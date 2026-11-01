@@ -1,0 +1,11 @@
+* text=auto
+*.py text eol=lf
+*.sh text eol=lf
+spk/scripts/* text eol=lf
+spk/INFO text eol=lf
+spk/port_conf/* text eol=lf
+spk/ui/config text eol=lf
+spk/ui/index.html text eol=lf
+src/web/index.html text eol=lf
+src/web/app.js text eol=lf
+src/web/styles.css text eol=lf

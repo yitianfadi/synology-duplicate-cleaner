@@ -85,7 +85,7 @@ def copy_tree(src: Path, dst: Path, normalize_text: bool = False) -> None:
             s = Path(base) / fname
             t = target_dir / fname
             is_script = "scripts" in rel.parts
-            if normalize_text and (is_script or fname in {"INFO", "config", "resource", "index.html", "strings"}):
+            if normalize_text and (is_script or fname.endswith(".sc") or fname in {"INFO", "config", "resource", "index.html", "strings"}):
                 t.write_bytes(norm_text(s.read_bytes()))
             else:
                 shutil.copy2(s, t)
