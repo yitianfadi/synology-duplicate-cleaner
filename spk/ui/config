@@ -4,7 +4,7 @@
       "type": "url",
       "icon": "images/icon_{0}.png",
       "title": "重复文件清理",
-      "desc": "基于哈希的重复文件扫描与安全清理（仅管理员）",
+      "desc": "基于哈希与内容相似度的重复文件扫描与安全清理（仅管理员）",
       "url": "3rdparty/DuplicateCleaner/index.html",
       "allUsers": false
     }

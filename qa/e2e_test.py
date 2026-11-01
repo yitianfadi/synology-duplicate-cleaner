@@ -20,6 +20,7 @@ import http.client
 import io
 import json
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -43,6 +44,17 @@ RISK_TEXT = (u"删除文件存在数据丢失风险，重要数据建议先备�
 RESULTS = []
 EVIDENCE = {}
 _MODULE_BTIME_SUPPORTED = True
+
+
+def expected_app_version():
+    """从后端 config.py 读取期望版本，避免升级后验收脚本写死版本号。"""
+    try:
+        with open(os.path.join(REPO, "src", "backend", "dupcleaner", "config.py"),
+                  "r", encoding="utf-8") as handle:
+            match = re.search(r'APP_VERSION\s*=\s*"([^"]+)"', handle.read())
+        return match.group(1) if match else None
+    except OSError:
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -719,7 +731,7 @@ def run():
         defaults = data.get("defaults") if isinstance(data.get("defaults"), dict) else {}
         check("META-01", "/api/meta 返回 dev_mode/creation_time_supported/版本/限制",
               resp.status == 200 and data.get("dev_mode") is True
-              and data.get("app_version") == "1.0.0-0001"
+              and data.get("app_version") == expected_app_version()
               and "creation_time_supported" in data
               and limits.get("max_files") == 500000
               and limits.get("max_roots") == 20
@@ -1139,8 +1151,9 @@ def run():
               "cd=%s" % resp.header("content-disposition"))
         text = body.decode("utf-8-sig")
         rows = list(csv.reader(io.StringIO(text)))
-        expected_header = ["组号", "状态", "文件路径", "大小(字节)", "SHA256/MD5",
-                           "创建时间", "修改时间", "保留", "默认勾选", "时间来源"]
+        expected_header = ["组号", "匹配类型", "状态", "文件路径", "大小(字节)",
+                           "SHA256/MD5", "创建时间", "修改时间", "保留",
+                           "默认勾选", "时间来源", "相似度分值"]
         check("CSV-03", "CSV 表头与契约列完全一致",
               rows and rows[0] == expected_header,
               "header=%s" % (rows[0] if rows else None))
@@ -1149,15 +1162,22 @@ def run():
               len(data_rows) == dup_files,
               "rows=%s dup_files=%s" % (len(data_rows), dup_files))
         keep_row = None
+        copy_row = None
         for row in data_rows:
-            if len(row) >= 10 and norm(row[2]) == norm(fx["photo"][2]):
+            if len(row) >= 12 and norm(row[3]) == norm(fx["photo"][2]):
                 keep_row = row
-                break
-        check("CSV-05", "CSV 保留行标记保留且时间来源为 statx/birthtime",
+            if len(row) >= 12 and norm(row[3]) == norm(fx["photo"][0]):
+                copy_row = row
+        check("CSV-05", "CSV 保留行标记保留、时间来源、匹配类型/分值（v1.1 新列）",
               keep_row is not None
-              and keep_row[7] in ("是", "true", "True", "1")
-              and keep_row[9] in ("statx", "birthtime"),
+              and keep_row[8] in ("是", "true", "True", "1")
+              and keep_row[10] in ("statx", "birthtime")
+              and keep_row[1] == u"哈希一致" and int(keep_row[11]) == 100,
               "row=%s" % keep_row)
+        check("CSV-06", "精准模式 CSV 匹配类型=哈希一致、相似度=100",
+              copy_row is not None and copy_row[1] == u"哈希一致"
+              and int(copy_row[11]) == 100,
+              "row=%s" % copy_row)
 
         # ---------------- 预览 ----------------
         resp = client.get(q("/api/preview", path=fx["pic"]))

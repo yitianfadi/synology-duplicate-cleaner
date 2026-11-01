@@ -213,10 +213,12 @@ class ScanGroupingTest(ScannerBase):
             self.assertTrue(raw.startswith(b"\xef\xbb\xbf"))
             text = raw.decode("utf-8-sig")
             rows = list(csv.reader(io.StringIO(text)))
-            self.assertEqual(rows[0][:4], [u"组号", u"状态", u"文件路径", u"大小(字节)"])
+            self.assertEqual(rows[0][:4], [u"组号", u"匹配类型", u"状态", u"文件路径"])
+            self.assertEqual(rows[0][4], u"大小(字节)")
             self.assertEqual(len(rows), 6)  # 1 表头 + 5 个重复文件
-            self.assertEqual(rows[0][9], u"时间来源")
-            statuses = [row[1] for row in rows[1:]]
+            self.assertEqual(rows[0][10], u"时间来源")
+            self.assertEqual(rows[0][11], u"相似度分值")
+            statuses = [row[2] for row in rows[1:]]
             self.assertIn(u"保留", statuses)
             self.assertIn(u"待删除", statuses)
         finally:

@@ -77,6 +77,16 @@ def walk_files(root, suffixes=None):
                 yield path
 
 
+def expected_app_version():
+    """从后端 config.py 读取期望版本（v1.0/v1.1 升级后无需改脚本）。"""
+    try:
+        text = read(os.path.join(REPO, "src", "backend", "dupcleaner", "config.py"))
+        match = re.search(r'APP_VERSION\s*=\s*"([^"]+)"', text)
+        return match.group(1) if match else None
+    except OSError:
+        return None
+
+
 # ---------------------------------------------------------------------------
 # 后端
 # ---------------------------------------------------------------------------
@@ -213,7 +223,8 @@ def check_backend():
                        "dataclasses", "unittest", "pathlib", "functools", "itertools",
                        "shlex", "locale", "getpass", "pwd", "grp", "resource", "fcntl",
                        "select", "queue", "math", "decimal", "calendar", "codecs",
-                       "heapq", "mimetypes", "tests", "stringprep", "encodings")
+                       "heapq", "mimetypes", "tests", "stringprep", "encodings",
+                       "zipfile", "zlib", "html", "PIL", "logging.handlers")
     for path in py_files:
         rel = os.path.relpath(path, REPO)
         src = read(path)
@@ -225,6 +236,91 @@ def check_backend():
                 third_party.append("%s:%s" % (rel, name))
     check("BE-STDLIB", "后端仅使用 Python 标准库（无第三方运行依赖）",
           not third_party, "third_party=%s" % third_party[:20])
+
+    # ---- v1.1 内容相似度模式（docs/SIMILARITY_CONTRACT.md）----
+    conf_src = read(os.path.join(backend, "dupcleaner", "config.py"))
+    sim_path = os.path.join(backend, "dupcleaner", "similarity.py")
+    sim_src = read(sim_path) if os.path.isfile(sim_path) else ""
+    check("BE-SIM-ALGO", "similarity 模块存在且 MinHash/pHash/安全团/确定性哈希符合契约",
+          os.path.isfile(sim_path)
+          and "SIMILARITY_SIGNATURE_SIZE = 64" in conf_src
+          and "SIMILARITY_MINHASH_BANDS = 16" in conf_src
+          and "SIMILARITY_MINHASH_ROWS = 4" in conf_src
+          and all(marker in sim_src for marker in
+                  ("minhash_signature", "build_groups", "dhash_from_gray",
+                   "content_sha256", "FeatureCache", "dc-sim-perm")),
+          "algorithm markers missing")
+    check("BE-SIM-CACHE", "特征缓存路径 feature_cache.json + cache_key(size/mtime/inode/dev/type)",
+          "SIMILARITY_CACHE_FILENAME = " in conf_src
+          and "feature_cache.json" in conf_src
+          and "def cache_key(size, mtime_ns, inode, dev, feature_type)" in sim_src
+          and "max_entries" in sim_src,
+          "cache markers missing")
+    sim_setting_keys = ["scan_mode", "similarity_threshold", "similarity_extensions",
+                        "similarity_exclude_extensions", "similarity_concurrency",
+                        "similarity_cache", "similarity_max_file_mb",
+                        "similarity_allow_binary"]
+    settings_src = read(os.path.join(backend, "dupcleaner", "settings.py"))
+    check("BE-SIM-SETTINGS", "settings 新增 8 个相似度键并做范围校验",
+          all(('"%s"' % key) in settings_src for key in sim_setting_keys)
+          and "_check_int(key, value, 0, 100)" in settings_src
+          and "_check_int(key, value, 1, 4)" in settings_src
+          and "_check_int(key, value, 1, 1024)" in settings_src,
+          "similarity settings markers missing")
+    check("BE-SIM-STAGE", "scanner 新增 similarity 阶段与分类统计",
+          '"similarity", "finalize"' in scanner_src
+          and "similarity_cache_hits" in scanner_src
+          and "similarity_skipped" in scanner_src
+          and '"exact_groups"' in scanner_src
+          and '"similar_groups"' in scanner_src
+          and '"similar_reclaimable_bytes"' in scanner_src,
+          "similarity stage/stats markers missing")
+    check("BE-SIM-GROUP-SCHEMA", "相似组 schema（match_type/manual_review_required/默认不勾选/keep latest）",
+          'match_type": "similar' in scanner_src
+          and '"manual_review_required": True' in scanner_src
+          and 'file_info["default_selected"] = False' in scanner_src
+          and 'group["group_id"] = "s-%06d"' in scanner_src
+          and '"similarity_score": group_score' in scanner_src,
+          "similar group schema markers missing")
+    check("BE-SIM-EXACT-ISOLATED", "精准组文件不参与相似计算（先精准哈希，再排除）",
+          "exact_paths" in scanner_src
+          and "if record.path in exact_paths" in scanner_src,
+          "exact isolation marker missing")
+    check("BE-SIM-GROUPS-API", "groups 支持 match_type 过滤并返回 exact_total/similar_total",
+          "def groups_page(self, scan_id, offset=0, limit=100, q=None," in scanner_src
+          and "match_type=None" in scanner_src
+          and '"exact_total": exact_total' in scanner_src
+          and '"similar_total": similar_total' in scanner_src
+          and "similarity_desc" in scanner_src,
+          "groups match_type markers missing")
+    check("BE-SIM-CSV", "CSV 新增 匹配类型/相似度分值 两列",
+          u"匹配类型" in scanner_src and u"相似度分值" in scanner_src
+          and u"内容相似" in scanner_src and u"哈希一致" in scanner_src,
+          "CSV similarity columns missing")
+    errors_src = read(os.path.join(backend, "dupcleaner", "errors.py"))
+    check("BE-SIM-REVIEW", "删除计划强制人工复核（SIMILAR_REVIEW_REQUIRED + confirm/reviewed 字段）",
+          "SIMILAR_REVIEW_REQUIRED" in errors_src
+          and "confirm_similar" in del_src
+          and "reviewed_similar_group_ids" in del_src
+          and "SIMILAR_REVIEW_REQUIRED" in del_src,
+          "review gating markers missing")
+    check("BE-SIM-SCOPE", "scope=all_duplicates 永不包含相似组",
+          "scope=all_duplicates 永不包含相似组" in del_src
+          and '(group.get("match_type") or "exact") == "similar"' in del_src,
+          "scope similar exclusion marker missing")
+    check("BE-SIM-REVALIDATE", "相似文件删除前按各自 content_sha256 重校验（不要求二者相等）",
+          "match_type == \"similar\"" in del_src
+          and "不要求哈希相等" in del_src
+          and "candidate_hash" in del_src and "keeper_hash" in del_src,
+          "similar revalidate markers missing")
+    check("BE-SIM-META", "/api/meta 暴露 similarity 能力",
+          "similarity.capabilities()" in http_src
+          and "default_extensions" in sim_src,
+          "meta similarity capability missing")
+    check("BE-SIM-COMPAT", "旧扫描结果缺少 match_type 时默认按 exact 处理（向后兼容）",
+          'group.get("match_type") or "exact"' in scanner_src
+          and '(group.get("match_type") or "exact") == "similar"' in del_src,
+          "backward compatibility marker missing")
 
 
 # ---------------------------------------------------------------------------
@@ -327,7 +423,11 @@ def check_frontend():
     setting_keys = ["hash_algo", "keep_mode", "pinned_path", "min_size_bytes",
                     "max_size_bytes", "include_extensions", "exclude_extensions",
                     "ignore_case_ext", "skip_empty", "skip_hidden", "concurrency",
-                    "hash_rate_mbps", "recycle_default", "allow_ctime_fallback"]
+                    "hash_rate_mbps", "recycle_default", "allow_ctime_fallback",
+                    "scan_mode", "similarity_threshold", "similarity_extensions",
+                    "similarity_exclude_extensions", "similarity_concurrency",
+                    "similarity_cache", "similarity_max_file_mb",
+                    "similarity_allow_binary"]
     missing_settings = [key for key in setting_keys if key not in app]
     check("FE-SETTINGS-KEYS", "设置页覆盖契约全部设置键",
           not missing_settings, "missing=%s" % missing_settings)
@@ -383,6 +483,66 @@ def check_frontend():
           and "/api/scans/' + encodePath(state.scan.id)" in app,
           "polling markers missing")
 
+    # ---- v1.1 内容相似度模式（docs/SIMILARITY_CONTRACT.md §6）----
+    sim_warning = (u"内容相似度为 AI/特征比对结果，存在误匹配概率；"
+                   u"相似组必须人工复核，禁止一键批量删除相似文件。")
+    check("FE-SIM-WARNING", "内容相似分区警示文案逐字符合契约",
+          sim_warning in html, "similarity warning text missing")
+    check("FE-SIM-MODE", "扫描模式切换（精准哈希/内容相似）UI 存在",
+          all(marker in html for marker in
+              ("modeExactBtn", "modeSimilarBtn", u"精准哈希", u"内容相似"))
+          and all(marker in app for marker in
+                  ("modeExactBtn", "modeSimilarBtn", "setScanMode")),
+          "scan mode switch markers missing")
+    check("FE-SIM-OPTIONS", "相似模式选项齐全（阈值/并发/缓存/大小上限/类型/二进制）",
+          all(marker in html for marker in
+              ("simThreshold", "simThresholdRange", "simConcurrency",
+               "simCache", "simMaxFileMb", "simAllowBinary", "simExtList",
+               "similarityOptions"))
+          and all(key in app for key in
+                  ("similarity_threshold", "similarity_concurrency",
+                   "similarity_cache", "similarity_max_file_mb",
+                   "similarity_allow_binary", "similarity_extensions")),
+          "similarity options markers missing")
+    check("FE-SIM-PARTITION", "结果页分两区：哈希一致（精准重复）/ 内容相似",
+          all(marker in html for marker in
+              ("exactPartition", "similarPartition", "exactPartitionTitle",
+               "exactPartitionCount", "similarPartitionCount"))
+          and u"哈希一致（精准重复）" in app and u"内容相似" in html
+          and u"需人工复核" in html,
+          "partition markers missing")
+    check("FE-SIM-SUMMARY", "摘要卡区分精准组/相似组与各自可释放空间",
+          "summaryCard" in app and u"哈希一致（精准重复）" in app
+          and u"内容相似" in app and "similar_reclaimable_bytes" in app,
+          "summary similarity markers missing")
+    check("FE-SIM-REVIEW", "相似组人工复核 checkbox + 未复核禁用组内文件选择",
+          "similarReview" in app and "data-review-key" in app
+          and u"人工复核本组" in app and u"未复核" in app
+          and u"勾选“人工复核”后才可逐条选择" in app,
+          "manual review markers missing")
+    check("FE-SIM-NO-BULK", "禁止对相似组一键全选/批量删除",
+          u"相似组不参与全选" in app and u"禁止一键批量删除" in html
+          and u"禁止批量删除" in app and "similarReview" in app,
+          "similar bulk-delete prohibition markers missing")
+    check("FE-SIM-DELETE-GATE", "删除计划提交 confirm_similar + reviewed_similar_group_ids，前端按复核门控",
+          "confirm_similar: true" in app
+          and "reviewed_similar_group_ids" in app
+          and "SIMILAR_REVIEW_REQUIRED" in app
+          and u"存在未人工复核的相似组，无法删除" in app,
+          "similar delete gating markers missing")
+    check("FE-SIM-DELETE-SUMMARY", "删除两步确认摘要分别展示精准/相似文件与已复核组数",
+          u"内容相似文件" in app and u"相似组已复核" in app
+          and u"人工复核" in app and "plan.similar_count" in app,
+          "delete plan summary markers missing")
+    check("FE-SIM-HISTORY", "历史记录按扫描模式展示（scan_mode/模式标签）",
+          "SCAN_MODE_LABEL" in app and "scan_mode" in app,
+          "history scan mode markers missing")
+    check("FE-SIM-CACHE-COUNTERS", "进度区展示相似特征/缓存命中/候选/跳过计数",
+          all(marker in html for marker in
+              ("simFeatures", "simCacheHits", "simCandidates", "simSkipped"))
+          and "similarityCounters" in html,
+          "similarity counters missing")
+
 
 # ---------------------------------------------------------------------------
 # SPK 源码
@@ -410,9 +570,9 @@ def check_spk_source():
     check("SPK-INFO-REQ", "SPK/INFO 包含必需字段",
           all(key in info for key in required),
           "missing=%s" % [key for key in required if key not in info])
-    check("SPK-INFO-VALUES", "INFO 字段值符合契约（1.0.0-0001 / DSM7 / noarch / 8787 / ui）",
+    check("SPK-INFO-VALUES", "INFO 字段值符合契约（版本与 config 一致 / DSM7 / noarch / 8787 / ui）",
           info.get("package") == "DuplicateCleaner"
-          and info.get("version") == "1.0.0-0001"
+          and info.get("version") == expected_app_version()
           and info.get("os_min_ver", "").startswith("7.0")
           and info.get("arch") == "noarch"
           and info.get("adminport") == "8787"
@@ -510,6 +670,15 @@ def check_spk_source():
     check("SPK-POSTINST", "postinst 创建 var 目录并保留日志",
           "var" in postinst and "chmod" in postinst,
           "postinst content unexpected")
+    build_script_path = os.path.join(REPO, "build", "build_spk.py")
+    build_src = read(build_script_path) if os.path.isfile(build_script_path) else ""
+    check("SPK-BUILD-VERSION", "build_spk.py 的 VERSION 与 config APP_VERSION 一致",
+          ('VERSION = "%s"' % expected_app_version()) in build_src,
+          "build script VERSION mismatch")
+    check("SPK-BUILD-WHITELIST", "build_spk.py 强制 app/ 仅打包 .py（防测试输出混入）",
+          "app/ 只允许 Python 源码" in build_src
+          and "p.suffix != \".py\"" in build_src,
+          "build app whitelist marker missing")
     return existing
 
 
@@ -563,12 +732,14 @@ def shell_syntax_check(scripts, rid_prefix):
 # ---------------------------------------------------------------------------
 def check_dist():
     out_dir = os.path.join(REPO, "dist")
-    spk_path = os.path.join(out_dir, "DuplicateCleaner-1.0.0-0001.spk")
+    version = expected_app_version()
+    filename = "DuplicateCleaner-%s.spk" % (version or "1.0.0-0001")
+    spk_path = os.path.join(out_dir, filename)
     if not os.path.isfile(spk_path):
-        record("SPK-DIST", "构建产物 dist/DuplicateCleaner-1.0.0-0001.spk", "UNVERIFIED",
+        record("SPK-DIST", "构建产物 dist/%s" % filename, "UNVERIFIED",
                "SPK 尚未构建（Lead 构建后重跑）")
         return
-    check("SPK-DIST", "构建产物存在", True, "")
+    check("SPK-DIST", "构建产物存在（%s）" % filename, True, "")
     expect_outer = {"INFO", "package.tgz", "PACKAGE_ICON.PNG",
                     "PACKAGE_ICON_256.PNG", "LICENSE",
                     "conf/privilege", "conf/resource",
@@ -585,6 +756,9 @@ def check_dist():
         script_modes = {name: outer.getmember(name).mode
                         for name in names if name.startswith("scripts/")}
     info = parse_info(info_bytes.decode("utf-8", "replace"))
+    check("SPK-VERSION", "SPK INFO.version 与当前源码 APP_VERSION（%s）一致" % version,
+          bool(version) and info.get("version") == version,
+          "info.version=%s expected=%s" % (info.get("version"), version))
     checksum = info.get("checksum", "")
     actual_md5 = hashlib.md5(package_bytes).hexdigest()
     check("SPK-CHECKSUM", "INFO.checksum 与 package.tgz MD5 一致",

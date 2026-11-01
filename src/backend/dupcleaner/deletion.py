@@ -133,9 +133,21 @@ def revalidate(record, keeper_record, share_service, algo="sha256",
 
     candidate_hash = record.get("hash") or ""
     keeper_hash = (keeper_record or {}).get("hash") or ""
-    if not candidate_hash or candidate_hash != keeper_hash:
-        return _result(False, REASON_HASH_MISMATCH,
-                       u"候选文件与保留文件记录的哈希不一致")
+    match_type = (record.get("match_type")
+                  or (keeper_record or {}).get("match_type") or "exact")
+    if match_type == "similar":
+        # 相似组：候选与保留文件内容本来就不同，不要求哈希相等；
+        # 只要求各自内容未变（下一段 fresh hash 分别对比自己的扫描记录）。
+        if not candidate_hash:
+            return _result(False, REASON_HASH_MISMATCH,
+                           u"缺少相似文件内容哈希，无法校验")
+        if not keeper_hash:
+            return _result(False, REASON_KEEPER_MISSING,
+                           u"缺少保留文件内容哈希，无法校验")
+    else:
+        if not candidate_hash or candidate_hash != keeper_hash:
+            return _result(False, REASON_HASH_MISMATCH,
+                           u"候选文件与保留文件记录的哈希不一致")
 
     if hash_check:
         try:
@@ -284,6 +296,12 @@ class DeletionManager(object):
                 not isinstance(item, str) for item in exclude_ids):
             raise invalid(u"exclude_file_ids 必须是文件 ID 数组")
         exclude_set = set(exclude_ids)
+        reviewed_ids = payload.get("reviewed_similar_group_ids") or []
+        if not isinstance(reviewed_ids, list) or any(
+                not isinstance(item, str) for item in reviewed_ids):
+            raise invalid(u"reviewed_similar_group_ids 必须是字符串数组")
+        reviewed_set = set(reviewed_ids)
+        confirm_similar = payload.get("confirm_similar") is True
 
         candidates = []  # (group, file, keeper)
         skipped = []
@@ -327,6 +345,9 @@ class DeletionManager(object):
         elif scope == "all_duplicates":
             for group in self.store.iter_scan_groups(scan_id):
                 self._purge_expired_plans()
+                if (group.get("match_type") or "exact") == "similar":
+                    # scope=all_duplicates 永不包含相似组：相似文件必须人工复核后显式选择
+                    continue
                 if group.get("needs_manual_keep"):
                     # 一律跳过：宁可少删，也不能误删用户真实想保留的文件
                     for file_info in group.get("files") or []:
@@ -349,6 +370,24 @@ class DeletionManager(object):
         else:
             raise invalid(u"必须提供 file_ids 或 scope=all_duplicates")
 
+        # 相似组删除门槛：confirm_similar + 每个涉及组都在 reviewed 列表内
+        needed_similar_groups = set()
+        for group, _file_info, _keeper in candidates:
+            if (group.get("match_type") or "exact") == "similar":
+                needed_similar_groups.add(group.get("group_id"))
+        if needed_similar_groups:
+            if not confirm_similar:
+                raise ApiError(
+                    "SIMILAR_REVIEW_REQUIRED",
+                    u"相似文件必须人工复核后才能删除（需要 confirm_similar=true）",
+                    details={"groups": sorted(needed_similar_groups)})
+            missing_groups = needed_similar_groups - reviewed_set
+            if missing_groups:
+                raise ApiError(
+                    "SIMILAR_REVIEW_REQUIRED",
+                    u"存在未人工复核的相似组，禁止删除",
+                    details={"groups": sorted(missing_groups)})
+
         plan_files = []
         groups_affected = set()
         recycle_unavailable = []
@@ -361,8 +400,12 @@ class DeletionManager(object):
 
         for group, file_info, keeper in candidates:
             group_id = group.get("group_id")
+            match_type = group.get("match_type") or "exact"
+            # 相似文件的内容哈希固定为 SHA256；精准组沿用配置的哈希算法
+            entry_algo = "sha256" if match_type == "similar" else algo
             path = file_info.get("path") or ""
-            result = revalidate(file_info, keeper, self.shares, algo=algo,
+            result = revalidate(file_info, keeper, self.shares,
+                                algo=entry_algo,
                                 hash_check=hash_check, hash_cache=hash_cache)
             if not result["ok"]:
                 skipped.append({"path": path, "file_id": file_info.get("file_id"),
@@ -413,7 +456,9 @@ class DeletionManager(object):
                 "keeper": keeper,
                 "group_hash": group.get("hash"),
                 "group_id": group_id,
-                "algo": algo,
+                "match_type": match_type,
+                "similarity_score": file_info.get("similarity_score"),
+                "algo": entry_algo,
             })
             groups_affected.add(group_id)
 
@@ -432,6 +477,14 @@ class DeletionManager(object):
         # 计划中的字节数只统计真正通过校验的文件（UI 用它显示可释放空间）
         total_bytes = sum(int(entry["file"].get("size") or 0)
                           for entry in plan_files)
+        similar_entries = [entry for entry in plan_files
+                           if entry.get("match_type") == "similar"]
+        exact_entries = [entry for entry in plan_files
+                         if entry.get("match_type") != "similar"]
+        similar_bytes = sum(int(entry["file"].get("size") or 0)
+                            for entry in similar_entries)
+        exact_bytes = sum(int(entry["file"].get("size") or 0)
+                          for entry in exact_entries)
         plan_id = make_plan_id()
         now = time.time()
         internal_path = self._write_plan_files(plan_id, plan_files)
@@ -441,6 +494,8 @@ class DeletionManager(object):
                 "path": entry["file"].get("path"),
                 "size": entry["file"].get("size"),
                 "group_id": entry["group_id"],
+                "match_type": entry.get("match_type") or "exact",
+                "similarity_score": entry.get("similarity_score"),
             }
             for entry in plan_files
         ]
@@ -457,6 +512,12 @@ class DeletionManager(object):
             "expires_at": timeutil.iso_local(now + config.PLAN_TTL_SECONDS),
             "count": len(plan_files),
             "bytes": total_bytes,
+            "similar_count": len(similar_entries),
+            "similar_bytes": similar_bytes,
+            "exact_count": len(exact_entries),
+            "exact_bytes": exact_bytes,
+            "manual_review": bool(similar_entries),
+            "reviewed_similar_group_ids": sorted(reviewed_set),
             "groups_affected": len(groups_affected),
             "files": public_files,
             "skipped": skipped,
@@ -476,6 +537,10 @@ class DeletionManager(object):
             "recycle": recycle,
             "count": plan["count"],
             "bytes": plan["bytes"],
+            "exact_count": plan["exact_count"],
+            "similar_count": plan["similar_count"],
+            "manual_review": plan["manual_review"],
+            "reviewed_similar_group_ids": plan["reviewed_similar_group_ids"],
             "skipped": len(skipped),
             "hash_verified": plan["hash_verified"],
         })
@@ -492,6 +557,12 @@ class DeletionManager(object):
             "recycle": plan["recycle"],
             "count": plan["count"],
             "bytes": plan["bytes"],
+            "similar_count": plan.get("similar_count", 0),
+            "similar_bytes": plan.get("similar_bytes", 0),
+            "exact_count": plan.get("exact_count", 0),
+            "exact_bytes": plan.get("exact_bytes", 0),
+            "manual_review": plan.get("manual_review", False),
+            "reviewed_similar_group_ids": plan.get("reviewed_similar_group_ids") or [],
             "files": files[:config.PLAN_FILES_RESPONSE_LIMIT],
             "files_total": len(files),
             "files_truncated": truncated,
@@ -618,6 +689,11 @@ class DeletionManager(object):
             "recycle": plan["recycle"],
             "count": plan["count"],
             "bytes": plan["bytes"],
+            "exact_count": plan.get("exact_count", 0),
+            "similar_count": plan.get("similar_count", 0),
+            "manual_review": plan.get("manual_review", False),
+            "reviewed_similar_group_ids": plan.get(
+                "reviewed_similar_group_ids") or [],
         })
         job.thread = threading.Thread(target=self._run_job, args=(job,),
                                       name="delete-" + job_id, daemon=True)
@@ -708,6 +784,9 @@ class DeletionManager(object):
             "path": path,
             "file_id": file_info.get("file_id"),
             "size": int(file_info.get("size") or 0),
+            "match_type": (file_info.get("match_type")
+                           or entry.get("match_type") or "exact"),
+            "similarity_score": file_info.get("similarity_score"),
             "recycle_path": None,
         }
         result = revalidate(file_info, keeper, self.shares, algo=algo,
@@ -785,6 +864,8 @@ class DeletionManager(object):
             "scan_id": job.scan_id,
             "path": result.get("path"),
             "status": result.get("status"),
+            "match_type": result.get("match_type") or "exact",
+            "similarity_score": result.get("similarity_score"),
             "recycle_path": result.get("recycle_path"),
             "size": result.get("size"),
         }

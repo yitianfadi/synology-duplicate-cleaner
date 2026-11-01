@@ -1,7 +1,7 @@
 # 打包、部署与运维（DSM 7 SPK）
 
-> 套件名：`DuplicateCleaner` · 版本：`1.0.0-0001` · 架构：`noarch`（Python 代码，无二进制）  
-> 产物：`dist/DuplicateCleaner-1.0.0-0001.spk` + SHA256 校验文件
+> 套件名：`DuplicateCleaner` · 版本：`1.1.0-0002` · 架构：`noarch`（Python 代码，无二进制）
+> 产物：`dist/DuplicateCleaner-1.1.0-0002.spk` + SHA256 校验文件
 
 ## 1. 运行依赖与前置条件
 
@@ -12,6 +12,7 @@
 | 权限 | DSM administrators 组 | Web 界面登录需要管理员；后端以 root 读取共享文件夹、写 `#recycle` |
 | 文件系统 | Btrfs / EXT4 | 创建时间依赖 `statx` 的 btime；两类文件系统在 DSM 7 内核下均支持（EXT4 需 inode 256） |
 | 浏览器 | 支持 ES2019 | DSM 7 自带 Chrome/Firefox；无 CDN 依赖 |
+| 可选 Pillow | 非必需 | 相似模式的 JPEG/WebP 感知哈希优先使用 Pillow；未安装时自动降级为字节特征并标记低置信。PNG 使用标准库解码，无需 Pillow |
 | 构建机 | Python 3.8+ | `build/build_spk.py` 跨平台；生成图标需要 Pillow（可选，仓库已含 PNG） |
 
 > 安装 Python3 的路径不必手动指定：启动脚本会依次探测
@@ -49,8 +50,8 @@ python build/build_spk.py
 产物：
 
 ```
-dist/DuplicateCleaner-1.0.0-0001.spk
-dist/DuplicateCleaner-1.0.0-0001.spk.sha256
+dist/DuplicateCleaner-1.1.0-0002.spk
+dist/DuplicateCleaner-1.1.0-0002.spk.sha256
 ```
 
 构建脚本做了：
@@ -78,7 +79,7 @@ rm -rf build/stage/package/app/tests build/stage/package/app/**/__pycache__
 cp -a src/web/. build/stage/package/web/
 cp -a spk/ui/. build/stage/package/ui/
 cp -a spk/port_conf/. build/stage/package/port_conf/
-echo "1.0.0-0001" > build/stage/package/VERSION
+echo "1.1.0-0002" > build/stage/package/VERSION
 # 2) package.tgz
 tar -czf build/stage/package.tgz -C build/stage/package .
 # 3) 外层
@@ -90,7 +91,7 @@ sed -i '/^checksum=/d' build/stage/spk/INFO
 echo "checksum=\"$MD5\"" >> build/stage/spk/INFO
 chmod 755 build/stage/spk/scripts/*
 # 4) 未压缩外层 tar
-tar -cf dist/DuplicateCleaner-1.0.0-0001.spk -C build/stage/spk .
+tar -cf dist/DuplicateCleaner-1.1.0-0002.spk -C build/stage/spk .
 ```
 
 > 注意：手工构建时 `ui/index.html` 里的 `__DUP_BACKEND_SCHEME__` 需要替换为 `http` 或 `https`；`ui` 必须在 package.tgz 里。
@@ -98,9 +99,9 @@ tar -cf dist/DuplicateCleaner-1.0.0-0001.spk -C build/stage/spk .
 ### 3.3 构建后自检
 
 ```bash
-tar -tf dist/DuplicateCleaner-1.0.0-0001.spk
+tar -tf dist/DuplicateCleaner-1.1.0-0002.spk
 # 应包含 INFO、package.tgz、PACKAGE_ICON.PNG、conf/*、scripts/*
-mkdir -p /tmp/dupcheck && tar -xf dist/DuplicateCleaner-1.0.0-0001.spk -C /tmp/dupcheck
+mkdir -p /tmp/dupcheck && tar -xf dist/DuplicateCleaner-1.1.0-0002.spk -C /tmp/dupcheck
 tar -tzf /tmp/dupcheck/package.tgz | head -50
 grep -E '^(package|version|os_min_ver|dsmuidir|dsmappname|adminport)=' /tmp/dupcheck/INFO
 python -m json.tool /tmp/dupcheck/conf/privilege
@@ -114,7 +115,7 @@ Windows 自带 `tar.exe`（bsdtar）也可执行 `tar -tf`、`tar -xf`。
 ### 4.1 上传安装
 
 1. DSM → **套件中心** → **手动安装**（右上角“手动安装”按钮）。
-2. 选择 `DuplicateCleaner-1.0.0-0001.spk`。
+2. 选择 `DuplicateCleaner-1.1.0-0002.spk`。
 3. 阅读风险提示/许可证；如 DSM 提示“未知发布者”，确认信任来源后继续。
    - DSM 7.2+ 若禁止未签名第三方套件，需在 **套件中心 → 设置 → 常规 → 信任层级** 调整为允许（或对套件签名，见 §9）。
 4. 安装前确认已安装 **Python3**；未安装会被 `preinst` 拒绝并提示。
@@ -242,8 +243,8 @@ python build/build_spk.py --scheme https
 - 无论是否签名，安装前都应校验 `dist/*.spk.sha256`：
 
 ```powershell
-Get-FileHash dist\DuplicateCleaner-1.0.0-0001.spk -Algorithm SHA256
-Get-Content dist\DuplicateCleaner-1.0.0-0001.spk.sha256
+Get-FileHash dist\DuplicateCleaner-1.1.0-0002.spk -Algorithm SHA256
+Get-Content dist\DuplicateCleaner-1.1.0-0002.spk.sha256
 ```
 
 ## 10. 升级与卸载

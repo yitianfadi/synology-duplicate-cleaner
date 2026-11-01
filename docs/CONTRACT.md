@@ -1,7 +1,8 @@
 # 实现契约（前后端共享，版本 1.0）
 
 > 本文件是前后端并行开发的唯一接口约定。任何一方需要改动字段，先改本文件并在团队任务中说明。
-> 产品名：**DuplicateCleaner**；显示名：**重复文件清理**；SPK 版本：**1.0.0-0001**。
+> 产品名：**DuplicateCleaner**；显示名：**重复文件清理**；SPK 版本：**1.1.0-0002**。
+> v1.1 新增内容相似度模式；相似模式字段与行为见 [SIMILARITY_CONTRACT.md](SIMILARITY_CONTRACT.md)，**精准模式规则不变**。
 
 ## 1. 仓库与写入边界
 
@@ -75,7 +76,7 @@ Cookie：`HttpOnly; SameSite=Strict; Path=/; Max-Age=28800`，TLS 时加 `Secure
 ### GET /api/meta
 ```json
 {
- "app_version": "1.0.0-0001",
+ "app_version": "1.1.0-0002",
  "dsm_version": "7.2.2-72806" | "dev",
  "python_version": "3.8.16",
  "creation_time_supported": true,
@@ -226,7 +227,9 @@ Cookie：`HttpOnly; SameSite=Strict; Path=/; Max-Age=28800`，TLS 时加 `Secure
 
 ### GET /api/scans/{scan_id}/csv
 `text/csv; charset=utf-8`，带 UTF-8 BOM；列：
-`组号,状态,文件路径,大小(字节),SHA256/MD5,创建时间,修改时间,保留,默认勾选,时间来源`
+`组号,匹配类型,状态,文件路径,大小(字节),SHA256/MD5,创建时间,修改时间,保留,默认勾选,时间来源,相似度分值`
+
+- 匹配类型：`哈希一致` / `内容相似`（相似模式见 [SIMILARITY_CONTRACT.md](SIMILARITY_CONTRACT.md)）；相似度分值 0–100，精准组为 100。
 Content-Disposition: attachment; filename="duplicate-scan-<id>.csv"
 
 ### POST /api/scans/{scan_id}/delete-plan
@@ -334,4 +337,4 @@ Content-Disposition: attachment; filename="duplicate-scan-<id>.csv"
 - 后端 unittest 覆盖：statx 时间读取降级、哈希分片/限速、重复分组与三种保留策略、
   路径黑名单、删除前重校验、回收站路径生成、CSV、API 鉴权。
 - 前端可用静态检查 + 本地 dev 后端联调；QA 用 dev 模式在临时目录生成重复文件跑完整 API 流程。
-- 打包产物 `dist/DuplicateCleaner-1.0.0-0001.spk` 必须能通过 `tar -tf` 检查，包含 INFO/package.tgz/scripts/conf/ui。
+- 打包产物 `dist/DuplicateCleaner-1.1.0-0002.spk` 必须能通过 `tar -tf` 检查，包含 INFO/package.tgz/scripts/conf/ui。

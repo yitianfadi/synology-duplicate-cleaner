@@ -7,9 +7,9 @@ import os
 import re
 
 APP_NAME = "DuplicateCleaner"
-APP_VERSION = "1.0.0-0001"
+APP_VERSION = "1.1.0-0002"
 DISPLAY_NAME = "重复文件清理"
-SPK_VERSION = "1.0.0-0001"
+SPK_VERSION = "1.1.0-0002"
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8787
@@ -34,6 +34,42 @@ JOB_RESULTS_MEMORY_LIMIT = 5000
 # 计划阶段做“候选+保留文件全量哈希复核”的总字节预算；超出则把哈希复核
 # 推迟到后台删除任务中逐文件执行（删除任务始终会复核全量哈希）。
 PLAN_HASH_VERIFY_BUDGET_BYTES = 512 * 1024 * 1024
+
+# ---------------------------------------------------------------------------
+# 内容相似度模式常量（docs/SIMILARITY_CONTRACT.md）
+# ---------------------------------------------------------------------------
+DEFAULT_SIMILARITY_EXTENSIONS = (
+    ".txt", ".md", ".markdown", ".csv", ".json", ".xml", ".html", ".htm", ".log",
+    ".pdf", ".docx", ".odt",
+    ".png", ".jpg", ".jpeg", ".webp",
+)
+
+# 无论 allow_binary 如何，这些压缩包/镜像/可执行/媒体类别永远只做精准哈希。
+SIMILARITY_BINARY_EXTENSIONS = frozenset([
+    ".zip", ".7z", ".rar", ".tar", ".gz", ".bz2", ".xz", ".zst", ".tgz",
+    ".iso", ".img", ".dmg", ".msi", ".pkg", ".spk", ".deb", ".rpm", ".cab",
+    ".exe", ".dll", ".so", ".dylib", ".com", ".scr", ".apk", ".jar", ".war",
+    ".mp4", ".mkv", ".avi", ".mov", ".wmv", ".flv", ".webm", ".m4v", ".mpg",
+    ".mpeg", ".3gp", ".ts", ".rmvb",
+    ".mp3", ".flac", ".aac", ".m4a", ".wav", ".ogg", ".wma", ".ape", ".opus",
+    ".ttf", ".otf", ".woff", ".woff2", ".psd", ".ai",
+])
+
+SIMILARITY_CACHE_FILENAME = "feature_cache.json"
+SIMILARITY_CACHE_MAX_ENTRIES = 50000
+SIMILARITY_SIGNATURE_SIZE = 64
+SIMILARITY_MINHASH_BANDS = 16
+SIMILARITY_MINHASH_ROWS = 4
+SIMILARITY_MAX_SHINGLES = 50000
+SIMILARITY_CHUNK_BYTES = 1024
+SIMILARITY_TEXT_EXTENSIONS = frozenset([
+    ".txt", ".md", ".markdown", ".csv", ".tsv", ".json", ".xml", ".html", ".htm",
+    ".log", ".yaml", ".yml", ".ini", ".conf", ".cfg", ".py", ".js", ".css",
+    ".sql", ".sh", ".bat", ".ps1", ".c", ".h", ".cpp", ".java", ".go", ".rs",
+    ".rb", ".php", ".lua", ".toml", ".properties", ".srt", ".nfo", ".env",
+])
+SIMILARITY_DOCUMENT_EXTENSIONS = frozenset([".pdf", ".docx", ".odt"])
+SIMILARITY_IMAGE_EXTENSIONS = frozenset([".png", ".jpg", ".jpeg", ".webp"])
 
 # 系统 / 隐藏目录名：任何一层路径出现都必须拒绝（回收站目标除外）。
 SYSTEM_DIR_NAMES = frozenset([

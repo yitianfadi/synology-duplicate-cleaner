@@ -6,6 +6,7 @@ import unittest
 import urllib.parse
 
 from tests.helpers import Harness, WebServer, write_bytes
+from tests.test_similarity import BASE_TEXT, VARIANT_TEXT
 
 from dupcleaner import config
 
@@ -164,7 +165,7 @@ class ApiTest(unittest.TestCase):
         self.login()
         status, _headers, payload = self.json_call("GET", "/api/meta")
         self.assertEqual(status, 200)
-        self.assertEqual(payload["app_version"], "1.0.0-0001")
+        self.assertEqual(payload["app_version"], config.APP_VERSION)
         self.assertEqual(payload["dsm_version"], "dev")
         self.assertTrue(payload["dev_mode"])
         self.assertTrue(payload["creation_time_supported"] is not None)
@@ -172,6 +173,11 @@ class ApiTest(unittest.TestCase):
         self.assertIn("keep_mode", payload["defaults"])
         self.assertIn("statx_supported", payload)
         self.assertIn("platform", payload)
+        similarity_caps = payload["similarity"]
+        self.assertIn(".txt", similarity_caps["default_extensions"])
+        self.assertEqual(similarity_caps["default_threshold"], 85)
+        self.assertIn("image_backend", similarity_caps)
+        self.assertIn("binary_extensions", similarity_caps)
 
         status, _headers, payload = self.json_call("GET", "/api/shares")
         self.assertEqual(status, 200)
@@ -261,7 +267,24 @@ class ApiTest(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(payload["total"], 2)
         self.assertEqual(payload["limit"], 100)
+        self.assertEqual(payload["exact_total"], 2)
+        self.assertEqual(payload["similar_total"], 0)
         self.assertEqual(len(payload["groups"]), 2)
+
+        status, _headers, payload = self.json_call(
+            "GET", "/api/scans/%s/groups?match_type=exact" % scan_id)
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["total"], 2)
+        status, _headers, payload = self.json_call(
+            "GET", "/api/scans/%s/groups?match_type=similar" % scan_id)
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["total"], 0)
+        self.assertEqual(payload["similar_total"], 0)
+
+        status, _headers, payload = self.json_call(
+            "GET", "/api/scans/%s/groups?offset=0&limit=100&sort=wasted_desc"
+            % scan_id)
+        self.assertEqual(status, 200)
         group = payload["groups"][0]
         for key in ("group_id", "hash", "algo", "size", "count",
                     "wasted_bytes", "keep_file_id", "keep_reason",
@@ -291,6 +314,8 @@ class ApiTest(unittest.TestCase):
                       headers["content-disposition"][0])
         self.assertTrue(raw.startswith(b"\xef\xbb\xbf"))
         self.assertIn(u"组号".encode("utf-8"), raw)
+        self.assertIn(u"匹配类型".encode("utf-8"), raw)
+        self.assertIn(u"相似度分值".encode("utf-8"), raw)
 
         status, headers, raw = self.client.request(
             "GET", "/api/preview?path=" + urllib.parse.quote(self.note))
@@ -435,6 +460,98 @@ class ApiTest(unittest.TestCase):
             "GET", preview_path, headers={"Range": "bytes=999999-"})
         self.assertEqual(status, 416)
         self.assertEqual(headers["content-range"][0], "bytes */%d" % total)
+
+    def test_similarity_api_flow(self):
+        self.login()
+        base = BASE_TEXT
+        variant = VARIANT_TEXT
+        first = write_bytes(os.path.join(self.root, "sim_api_a.txt"),
+                            base.encode("utf-8"))
+        second = write_bytes(os.path.join(self.root, "sim_api_b.txt"),
+                             variant.encode("utf-8"))
+        self.harness.set_creation(first, 3000)
+        self.harness.set_creation(second, 3100)
+
+        status, _headers, payload = self.json_call(
+            "POST", "/api/scans",
+            {"roots": [self.root],
+             "options": {"scan_mode": "similar",
+                         "similarity_threshold": 85}})
+        self.assertEqual(status, 202)
+        scan_id = payload["scan_id"]
+        scan = self.wait_scan(scan_id)
+        self.assertEqual(scan["status"], "completed")
+        self.assertEqual(scan["options"]["scan_mode"], "similar")
+        stats = scan["stats"]
+        self.assertEqual(stats["exact_groups"], 2)
+        self.assertEqual(stats["similar_groups"], 1)
+        self.assertGreater(stats["similar_reclaimable_bytes"], 0)
+
+        status, _headers, payload = self.json_call(
+            "GET", "/api/scans/%s/groups?match_type=similar" % scan_id)
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["total"], 1)
+        self.assertEqual(payload["exact_total"], 2)
+        self.assertEqual(payload["similar_total"], 1)
+        group = payload["groups"][0]
+        self.assertEqual(group["match_type"], "similar")
+        self.assertEqual(group["hash"], "")
+        self.assertTrue(group["manual_review_required"])
+        self.assertFalse(group["low_confidence"])
+        self.assertGreaterEqual(group["similarity_score"], 85)
+        for file_info in group["files"]:
+            self.assertFalse(file_info["default_selected"])
+        keeper = [item for item in group["files"] if item["is_keep"]][0]
+        non_keeper = [item for item in group["files"] if not item["is_keep"]][0]
+
+        status, headers, raw = self.client.request(
+            "GET", "/api/scans/%s/csv" % scan_id)
+        self.assertEqual(status, 200)
+        self.assertIn(u"匹配类型".encode("utf-8"), raw)
+        self.assertIn(u"内容相似".encode("utf-8"), raw)
+
+        status, _headers, payload = self.json_call(
+            "GET", "/api/scans/%s/groups?sort=similarity_desc" % scan_id)
+        self.assertEqual(status, 200)
+        self.assertTrue(payload["groups"])
+
+        # 相似文件未复核 → 400 SIMILAR_REVIEW_REQUIRED
+        status, _headers, payload = self.json_call(
+            "POST", "/api/scans/%s/delete-plan" % scan_id,
+            {"file_ids": [non_keeper["file_id"]], "recycle": True})
+        self.assertEqual(status, 400)
+        self.assertEqual(payload["error"]["code"], "SIMILAR_REVIEW_REQUIRED")
+
+        status, _headers, payload = self.json_call(
+            "POST", "/api/scans/%s/delete-plan" % scan_id,
+            {"file_ids": [non_keeper["file_id"]], "recycle": True,
+             "confirm_similar": True,
+             "reviewed_similar_group_ids": [group["group_id"]]})
+        self.assertEqual(status, 200)
+        plan = payload["plan"]
+        self.assertEqual(plan["similar_count"], 1)
+        self.assertEqual(plan["exact_count"], 0)
+        self.assertTrue(plan["manual_review"])
+        self.assertEqual(plan["files"][0]["match_type"], "similar")
+
+        # scope=all_duplicates 只包含精准组
+        status, _headers, payload = self.json_call(
+            "POST", "/api/scans/%s/delete-plan" % scan_id,
+            {"scope": "all_duplicates", "recycle": True})
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["plan"]["similar_count"], 0)
+        self.assertEqual(payload["plan"]["exact_count"], 3)
+
+        # 相似组删除执行（回收站）
+        status, _headers, payload = self.json_call(
+            "POST", "/api/scans/%s/delete" % scan_id,
+            {"plan_id": plan["plan_id"], "confirm": "DELETE"})
+        self.assertEqual(status, 202)
+        job = self.wait_job(scan_id, payload["job_id"])
+        self.assertEqual(job["status"], "completed")
+        self.assertEqual(job["results"][0]["match_type"], "similar")
+        self.assertFalse(os.path.exists(non_keeper["path"]))
+        self.assertTrue(os.path.exists(keeper["path"]))
 
     def test_scan_invalid_root(self):
         self.login()

@@ -1,0 +1,383 @@
+{
+  "generated_at": "2026-11-02T07:40:11+0800",
+  "python": "3.12.9 | packaged by Anaconda, Inc. | (main, Feb  6 2025, 18:49:16) [MSC v.1929 64 bit (AMD64)]",
+  "repo": "D:\\code\\zhouyi\\qunhui",
+  "summary": {
+    "PASS": 44,
+    "FAIL": 0,
+    "UNVERIFIED": 0
+  },
+  "evidence": {
+    "app_version_expected": "1.1.0-0002",
+    "backend_port": 4169,
+    "main_scan_id": "20261102-074005-2492f8",
+    "main_stats": {
+      "files_seen": 18,
+      "dirs_scanned": 5,
+      "files_scanned": 18,
+      "candidate_files": 12,
+      "groups": 5,
+      "duplicate_groups": 5,
+      "duplicate_files": 10,
+      "reclaimable_bytes": 12316,
+      "selectable_duplicate_files": 2,
+      "selectable_reclaimable_bytes": 12316,
+      "bytes_hashed": 24632,
+      "bytes_per_sec": 7685,
+      "errors": 0,
+      "skipped": {
+        "symlink": 0,
+        "hidden": 0,
+        "empty": 0,
+        "extension": 0,
+        "size": 0,
+        "hardlink": 0,
+        "excluded": 1,
+        "permission": 0,
+        "other": 0
+      },
+      "exact_groups": 2,
+      "exact_files": 4,
+      "similar_groups": 3,
+      "similar_files": 6,
+      "similar_reclaimable_bytes": 120960,
+      "similarity_candidates": 8,
+      "similarity_features": 8,
+      "similarity_cache_hits": 0,
+      "similarity_cache_misses": 8,
+      "similarity_pairs_checked": 3,
+      "similarity_skipped": {
+        "type": 0,
+        "size": 2,
+        "binary": 4,
+        "decode": 0,
+        "no_text": 0,
+        "error": 0
+      }
+    },
+    "groups_total": 5,
+    "similar_group_scores": [
+      {
+        "group_id": "s-000003",
+        "score": 88,
+        "method": "minhash",
+        "count": 2,
+        "paths": [
+          "iota.txt",
+          "theta.txt"
+        ]
+      },
+      {
+        "group_id": "s-000002",
+        "score": 91,
+        "method": "minhash",
+        "count": 2,
+        "paths": [
+          "delta.txt",
+          "gamma.txt"
+        ]
+      },
+      {
+        "group_id": "s-000001",
+        "score": 94,
+        "method": "minhash",
+        "count": 2,
+        "paths": [
+          "beta.txt",
+          "alpha.txt"
+        ]
+      }
+    ],
+    "cache_scan_stats": {
+      "similar_groups": 3,
+      "similarity_candidates": 8,
+      "similarity_features": 8,
+      "similarity_cache_hits": 8,
+      "similarity_cache_misses": 0
+    },
+    "scope_plan": {
+      "plan_id": "plan-c215e8751a0a0d41",
+      "count": 2,
+      "exact_count": 2,
+      "similar_count": 0
+    },
+    "similar_delete_job": {
+      "job_id": "del-20261102-074009-cfd54f",
+      "status": "completed",
+      "done": 1,
+      "failed": 0
+    },
+    "stop_scan": {
+      "scan_id": "20261102-074010-3efb20",
+      "observed_stage": "similarity",
+      "final_status": "stopped",
+      "stopped": true
+    }
+  },
+  "results": [
+    {
+      "id": "SIM-META-01",
+      "name": "/api/meta 报告 v1.1 版本与 similarity 能力",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SIM-META-02",
+      "name": "/api/meta defaults 含 similarity 默认键",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SIM-SET-01",
+      "name": "非法 scan_mode 返回 INVALID_ARGUMENT",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SIM-SET-02",
+      "name": "similarity_threshold 越界被拒绝",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SIM-SET-03",
+      "name": "similarity_concurrency 越界被拒绝",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SIM-SET-04",
+      "name": "similarity_max_file_mb 越界被拒绝",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SIM-SCAN-01",
+      "name": "similar 模式扫描创建并完成",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SIM-SCAN-02",
+      "name": "扫描 options 记录 scan_mode=similar / threshold=85",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SIM-STATS-01",
+      "name": "stats 含 exact/similar 分类统计且自洽",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SIM-STATS-02",
+      "name": "similarity_candidates/features/cache/skipped 计数存在",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SIM-STATS-03",
+      "name": "首次扫描缓存均为 miss、相似跳过 binary/size 分类正确",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SIM-GROUP-01",
+      "name": "结果按 exact/similar 分区且数量与 stats 一致",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SIM-GROUP-02",
+      "name": "精准组 match_type=exact/similarity_score=100/hash 非空",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SIM-GROUP-03",
+      "name": "相似组 schema：hash/algo 为空、match_type/similarity/manual_review 正确",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SIM-GROUP-04",
+      "name": "相似组保留最新创建项、文件 hash 为内容 SHA256、默认不勾选",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SIM-GROUP-05",
+      "name": "相似组文件 similarity_score：保留=100、副本>=阈值",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SIM-EXACT-ISOLATED",
+      "name": "精准组文件不再出现在相似组中",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SIM-THRESHOLD",
+      "name": "低于阈值的文本对不成相似组",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SIM-SKIP-BINARY",
+      "name": "压缩包/媒体不进入相似组且计入 binary 跳过",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SIM-SKIP-SIZE",
+      "name": "超过 similarity_max_file_mb 的文件跳过相似计算",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SIM-EXACT-BINARY",
+      "name": "压缩包虽跳过相似，但精准哈希仍识别重复",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SIM-GROUPS-FILTER-EXACT",
+      "name": "groups?match_type=exact 只返回精准组并给出 totals",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SIM-GROUPS-FILTER-SIMILAR",
+      "name": "groups?match_type=similar 只返回相似组且按相似度降序",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SIM-GROUPS-FILTER-BAD",
+      "name": "非法 match_type 返回 INVALID_ARGUMENT",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SIM-CSV-01",
+      "name": "CSV 新表头（匹配类型/相似度分值）逐字正确且带 BOM",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SIM-CSV-02",
+      "name": "CSV 匹配类型标签为 哈希一致/内容相似",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SIM-CSV-03",
+      "name": "CSV 相似度分值：精准=100、相似副本>=85、相似文件默认勾选=否",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SIM-CSV-04",
+      "name": "CSV 相似组保留行标记保留/分值 100",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SIM-CACHE-01",
+      "name": "同一内容第二次扫描特征缓存命中（cache_hits>0）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SIM-CACHE-02",
+      "name": "feature_cache.json 持久化在数据目录",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SIM-CACHE-03",
+      "name": "第二次扫描相似组数量稳定",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SIM-DEL-CHANGED",
+      "name": "扫描后被修改的相似文件在计划阶段被跳过（FILE_CHANGED）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SIM-DEL-SCOPE",
+      "name": "scope=all_duplicates 只含精准组、不含相似组",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SIM-DEL-REVIEW-01",
+      "name": "相似文件未带 confirm_similar 返回 400 SIMILAR_REVIEW_REQUIRED",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SIM-DEL-REVIEW-02",
+      "name": "confirm_similar=true 但缺少 reviewed 组仍返回 400",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SIM-DEL-PLAN",
+      "name": "带人工复核的相似删除计划生成（similar_count/评分/manual_review）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SIM-DEL-EXEC",
+      "name": "相似文件经回收站删除成功且保留项仍在",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SIM-DEL-KEEPER",
+      "name": "相似组保留项提交删除被拒（IS_KEEPER）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SIM-DEL-MIXED-PLAN",
+      "name": "混合精准+相似计划分别统计 exact/similar",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SIM-DEL-MIXED-EXEC",
+      "name": "混合删除任务完成，精准/相似副本均移入回收站，保留项保留",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SIM-AUDIT",
+      "name": "审计 delete_plan 记录 similar_count/manual_review 信息",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SIM-STOP",
+      "name": "相似阶段可停止（观察 similarity 阶段后 stop -> stopped）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SIM-LOGS-01",
+      "name": "扫描日志列表包含本次相似扫描日志",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SIM-LOGS-02",
+      "name": "扫描日志记录 scan_mode/threshold/similar_groups",
+      "status": "PASS",
+      "detail": ""
+    }
+  ]
+}

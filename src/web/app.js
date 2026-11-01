@@ -40,13 +40,22 @@
   };
   var STAGE_LABEL = {
     enumerate: '枚举文件', size: '按大小分组', sample: '快速指纹采样',
-    hash: '计算哈希', finalize: '归并结果', done: '完成'
+    hash: '计算哈希', similarity: '内容相似度分析', finalize: '归并结果', done: '完成'
   };
   var KEEP_LABEL = {
     latest_created: '最晚创建', earliest_created: '最早创建',
     pinned_path: '指定路径', manual: '需手动选择', tie: '创建时间相同'
   };
   var KEEP_MODE_LABEL = { latest: '最晚创建', earliest: '最早创建', pinned: '指定路径' };
+  var SCAN_MODE_LABEL = { exact: '精准哈希', similar: '内容相似' };
+  var SCAN_MODE_BADGE = { exact: 'badge-gray', similar: 'badge-purple' };
+  var DEFAULT_SIMILARITY_EXTENSIONS = [
+    '.txt', '.md', '.markdown', '.csv', '.json', '.xml', '.html', '.htm', '.log',
+    '.pdf', '.docx', '.odt', '.png', '.jpg', '.jpeg', '.webp'
+  ];
+  var SIMILARITY_OPTION_KEYS = ['scan_mode', 'similarity_threshold', 'similarity_extensions',
+    'similarity_exclude_extensions', 'similarity_concurrency', 'similarity_cache',
+    'similarity_max_file_mb', 'similarity_allow_binary'];
   var SOURCE_INFO = {
     statx: { short: 'statx', title: 'statx：文件系统创建时间（可靠）', cls: 'is-ok' },
     birthtime: { short: 'birthtime', title: 'birthtime：系统提供的创建时间', cls: 'is-ok' },
@@ -85,6 +94,7 @@
     HASH_MISMATCH: '文件哈希与扫描时不一致。',
     FILE_CHANGED: '文件在扫描后已被修改。',
     RECYCLE_UNAVAILABLE: '回收站不可用，请改用永久删除。',
+    SIMILAR_REVIEW_REQUIRED: '相似组需要人工复核：请先逐组勾选“人工复核”，并逐条选择要删除的副本。',
     INTERNAL_ERROR: '服务内部错误，请稍后重试。'
   };
   var DEFAULT_SETTINGS = {
@@ -93,7 +103,10 @@
     include_extensions: [], exclude_extensions: [], ignore_case_ext: true,
     min_size_bytes: 0, max_size_bytes: 0, quick_sample_kb: 64,
     concurrency: 2, hash_rate_mbps: 0, recycle_default: true,
-    create_recycle_dir: false, max_files: 500000, allow_ctime_fallback: false
+    create_recycle_dir: false, max_files: 500000, allow_ctime_fallback: false,
+    scan_mode: 'exact', similarity_threshold: 85, similarity_extensions: [],
+    similarity_exclude_extensions: [], similarity_concurrency: 2, similarity_cache: true,
+    similarity_max_file_mb: 32, similarity_allow_binary: false
   };
   var SIZE_UNITS = { kb: 1024, mb: 1048576, gb: 1073741824 };
 
@@ -112,16 +125,21 @@
     excludes: [],
     pinnedPath: '',
     recycleDefault: true,
+    scanMode: 'exact',
+    similarity: { supported: true, extensions: DEFAULT_SIMILARITY_EXTENSIONS.slice(), defaultThreshold: 85, maxConcurrency: 4, binaryExtensions: [] },
     // 当前扫描
     scan: { id: null, data: null, stats: null, timer: null, abort: null, polling: false, errors: 0, handled: false },
     // 结果
     results: {
       groups: [], total: 0, offset: 0, limit: GROUPS_LIMIT, q: '', sort: 'wasted_desc',
       mode: 'none', selected: new Map(), excluded: new Map(), manualKeep: new Map(),
-      loading: false, seq: 0, loaded: false
+      loading: false, seq: 0, loaded: false,
+      scanMode: 'exact', exactTotal: 0, similarTotal: 0,
+      similarGroups: [], similarOffset: 0, similarLoading: false, similarLoaded: false,
+      similarSeq: 0, similarReview: new Set(), similarSelected: new Map()
     },
     // 删除流程
-    deleteFlow: { plan: null, job: null, timer: null, abort: null, running: false, busy: false, modal: null, recycle: true },
+    deleteFlow: { plan: null, job: null, timer: null, abort: null, running: false, busy: false, modal: null, recycle: true, override: null },
     picker: null,
     preview: { urls: [], abort: null },
     historyCache: null,
@@ -148,7 +166,14 @@
     'setIncludeExt setIncludeExtError setExcludeExt setExcludeExtError setIgnoreCase setSkipEmpty setSkipHidden setSkipSymlinks ' +
     'setQuickSampleKb setQuickSampleError setConcurrency setConcurrencyError setHashRate setHashRateError setMaxFiles ' +
     'setMaxFilesError setRecycleDefault setCreateRecycleDir setAllowCtime settingsError saveSettingsBtn resetSettingsBtn ' +
-    'footerMeta toastRoot modalRoot').split(' ');
+    'modeExactBtn modeSimilarBtn modeDesc modeCapabilityBadge similarityOptions simThreshold simThresholdRange simThresholdError ' +
+    'simConcurrency simConcurrencyError simMaxFileMb simMaxFileError simCache simAllowBinary simExtList simExtError ' +
+    'similarityCounters simFeatures simCacheHits simCandidates simSkipped resultsModeBadge exactPartition exactPartitionTitle ' +
+    'exactPartitionBadge exactPartitionCount similarPartition similarPartitionCount similarLoading similarError similarEmpty ' +
+    'similarGroupsList similarLoadMoreBtn similarLoadMoreStatus settingsSimilarityDetails setScanMode setSimilarityThreshold ' +
+    'setSimilarityThresholdError setSimilarityConcurrency setSimilarityConcurrencyError setSimilarityMaxMb setSimilarityMaxFileError ' +
+    'setSimilarityCache setSimilarityAllowBinary setSimExtList setSimilarityExtError setSimilarityExcludeExt ' +
+    'setSimilarityExcludeExtError footerMeta toastRoot modalRoot').split(' ');
 
   var activeModal = null;
   var modalSeq = 0;
@@ -761,6 +786,8 @@
     state.excludes = [];
     state.pinnedPath = '';
     state.recycleDefault = true;
+    state.scanMode = 'exact';
+    state.similarity = { supported: true, extensions: DEFAULT_SIMILARITY_EXTENSIONS.slice(), defaultThreshold: 85, maxConcurrency: 4, binaryExtensions: [] };
     state.historyCache = null;
     state.logsLoaded = false;
     state.settingsLoaded = false;
@@ -769,8 +796,10 @@
     state.deleteFlow = { plan: null, job: null, timer: null, abort: null, running: false, busy: false, modal: null, recycle: true };
     hide(els.progressPanel);
     hide(els.resultsSection);
+    hide(els.similarityCounters);
     setText(els.userName, '—');
     hide(els.envBadge);
+    setScanMode('exact', { silent: true });
     clear(els.historyList);
     clear(els.logFilesList);
     clear(els.auditList);
@@ -803,6 +832,8 @@
       toast('读取默认设置失败，已使用内置默认值。', 'error');
     }
     state.recycleDefault = state.settings.recycle_default !== false;
+    state.similarity = similarityCapability();
+    state.scanMode = state.settings.scan_mode === 'similar' ? 'similar' : 'exact';
     applySettingsToScanForm(state.settings);
     renderRoots();
     renderExcludeChips();
@@ -819,6 +850,8 @@
     if (meta.platform) { parts.push(meta.platform); }
     if (meta.python_version) { parts.push('Python ' + meta.python_version); }
     setText(els.footerMeta, parts.join(' · '));
+    state.similarity = similarityCapability();
+    updateModeAvailability();
   }
 
   // ==================== 7. 导航 ====================
@@ -1404,7 +1437,11 @@
     quickSample: { input: 'quickSampleKb', error: 'quickSampleError' },
     concurrency: { input: 'concurrency', error: 'concurrencyError' },
     hashRate: { input: 'hashRate', error: 'hashRateError' },
-    maxFiles: { input: 'maxFiles', error: 'maxFilesError' }
+    maxFiles: { input: 'maxFiles', error: 'maxFilesError' },
+    simThreshold: { input: 'simThreshold', error: 'simThresholdError' },
+    simConcurrency: { input: 'simConcurrency', error: 'simConcurrencyError' },
+    simMaxFile: { input: 'simMaxFileMb', error: 'simMaxFileError' },
+    simExt: { input: 'simExtList', error: 'simExtError' }
   };
 
   function renderRoots() {
@@ -1494,16 +1531,174 @@
 
   function updateScanSummary() {
     if (!els.scanSummary) { return; }
+    var modeText = state.scanMode === 'similar' ? '内容相似模式' : '精准哈希模式';
     if (!state.roots.length) {
-      setText(els.scanSummary, '请选择扫描目录后开始扫描。');
+      setText(els.scanSummary, modeText + '：请选择扫描目录后开始扫描。');
       return;
     }
-    var parts = ['扫描 ' + state.roots.length + ' 个目录'];
+    var parts = [modeText, '扫描 ' + state.roots.length + ' 个目录'];
     if (state.excludes.length) { parts.push('排除 ' + state.excludes.length + ' 个目录'); }
     var mode = els.keepMode ? els.keepMode.value : 'latest';
     parts.push('保留策略：' + (KEEP_MODE_LABEL[mode] || mode));
     if (els.hashAlgo) { parts.push(els.hashAlgo.value === 'md5' ? 'MD5 哈希' : 'SHA-256 哈希'); }
+    if (state.scanMode === 'similar') {
+      var threshold = parseInt(els.simThreshold ? els.simThreshold.value : '85', 10);
+      parts.push('相似阈值 ' + (isFinite(threshold) ? clamp(threshold, 0, 100) : 85) + '%');
+      if (els.simConcurrency && els.simConcurrency.value) { parts.push('相似并发 ' + els.simConcurrency.value); }
+    }
     setText(els.scanSummary, parts.join(' · ') + '。');
+  }
+
+  // ---------- 内容相似模式：能力探测、模式切换与选项 ----------
+  function similarityCapability() {
+    var meta = state.meta;
+    var sim = meta && meta.similarity;
+    var supported = meta ? !!(sim && typeof sim === 'object') : true;
+    if (sim && (sim.enabled === false || sim.supported === false)) { supported = false; }
+    var defaults = (meta && meta.defaults) || {};
+    var settings = state.settings || {};
+    var list = [];
+    if (sim && Array.isArray(sim.default_extensions) && sim.default_extensions.length) { list = sim.default_extensions.slice(); }
+    if (!list.length && Array.isArray(defaults.similarity_extensions) && defaults.similarity_extensions.length) {
+      list = defaults.similarity_extensions.slice();
+    }
+    if (!list.length && Array.isArray(settings.similarity_extensions) && settings.similarity_extensions.length) {
+      list = settings.similarity_extensions.slice();
+    }
+    if (!list.length) { list = DEFAULT_SIMILARITY_EXTENSIONS.slice(); }
+    var threshold = (sim && typeof sim.default_threshold === 'number') ? sim.default_threshold
+      : (typeof defaults.similarity_threshold === 'number' ? defaults.similarity_threshold : 85);
+    return {
+      supported: supported,
+      extensions: list,
+      defaultThreshold: clamp(threshold, 0, 100),
+      maxConcurrency: 4,
+      binaryExtensions: (sim && Array.isArray(sim.binary_extensions)) ? sim.binary_extensions : []
+    };
+  }
+
+  function updateModeAvailability() {
+    var sim = state.similarity || {};
+    var supported = sim.supported !== false;
+    if (els.modeSimilarBtn) {
+      els.modeSimilarBtn.disabled = !supported;
+      els.modeSimilarBtn.title = supported ? '' : '当前后端尚未提供内容相似能力，请升级后端或联系管理员。';
+    }
+    if (els.modeCapabilityBadge) {
+      if (!supported) {
+        setText(els.modeCapabilityBadge, '后端未启用内容相似');
+        els.modeCapabilityBadge.className = 'badge badge-amber';
+        show(els.modeCapabilityBadge);
+      } else if (state.meta && sim.extensions) {
+        setText(els.modeCapabilityBadge, '相似类型 ' + sim.extensions.length + ' 种');
+        els.modeCapabilityBadge.className = 'badge badge-gray';
+        show(els.modeCapabilityBadge);
+      } else {
+        hide(els.modeCapabilityBadge);
+      }
+    }
+    if (!supported && state.scanMode === 'similar') { setScanMode('exact', { silent: true }); }
+  }
+
+  function setScanMode(mode, options) {
+    options = options || {};
+    if (mode === 'similar' && state.similarity && state.similarity.supported === false) {
+      if (!options.silent) { toast('当前后端未启用内容相似能力，已保持精准哈希模式。', 'error'); }
+      mode = 'exact';
+    }
+    state.scanMode = mode === 'similar' ? 'similar' : 'exact';
+    var similar = state.scanMode === 'similar';
+    [[els.modeExactBtn, !similar], [els.modeSimilarBtn, similar]].forEach(function (pair) {
+      var btn = pair[0];
+      if (!btn) { return; }
+      btn.classList.toggle('is-active', pair[1]);
+      btn.setAttribute('aria-checked', pair[1] ? 'true' : 'false');
+    });
+    if (els.similarityOptions) { setHidden(els.similarityOptions, !similar); }
+    if (els.modeDesc) {
+      setText(els.modeDesc, similar
+        ? '先精准哈希判重，再对允许的文件类型做内容特征相似检索；相似组必须人工复核后才能选择删除。'
+        : '仅按哈希判定内容完全一致的文件，速度快、可信度高。');
+    }
+    if (!options.silent) { updateScanSummary(); }
+  }
+
+  function syncThresholdInputs(source) {
+    if (!els.simThreshold || !els.simThresholdRange) { return; }
+    var raw = source === 'range' ? els.simThresholdRange.value : els.simThreshold.value;
+    if (raw === '') { return; }
+    var num = parseInt(raw, 10);
+    if (!isFinite(num)) { return; }
+    num = clamp(num, 0, 100);
+    if (source === 'range') { els.simThreshold.value = String(num); }
+    else { els.simThresholdRange.value = String(num); }
+  }
+
+  function setSimilarityThreshold(value) {
+    var num = clamp(parseInt(value, 10) || 0, 0, 100);
+    if (els.simThreshold) { els.simThreshold.value = String(num); }
+    if (els.simThresholdRange) { els.simThresholdRange.value = String(num); }
+  }
+
+  function renderExtChips(container, allExtensions, selected, onChange) {
+    if (!container) { return; }
+    clear(container);
+    var selectedMap = {};
+    (selected || []).forEach(function (ext) { selectedMap[String(ext).toLowerCase()] = true; });
+    (allExtensions || []).forEach(function (ext) {
+      var input = el('input', { attrs: { type: 'checkbox', value: ext } });
+      input.checked = !!selectedMap[String(ext).toLowerCase()];
+      var chip = el('label', { className: 'ext-chip' + (input.checked ? ' is-checked' : '') }, [input, document.createTextNode(String(ext))]);
+      input.addEventListener('change', function () {
+        chip.classList.toggle('is-checked', input.checked);
+        if (onChange) { onChange(); }
+      });
+      container.appendChild(chip);
+    });
+  }
+
+  function readExtChips(container) {
+    var values = [];
+    if (!container) { return values; }
+    $$('input[type="checkbox"]', container).forEach(function (input) {
+      if (input.checked) { values.push(input.value); }
+    });
+    return values;
+  }
+
+  function applySimilaritySettingsToForm(settings) {
+    if (!settings) { settings = state.settings || DEFAULT_SETTINGS; }
+    var sim = state.similarity || similarityCapability();
+    var threshold = (settings.similarity_threshold === undefined || settings.similarity_threshold === null)
+      ? sim.defaultThreshold : settings.similarity_threshold;
+    setSimilarityThreshold(threshold);
+    if (els.simConcurrency) {
+      var conc = parseInt(settings.similarity_concurrency, 10);
+      els.simConcurrency.value = String(clamp(isFinite(conc) ? conc : 2, 1, 4));
+    }
+    if (els.simMaxFileMb) {
+      var maxMb = parseInt(settings.similarity_max_file_mb, 10);
+      els.simMaxFileMb.value = String(clamp(isFinite(maxMb) ? maxMb : 32, 1, 1024));
+    }
+    if (els.simCache) { els.simCache.checked = settings.similarity_cache !== false; }
+    if (els.simAllowBinary) { els.simAllowBinary.checked = settings.similarity_allow_binary === true; }
+    var selected = (Array.isArray(settings.similarity_extensions) && settings.similarity_extensions.length)
+      ? settings.similarity_extensions : sim.extensions;
+    renderExtChips(els.simExtList, sim.extensions, selected, null);
+  }
+
+  function detectScanMode(scan) {
+    if (!scan) { return 'exact'; }
+    var candidates = [
+      scan.scan_mode,
+      scan.config && scan.config.scan_mode,
+      scan.options && scan.options.scan_mode
+    ];
+    for (var i = 0; i < candidates.length; i += 1) {
+      if (candidates[i] === 'similar') { return 'similar'; }
+      if (candidates[i] === 'exact') { return 'exact'; }
+    }
+    return 'exact';
   }
 
   function sizeFieldValue(bytes) {
@@ -1551,6 +1746,10 @@
     els.allowCtimeFallback.checked = settings.allow_ctime_fallback === true;
     els.createRecycleDir.checked = settings.create_recycle_dir === true;
     applySizeFields(settings.min_size_bytes, settings.max_size_bytes);
+    state.similarity = similarityCapability();
+    state.scanMode = settings.scan_mode === 'similar' ? 'similar' : 'exact';
+    setScanMode(state.scanMode, { silent: true });
+    applySimilaritySettingsToForm(settings);
     updateKeepModeUi();
     clearOptionsErrors();
     updateScanSummary();
@@ -1650,6 +1849,27 @@
     if (rate.error) { errors.hashRate = rate.error; } else { options.hash_rate_mbps = rate.value; }
     var maxFiles = readIntOption(els.maxFiles, 1, 10000000, false, 0, '最大扫描文件数');
     if (maxFiles.error) { errors.maxFiles = maxFiles.error; } else { options.max_files = maxFiles.value; }
+
+    if (state.scanMode === 'similar') {
+      options.scan_mode = 'similar';
+      var threshold = readIntOption(els.simThreshold, 0, 100, false, 0, '相似度阈值');
+      if (threshold.error) { errors.simThreshold = threshold.error; } else { options.similarity_threshold = threshold.value; }
+      var simConc = readIntOption(els.simConcurrency, 1, 4, false, 0, '相似特征并发数');
+      if (simConc.error) { errors.simConcurrency = simConc.error; } else { options.similarity_concurrency = simConc.value; }
+      var simMax = readIntOption(els.simMaxFileMb, 1, 1024, false, 0, '单文件相似计算上限（MB）');
+      if (simMax.error) { errors.simMaxFile = simMax.error; } else { options.similarity_max_file_mb = simMax.value; }
+      var extSelected = readExtChips(els.simExtList);
+      if (!extSelected.length) {
+        errors.simExt = '请至少选择一种允许相似计算的文件类型。';
+      } else {
+        options.similarity_extensions = extSelected;
+      }
+      var settings = state.settings || {};
+      options.similarity_exclude_extensions = Array.isArray(settings.similarity_exclude_extensions)
+        ? settings.similarity_exclude_extensions.slice() : [];
+      options.similarity_cache = !!els.simCache.checked;
+      options.similarity_allow_binary = !!els.simAllowBinary.checked;
+    }
     return { options: options, errors: errors, valid: Object.keys(errors).length === 0 };
   }
 
@@ -1697,6 +1917,30 @@
       loadResults(true);
       scrollToNode(els.resultsSection);
     });
+    if (els.modeExactBtn) { els.modeExactBtn.addEventListener('click', function () { setScanMode('exact'); }); }
+    if (els.modeSimilarBtn) { els.modeSimilarBtn.addEventListener('click', function () { setScanMode('similar'); }); }
+    if (els.simThresholdRange) {
+      els.simThresholdRange.addEventListener('input', function () {
+        syncThresholdInputs('range');
+        clearOptionsErrors();
+        updateScanSummary();
+      });
+    }
+    if (els.simThreshold) {
+      els.simThreshold.addEventListener('input', function () {
+        syncThresholdInputs('number');
+        clearOptionsErrors();
+        updateScanSummary();
+      });
+      els.simThreshold.addEventListener('change', function () {
+        var num = parseInt(els.simThreshold.value, 10);
+        if (isFinite(num)) { setSimilarityThreshold(num); }
+        updateScanSummary();
+      });
+    }
+    if (els.simExtList) {
+      els.simExtList.addEventListener('change', function () { clearOptionsErrors(); updateScanSummary(); });
+    }
   }
 
   // ==================== 10. 启动扫描 / 进度轮询 ====================
@@ -1729,9 +1973,12 @@
       });
       if (!res || !res.scan_id) { throw new ApiError(200, 'INVALID_RESPONSE', '服务未返回 scan_id，请稍后重试。'); }
       resetResultsState();
+      state.results.scanMode = state.scanMode;
       hide(els.resultsSection);
       startScanPolling(res.scan_id);
-      toast('扫描任务已开始，正在枚举文件。', 'success');
+      toast(state.scanMode === 'similar'
+        ? '扫描任务已开始：先进行精准哈希，随后进行内容相似度分析。'
+        : '扫描任务已开始，正在枚举文件。', 'success');
       scrollToNode(els.progressPanel);
     } catch (err) {
       var msg = errorMessage(err, '启动扫描失败，请稍后重试。');
@@ -1839,6 +2086,19 @@
     setText(els.progressPath, currentPath || '—');
     els.progressPath.title = currentPath;
     setText(els.progressElapsed, fmtElapsed(scan.elapsed_sec));
+    var scanMode = detectScanMode(scan);
+    if (scanMode === 'similar' || stats.similarity_features !== undefined || stats.similar_groups !== undefined) {
+      show(els.similarityCounters);
+      setText(els.simFeatures, fmtInt(stats.similarity_features));
+      setText(els.simCacheHits, fmtInt(stats.similarity_cache_hits));
+      setText(els.simCandidates, fmtInt(stats.similarity_candidates));
+      var simSkipped = stats.similarity_skipped || {};
+      var skippedTotal = 0;
+      Object.keys(simSkipped).forEach(function (key) { skippedTotal += Number(simSkipped[key]) || 0; });
+      setText(els.simSkipped, fmtInt(skippedTotal));
+    } else {
+      hide(els.similarityCounters);
+    }
     renderProgressActions(scan);
   }
 
@@ -1855,10 +2115,16 @@
     if (!scan) { return; }
     state.scan.data = scan;
     state.historyCache = null;
+    state.results.scanMode = detectScanMode(scan);
     if (scan.status === 'completed') {
       if (!state.scan.handled) {
         state.scan.handled = true;
-        toast('扫描完成，共发现 ' + fmtInt((scan.stats || {}).duplicate_groups) + ' 组重复文件。', 'success', 5000);
+        var doneStats = scan.stats || {};
+        var exactGroups = doneStats.exact_groups !== undefined ? doneStats.exact_groups : doneStats.duplicate_groups;
+        var similarGroups = doneStats.similar_groups || 0;
+        toast('扫描完成：精准组 ' + fmtInt(exactGroups) + ' 组' +
+          (similarGroups > 0 ? '，内容相似组 ' + fmtInt(similarGroups) + ' 组（需人工复核）' : '') + '。',
+          'success', 5600);
       }
       show(els.resultsSection);
       loadResults(true);
@@ -1937,19 +2203,69 @@
     results.loading = false;
     results.seq += 1;
     results.loaded = false;
+    results.scanMode = 'exact';
+    results.exactTotal = 0;
+    results.similarTotal = 0;
+    results.similarGroups = [];
+    results.similarOffset = 0;
+    results.similarLoading = false;
+    results.similarLoaded = false;
+    results.similarSeq += 1;
+    results.similarReview = new Set();
+    results.similarSelected = new Map();
     if (els.searchGroups) { els.searchGroups.value = ''; }
     if (els.sortGroups) { els.sortGroups.value = 'wasted_desc'; }
     if (els.groupsList) { clear(els.groupsList); }
+    if (els.similarGroupsList) { clear(els.similarGroupsList); }
     if (els.resultsSection) { hide(els.resultsSection); }
     if (els.resultsError) { hide(els.resultsError); }
     if (els.resultsLoading) { hide(els.resultsLoading); }
     if (els.resultsEmpty) { hide(els.resultsEmpty); }
+    if (els.similarError) { hide(els.similarError); }
+    if (els.similarLoading) { hide(els.similarLoading); }
+    if (els.similarEmpty) { hide(els.similarEmpty); }
+    if (els.exactPartitionCount) { setText(els.exactPartitionCount, ''); }
+    if (els.similarPartitionCount) { setText(els.similarPartitionCount, ''); }
+    if (els.resultsCountLabel) { setText(els.resultsCountLabel, ''); }
+    if (els.loadMoreStatus) { setText(els.loadMoreStatus, ''); }
+    if (els.similarLoadMoreStatus) { setText(els.similarLoadMoreStatus, ''); }
+    if (els.loadMoreBtn) { hide(els.loadMoreBtn); }
+    if (els.similarLoadMoreBtn) { hide(els.similarLoadMoreBtn); }
+    if (els.similarPartition) { hide(els.similarPartition); }
     if (els.csvLink) {
       els.csvLink.setAttribute('href', '#');
       els.csvLink.setAttribute('aria-disabled', 'true');
       els.csvLink.classList.add('is-disabled');
     }
     updateSelectionSummary();
+  }
+
+  function resetExactPartition() {
+    var results = state.results;
+    results.groups = [];
+    results.total = 0;
+    results.offset = 0;
+    results.loaded = false;
+    results.loading = false;
+    results.seq += 1;
+    if (els.groupsList) { clear(els.groupsList); }
+    setHidden(els.resultsLoading, true);
+    setHidden(els.resultsError, true);
+    setHidden(els.resultsEmpty, true);
+  }
+
+  function resetSimilarPartition() {
+    var results = state.results;
+    results.similarGroups = [];
+    results.similarTotal = 0;
+    results.similarOffset = 0;
+    results.similarLoaded = false;
+    results.similarLoading = false;
+    results.similarSeq += 1;
+    if (els.similarGroupsList) { clear(els.similarGroupsList); }
+    setHidden(els.similarLoading, true);
+    setHidden(els.similarError, true);
+    setHidden(els.similarEmpty, true);
   }
 
   function setResultsStateBoxes(options) {
@@ -1986,7 +2302,10 @@
       if (detail && typeof detail === 'object') {
         var merged = {};
         ['files_seen', 'dirs_scanned', 'files_scanned', 'candidate_files', 'groups', 'duplicate_groups',
-          'duplicate_files', 'reclaimable_bytes', 'bytes_hashed', 'bytes_per_sec', 'errors'].forEach(function (key) {
+          'duplicate_files', 'reclaimable_bytes', 'selectable_duplicate_files', 'selectable_reclaimable_bytes',
+          'exact_groups', 'exact_files', 'similar_groups', 'similar_files', 'similar_reclaimable_bytes',
+          'similarity_candidates', 'similarity_features', 'similarity_cache_hits', 'similarity_cache_misses',
+          'similarity_pairs_checked', 'bytes_hashed', 'bytes_per_sec', 'errors'].forEach(function (key) {
           if (typeof detail[key] === 'number') { merged[key] = detail[key]; }
         });
         if (Object.keys(merged).length) {
@@ -2000,33 +2319,43 @@
   }
 
   async function loadResults(reset) {
+    if (!state.scan.id) { return; }
+    var similarMode = state.results.scanMode === 'similar';
+    if (reset) {
+      resetExactPartition();
+      if (similarMode) { resetSimilarPartition(); }
+      clearSelectionState();
+    }
+    if (similarMode) {
+      await Promise.all([loadExactPartition(reset), loadSimilarPartition(reset)]);
+    } else {
+      setHidden(els.similarPartition, true);
+      await loadExactPartition(reset);
+    }
+  }
+
+  async function loadExactPartition(reset) {
     var results = state.results;
     if (!state.scan.id) { return; }
-    if (reset) {
-      results.groups = [];
-      results.total = 0;
-      results.offset = 0;
-      results.loaded = false;
-      clearSelectionState();
-      if (els.groupsList) { clear(els.groupsList); }
-      setText(els.resultsCountLabel, '');
-      setText(els.loadMoreStatus, '');
-      setHidden(els.loadMoreBtn, true);
-    }
     if (results.loading && !reset) { return; }
-    if (results.loading && reset) { results.loading = false; }
+    if (results.loading && reset) { results.seq += 1; }
     var seq = results.seq + 1;
     results.seq = seq;
     results.loading = true;
-    setResultsStateBoxes({ loading: true, error: '' });
+    setHidden(els.resultsLoading, false);
+    setHidden(els.resultsError, true);
+    setHidden(els.resultsEmpty, true);
     var offset = reset ? 0 : results.groups.length;
     var query = '?offset=' + offset + '&limit=' + results.limit +
       '&q=' + encodeURIComponent(results.q) + '&sort=' + encodeURIComponent(results.sort);
+    if (results.scanMode === 'similar') { query += '&match_type=exact'; }
     try {
       var res = await api('/api/scans/' + encodePath(state.scan.id) + '/groups' + query, { timeout: 20000 });
       if (seq !== results.seq) { return; }
       var groups = Array.isArray(res.groups) ? res.groups : [];
-      results.total = Number(res.total) || 0;
+      results.total = Number(res.exact_total !== undefined ? res.exact_total : res.total) || 0;
+      results.exactTotal = results.total;
+      if (typeof res.similar_total === 'number') { results.similarTotal = res.similar_total; }
       results.offset = res.offset === undefined ? offset : Number(res.offset);
       results.groups = reset ? groups : results.groups.concat(groups);
       results.loaded = true;
@@ -2036,30 +2365,57 @@
     } catch (err) {
       if (seq !== results.seq) { return; }
       results.loading = false;
-      setResultsStateBoxes({ error: errorMessage(err, '加载扫描结果失败，请稍后重试。') });
+      setHidden(els.resultsLoading, true);
+      setHidden(els.resultsError, false);
+      setText(els.resultsError, errorMessage(err, '加载精准组失败，请稍后重试。'));
       updateSelectionSummary();
+    }
+  }
+
+  async function loadSimilarPartition(reset) {
+    var results = state.results;
+    if (!state.scan.id) { return; }
+    if (results.similarLoading && !reset) { return; }
+    if (results.similarLoading && reset) { results.similarSeq += 1; }
+    var seq = results.similarSeq + 1;
+    results.similarSeq = seq;
+    results.similarLoading = true;
+    setHidden(els.similarLoading, false);
+    setHidden(els.similarError, true);
+    setHidden(els.similarEmpty, true);
+    var offset = reset ? 0 : results.similarGroups.length;
+    var query = '?offset=' + offset + '&limit=' + results.limit + '&match_type=similar&sort=similarity_desc' +
+      '&q=' + encodeURIComponent(results.q);
+    try {
+      var res = await api('/api/scans/' + encodePath(state.scan.id) + '/groups' + query, { timeout: 20000 });
+      if (seq !== results.similarSeq) { return; }
+      var groups = Array.isArray(res.groups) ? res.groups : [];
+      results.similarTotal = Number(res.similar_total !== undefined ? res.similar_total : res.total) || 0;
+      if (typeof res.exact_total === 'number') {
+        results.exactTotal = res.exact_total;
+        results.total = res.exact_total;
+      }
+      results.similarOffset = res.offset === undefined ? offset : Number(res.offset);
+      results.similarGroups = reset ? groups : results.similarGroups.concat(groups);
+      results.similarLoaded = true;
+      results.similarLoading = false;
+      renderResults();
+    } catch (err) {
+      if (seq !== results.similarSeq) { return; }
+      results.similarLoading = false;
+      setHidden(els.similarLoading, true);
+      setHidden(els.similarError, false);
+      setText(els.similarError, errorMessage(err, '加载内容相似组失败，请稍后重试。'));
     }
   }
 
   function renderResults() {
     show(els.resultsSection);
     var results = state.results;
+    var similarMode = results.scanMode === 'similar';
     var stats = currentScanStats();
     renderResultsSummary(stats);
-    var countText = '共 ' + fmtInt(results.total) + ' 组';
-    if (results.q) { countText += ' · 搜索“' + results.q + '”'; }
-    countText += ' · 已加载 ' + fmtInt(results.groups.length) + ' 组';
-    setText(els.resultsCountLabel, countText);
-    setText(els.loadMoreStatus, '已加载 ' + fmtInt(results.groups.length) + ' / ' + fmtInt(results.total) + ' 组');
-    var hasMore = results.groups.length < results.total;
-    setHidden(els.loadMoreBtn, !hasMore);
-    setText(els.loadMoreBtn, '加载更多（剩余 ' + fmtInt(Math.max(0, results.total - results.groups.length)) + ' 组）');
-    setResultsStateBoxes({
-      loading: false,
-      error: '',
-      empty: results.total === 0,
-      emptyText: results.q ? '未找到匹配“' + results.q + '”的重复组。' : '没有找到重复文件。'
-    });
+    renderResultsHeader(similarMode, results);
     if (els.csvLink && state.scan.id) {
       els.csvLink.setAttribute('href', '/api/scans/' + encodePath(state.scan.id) + '/csv');
       els.csvLink.setAttribute('download', 'duplicate-scan-' + state.scan.id + '.csv');
@@ -2067,7 +2423,54 @@
       els.csvLink.classList.remove('is-disabled');
     }
     renderGroups();
+    if (similarMode) { renderSimilarGroups(); }
     updateSelectionSummary();
+  }
+
+  function renderResultsHeader(similarMode, results) {
+    if (els.resultsModeBadge) {
+      setText(els.resultsModeBadge, similarMode ? '内容相似模式' : '精准哈希模式');
+      els.resultsModeBadge.className = 'badge results-mode-badge ' + (similarMode ? 'badge-purple' : 'badge-gray');
+    }
+    if (els.resultsSubtitle) {
+      setText(els.resultsSubtitle, similarMode
+        ? '结果按“哈希一致（精准重复）”与“内容相似”分区展示。相似组存在误匹配概率，必须逐组人工复核后逐条选择，禁止批量删除。'
+        : '按组列出内容相同的文件。保留项已高亮，需手动选择的组请先指定保留项。');
+    }
+    if (els.exactPartitionTitle) { setText(els.exactPartitionTitle, similarMode ? '哈希一致（精准重复）' : '重复文件'); }
+    setHidden(els.exactPartitionBadge, !similarMode);
+    if (els.sortLabel) { setText(els.sortLabel, similarMode ? '精准组排序' : '排序'); }
+    var countText = '共 ' + fmtInt(results.total) + ' 组';
+    if (results.q) { countText += ' · 搜索“' + results.q + '”'; }
+    countText += ' · 已加载 ' + fmtInt(results.groups.length) + ' 组';
+    setText(els.resultsCountLabel, countText);
+    setText(els.exactPartitionCount, countText);
+    setText(els.loadMoreStatus, '已加载 ' + fmtInt(results.groups.length) + ' / ' + fmtInt(results.total) + ' 组');
+    var hasMore = results.groups.length < results.total;
+    setHidden(els.loadMoreBtn, !hasMore);
+    setText(els.loadMoreBtn, '加载更多（剩余 ' + fmtInt(Math.max(0, results.total - results.groups.length)) + ' 组）');
+    setHidden(els.resultsLoading, !results.loading);
+    var exactEmpty = results.loaded && !results.loading && results.total === 0;
+    setHidden(els.resultsEmpty, !exactEmpty);
+    if (exactEmpty) {
+      setText(els.resultsEmpty, results.q
+        ? '未找到匹配“' + results.q + '”的精准组。'
+        : (similarMode ? '哈希一致（精准重复）组为空，请查看下方内容相似分区。' : '没有找到重复文件。'));
+    }
+    setHidden(els.similarPartition, !similarMode);
+    if (similarMode) {
+      setText(els.similarPartitionCount, '共 ' + fmtInt(results.similarTotal) + ' 组 · 已加载 ' + fmtInt(results.similarGroups.length) + ' 组');
+      setText(els.similarLoadMoreStatus, '已加载 ' + fmtInt(results.similarGroups.length) + ' / ' + fmtInt(results.similarTotal) + ' 组');
+      var similarHasMore = results.similarGroups.length < results.similarTotal;
+      setHidden(els.similarLoadMoreBtn, !similarHasMore);
+      setText(els.similarLoadMoreBtn, '加载更多相似组（剩余 ' + fmtInt(Math.max(0, results.similarTotal - results.similarGroups.length)) + ' 组）');
+      setHidden(els.similarLoading, !results.similarLoading);
+      var similarEmpty = results.similarLoaded && !results.similarLoading && results.similarTotal === 0;
+      setHidden(els.similarEmpty, !similarEmpty);
+      if (similarEmpty) {
+        setText(els.similarEmpty, results.q ? '未找到匹配“' + results.q + '”的内容相似组。' : '没有内容相似的组。');
+      }
+    }
   }
 
   function renderGroups() {
@@ -2077,28 +2480,62 @@
     });
   }
 
+  function renderSimilarGroups() {
+    if (!els.similarGroupsList) { return; }
+    clear(els.similarGroupsList);
+    state.results.similarGroups.forEach(function (group, index) {
+      els.similarGroupsList.appendChild(renderSimilarGroupCard(group, index));
+    });
+  }
+
   function renderResultsSummary(stats) {
     stats = stats || currentScanStats();
+    var similarMode = state.results.scanMode === 'similar';
     var manualGroups = Number(stats.needs_manual_keep_groups);
     if (!isFinite(manualGroups)) {
-      manualGroups = state.results.groups.filter(function (g) { return g.needs_manual_keep; }).length;
+      manualGroups = state.results.groups.filter(function (g) { return g.needs_manual_keep; }).length
+        + state.results.similarGroups.filter(function (g) { return g.needs_manual_keep; }).length;
     }
     var unsafe = !!(state.scan.data && state.scan.data.creation_time_unsafe);
     var skipped = stats.skipped || {};
-    var summaryCards = [
-      summaryCard('folder', '', fmtInt(stats.duplicate_groups || stats.groups || 0), '重复组',
-        '已扫描 ' + fmtInt(stats.files_scanned) + ' 个文件'),
-      summaryCard('file', '', fmtInt(stats.duplicate_files), '重复文件',
-        '按组核对后再删除'),
-      summaryCard('trash', 'is-green', fmtBytes(stats.reclaimable_bytes), '可释放空间',
-        '移动到回收站可恢复'),
-      summaryCard('search', '', fmtInt(stats.files_seen), '已读取文件',
-        '跳过：空 ' + fmtInt(skipped.empty) + ' · 隐藏 ' + fmtInt(skipped.hidden) + ' · 后缀 ' + fmtInt(skipped.extension)),
-      summaryCard('warning', (manualGroups > 0 || unsafe) ? 'is-amber' : 'is-green',
-        fmtInt(manualGroups) + ' 组', '需人工确认',
-        (manualGroups > 0 || unsafe) ? '本组不参与自动删除' : '无需人工确认')
-    ];
+    var summaryCards;
+    if (similarMode) {
+      var exactGroups = Number(stats.exact_groups !== undefined ? stats.exact_groups : stats.duplicate_groups) || 0;
+      var similarGroups = Number(stats.similar_groups) || 0;
+      var exactFiles = Number(stats.exact_files !== undefined ? stats.exact_files : stats.selectable_duplicate_files) || 0;
+      var similarFiles = Number(stats.similar_files) || 0;
+      summaryCards = [
+        summaryCard('folder', 'is-green', fmtInt(exactGroups) + ' 组', '哈希一致（精准重复）',
+          '精准文件 ' + fmtInt(exactFiles) + ' 个'),
+        summaryCard('warning', 'is-amber', fmtInt(similarGroups) + ' 组', '内容相似',
+          '相似文件 ' + fmtInt(similarFiles) + ' 个 · 需人工复核'),
+        summaryCard('trash', 'is-green', fmtBytes(stats.reclaimable_bytes), '精准可释放空间',
+          '仅统计安全精准组'),
+        summaryCard('info', 'is-amber', fmtBytes(stats.similar_reclaimable_bytes), '相似潜在可释放',
+          '仅作参考，须人工复核'),
+        summaryCard('search', '', fmtInt(stats.files_scanned), '已扫描文件',
+          '已读取 ' + fmtInt(stats.files_seen) + ' 个文件'),
+        summaryCard('warning', (manualGroups > 0 || unsafe) ? 'is-amber' : 'is-green',
+          fmtInt(manualGroups) + ' 组', '需人工确认',
+          (manualGroups > 0 || unsafe) ? '本组不参与自动删除' : '无需人工确认')
+      ];
+    } else {
+      summaryCards = [
+        summaryCard('folder', '', fmtInt(stats.duplicate_groups || stats.groups || 0), '重复组',
+          '已扫描 ' + fmtInt(stats.files_scanned) + ' 个文件'),
+        summaryCard('file', '', fmtInt(stats.duplicate_files), '重复文件',
+          '按组核对后再删除'),
+        summaryCard('trash', 'is-green', fmtBytes(stats.reclaimable_bytes), '可释放空间',
+          '移动到回收站可恢复'),
+        summaryCard('search', '', fmtInt(stats.files_seen), '已读取文件',
+          '跳过：空 ' + fmtInt(skipped.empty) + ' · 隐藏 ' + fmtInt(skipped.hidden) + ' · 后缀 ' + fmtInt(skipped.extension)),
+        summaryCard('warning', (manualGroups > 0 || unsafe) ? 'is-amber' : 'is-green',
+          fmtInt(manualGroups) + ' 组', '需人工确认',
+          (manualGroups > 0 || unsafe) ? '本组不参与自动删除' : '无需人工确认')
+      ];
+    }
     clear(els.resultsSummary);
+    els.resultsSummary.classList.toggle('is-similar', similarMode);
     summaryCards.forEach(function (card) { els.resultsSummary.appendChild(card); });
   }
 
@@ -2312,6 +2749,297 @@
     input.indeterminate = selectedCount > 0 && selectedCount < selectable.length;
   }
 
+  // ---------- 内容相似组渲染（人工复核门控） ----------
+  function similarityMethodLabel(method) {
+    if (method === 'phash') { return '图像感知哈希'; }
+    if (method === 'bytes') { return '字节 MinHash'; }
+    if (method === 'minhash') { return '文本 MinHash'; }
+    return method || '特征比对';
+  }
+
+  function groupKeeperFileId(group) {
+    if (!group) { return null; }
+    if (group.needs_manual_keep) { return null; }
+    if (group.keep_file_id) { return group.keep_file_id; }
+    var files = group.files || [];
+    for (var i = 0; i < files.length; i += 1) {
+      if (files[i] && files[i].is_keep) { return files[i].file_id; }
+    }
+    return null;
+  }
+
+  function similarGroupSelectedCount(group) {
+    var count = 0;
+    (group.files || []).forEach(function (file) {
+      if (state.results.similarSelected.has(file.file_id)) { count += 1; }
+    });
+    return count;
+  }
+
+  function similarGroupSelectedBytes(group) {
+    var bytes = 0;
+    (group.files || []).forEach(function (file) {
+      if (state.results.similarSelected.has(file.file_id)) { bytes += Number(file.size) || 0; }
+    });
+    return bytes;
+  }
+
+  function findSimilarGroupCard(groupId) {
+    if (!els.similarGroupsList) { return null; }
+    return $('[data-group-key="' + encodePath(groupId) + '"]', els.similarGroupsList);
+  }
+
+  function refreshSimilarActionButtons() {
+    state.results.similarGroups.forEach(function (group) {
+      var card = findSimilarGroupCard(group.group_id);
+      if (card) { updateSimilarGroupAction(group, card); }
+    });
+  }
+
+  function updateSimilarGroupAction(group, card) {
+    if (!card) { card = findSimilarGroupCard(group.group_id); }
+    if (!card) { return; }
+    var btn = $('.similar-delete-btn', card);
+    var info = $('.group-foot-info', card);
+    var reviewed = state.results.similarReview.has(group.group_id);
+    var selectedCount = similarGroupSelectedCount(group);
+    if (info) {
+      if (group.needs_manual_keep) { setText(info, '本组已排除在删除范围之外'); }
+      else if (!reviewed) { setText(info, '未复核：勾选“人工复核”后才可逐条选择'); }
+      else { setText(info, '已复核：已选 ' + fmtInt(selectedCount) + ' 个副本（保留项不可选）'); }
+    }
+    if (btn) {
+      var disabled = !reviewed || !!group.needs_manual_keep || selectedCount === 0 || state.deleteFlow.running;
+      btn.disabled = disabled;
+      btn.title = disabled
+        ? (group.needs_manual_keep ? '本组禁止删除' : (!reviewed ? '请先人工复核本组' : (selectedCount === 0 ? '请逐条勾选要删除的副本' : '删除任务进行中')))
+        : '仅删除本组已勾选的副本（需两步确认）';
+    }
+  }
+
+  function syncSimilarGroupUi(group) {
+    var card = findSimilarGroupCard(group.group_id);
+    if (!card) { return; }
+    var reviewed = state.results.similarReview.has(group.group_id);
+    var bar = $('.similar-review-bar', card);
+    if (bar) {
+      bar.classList.toggle('is-reviewed', reviewed);
+    }
+    $$('.file-row', card).forEach(function (row) {
+      var cb = $('input[type="checkbox"]', row);
+      if (!cb) { return; }
+      var fileId = row.dataset.fileId;
+      var file = null;
+      (group.files || []).forEach(function (item) { if (item.file_id === fileId) { file = item; } });
+      if (!file) { return; }
+      var keeperId = groupKeeperFileId(group);
+      var selectable = reviewed && !group.needs_manual_keep && file.file_id !== keeperId;
+      cb.disabled = !selectable;
+      cb.checked = selectable && state.results.similarSelected.has(file.file_id);
+      row.classList.toggle('is-await-review', !group.needs_manual_keep && !reviewed && file.file_id !== keeperId);
+    });
+    updateSimilarGroupAction(group, card);
+  }
+
+  function focusSimilarReview(groupId) {
+    if (!els.similarGroupsList) { return; }
+    var input = $('input[data-review-key="' + encodePath(groupId) + '"]', els.similarGroupsList);
+    if (input) { focusSoon(input); }
+  }
+
+  function toggleSimilarReview(group, checked) {
+    var results = state.results;
+    if (!group || group.needs_manual_keep) { return; }
+    if (checked) {
+      results.similarReview.add(group.group_id);
+    } else {
+      results.similarReview.delete(group.group_id);
+      (group.files || []).forEach(function (file) { results.similarSelected.delete(file.file_id); });
+    }
+    renderSimilarGroups();
+    focusSimilarReview(group.group_id);
+    updateSelectionSummary();
+  }
+
+  function toggleSimilarFileSelection(group, file, checked) {
+    if (!group || !file) { return; }
+    var results = state.results;
+    if (group.needs_manual_keep) { return; }
+    if (!results.similarReview.has(group.group_id)) {
+      toast('请先勾选该组的“人工复核”，再逐条选择要删除的副本。', 'error');
+      return;
+    }
+    if (file.file_id === groupKeeperFileId(group)) { return; }
+    if (checked) {
+      if (results.mode === 'all') {
+        results.mode = 'none';
+        results.selected = new Map();
+        results.excluded = new Map();
+        renderGroups();
+        toast('已取消“全选精准组”：相似文件需与手动选择的精准组文件混合删除。', 'info', 4600);
+      }
+      results.similarSelected.set(file.file_id, {
+        size: file.size, groupId: group.group_id, path: file.path
+      });
+    } else {
+      results.similarSelected.delete(file.file_id);
+    }
+    syncSimilarGroupUi(group);
+    updateSelectionSummary();
+  }
+
+  function renderSimilarGroupCard(group, index) {
+    var manual = !!group.needs_manual_keep;
+    var keeperId = groupKeeperFileId(group);
+    var score = Number(group.similarity_score);
+    if (!isFinite(score)) { score = null; }
+    var reviewed = state.results.similarReview.has(group.group_id);
+    var card = el('article', {
+      className: 'group-card similar-group-card' + (manual ? ' needs-keep' : '') + (reviewed ? ' is-reviewed' : ''),
+      dataset: { groupKey: encodePath(group.group_id), groupId: group.group_id, matchType: 'similar' }
+    });
+    var badges = [
+      el('span', { className: 'similar-score-badge', text: '内容相似' + (score !== null ? ' · ' + score + '%' : '') })
+    ];
+    if (manual) {
+      badges.push(el('span', { className: 'badge badge-amber', text: '需手动选择 · 禁止删除' }));
+    } else {
+      badges.push(el('span', { className: 'badge badge-green', text: '保留：' + (KEEP_LABEL[group.keep_reason] || '保留项') }));
+    }
+    if (group.low_confidence) { badges.push(el('span', { className: 'badge low-confidence-badge', text: '低置信度' })); }
+    if (group.creation_time_suspect) { badges.push(el('span', { className: 'badge badge-amber', text: '创建时间存疑' })); }
+
+    var headMain = el('div', { className: 'group-head-main' }, [
+      el('div', { className: 'group-title', text: '组 #' + (index + 1) + ' · ' + fmtInt(group.count) + ' 个文件' }),
+      el('div', { className: 'group-sub' }, [
+        el('span', { text: similarityMethodLabel(group.similarity_method) }),
+        el('span', { text: '单文件 ' + fmtBytes(group.size) }),
+        el('span', { text: '潜在可释放 ' + fmtBytes(group.wasted_bytes) }),
+        el('span', { className: 'muted', text: '哈希：—' })
+      ])
+    ]);
+    var head = el('div', { className: 'group-head' }, [headMain, el('div', { className: 'group-badges' }, badges)]);
+    if (manual) {
+      head.appendChild(el('p', { className: 'group-hint' }, [
+        icon('warning'),
+        '该组创建时间无法可靠区分，已禁止自动删除；请先在 DSM 中人工确认保留项，本组不参与本次清理。'
+      ]));
+    }
+    card.appendChild(head);
+
+    var reviewCheckbox = el('input', { attrs: { type: 'checkbox', 'data-review-key': encodePath(group.group_id), 'aria-label': '人工复核组 #' + (index + 1) } });
+    reviewCheckbox.checked = reviewed;
+    reviewCheckbox.disabled = manual;
+    if (!manual) {
+      reviewCheckbox.addEventListener('change', function () {
+        toggleSimilarReview(group, reviewCheckbox.checked);
+      });
+    }
+    var reviewBar = el('div', { className: 'similar-review-bar' + (reviewed ? ' is-reviewed' : '') }, [
+      el('label', { className: 'check' }, [
+        reviewCheckbox,
+        manual ? '本组禁止删除，无需复核' : '人工复核本组（必须勾选后才能逐条选择副本）'
+      ]),
+      el('span', {
+        className: 'similar-review-hint',
+        text: reviewed ? '已复核：请逐条勾选要删除的副本，保留项不可选。' : '未复核：组内文件选择已禁用。'
+      })
+    ]);
+    card.appendChild(reviewBar);
+
+    var list = el('div', { className: 'file-list' });
+    (group.files || []).forEach(function (file) {
+      list.appendChild(renderSimilarFileRow(group, file, keeperId, manual, reviewed));
+    });
+    card.appendChild(list);
+
+    var footInfo = el('span', { className: 'group-foot-info', text: '' });
+    var groupDeleteBtn = el('button', {
+      className: 'btn btn-danger btn-sm similar-delete-btn', attrs: { type: 'button' },
+      text: '删除本组所选副本'
+    });
+    groupDeleteBtn.disabled = true;
+    groupDeleteBtn.addEventListener('click', function () {
+      beginDelete({ similarGroupId: group.group_id });
+    });
+    var foot = el('div', { className: 'group-foot' }, [footInfo, groupDeleteBtn]);
+    card.appendChild(foot);
+    updateSimilarGroupAction(group, card);
+    return card;
+  }
+
+  function buildContentHashSub(file) {
+    var hash = file.hash || '';
+    var copyBtn = null;
+    if (hash) {
+      copyBtn = el('button', {
+        className: 'icon-btn',
+        attrs: { type: 'button', title: '复制内容哈希', 'aria-label': '复制内容哈希' }
+      }, [icon('copy')]);
+      copyBtn.addEventListener('click', function () { copyWithFeedback(hash, copyBtn); });
+    }
+    return el('span', { className: 'file-hash' }, [
+      el('span', { className: 'content-hash-label', text: '内容哈希' }),
+      el('code', {
+        className: 'hash-code' + (hash ? '' : ' is-empty'),
+        attrs: { title: hash || '' },
+        text: hash ? truncHash(hash) : '—'
+      }),
+      copyBtn
+    ]);
+  }
+
+  function renderSimilarFileRow(group, file, keeperId, manual, reviewed) {
+    var isKeeper = !manual && file.file_id === keeperId;
+    var selectable = !manual && !isKeeper && reviewed;
+    var selected = state.results.similarSelected.has(file.file_id);
+    var rowClass = 'file-row' + (isKeeper ? ' is-keeper' : '') + (!manual && !isKeeper && !reviewed ? ' is-await-review' : '');
+    var row = el('div', { className: rowClass, dataset: { fileId: file.file_id, matchType: 'similar' } });
+
+    var checkbox = el('input', {
+      attrs: {
+        type: 'checkbox',
+        disabled: !selectable,
+        'aria-label': isKeeper ? '保留项，不可选择删除' : (manual ? '本组禁止删除' : (!reviewed ? '请先人工复核本组' : '选择删除 ' + file.path))
+      }
+    });
+    checkbox.checked = selectable && selected;
+    if (!selectable) {
+      checkbox.title = manual ? '该组需人工确认，禁止删除'
+        : (isKeeper ? '保留项不可删除' : '请先勾选“人工复核本组”');
+    }
+    if (selectable) {
+      checkbox.addEventListener('change', function () {
+        toggleSimilarFileSelection(group, file, checkbox.checked);
+        checkbox.checked = state.results.similarSelected.has(file.file_id);
+      });
+    }
+    var selectWrap = el('div', { className: 'file-select' }, [checkbox]);
+
+    var score = Number(file.similarity_score);
+    if (!isFinite(score)) { score = isKeeper ? 100 : (Number(group.similarity_score) || null); }
+    var subItems = [
+      el('span', { text: fmtBytes(file.size) }),
+      el('span', { className: 'similar-file-score' }, [
+        el('span', { className: 'muted', text: '相似度' }),
+        el('span', { className: 'similar-score-badge', text: score === null ? '—' : String(score) + '%' })
+      ]),
+      buildContentHashSub(file)
+    ];
+    if (file.low_confidence) {
+      subItems.push(el('span', { className: 'badge low-confidence-badge', text: '低置信度' }));
+    }
+    var main = el('div', { className: 'file-main' }, [
+      el('div', { className: 'file-path', attrs: { title: file.path }, text: file.path }),
+      el('div', { className: 'file-sub' }, subItems)
+    ]);
+
+    var times = buildFileTimes(file);
+    var actions = buildFileActions(group, file, isKeeper, manual);
+    appendChildren(row, [selectWrap, main, times, actions]);
+    return row;
+  }
+
   function bindResultsEvents() {
     els.searchGroups.addEventListener('input', debounce(function () {
       var value = els.searchGroups.value.trim();
@@ -2331,10 +3059,11 @@
       loadResults(true);
       toast('正在刷新扫描结果。', 'info');
     });
-    els.loadMoreBtn.addEventListener('click', function () { loadResults(false); });
+    els.loadMoreBtn.addEventListener('click', function () { loadExactPartition(false); });
+    if (els.similarLoadMoreBtn) { els.similarLoadMoreBtn.addEventListener('click', function () { loadSimilarPartition(false); }); }
     els.selectAllBtn.addEventListener('click', selectAllDuplicates);
     els.clearSelectionBtn.addEventListener('click', clearSelection);
-    els.deleteSelectedBtn.addEventListener('click', beginDelete);
+    els.deleteSelectedBtn.addEventListener('click', function () { beginDelete(); });
     els.csvLink.addEventListener('click', function (event) {
       if (els.csvLink.getAttribute('aria-disabled') === 'true' || !state.scan.id) {
         event.preventDefault();
@@ -2359,6 +3088,9 @@
 
   function selectionTotals() {
     var results = state.results;
+    var exactCount = 0;
+    var exactBytes = 0;
+    var excludedCount = 0;
     if (results.mode === 'all') {
       var stats = currentScanStats();
       var excludedBytes = 0;
@@ -2367,23 +3099,46 @@
         ? stats.selectable_duplicate_files : (Number(stats.duplicate_files) || 0);
       var selectableBytes = typeof stats.selectable_reclaimable_bytes === 'number'
         ? stats.selectable_reclaimable_bytes : (Number(stats.reclaimable_bytes) || 0);
-      return {
-        mode: 'all',
-        count: Math.max(0, selectableFiles - results.excluded.size),
-        bytes: Math.max(0, selectableBytes - excludedBytes),
-        excludedCount: results.excluded.size
-      };
+      exactCount = Math.max(0, selectableFiles - results.excluded.size);
+      exactBytes = Math.max(0, selectableBytes - excludedBytes);
+      excludedCount = results.excluded.size;
+    } else {
+      results.selected.forEach(function (item) {
+        exactCount += 1;
+        exactBytes += Number(item && item.size) || 0;
+      });
     }
-    var totalBytes = 0;
-    results.selected.forEach(function (item) { totalBytes += Number(item && item.size) || 0; });
-    return { mode: results.mode, count: results.selected.size, bytes: totalBytes, excludedCount: 0 };
+    var similarCount = 0;
+    var similarBytes = 0;
+    var similarGroupIds = [];
+    results.similarSelected.forEach(function (item) {
+      similarCount += 1;
+      similarBytes += Number(item && item.size) || 0;
+      if (item && item.groupId && similarGroupIds.indexOf(item.groupId) === -1) { similarGroupIds.push(item.groupId); }
+    });
+    var allSimilarReviewed = similarGroupIds.every(function (groupId) {
+      return results.similarReview.has(groupId);
+    });
+    return {
+      mode: results.mode,
+      exactCount: exactCount,
+      exactBytes: exactBytes,
+      excludedCount: excludedCount,
+      similarCount: similarCount,
+      similarBytes: similarBytes,
+      similarGroupIds: similarGroupIds,
+      allSimilarReviewed: allSimilarReviewed,
+      count: exactCount + similarCount,
+      bytes: exactBytes + similarBytes
+    };
   }
 
   function manualGroupCount() {
     var stats = currentScanStats();
     var count = Number(stats.needs_manual_keep_groups);
     if (isFinite(count) && count >= 0) { return count; }
-    return state.results.groups.filter(function (group) { return group.needs_manual_keep; }).length;
+    return state.results.groups.filter(function (group) { return group.needs_manual_keep; }).length
+      + state.results.similarGroups.filter(function (group) { return group.needs_manual_keep; }).length;
   }
 
   function updateSelectionSummary() {
@@ -2392,44 +3147,70 @@
     clear(els.selectionSummary);
     if (!totals.count) {
       els.selectionSummary.appendChild(document.createTextNode('未选择任何文件'));
-    } else if (totals.mode === 'all') {
-      appendChildren(els.selectionSummary, [
-        '已全选待删除副本（约 ', el('strong', { text: fmtInt(totals.count) }), ' 个文件 · 约 ', fmtBytes(totals.bytes), '）'
-      ]);
-      if (manualGroupCount() > 0) {
-        els.selectionSummary.appendChild(document.createTextNode('，需人工确认的组已排除'));
-      }
-      if (totals.excludedCount) {
-        els.selectionSummary.appendChild(document.createTextNode('，已排除 ' + fmtInt(totals.excludedCount) + ' 个'));
-      }
     } else {
-      appendChildren(els.selectionSummary, [
-        '已选择 ', el('strong', { text: fmtInt(totals.count) }), ' 个文件 · 约 ', fmtBytes(totals.bytes)
-      ]);
+      if (totals.exactCount > 0) {
+        appendChildren(els.selectionSummary, [
+          totals.mode === 'all' ? '精准组：已全选 ' : '精准组：已选 ',
+          el('strong', { text: fmtInt(totals.exactCount) }), ' 个 · ', fmtBytes(totals.exactBytes)
+        ]);
+        if (totals.excludedCount) {
+          els.selectionSummary.appendChild(document.createTextNode('（已排除 ' + fmtInt(totals.excludedCount) + ' 个）'));
+        }
+      }
+      if (totals.similarCount > 0) {
+        if (totals.exactCount > 0) { els.selectionSummary.appendChild(document.createTextNode('；')); }
+        appendChildren(els.selectionSummary, [
+          '内容相似：已选 ', el('strong', { text: fmtInt(totals.similarCount) }), ' 个 · ',
+          fmtBytes(totals.similarBytes),
+          '（已复核 ' + fmtInt(totals.similarGroupIds.length) + ' 组）'
+        ]);
+      }
+    }
+    var blocked = false;
+    var blockedReason = '';
+    if (totals.mode === 'all' && totals.similarCount > 0) {
+      blocked = true;
+      blockedReason = '“全选精准组”不能与相似文件混合删除，请手动选择精准组文件。';
+    } else if (totals.similarCount > 0 && !totals.allSimilarReviewed) {
+      blocked = true;
+      blockedReason = '存在未人工复核的相似组，无法删除。';
     }
     if (els.deleteSelectedBtn) {
-      els.deleteSelectedBtn.disabled = !(totals.count > 0) || state.deleteFlow.running || state.results.loading;
+      els.deleteSelectedBtn.disabled = !(totals.count > 0) || state.deleteFlow.running || state.results.loading || blocked;
+      els.deleteSelectedBtn.title = blocked ? blockedReason : '';
     }
-    if (els.selectAllBtn) { setText(els.selectAllBtn, totals.mode === 'all' ? '已全选待删除副本' : '全选待删除副本'); }
+    if (els.selectAllBtn) {
+      setText(els.selectAllBtn, state.results.scanMode === 'similar'
+        ? (totals.mode === 'all' ? '已全选精准组副本' : '全选待删除副本（仅精准组）')
+        : (totals.mode === 'all' ? '已全选待删除副本' : '全选待删除副本'));
+    }
     if (els.clearSelectionBtn) { els.clearSelectionBtn.disabled = totals.mode === 'none' && !totals.count; }
+    if (state.results.scanMode === 'similar') { refreshSimilarActionButtons(); }
   }
 
   function clearSelectionState() {
     state.results.mode = 'none';
     state.results.selected = new Map();
     state.results.excluded = new Map();
+    state.results.similarSelected = new Map();
+    state.results.similarReview = new Set();
   }
 
   function clearSelection() {
     clearSelectionState();
     renderGroups();
+    if (state.results.scanMode === 'similar') { renderSimilarGroups(); }
     updateSelectionSummary();
-    toast('已清空选择。', 'info');
+    toast('已清空选择（包含人工复核状态）。', 'info');
   }
 
   function selectAllDuplicates() {
     if (!state.scan.id) { toast('请先完成一次扫描。', 'info'); return; }
-    if (!state.results.total) { toast('没有可选择的重复组。', 'info'); return; }
+    if (state.results.similarSelected.size > 0) {
+      toast('已选择内容相似文件，不能再“全选”精准组；请手动勾选精准组文件，或先清空选择。', 'error', 5200);
+      return;
+    }
+    if (!state.results.total) { toast('没有可选择的精准组。', 'info'); return; }
     var results = state.results;
     results.mode = 'all';
     results.selected = new Map();
@@ -2437,8 +3218,10 @@
     renderGroups();
     updateSelectionSummary();
     var manual = manualGroupCount();
-    toast('已全选待删除副本' + (manual ? '；需人工确认的 ' + manual + ' 组已自动排除，不会删除。' : '。'),
-      'info', 4600);
+    toast(state.results.scanMode === 'similar'
+      ? '已全选精准组副本（相似组不参与全选，需人工复核后逐条选择）。'
+      : ('已全选待删除副本' + (manual ? '；需人工确认的 ' + manual + ' 组已自动排除，不会删除。' : '。')),
+      'info', 4800);
   }
 
   function toggleFileSelection(group, file, checked) {
@@ -2608,13 +3391,38 @@
     return keys;
   }
 
-  function beginDelete() {
+  function beginDelete(override) {
     if (!state.scan.id) { toast('请先完成一次扫描。', 'info'); return; }
     if (state.deleteFlow.running) { toast('删除任务正在执行，请等待完成。', 'info'); return; }
     var totals = selectionTotals();
-    if (!totals.count) { toast('请先选择要删除的副本。', 'error'); return; }
-    if (state.results.mode === 'none') { toast('请先选择要删除的副本。', 'error'); return; }
+    var similarGroupId = override && override.similarGroupId ? override.similarGroupId : null;
+    if (similarGroupId) {
+      if (!state.results.similarReview.has(similarGroupId)) {
+        toast('请先勾选该相似组的“人工复核”，再删除。', 'error');
+        return;
+      }
+      var groupSelected = 0;
+      state.results.similarSelected.forEach(function (item) {
+        if (item && item.groupId === similarGroupId) { groupSelected += 1; }
+      });
+      if (!groupSelected) { toast('请先逐条勾选该组要删除的副本。', 'error'); return; }
+    } else {
+      if (!totals.count) { toast('请先选择要删除的副本。', 'error'); return; }
+      if (totals.similarCount > 0 && !totals.allSimilarReviewed) {
+        toast('存在未人工复核的相似组，无法删除。', 'error');
+        return;
+      }
+      if (totals.mode === 'all' && totals.similarCount > 0) {
+        toast('“全选精准组”不能与相似文件混合删除，请手动选择精准组文件。', 'error', 5200);
+        return;
+      }
+      if (state.results.mode === 'none' && totals.similarCount === 0) {
+        toast('请先选择要删除的副本。', 'error');
+        return;
+      }
+    }
     var flow = state.deleteFlow;
+    flow.override = similarGroupId ? { similarGroupId: similarGroupId } : null;
     flow.plan = null;
     flow.job = null;
     flow.busy = false;
@@ -2635,6 +3443,7 @@
         if (flow.running) { return; }
         flow.plan = null;
         flow.step = null;
+        flow.override = null;
       }
     });
     requestDeletePlan(flow.recycle);
@@ -2669,7 +3478,34 @@
     renderPlanLoading();
     try {
       var body;
-      if (state.results.mode === 'all') {
+      var override = flow.override || null;
+      var similarIds = [];
+      var reviewedGroupIds = [];
+      if (override && override.similarGroupId) {
+        state.results.similarSelected.forEach(function (item, fileId) {
+          if (item && item.groupId === override.similarGroupId) { similarIds.push(fileId); }
+        });
+        reviewedGroupIds = [override.similarGroupId];
+      } else {
+        state.results.similarSelected.forEach(function (item, fileId) {
+          similarIds.push(fileId);
+          if (item && item.groupId && reviewedGroupIds.indexOf(item.groupId) === -1) {
+            reviewedGroupIds.push(item.groupId);
+          }
+        });
+      }
+      if (similarIds.length) {
+        var exactIds = state.results.mode === 'all' ? [] : mapKeyList(state.results.selected);
+        if (state.results.mode === 'all' && !override) {
+          throw new ApiError(400, 'SIMILAR_REVIEW_REQUIRED', '“全选精准组”不能与相似文件混合删除，请先手动选择精准组文件。');
+        }
+        body = {
+          file_ids: exactIds.concat(similarIds),
+          recycle: flow.recycle,
+          confirm_similar: true,
+          reviewed_similar_group_ids: reviewedGroupIds
+        };
+      } else if (state.results.mode === 'all') {
         body = {
           scope: 'all_duplicates',
           exclude_file_ids: mapKeyList(state.results.excluded),
@@ -2679,6 +3515,10 @@
       } else {
         body = { file_ids: mapKeyList(state.results.selected), recycle: flow.recycle };
       }
+      if (flow.override) {
+        flow.override.selectedFileIds = similarIds.slice();
+        flow.override.reviewedGroupIds = reviewedGroupIds.slice();
+      }
       var res = await api('/api/scans/' + encodePath(state.scan.id) + '/delete-plan', {
         method: 'POST', body: body, timeout: 30000
       });
@@ -2687,7 +3527,11 @@
       flow.recycle = res.plan.recycle !== false;
       renderPlanStep(res.plan);
     } catch (err) {
-      renderPlanError(errorMessage(err, '创建删除计划失败，请稍后重试。'));
+      var planMessage = errorMessage(err, '创建删除计划失败，请稍后重试。');
+      if (err && err.code === 'SIMILAR_REVIEW_REQUIRED') {
+        planMessage = '相似组必须人工复核并逐条选择后才能删除。' + (err.message ? ' ' + err.message : '');
+      }
+      renderPlanError(planMessage);
     } finally {
       flow.busy = false;
     }
@@ -2731,7 +3575,10 @@
 
     flow.modal.setTitle('删除计划确认（第 1 步 / 共 2 步）');
     var body = el('div', {});
-    body.appendChild(el('p', { className: 'modal-note', text: '服务端已重新校验：文件仍然存在、未被修改、哈希与保留文件一致，且不是保留项。校验未通过的文件会自动跳过，不会被删除。' }));
+    var revalidateNote = Number(plan.similar_count) > 0
+      ? '服务端已重新校验：文件仍然存在、未被修改；精准组哈希与保留文件一致，相似组各自内容哈希与扫描时一致，且都不是保留项。校验未通过的文件会自动跳过，不会被删除。'
+      : '服务端已重新校验：文件仍然存在、未被修改、哈希与保留文件一致，且不是保留项。校验未通过的文件会自动跳过，不会被删除。';
+    body.appendChild(el('p', { className: 'modal-note', text: revalidateNote }));
 
     var kv = el('dl', { className: 'modal-kv' });
     function addKv(label, valueNodeOrText, cls) {
@@ -2742,11 +3589,27 @@
     }
     addKv('待删除文件', fmtInt(plan.count) + ' 个');
     addKv('可释放空间', fmtBytes(plan.bytes));
+    var hasSplit = typeof plan.exact_count === 'number' || typeof plan.similar_count === 'number';
+    if (hasSplit) {
+      addKv('精准组文件', fmtInt(plan.exact_count) + ' 个 · ' + fmtBytes(plan.exact_bytes));
+      addKv('内容相似文件', fmtInt(plan.similar_count) + ' 个 · ' + fmtBytes(plan.similar_bytes));
+      var reviewedList = Array.isArray(plan.reviewed_similar_group_ids) ? plan.reviewed_similar_group_ids : [];
+      if (reviewedList.length || plan.similar_count > 0) {
+        addKv('相似组已复核', fmtInt(reviewedList.length) + ' 组');
+      }
+      if (plan.manual_review) { addKv('人工复核', '已确认（相似组为逐条选择）'); }
+    }
     addKv('删除方式', permanent ? '永久删除（不可恢复）' : '移动到回收站', permanent ? 'is-permanent' : '');
     addKv('涉及分组', fmtInt(plan.groups_affected) + ' 组');
     addKv('校验跳过', fmtInt(skippedTotal) + ' 个');
     if (plan.expires_at) { addKv('计划有效期', fmtDateTime(plan.expires_at)); }
     body.appendChild(el('div', { className: 'modal-section' }, [kv]));
+    if (hasSplit && Number(plan.similar_count) > 0) {
+      body.appendChild(el('div', { className: 'modal-section modal-warning' }, [
+        icon('warning'),
+        '本次计划包含内容相似文件：相似度是特征比对结果，存在误匹配概率。请确认已对相似组逐一人工复核，并核对保留项与文件清单。'
+      ]));
+    }
 
     // 回收站开关：切换后需要重新生成计划（计划中记录了删除方式）
     var recycleCheckbox = el('input', { attrs: { type: 'checkbox' } });
@@ -2847,11 +3710,17 @@
     }
     addKv('待删除文件', fmtInt(plan.count) + ' 个');
     addKv('可释放空间', fmtBytes(plan.bytes));
+    if (typeof plan.exact_count === 'number' || typeof plan.similar_count === 'number') {
+      addKv('精准组文件', fmtInt(plan.exact_count) + ' 个 · ' + fmtBytes(plan.exact_bytes));
+      addKv('内容相似文件', fmtInt(plan.similar_count) + ' 个 · ' + fmtBytes(plan.similar_bytes));
+      var reviewedIds = Array.isArray(plan.reviewed_similar_group_ids) ? plan.reviewed_similar_group_ids : [];
+      addKv('相似组已复核', fmtInt(reviewedIds.length) + ' 组');
+    }
     addKv('删除方式', permanent ? '永久删除（不可恢复）' : '移动到回收站', permanent ? 'is-permanent' : '');
     addKv('涉及分组', fmtInt(plan.groups_affected) + ' 组');
     addKv('校验跳过', fmtInt(skippedTotal) + ' 个');
     body.appendChild(el('div', { className: 'modal-section' }, [kv]));
-    body.appendChild(el('p', { className: 'modal-note', text: '需人工确认的重复组不在删除范围内；保留项不会被删除。' }));
+    body.appendChild(el('p', { className: 'modal-note', text: '需人工确认的重复组不在删除范围内；保留项不会被删除。相似组仅包含已人工复核并逐条选择的文件。' }));
 
     var confirmCheckbox = el('input', { attrs: { type: 'checkbox' } });
     var confirmRow = el('label', { className: 'modal-check-row' }, [
@@ -3148,6 +4017,7 @@
       if (state.scan.id !== scanId) { return; }
       if (res && res.scan) {
         state.scan.data = res.scan;
+        state.results.scanMode = detectScanMode(res.scan);
         renderScanProgress(res.scan);
       }
       loadResults(true);
@@ -3197,27 +4067,52 @@
     var keepMode = config.keep_mode || options.keep_mode;
     var startedAt = scan.started_at;
     var finishedAt = scan.finished_at;
+    var scanMode = detectScanMode(scan);
     var item = el('div', { className: 'history-item' });
 
     var title = el('div', { className: 'history-title' }, [
       statusBadge(status),
       el('span', { text: '扫描任务' }),
-      el('span', { className: 'mono', text: scan.scan_id || '—' })
+      el('span', { className: 'mono', text: scan.scan_id || '—' }),
+      el('span', {
+        className: 'badge ' + (scanMode === 'similar' ? 'badge-purple' : 'badge-gray'),
+        text: scanMode === 'similar' ? '内容相似模式' : '精准哈希模式'
+      })
     ]);
     var metaParts = ['开始：' + fmtDateTime(startedAt), '结束：' + (finishedAt ? fmtDateTime(finishedAt) : '—')];
     if (keepMode) { metaParts.push('保留策略：' + (KEEP_MODE_LABEL[keepMode] || keepMode)); }
+    if (scanMode === 'similar') {
+      var thresholdText = options.similarity_threshold !== undefined ? options.similarity_threshold
+        : (config.similarity_threshold !== undefined ? config.similarity_threshold : null);
+      if (thresholdText !== null) { metaParts.push('相似阈值：' + thresholdText + '%'); }
+    }
     var meta = el('div', { className: 'history-meta' }, metaParts.map(function (text) {
       return el('span', { text: text });
     }));
-    var statsEl = el('div', { className: 'history-stats' }, [
-      el('span', {}, ['重复组 ', el('strong', { text: fmtInt(stats.duplicate_groups) })]),
-      el('span', {}, ['重复文件 ', el('strong', { text: fmtInt(stats.duplicate_files) })]),
-      el('span', {}, ['可释放 ', el('strong', { text: fmtBytes(stats.reclaimable_bytes) })]),
-      el('span', {}, ['已扫描 ', el('strong', { text: fmtInt(stats.files_scanned) })]),
-      Number(stats.needs_manual_keep_groups) > 0
-        ? el('span', {}, ['需人工确认 ', el('strong', { text: fmtInt(stats.needs_manual_keep_groups) }), ' 组'])
-        : null
-    ]);
+    var statsItems = [];
+    if (scanMode === 'similar') {
+      statsItems = [
+        el('span', {}, ['精准组 ', el('strong', { text: fmtInt(stats.exact_groups !== undefined ? stats.exact_groups : stats.duplicate_groups) })]),
+        el('span', {}, ['相似组 ', el('strong', { text: fmtInt(stats.similar_groups) })]),
+        el('span', {}, ['精准可释放 ', el('strong', { text: fmtBytes(stats.reclaimable_bytes) })]),
+        el('span', {}, ['相似潜在 ', el('strong', { text: fmtBytes(stats.similar_reclaimable_bytes) })]),
+        el('span', {}, ['已扫描 ', el('strong', { text: fmtInt(stats.files_scanned) })]),
+        Number(stats.needs_manual_keep_groups) > 0
+          ? el('span', {}, ['需人工确认 ', el('strong', { text: fmtInt(stats.needs_manual_keep_groups) }), ' 组'])
+          : null
+      ];
+    } else {
+      statsItems = [
+        el('span', {}, ['重复组 ', el('strong', { text: fmtInt(stats.duplicate_groups) })]),
+        el('span', {}, ['重复文件 ', el('strong', { text: fmtInt(stats.duplicate_files) })]),
+        el('span', {}, ['可释放 ', el('strong', { text: fmtBytes(stats.reclaimable_bytes) })]),
+        el('span', {}, ['已扫描 ', el('strong', { text: fmtInt(stats.files_scanned) })]),
+        Number(stats.needs_manual_keep_groups) > 0
+          ? el('span', {}, ['需人工确认 ', el('strong', { text: fmtInt(stats.needs_manual_keep_groups) }), ' 组'])
+          : null
+      ];
+    }
+    var statsEl = el('div', { className: 'history-stats' }, statsItems);
     var rootsEl = el('div', { className: 'history-roots' });
     roots.slice(0, 3).forEach(function (path) {
       rootsEl.appendChild(el('span', { className: 'root-chip', attrs: { title: path }, text: path }));
@@ -3261,6 +4156,7 @@
     state.scan.handled = true;
     state.scan.data = scan;
     resetResultsState();
+    state.results.scanMode = detectScanMode(scan);
     show(els.progressPanel);
     renderScanProgress(scan);
     if (ACTIVE_STATUS.indexOf(scan.status) !== -1) {
@@ -3271,6 +4167,7 @@
       api('/api/scans/' + encodePath(scanId), { timeout: 15000 }).then(function (res) {
         if (state.scan.id !== scanId || !res || !res.scan) { return; }
         state.scan.data = res.scan;
+        state.results.scanMode = detectScanMode(res.scan);
         renderScanProgress(res.scan);
         if (res.scan.status === 'completed' || res.scan.status === 'stopped') {
           show(els.resultsSection);
@@ -3378,7 +4275,12 @@
     quickSample: { input: 'setQuickSampleKb', error: 'setQuickSampleError' },
     concurrency: { input: 'setConcurrency', error: 'setConcurrencyError' },
     hashRate: { input: 'setHashRate', error: 'setHashRateError' },
-    maxFiles: { input: 'setMaxFiles', error: 'setMaxFilesError' }
+    maxFiles: { input: 'setMaxFiles', error: 'setMaxFilesError' },
+    similarityThreshold: { input: 'setSimilarityThreshold', error: 'setSimilarityThresholdError' },
+    similarityConcurrency: { input: 'setSimilarityConcurrency', error: 'setSimilarityConcurrencyError' },
+    similarityMaxFile: { input: 'setSimilarityMaxMb', error: 'setSimilarityMaxFileError' },
+    similarityExt: { input: 'setSimExtList', error: 'setSimilarityExtError' },
+    similarityExcludeExt: { input: 'setSimilarityExcludeExt', error: 'setSimilarityExcludeExtError' }
   };
 
   function bytesToMbValue(bytes) {
@@ -3408,6 +4310,28 @@
     els.setRecycleDefault.checked = settings.recycle_default !== false;
     els.setCreateRecycleDir.checked = settings.create_recycle_dir === true;
     els.setAllowCtime.checked = settings.allow_ctime_fallback === true;
+    if (els.setScanMode) { els.setScanMode.value = settings.scan_mode === 'similar' ? 'similar' : 'exact'; }
+    if (els.setSimilarityThreshold) {
+      var threshold = parseInt(settings.similarity_threshold, 10);
+      els.setSimilarityThreshold.value = String(clamp(isFinite(threshold) ? threshold : 85, 0, 100));
+    }
+    if (els.setSimilarityConcurrency) {
+      var simConc = parseInt(settings.similarity_concurrency, 10);
+      els.setSimilarityConcurrency.value = String(clamp(isFinite(simConc) ? simConc : 2, 1, 4));
+    }
+    if (els.setSimilarityMaxMb) {
+      var simMaxMb = parseInt(settings.similarity_max_file_mb, 10);
+      els.setSimilarityMaxMb.value = String(clamp(isFinite(simMaxMb) ? simMaxMb : 32, 1, 1024));
+    }
+    if (els.setSimilarityCache) { els.setSimilarityCache.checked = settings.similarity_cache !== false; }
+    if (els.setSimilarityAllowBinary) { els.setSimilarityAllowBinary.checked = settings.similarity_allow_binary === true; }
+    if (els.setSimExtList) {
+      var simMeta = state.similarity || similarityCapability();
+      var selectedExt = (Array.isArray(settings.similarity_extensions) && settings.similarity_extensions.length)
+        ? settings.similarity_extensions : simMeta.extensions;
+      renderExtChips(els.setSimExtList, simMeta.extensions, selectedExt, null);
+    }
+    if (els.setSimilarityExcludeExt) { els.setSimilarityExcludeExt.value = extListToText(settings.similarity_exclude_extensions); }
     clearSettingsErrors();
   }
 
@@ -3436,6 +4360,10 @@
         if (res.defaults) { state.defaults = Object.assign({}, DEFAULT_SETTINGS, res.defaults); }
       }
       state.settingsLoaded = true;
+      state.similarity = similarityCapability();
+      updateModeAvailability();
+      var simSupported = !(state.meta && state.similarity && state.similarity.supported === false);
+      if (els.settingsSimilarityDetails) { setHidden(els.settingsSimilarityDetails, !simSupported); }
       fillSettingsForm(state.settings || DEFAULT_SETTINGS);
       setHidden(els.settingsLoading, true);
     } catch (err) {
@@ -3493,6 +4421,25 @@
     if (settings.keep_mode === 'pinned' && !settings.pinned_path) {
       errors.pinned = '选择“指定路径”策略时请填写保留路径。';
     }
+
+    var simSupported = !(state.meta && state.similarity && state.similarity.supported === false);
+    if (simSupported) {
+      settings.scan_mode = els.setScanMode && els.setScanMode.value === 'similar' ? 'similar' : 'exact';
+      var simThreshold = readIntOption(els.setSimilarityThreshold, 0, 100, false, 0, '相似度阈值');
+      if (simThreshold.error) { errors.similarityThreshold = simThreshold.error; } else { settings.similarity_threshold = simThreshold.value; }
+      var simConc = readIntOption(els.setSimilarityConcurrency, 1, 4, false, 0, '相似特征并发数');
+      if (simConc.error) { errors.similarityConcurrency = simConc.error; } else { settings.similarity_concurrency = simConc.value; }
+      var simMax = readIntOption(els.setSimilarityMaxMb, 1, 1024, false, 0, '单文件相似上限（MB）');
+      if (simMax.error) { errors.similarityMaxFile = simMax.error; } else { settings.similarity_max_file_mb = simMax.value; }
+      var simExt = readExtChips(els.setSimExtList);
+      if (!simExt.length) { errors.similarityExt = '请至少选择一种允许相似计算的默认文件类型。'; }
+      else { settings.similarity_extensions = simExt; }
+      var simExclude = normalizeExtList(els.setSimilarityExcludeExt.value);
+      if (simExclude.error) { errors.similarityExcludeExt = simExclude.error; }
+      else { settings.similarity_exclude_extensions = simExclude.list; }
+      settings.similarity_cache = !!(els.setSimilarityCache && els.setSimilarityCache.checked);
+      settings.similarity_allow_binary = !!(els.setSimilarityAllowBinary && els.setSimilarityAllowBinary.checked);
+    }
     return { settings: settings, errors: errors, valid: Object.keys(errors).length === 0 };
   }
 
@@ -3530,6 +4477,8 @@
       var res = await api('/api/settings', { method: 'PUT', body: { settings: parsed.settings }, timeout: 20000 });
       if (res && res.settings) {
         state.settings = Object.assign({}, DEFAULT_SETTINGS, res.settings);
+        state.similarity = similarityCapability();
+        updateModeAvailability();
         fillSettingsForm(state.settings);
       }
       state.settingsLoaded = true;
@@ -3556,6 +4505,7 @@
     els.resetSettingsBtn.addEventListener('click', resetSettingsToDefaults);
     els.settingsForm.addEventListener('input', clearSettingsErrors);
     els.settingsForm.addEventListener('change', clearSettingsErrors);
+    if (els.setSimExtList) { els.setSimExtList.addEventListener('change', clearSettingsErrors); }
   }
 
   // ==================== 18. 启动 ====================

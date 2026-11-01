@@ -210,3 +210,24 @@ python build/build_spk.py --no-icons --out-dir $env:TEMP\qa-build2
 - 最终 SPK：结构/checksum/权限/洁净性/源码同步/构建可复现全部 PASS，SHA256
   `b16d36224af6db5d4c89681daab45c695de2ba97681324d3a4337033b389fc8f`。
 - 交付建议：可交付；上线前按 §7 做一次 DSM 真机 + 浏览器冒烟测试；D1 可在后续版本与契约对齐（409→200+plan 或修订契约）。
+
+
+---
+
+## 10. 附：v1.1 内容相似度模式复验（2026-11-02）
+
+> 本节为 v1.1 增量验收摘要；完整报告见 [qa/SIMILARITY_REPORT.md](SIMILARITY_REPORT.md)。v1.0 历史结论保留在上文。
+
+- 最终产物：`dist/DuplicateCleaner-1.1.0-0002.spk`
+  - SHA256 `62a54ed48d20f9255ac9f0788f808a210e4e9121e3d2b6019aeabf88a57cc351`
+  - package.tgz MD5 `14fc3f6c6a4f925e0ac4237a2c7df89b`（= INFO.checksum）
+- 相似模式端到端：`python qa/similarity_e2e.py` → **PASS=44 / FAIL=0 / UNVERIFIED=0**
+  （文本相似/低于阈值、精准组隔离、binary/size 跳过、缓存二次命中 8/8、similarity 阶段停止、
+  groups match_type 过滤、CSV 12 列、scope 排除相似、无复核 400、复核后回收站删除、keeper 保护、混合删除）。
+- 旧精准模式回归：`python qa/e2e_test.py` → **PASS=113 / FAIL=0 / UNVERIFIED=1**（Windows symlink 权限限制）。
+- 静态检查：`python qa/static_checks.py` → **PASS=104 / FAIL=0 / UNVERIFIED=0**（新增 v1.1 后端/前端/构建检查）。
+- 后端 unittest：139 tests PASS（2 skipped）。
+- SPK：checksum/权限/洁净性/源码同步全部 PASS；独立构建 2 次 SHA256 均与 dist bit-identical。
+- 已知风险：相似度质量与性能未做大规模评估；图片/PDF/DOCX 相似仅单测覆盖；真实 DSM/浏览器未验证；
+  CONTRACT §7 CSV 列描述待同步为新 12 列（实现按 SIMILARITY_CONTRACT §4.2）。
+- 结论：v1.1 **PASS（可交付）**，详见 [qa/SIMILARITY_REPORT.md](SIMILARITY_REPORT.md)。

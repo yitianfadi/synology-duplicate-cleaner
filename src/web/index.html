@@ -6,8 +6,8 @@
 <meta name="color-scheme" content="light">
 <meta name="referrer" content="same-origin">
 <title>重复文件清理 · DuplicateCleaner</title>
-<link rel="icon" href="./assets/favicon.svg?v=1.0.0-0001" type="image/svg+xml">
-<link rel="stylesheet" href="./styles.css?v=1.0.0-0001">
+<link rel="icon" href="./assets/favicon.svg?v=1.1.0-0002" type="image/svg+xml">
+<link rel="stylesheet" href="./styles.css?v=1.1.0-0002">
 </head>
 <body>
 <a class="skip-link" href="#main">跳到主要内容</a>
@@ -98,6 +98,21 @@
           <h1 id="scanHeading">扫描重复文件</h1>
           <p class="page-desc">选择扫描范围与选项，扫描完成后按组核对结果，再进行可回退的删除操作。</p>
         </div>
+      </div>
+
+      <div class="scan-mode-bar card" role="group" aria-label="扫描模式">
+        <div class="scan-mode-main">
+          <div class="mode-segmented" role="radiogroup" aria-label="扫描模式选择">
+            <button type="button" class="mode-btn is-active" id="modeExactBtn" data-mode="exact" role="radio" aria-checked="true">
+              <span class="mode-btn-title">精准哈希</span><span class="mode-btn-sub">默认</span>
+            </button>
+            <button type="button" class="mode-btn" id="modeSimilarBtn" data-mode="similar" role="radio" aria-checked="false">
+              <span class="mode-btn-title">内容相似</span><span class="mode-btn-sub">哈希 + 相似</span>
+            </button>
+          </div>
+          <p class="mode-desc" id="modeDesc">仅按哈希判定内容完全一致的文件，速度快、可信度高。</p>
+        </div>
+        <span class="badge badge-gray" id="modeCapabilityBadge" hidden></span>
       </div>
 
       <div class="scan-grid">
@@ -209,6 +224,51 @@
               </div>
             </div>
 
+            <div id="similarityOptions" class="similarity-options" hidden>
+              <div class="section-subhead">
+                <h3>内容相似选项</h3>
+                <span class="badge badge-purple">相似组必须人工复核</span>
+              </div>
+              <div class="form-grid">
+                <div class="field">
+                  <label for="simThreshold">相似度阈值（0–100，默认 85）</label>
+                  <div class="range-row">
+                    <input id="simThresholdRange" type="range" min="0" max="100" step="1" value="85" aria-label="相似度阈值滑块">
+                    <input id="simThreshold" name="similarity_threshold" type="number" inputmode="numeric" min="0" max="100" step="1" value="85" aria-label="相似度阈值数字输入">
+                  </div>
+                  <p class="hint">分数四舍五入取整，达到阈值才算相似；值越高越严格。</p>
+                  <p class="field-error" id="simThresholdError" role="alert" hidden></p>
+                </div>
+                <div class="field">
+                  <label for="simConcurrency">相似特征并发数</label>
+                  <input id="simConcurrency" name="similarity_concurrency" type="number" inputmode="numeric" min="1" max="4" step="1" value="2">
+                  <p class="hint">1–4；建议低并发，避免占用 NAS 的 CPU 与磁盘。</p>
+                  <p class="field-error" id="simConcurrencyError" role="alert" hidden></p>
+                </div>
+                <div class="field">
+                  <label for="simMaxFileMb">单文件相似计算上限（MB）</label>
+                  <input id="simMaxFileMb" name="similarity_max_file_mb" type="number" inputmode="numeric" min="1" max="1024" step="1" value="32">
+                  <p class="hint">1–1024；超过上限的文件只做精准哈希，不参与相似计算。</p>
+                  <p class="field-error" id="simMaxFileError" role="alert" hidden></p>
+                </div>
+                <div class="field">
+                  <label class="check"><input id="simCache" type="checkbox" checked>使用持久化特征缓存（推荐）</label>
+                  <label class="check"><input id="simAllowBinary" type="checkbox">允许对未知二进制做相似计算（高级，可能增加 CPU 占用）</label>
+                  <p class="hint">压缩包、磁盘镜像、可执行文件、音视频始终不进入相似计算，该开关只影响其他未知二进制。</p>
+                </div>
+                <div class="field field-wide">
+                  <span class="field-label" id="simExtLabel">允许相似计算的文件类型</span>
+                  <div id="simExtList" class="ext-chip-grid" role="group" aria-labelledby="simExtLabel"></div>
+                  <p class="hint">默认来自后端推荐列表；可关闭 pdf/txt/jpg 等类型。相似计算只影响“内容相似”分区。</p>
+                  <p class="field-error" id="simExtError" role="alert" hidden></p>
+                </div>
+              </div>
+              <p class="mode-warning">
+                <svg class="icon" aria-hidden="true"><use href="#i-warning"></use></svg>
+                说明：压缩包、媒体、可执行文件及超过大小上限的文件只做精准哈希；相似分析阶段支持暂停 / 停止，结果仅作辅助，必须人工复核。
+              </p>
+            </div>
+
             <details class="advanced" id="advancedOptions">
               <summary>高级选项</summary>
               <div class="form-grid">
@@ -284,6 +344,12 @@
           <div><dt>哈希速度</dt><dd id="counterRate">0 B/s</dd></div>
           <div><dt>错误数</dt><dd id="counterErrors">0</dd></div>
         </dl>
+        <dl class="counter-grid similarity-counter-grid" id="similarityCounters" hidden>
+          <div><dt>相似特征数</dt><dd id="simFeatures">0</dd></div>
+          <div><dt>相似缓存命中</dt><dd id="simCacheHits">0</dd></div>
+          <div><dt>相似候选</dt><dd id="simCandidates">0</dd></div>
+          <div><dt>相似跳过</dt><dd id="simSkipped">0</dd></div>
+        </dl>
         <div class="progress-meta">
           <div class="path-line" title=""><span class="meta-label">当前路径</span><span class="mono" id="progressPath">—</span></div>
           <div><span class="meta-label">已用时间</span><span id="progressElapsed">0 秒</span></div>
@@ -300,7 +366,7 @@
       <section id="resultsSection" class="results-section" hidden aria-labelledby="resultsHeading">
         <div class="page-head results-head">
           <div>
-            <h2 id="resultsHeading">扫描结果</h2>
+            <h2 id="resultsHeading">扫描结果 <span class="badge badge-gray results-mode-badge" id="resultsModeBadge">精准哈希</span></h2>
             <p class="page-desc" id="resultsSubtitle">按组列出内容相同的文件。保留项已高亮，需手动选择的组请先指定保留项。</p>
           </div>
           <div class="results-head-actions">
@@ -319,7 +385,7 @@
               <input id="searchGroups" type="search" placeholder="搜索文件路径或哈希…" aria-label="搜索分组结果" autocomplete="off">
             </div>
             <div class="toolbar-selects">
-              <label class="inline-label" for="sortGroups">排序</label>
+              <label class="inline-label" for="sortGroups" id="sortLabel">精准组排序</label>
               <select id="sortGroups">
                 <option value="wasted_desc">可释放空间从大到小</option>
                 <option value="size_desc">文件大小从大到小</option>
@@ -341,15 +407,40 @@
           </div>
         </div>
 
-        <div class="state-box" id="resultsLoading" hidden><span class="spinner" aria-hidden="true"></span>正在加载扫描结果…</div>
-        <div class="state-box state-error" id="resultsError" role="alert" hidden></div>
-        <div class="state-box state-empty" id="resultsEmpty" hidden>没有找到重复文件。</div>
+        <div id="exactPartition" class="result-partition">
+          <div class="partition-head">
+            <h3 id="exactPartitionTitle">重复文件</h3>
+            <span class="badge badge-green" id="exactPartitionBadge" hidden>哈希一致</span>
+            <span class="muted partition-count" id="exactPartitionCount"></span>
+          </div>
+          <div class="state-box" id="resultsLoading" hidden><span class="spinner" aria-hidden="true"></span>正在加载精准组…</div>
+          <div class="state-box state-error" id="resultsError" role="alert" hidden></div>
+          <div class="state-box state-empty" id="resultsEmpty" hidden>没有找到重复文件。</div>
+          <div id="groupsList" class="groups-list"></div>
+          <div class="load-more-row">
+            <button type="button" class="btn btn-ghost" id="loadMoreBtn" hidden>加载更多</button>
+            <span class="muted" id="loadMoreStatus"></span>
+          </div>
+        </div>
 
-        <div id="groupsList" class="groups-list"></div>
-
-        <div class="load-more-row">
-          <button type="button" class="btn btn-ghost" id="loadMoreBtn" hidden>加载更多</button>
-          <span class="muted" id="loadMoreStatus"></span>
+        <div id="similarPartition" class="result-partition similar-partition" hidden>
+          <div class="similar-warning" role="alert">
+            <svg class="icon" aria-hidden="true"><use href="#i-warning"></use></svg>
+            <p>内容相似度为 AI/特征比对结果，存在误匹配概率；相似组必须人工复核，禁止一键批量删除相似文件。</p>
+          </div>
+          <div class="partition-head">
+            <h3>内容相似</h3>
+            <span class="badge badge-amber">需人工复核</span>
+            <span class="muted partition-count" id="similarPartitionCount"></span>
+          </div>
+          <div class="state-box" id="similarLoading" hidden><span class="spinner" aria-hidden="true"></span>正在加载相似组…</div>
+          <div class="state-box state-error" id="similarError" role="alert" hidden></div>
+          <div class="state-box state-empty" id="similarEmpty" hidden>没有内容相似的组。</div>
+          <div id="similarGroupsList" class="groups-list"></div>
+          <div class="load-more-row">
+            <button type="button" class="btn btn-ghost" id="similarLoadMoreBtn" hidden>加载更多相似组</button>
+            <span class="muted" id="similarLoadMoreStatus"></span>
+          </div>
         </div>
       </section>
     </section>
@@ -501,6 +592,51 @@
             <p class="hint">关闭 ctime 降级时，创建时间未知的组需要人工指定保留项，更安全。</p>
           </div>
         </div>
+
+        <details class="advanced" id="settingsSimilarityDetails">
+          <summary>内容相似默认值（相似模式）</summary>
+          <div class="form-grid">
+            <div class="field">
+              <label for="setScanMode">默认扫描模式</label>
+              <select id="setScanMode">
+                <option value="exact">精准哈希（默认）</option>
+                <option value="similar">内容相似（哈希 + 相似）</option>
+              </select>
+              <p class="hint">决定扫描页默认选中的模式，可在扫描页临时切换。</p>
+            </div>
+            <div class="field">
+              <label for="setSimilarityThreshold">相似度阈值（0–100）</label>
+              <input id="setSimilarityThreshold" type="number" inputmode="numeric" min="0" max="100" step="1" value="85">
+              <p class="field-error" id="setSimilarityThresholdError" role="alert" hidden></p>
+            </div>
+            <div class="field">
+              <label for="setSimilarityConcurrency">相似特征并发数（1–4）</label>
+              <input id="setSimilarityConcurrency" type="number" inputmode="numeric" min="1" max="4" step="1" value="2">
+              <p class="field-error" id="setSimilarityConcurrencyError" role="alert" hidden></p>
+            </div>
+            <div class="field">
+              <label for="setSimilarityMaxMb">单文件相似上限（MB，1–1024）</label>
+              <input id="setSimilarityMaxMb" type="number" inputmode="numeric" min="1" max="1024" step="1" value="32">
+              <p class="field-error" id="setSimilarityMaxFileError" role="alert" hidden></p>
+            </div>
+            <div class="field">
+              <label class="check"><input id="setSimilarityCache" type="checkbox" checked>启用持久化特征缓存</label>
+              <label class="check"><input id="setSimilarityAllowBinary" type="checkbox">允许未知二进制参与相似计算（有风险）</label>
+            </div>
+            <div class="field field-wide">
+              <span class="field-label" id="setSimExtLabel">允许相似计算的默认文件类型</span>
+              <div id="setSimExtList" class="ext-chip-grid" role="group" aria-labelledby="setSimExtLabel"></div>
+              <p class="hint">取消勾选表示不默认计算该类型；全部使用推荐值时保留默认。</p>
+              <p class="field-error" id="setSimilarityExtError" role="alert" hidden></p>
+            </div>
+            <div class="field field-wide">
+              <label for="setSimilarityExcludeExt">相似计算排除后缀（可选）</label>
+              <input id="setSimilarityExcludeExt" type="text" placeholder=".pdf,.png" autocomplete="off" spellcheck="false">
+              <p class="hint">优先级高于允许列表；逗号分隔。</p>
+              <p class="field-error" id="setSimilarityExcludeExtError" role="alert" hidden></p>
+            </div>
+          </div>
+        </details>
         <p class="form-error-banner" id="settingsError" role="alert" hidden></p>
         <div class="form-actions">
           <button type="button" class="btn btn-primary" id="saveSettingsBtn">保存设置</button>
@@ -549,6 +685,6 @@
   <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.6" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M12 10.8v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="12" cy="7.6" r="1.05" fill="currentColor"/></symbol>
 </svg>
 
-<script src="./app.js?v=1.0.0-0001" defer></script>
+<script src="./app.js?v=1.1.0-0002" defer></script>
 </body>
 </html>

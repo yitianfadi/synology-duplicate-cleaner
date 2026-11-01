@@ -30,12 +30,22 @@ DEFAULT_SETTINGS = {
     "create_recycle_dir": False,
     "max_files": config.MAX_FILES_DEFAULT,
     "allow_ctime_fallback": False,
+    # --- 内容相似度模式（docs/SIMILARITY_CONTRACT.md §2）---
+    "scan_mode": "exact",
+    "similarity_threshold": 85,
+    "similarity_extensions": list(config.DEFAULT_SIMILARITY_EXTENSIONS),
+    "similarity_exclude_extensions": [],
+    "similarity_concurrency": 2,
+    "similarity_cache": True,
+    "similarity_max_file_mb": 32,
+    "similarity_allow_binary": False,
 }
 
 SETTINGS_KEYS = tuple(DEFAULT_SETTINGS)
 
 HASH_ALGOS = ("sha256", "md5")
 KEEP_MODES = ("latest", "earliest", "pinned")
+SCAN_MODES = ("exact", "similar")
 
 
 def default_settings():
@@ -100,6 +110,22 @@ def _normalize_value(key, value):
         return value
     if key == "pinned_path":
         return _check_str(key, value)
+    if key == "scan_mode":
+        if value not in SCAN_MODES:
+            _err(u"scan_mode 只能是 exact 或 similar", {"key": key})
+        return value
+    if key == "similarity_threshold":
+        return _check_int(key, value, 0, 100)
+    if key in ("similarity_extensions", "similarity_exclude_extensions"):
+        return _check_ext_list(key, value)
+    if key == "similarity_concurrency":
+        return _check_int(key, value, 1, 4)
+    if key == "similarity_cache":
+        return _check_bool(key, value)
+    if key == "similarity_max_file_mb":
+        return _check_int(key, value, 1, 1024)
+    if key == "similarity_allow_binary":
+        return _check_bool(key, value)
     if key == "skip_symlinks":
         # 无论前端传什么，符号链接一律跳过（安全强制）
         if not isinstance(value, bool):

@@ -10,7 +10,7 @@ import platform
 import re
 import urllib.parse
 
-from . import config, timeutil
+from . import config, similarity, timeutil
 from .errors import ApiError, forbidden, invalid, not_found, auth_required
 from .settings import default_settings
 
@@ -286,6 +286,8 @@ class Api(object):
                 "max_roots": config.MAX_ROOTS,
                 "max_excludes": config.MAX_EXCLUDES,
             },
+            # 相似度模式能力（docs/SIMILARITY_CONTRACT.md §3）
+            "similarity": similarity.capabilities(),
         })
 
     def _shares(self, request, session, params):
@@ -399,7 +401,8 @@ class Api(object):
             offset=_query_int(request, "offset", 0),
             limit=_query_int(request, "limit", 100),
             q=request.query_last("q", "") or "",
-            sort=request.query_last("sort", "wasted_desc") or "wasted_desc")
+            sort=request.query_last("sort", "wasted_desc") or "wasted_desc",
+            match_type=request.query_last("match_type", None) or None)
         payload = {"ok": True}
         payload.update(page)
         return json_response(payload)
