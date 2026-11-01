@@ -1,0 +1,45 @@
+#!/bin/sh
+# 本脚本由 DSM 套件框架以 root 身份调用；目标路径可由环境变量覆盖。
+PKG_NAME="DuplicateCleaner"
+PKG_DIR="${SYNOPKG_PKGDEST:-/var/packages/${PKG_NAME}/target}"
+VAR_DIR="${SYNOPKG_PKGVAR:-/var/packages/${PKG_NAME}/var}"
+
+# 检查 DSM 主版本（套件仅支持 DSM 7.x）。
+DSM_MAJOR=""
+if [ -n "${SYNOPKG_DSM_VERSION_MAJOR:-}" ]; then
+  DSM_MAJOR="$SYNOPKG_DSM_VERSION_MAJOR"
+elif [ -r /etc/VERSION ]; then
+  DSM_MAJOR=$(grep '^majorversion=' /etc/VERSION 2>/dev/null | head -n 1 | cut -d'"' -f2)
+fi
+if [ -n "$DSM_MAJOR" ] && [ "$DSM_MAJOR" != "7" ]; then
+  echo "DuplicateCleaner requires DSM 7.x (detected major=$DSM_MAJOR)." >&2
+  exit 1
+fi
+
+# DSM 7 不自带 Python 3；需先在套件中心安装官方 Python3（或等价的 Python 3.8+）。
+# 这里不强制 install_dep_packages，避免不同 DSM 版本的包 ID 差异导致无法安装，
+# 而是在安装阶段给出明确诊断。
+PYTHON=""
+for p in /usr/local/bin/python3 /usr/bin/python3 \
+         /var/packages/Python3/target/usr/local/bin/python3 \
+         /var/packages/Python3/target/bin/python3 \
+         /var/packages/python38/target/bin/python3.8 \
+         /var/packages/python311/target/bin/python3.11 \
+         /var/packages/py3k/target/usr/local/bin/python3 \
+         /var/packages/py3k/target/bin/python3 \
+         /var/packages/*/target/usr/local/bin/python3 \
+         /var/packages/*/target/bin/python3 \
+         /var/packages/*/target/bin/python3.*; do
+  if [ -x "$p" ]; then PYTHON="$p"; break; fi
+done
+if [ -z "$PYTHON" ]; then
+  echo "未找到 Python 3。请先在 DSM 套件中心安装官方 Python3 套件，再安装本套件。" >&2
+  echo "Python 3.8+ not found. Install the official Python3 package first." >&2
+  exit 1
+fi
+if ! "$PYTHON" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 8) else 1)' 2>/dev/null; then
+  echo "Python 3.8+ is required; found: $PYTHON" >&2
+  exit 1
+fi
+echo "DuplicateCleaner preinst: Python=$PYTHON"
+exit 0

@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>重复文件清理 · 正在打开</title>
+<style>
+  html,body{height:100%;margin:0}
+  body{display:flex;align-items:center;justify-content:center;background:#f3f6f8;color:#25313a;
+       font:14px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
+  .card{width:min(520px,calc(100vw - 48px));background:#fff;border:1px solid #dde5ea;border-radius:12px;
+        box-shadow:0 12px 32px rgba(20,40,60,.10);padding:28px 30px;text-align:center}
+  .spinner{width:34px;height:34px;margin:0 auto 16px;border:3px solid #d8e6ee;border-top-color:#0b7fab;
+           border-radius:50%;animation:spin .9s linear infinite}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  h1{font-size:18px;margin:0 0 8px}
+  p{margin:6px 0;color:#5c6b76}
+  a{color:#0b6e99}
+  code{background:#f0f4f7;border-radius:4px;padding:1px 5px}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="spinner" aria-hidden="true"></div>
+  <h1>正在打开“重复文件清理”</h1>
+  <p>正在跳转到本地服务 <code>__DUP_HOST__:8787</code>。若 3 秒后没有反应，请点击下面的链接。</p>
+  <p><a id="manual-link" href="#">手动打开</a></p>
+  <p style="font-size:12px;margin-top:14px">本工具仅允许 DSM 管理员登录使用。请通过局域网地址访问，勿直接暴露到公网。</p>
+</div>
+<script>
+(function () {
+  var scheme = "__DUP_BACKEND_SCHEME__";
+  if (!/^https?$/.test(scheme)) { scheme = "http"; }
+  var host = location.hostname || "localhost";
+  var target = scheme + "://" + host + ":8787/";
+  var link = document.getElementById("manual-link");
+  link.href = target;
+  // 用当前 DSM 访问主机名拼接后端地址，避免写死 NAS IP。
+  setTimeout(function () { location.replace(target); }, 60);
+})();
+</script>
+</body>
+</html>

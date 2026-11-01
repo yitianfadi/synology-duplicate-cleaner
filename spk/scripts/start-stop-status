@@ -1,0 +1,148 @@
+#!/bin/sh
+# 本脚本由 DSM 套件框架以 root 身份调用；目标路径可由环境变量覆盖。
+PKG_NAME="DuplicateCleaner"
+PKG_DIR="${SYNOPKG_PKGDEST:-/var/packages/${PKG_NAME}/target}"
+VAR_DIR="${SYNOPKG_PKGVAR:-/var/packages/${PKG_NAME}/var}"
+
+PORT="8787"
+PID_FILE="$VAR_DIR/backend.pid"
+LOG_DIR="$VAR_DIR/log"
+LOG_FILE="$LOG_DIR/backend.log"
+# 可选 TLS：在 $VAR_DIR/tls.env 中设置
+#   DUP_TLS_CERT=/path/fullchain.pem
+#   DUP_TLS_KEY=/path/privkey.pem
+# 启用后请用 python build/build_spk.py --scheme https 重新打包桌面入口。
+TLS_ARGS=""
+SCHEME="http"
+if [ -r "$VAR_DIR/tls.env" ]; then
+  . "$VAR_DIR/tls.env"
+  if [ -n "${DUP_TLS_CERT:-}" ] && [ -n "${DUP_TLS_KEY:-}" ] && [ -r "$DUP_TLS_CERT" ] && [ -r "$DUP_TLS_KEY" ]; then
+    TLS_ARGS="--tls-cert $DUP_TLS_CERT --tls-key $DUP_TLS_KEY"
+    SCHEME="https"
+  fi
+fi
+PYTHON=""
+for p in /usr/local/bin/python3 /usr/bin/python3 \
+         /var/packages/Python3/target/usr/local/bin/python3 \
+         /var/packages/Python3/target/bin/python3 \
+         /var/packages/python38/target/bin/python3.8 \
+         /var/packages/python311/target/bin/python3.11 \
+         /var/packages/py3k/target/usr/local/bin/python3 \
+         /var/packages/py3k/target/bin/python3 \
+         /var/packages/*/target/usr/local/bin/python3 \
+         /var/packages/*/target/bin/python3 \
+         /var/packages/*/target/bin/python3.*; do
+  if [ -x "$p" ]; then PYTHON="$p"; break; fi
+done
+
+is_running() {
+  [ -r "$PID_FILE" ] || return 1
+  _pid=$(cat "$PID_FILE" 2>/dev/null)
+  [ -n "$_pid" ] || return 1
+  kill -0 "$_pid" 2>/dev/null || return 1
+  # 防止 PID 复用：确认命令行仍是本套件的 app.py。
+  if [ -r "/proc/$_pid/cmdline" ]; then
+    tr '\000' ' ' < "/proc/$_pid/cmdline" 2>/dev/null | grep -q "$PKG_DIR/app/app.py" || return 1
+  fi
+  return 0
+}
+
+find_orphan_pids() {
+  # 兼容 pid 文件丢失（例如异常重启）时停止残留服务；不使用 pkill 以免误伤。
+  for p in /proc/[0-9]*; do
+    [ -r "$p/cmdline" ] || continue
+    if tr '\000' ' ' < "$p/cmdline" 2>/dev/null | grep -q "$PKG_DIR/app/app.py"; then
+      echo "${p#/proc/}"
+    fi
+  done
+}
+
+start_service() {
+  if is_running; then
+    echo "DuplicateCleaner is already running."
+    return 0
+  fi
+  if [ -z "$PYTHON" ]; then
+    echo "Python 3 not found; cannot start DuplicateCleaner." >&2
+    return 1
+  fi
+  mkdir -p "$LOG_DIR" "$VAR_DIR" 2>/dev/null
+  chmod 700 "$VAR_DIR" "$LOG_DIR" 2>/dev/null
+  # 明确隔离开发模式，生产环境绝不允许跳过 DSM 登录。
+  unset DUP_CLEANER_DEV DUP_DEV_ROOTS DUP_DEV_PASSWORD
+  ulimit -n 65536 2>/dev/null || true
+  cd "$PKG_DIR" || return 1
+  # 低优先级启动：nice 让出 CPU，ionice 让出磁盘 IO，避免影响 DSM 其他服务。
+  if command -v ionice >/dev/null 2>&1; then
+    nohup ionice -c2 -n7 nice -n 10 "$PYTHON" "$PKG_DIR/app/app.py" \
+      --host 0.0.0.0 --port "$PORT" --data-dir "$VAR_DIR" --web-dir "$PKG_DIR/web" $TLS_ARGS \
+      >> "$LOG_FILE" 2>&1 < /dev/null &
+  else
+    nohup nice -n 10 "$PYTHON" "$PKG_DIR/app/app.py" \
+      --host 0.0.0.0 --port "$PORT" --data-dir "$VAR_DIR" --web-dir "$PKG_DIR/web" $TLS_ARGS \
+      >> "$LOG_FILE" 2>&1 < /dev/null &
+  fi
+  echo $! > "$PID_FILE"
+  # 等待健康检查通过（最多 15 秒），失败时返回错误并保留日志。
+  _i=0
+  while [ "$_i" -lt 30 ]; do
+    if "$PYTHON" - "$PORT" "$SCHEME" <<'PY' >/dev/null 2>&1
+import ssl, sys, urllib.request
+scheme, port = sys.argv[2], sys.argv[1]
+url = "%s://127.0.0.1:%s/api/healthz" % (scheme, port)
+ctx = ssl._create_unverified_context() if scheme == "https" else None
+try:
+    urllib.request.urlopen(url, timeout=1, context=ctx).read()
+except Exception:
+    raise SystemExit(1)
+PY
+    then
+      echo "DuplicateCleaner started on port $PORT (pid $(cat "$PID_FILE"))."
+      return 0
+    fi
+    _i=$((_i + 1))
+    sleep 0.5
+  done
+  echo "DuplicateCleaner failed to become healthy; see $LOG_FILE" >&2
+  tail -n 40 "$LOG_FILE" 2>/dev/null >&2
+  return 1
+}
+
+stop_service() {
+  _stopped=0
+  if is_running; then
+    _pid=$(cat "$PID_FILE" 2>/dev/null)
+    kill -TERM "$_pid" 2>/dev/null
+    _i=0
+    while [ "$_i" -lt 40 ]; do
+      kill -0 "$_pid" 2>/dev/null || { _stopped=1; break; }
+      sleep 0.5
+      _i=$((_i + 1))
+    done
+    if [ "$_stopped" != "1" ]; then
+      kill -KILL "$_pid" 2>/dev/null
+      _stopped=1
+    fi
+  fi
+  for _pid in $(find_orphan_pids); do
+    kill -TERM "$_pid" 2>/dev/null
+    _stopped=1
+  done
+  rm -f "$PID_FILE" 2>/dev/null
+  echo "DuplicateCleaner stopped."
+  return 0
+}
+
+case "$1" in
+  start) start_service ;;
+  stop) stop_service ;;
+  restart) stop_service; start_service ;;
+  status)
+    if is_running; then echo "DuplicateCleaner is running."; exit 0; else echo "DuplicateCleaner is stopped."; exit 1; fi
+    ;;
+  prestart|prestop) exit 0 ;;
+  *)
+    echo "Usage: $0 {start|stop|restart|status}" >&2
+    exit 1
+    ;;
+esac

@@ -1,0 +1,490 @@
+{
+  "generated_at": "2026-11-01T20:47:02+0800",
+  "summary": {
+    "PASS": 77,
+    "FAIL": 0,
+    "UNVERIFIED": 0
+  },
+  "results": [
+    {
+      "id": "BE-FILES",
+      "name": "后端存在入口 app.py 与 dupcleaner 包",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "BE-COMPILE",
+      "name": "全部后端 .py 通过 py_compile 语法检查",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "BE-PY38",
+      "name": "全部后端 .py 符合 Python 3.8 语法（ast feature_version=3.8）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "BE-FILE-COUNT",
+      "name": "后端 Python 文件数",
+      "status": "INFO",
+      "detail": "29"
+    },
+    {
+      "id": "BE-SRC-HYGIENE",
+      "name": "src/backend 不含调试脚本/测试输出等会被打包的临时文件",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "BE-TESTFILES",
+      "name": "存在后端 unittest 测试文件",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "BE-UNITTEST",
+      "name": "后端 unittest 全部通过",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "BE-UNITTEST-LOG",
+      "name": "unittest 结果",
+      "status": "INFO",
+      "detail": "Ran 109 tests in 9.072s"
+    },
+    {
+      "id": "BE-NO-AUTODELETE",
+      "name": "scanner.py 中没有任何删除/移动文件的调用",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "BE-SCAN-AUDIT",
+      "name": "scanner 写入 scan 日志与审计（scan_start/scan_end）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "BE-STATX",
+      "name": "timeutil 使用 statx btime，含 x86_64=332 / aarch64=291",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "BE-CTIME",
+      "name": "st_ctime 仅在 allow_ctime_fallback 分支使用（不静默冒充创建时间）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "BE-DELETE-SAFETY",
+      "name": "删除模块含 #recycle/@duplicate-cleaner、confirm=DELETE、永久删除短语、revalidate",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "BE-DELETE-CONFIRM",
+      "name": "start_delete 精确校验 confirm == DELETE",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "BE-DELETE-PHRASE",
+      "name": "永久删除校验 REQUIRED_PERMANENT_PHRASE",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "BE-ROUTES",
+      "name": "后端路由覆盖契约端点",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "BE-STDLIB",
+      "name": "后端仅使用 Python 标准库（无第三方运行依赖）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "FE-FILES",
+      "name": "前端 index.html/app.js/styles.css 存在",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "FE-NODECHECK",
+      "name": "node --check src/web/app.js 语法通过",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "FE-RISK-TEXT",
+      "name": "风险提示文案与契约逐字一致（index.html）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "FE-RISK-PERSISTENT",
+      "name": "风险提示无关闭按钮/无隐藏逻辑（顶部常驻）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "FE-ENDPOINTS",
+      "name": "前端覆盖契约全部 API 端点",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "FE-DELETE-FLOW",
+      "name": "删除流程先 delete-plan 再 delete（两步）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "FE-CONFIRM-1",
+      "name": "存在第一次删除清单确认文案/弹窗",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "FE-CONFIRM-2",
+      "name": "存在第二次最终确认文案与永久删除短语输入",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "FE-RECYCLE",
+      "name": "前端提供回收站/永久删除选项",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "FE-NO-AUTODELETE",
+      "name": "前端不存在定时/自动删除调用",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "FE-DOUBLE-SUBMIT",
+      "name": "删除请求有防重复提交（按钮禁用/标志位）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "FE-CREATED-SOURCE",
+      "name": "结果行显示创建时间来源（created_source/SOURCE_INFO）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "FE-HASH-COPY",
+      "name": "结果行支持复制完整哈希",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "FE-PAGINATION",
+      "name": "结果列表分页/加载更多（offset/limit）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "FE-PREVIEW-TYPES",
+      "name": "预览覆盖图片/文本/PDF/音视频",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "FE-SETTINGS-KEYS",
+      "name": "设置页覆盖契约全部设置键",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "FE-ES2019",
+      "name": "未使用 ES2020+ 语法/API（兼容 DSM 内置浏览器）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "FE-NO-CDN",
+      "name": "无第三方 CDN / 外部脚本样式引用",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "FE-INNERHTML",
+      "name": "app.js innerHTML 使用次数（需人工确认不含不可信数据）",
+      "status": "INFO",
+      "detail": "0"
+    },
+    {
+      "id": "FE-TEXTCONTENT",
+      "name": "使用 textContent/createTextNode 输出不可信文本（避免 innerHTML 注入）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "FE-CHINESE",
+      "name": "前端存在中文界面文案（抽查扫描/历史/日志/设置）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "FE-NAV",
+      "name": "顶部导航包含 扫描/历史记录/操作日志/设置",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "FE-FOLDER-PICKER",
+      "name": "文件夹选择器调用 /api/browse 并支持多选/排除",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "FE-KEEP-HIGHLIGHT",
+      "name": "结果页保留项高亮/徽标",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "FE-PREVIEW",
+      "name": "结果页预览使用 /api/preview",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "FE-CSV",
+      "name": "结果页导出 CSV",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "FE-SELECT-ALL",
+      "name": "支持全选待删除副本/清空选择",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "FE-PROGRESS",
+      "name": "扫描进度真实轮询 /api/scans/{id}",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SPK-INFO-REQ",
+      "name": "SPK/INFO 包含必需字段",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SPK-INFO-VALUES",
+      "name": "INFO 字段值符合契约（1.0.0-0001 / DSM7 / noarch / 8787 / ui）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SPK-INFO-CHECKSUM-SRC",
+      "name": "源码 INFO 的 checksum 由构建脚本注入（源码可无）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SPK-CONF-JSON",
+      "name": "conf/privilege 与 conf/resource 为合法 JSON",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SPK-PRIVILEGE",
+      "name": "conf/privilege 声明 run-as=root",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SPK-PORT",
+      "name": "port_conf 注册 8787/tcp",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SPK-UI-CONFIG-JSON",
+      "name": "SPK ui/config 为合法 JSON 且包含桌面入口",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SPK-UI-PLACEHOLDERS",
+      "name": "SPK ui/index.html 含构建占位符 __DUP_BACKEND_SCHEME__/__DUP_HOST__",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SPK-UI-CONFIG",
+      "name": "SPK ui/config 桌面入口指向 3rdparty/DuplicateCleaner/index.html",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SPK-SCRIPTS",
+      "name": "SPK 生命周期脚本齐全",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SPK-NO-DEV",
+      "name": "生产启动脚本明确 unset DUP_CLEANER_DEV/DUP_DEV_ROOTS/DUP_DEV_PASSWORD",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SPK-NO-DEV-SET",
+      "name": "SPK 源码中没有任何开启 dev 模式的赋值",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SPK-NICE",
+      "name": "启动脚本使用 nice/ionice 降低资源占用",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SPK-HEALTH",
+      "name": "启动脚本等待 /api/healthz 健康检查",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SPK-PY-DETECT",
+      "name": "preinst 检测 Python3 且要求 3.8+",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SPK-KEEP-VAR",
+      "name": "卸载脚本不删除 var/（审计日志持久化）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SPK-SHEBANG",
+      "name": "生命周期脚本 shebang 为 #!/bin/sh（DSM 兼容）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SPK-POSTINST",
+      "name": "postinst 创建 var 目录并保留日志",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SPK-SH-SYNTAX-SRC",
+      "name": "shell 脚本 bash -n 语法检查通过",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SPK-DIST",
+      "name": "构建产物存在",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SPK-TAR-OUTER",
+      "name": "SPK 外层 tar 结构完整",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SPK-CHECKSUM",
+      "name": "INFO.checksum 与 package.tgz MD5 一致",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SPK-SCRIPT-MODE",
+      "name": "SPK 内 scripts 全部为可执行（755）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SPK-SHA256",
+      "name": ".spk.sha256 与实际 SHA256 一致",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SPK-PKG-STRUCT",
+      "name": "package.tgz 含 app/web/ui/port_conf/VERSION",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SPK-PKG-CLEAN",
+      "name": "package.tgz 不含 tests/__pycache__/pyc/调试/测试输出文件",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SPK-PKG-WHITELIST",
+      "name": "package.tgz 内容符合白名单（app 仅 .py，无临时/输出文件）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SPK-PKG-UI-PLACEHOLDER",
+      "name": "打包后 ui/index.html 占位符已被替换",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SPK-PKG-RISK",
+      "name": "打包后 web/index.html 仍含精确风险提示",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SPK-PKG-WEB",
+      "name": "package.tgz 含完整前端文件",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SPK-SYNC",
+      "name": "SPK 产物与当前源码一致（构建后未再修改源码）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SPK-DEV-ENV",
+      "name": "打包内容中不含 DUP_CLEANER_DEV=1 生产开启",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SPK-APP-MODE",
+      "name": "package.tgz 内 app/app.py 可执行",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SPK-SH-SYNTAX",
+      "name": "shell 脚本 bash -n 语法检查通过",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SPK-SH-LF",
+      "name": "SPK 脚本为 LF 换行（DSM shell 兼容）",
+      "status": "PASS",
+      "detail": ""
+    }
+  ]
+}

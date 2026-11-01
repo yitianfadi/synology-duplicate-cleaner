@@ -25,7 +25,7 @@ dist/                   构建产物 .spk（不入库也不提交给用户以外
 
 ## 2. 服务与部署
 
-- 后端监听 `0.0.0.0:8787`（可用 `--port` 改），同时提供静态 UI 与 REST API，同源，无 CORS。
+- 后端默认监听 `127.0.0.1:8787`（开发/反代友好；SPK 的 `start-stop-status` 显式传 `--host 0.0.0.0`），可用 `--port` 改；同时提供静态 UI 与 REST API，同源，无 CORS。
 - DSM 套件桌面入口 `ui/index.html` 负责跳转到
   `http://<当前DSM主机名>:8787/`（若后端 TLS 启用则 https），避免 DSM HTTPS 页面内混合内容。
 - 数据目录：环境变量 `DUP_DATA_DIR`，SPK 内为 `/var/packages/DuplicateCleaner/var`；开发时默认 `./data`。
@@ -232,15 +232,20 @@ Content-Disposition: attachment; filename="duplicate-scan-<id>.csv"
 ### POST /api/scans/{scan_id}/delete-plan
 请求（二选一）：
 ```json
-{"scope": "all_duplicates", "exclude_file_ids": [], "include_manual_groups": false,
- "recycle": true}
+{"scope": "all_duplicates", "exclude_file_ids": [], "recycle": true}
 ```
 或
 ```json
 {"file_ids": ["f-1","f-2"], "recycle": true}
 ```
 - 服务端必须重新校验：文件仍存在、仍非保留项、未被修改、与保留文件哈希一致、在允许路径内。
+  候选总量 ≤512 MB 时 plan 阶段立即重哈希；超过预算时哈希复核推迟到删除任务中逐文件执行，
+  但删除前始终会重新哈希候选和保留文件。
 - 任何无法校验的组/文件进入 `skipped`，绝不静默删除。
+- **v1 不支持 `include_manual_groups`**：`needs_manual_keep=true` 的组一律跳过，并在 `skipped` 中说明
+  `MANUAL_KEEP_REQUIRED`；`include_manual_groups=true` 返回 `INVALID_ARGUMENT`。
+  原因是创建时间不可靠时，用户认为的保留项可能与服务端 `keep_file_id` 不同，允许删除有误删风险。
+- `plan.count` / `plan.bytes` 只统计最终进入计划且通过校验的文件；`skipped` 不计入。
 - 返回 200：
 ```json
 {"ok": true, "plan": {
@@ -251,6 +256,10 @@ Content-Disposition: attachment; filename="duplicate-scan-<id>.csv"
 }}
 ```
 - plan 只对创建它的会话有效，5 分钟过期，一次性；服务端保存完整待删列表和校验快照。
+- 响应明细数组有上限（内存保护）：`files` 最多 5000 条（`files_total/files_truncated`），
+  `skipped` 最多 2000 条（`skipped_total/skipped_truncated`）；前端用总数展示。
+- 若所有候选都因回收站不可用被跳过，接口返回 **409 `RECYCLE_UNAVAILABLE`**，
+  `details.recycle_unavailable` 列出共享文件夹；前端提示用户启用回收站或改用永久删除，绝不静默降级。
 
 ### POST /api/scans/{scan_id}/delete
 请求：

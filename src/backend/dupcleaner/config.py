@@ -1,0 +1,141 @@
+# -*- coding: utf-8 -*-
+"""运行期配置、安全常量与路径黑名单。"""
+
+from __future__ import absolute_import
+
+import os
+import re
+
+APP_NAME = "DuplicateCleaner"
+APP_VERSION = "1.0.0-0001"
+DISPLAY_NAME = "重复文件清理"
+SPK_VERSION = "1.0.0-0001"
+
+DEFAULT_HOST = "127.0.0.1"
+DEFAULT_PORT = 8787
+
+SESSION_COOKIE = "dc_session"
+SESSION_TTL_SECONDS = 28800
+PLAN_TTL_SECONDS = 300
+REQUIRED_PERMANENT_PHRASE = u"永久删除"
+
+HASH_CHUNK_SIZE = 1024 * 1024
+MAX_BODY_BYTES = 4 * 1024 * 1024
+MAX_ROOTS = 20
+MAX_EXCLUDES = 200
+MAX_FILES_LIMIT = 1000000
+MAX_FILES_DEFAULT = 500000
+
+# 单次计划响应里 files 明细上限（过大响应会拖垮前端；计划本身按文件流式落盘）。
+PLAN_FILES_RESPONSE_LIMIT = 5000
+# 删除任务在内存里保留的结果条数上限，超出部分只在 JSONL 日志里。
+JOB_RESULTS_MEMORY_LIMIT = 5000
+
+# 计划阶段做“候选+保留文件全量哈希复核”的总字节预算；超出则把哈希复核
+# 推迟到后台删除任务中逐文件执行（删除任务始终会复核全量哈希）。
+PLAN_HASH_VERIFY_BUDGET_BYTES = 512 * 1024 * 1024
+
+# 系统 / 隐藏目录名：任何一层路径出现都必须拒绝（回收站目标除外）。
+SYSTEM_DIR_NAMES = frozenset([
+    "@eaDir", "@tmp", "@appstore", "@docker", "@synologydrive", "@database",
+    "@surveillance", "@guest", "@log", "@download", "@ups", "@mailplus", "@S2S",
+    "@autoupdate", "@iSCSI", "@smallfiles", "@sharebin", "@appdata", "@webapi",
+    "@spool", "@sync", "@cloudstation", "@server", "@pgsql", "@mariadb", "@mysql",
+    "@synocore", "@user", "@sys", "@web", "@nfs", "@samba", "@recycle",
+    "@thumbnails", "@photos", "@tmpfiles", "@index", "@search", "@convert",
+    "#recycle", "#snapshot", "#surveillance", "#usb", "#video", "#music",
+    "#photo", "#download", "#home", "#homes", "#docker", "#recyclebin",
+    ".SynoFSFolder", ".synofolder", "lost+found",
+    # Windows/常见系统文件（扫描时同样视为系统文件，永久跳过）
+    "Thumbs.db", "thumbs.db", "ehthumbs.db", "desktop.ini", "Desktop.ini",
+    "iconcache.db", "IconCache.db", "$RECYCLE.BIN", "System Volume Information",
+])
+SYSTEM_NAME_PREFIXES = ("@", "#")
+
+# POSIX 系统目录（绝对前缀），任何情况下都不允许浏览/扫描/删除。
+POSIX_BLOCKED_PREFIXES = (
+    "/etc", "/usr", "/var", "/root", "/bin", "/sbin", "/lib", "/lib64",
+    "/boot", "/proc", "/sys", "/dev", "/opt", "/tmp", "/run", "/srv",
+    "/mnt", "/media", "/home", "/snap", "/lost+found",
+)
+
+# Windows 系统目录（小写、规范化后比较），仅用于开发/测试环境的额外防线。
+WINDOWS_BLOCKED_PREFIXES = (
+    "c:\\windows", "c:\\program files", "c:\\program files (x86)",
+    "c:\\programdata", "c:\\$recycle.bin", "c:\\system volume information",
+    "c:\\recovery", "c:\\boot", "c:\\perflogs",
+)
+
+VOLUME_ROOT_RE = re.compile(r"^/volume(?:usb)?\d+$", re.IGNORECASE)
+VOLUME_RE = re.compile(r"^/volume(?:usb)?\d+(?:/|$)", re.IGNORECASE)
+SAFE_ID_RE = re.compile(r"^[A-Za-z0-9._-]+$")
+SAFE_LOG_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,120}\.(?:log|jsonl|csv|txt)$")
+SCAN_ID_RE = re.compile(r"^[0-9]{8}-[0-9]{6}-[0-9a-f]{6}$")
+PLAN_ID_RE = re.compile(r"^plan-[A-Za-z0-9._-]{6,80}$")
+JOB_ID_RE = re.compile(r"^del-[A-Za-z0-9._-]{6,80}$")
+
+
+def default_web_dir():
+    """默认静态资源目录：<repo>/src/web（app.py 位于 <repo>/src/backend）。"""
+    here = os.path.dirname(os.path.abspath(__file__))
+    return os.path.normpath(os.path.join(here, os.pardir, os.pardir, "web"))
+
+
+class RuntimeConfig(object):
+    """进程级运行配置。dev 模式只能由环境变量 / 显式参数开启。"""
+
+    def __init__(self, data_dir=None, web_dir=None, dev_mode=None, dev_roots=None,
+                 dev_password=None, tls_cert=None, tls_key=None, host=None,
+                 port=None, environ=None, admin_users=None):
+        env = os.environ if environ is None else environ
+        self.data_dir = os.path.abspath(
+            data_dir or env.get("DUP_DATA_DIR") or os.path.join(os.getcwd(), "data"))
+        self.web_dir = os.path.abspath(web_dir or default_web_dir())
+
+        if dev_mode is None:
+            dev_mode = str(env.get("DUP_CLEANER_DEV", "")).strip().lower() in (
+                "1", "true", "yes", "on")
+        self.dev_mode = bool(dev_mode)
+
+        if dev_roots is None:
+            raw = env.get("DUP_DEV_ROOTS", "") or ""
+            dev_roots = [p for p in raw.split(";") if p.strip()]
+        roots = []
+        for item in dev_roots or []:
+            item = str(item).strip()
+            if not item:
+                continue
+            roots.append(os.path.abspath(os.path.expanduser(item)))
+        self.dev_roots = roots
+
+        if dev_password is None:
+            dev_password = env.get("DUP_DEV_PASSWORD") or "admin"
+        self.dev_password = dev_password
+
+        if admin_users is None:
+            raw_admin = env.get("DUP_ADMIN_USERS", "") or ""
+            admin_users = [item.strip() for item in raw_admin.split(",") if item.strip()]
+        self.admin_users = [str(item) for item in admin_users]
+
+        self.tls_cert = tls_cert or None
+        self.tls_key = tls_key or None
+        self.host = host or DEFAULT_HOST
+        self.port = int(port if port is not None else DEFAULT_PORT)
+
+    @property
+    def tls_enabled(self):
+        return bool(self.tls_cert and self.tls_key)
+
+    @property
+    def scheme(self):
+        return "https" if self.tls_enabled else "http"
+
+    def __repr__(self):
+        return "RuntimeConfig(data_dir=%r, web_dir=%r, dev_mode=%r, dev_roots=%r)" % (
+            self.data_dir, self.web_dir, self.dev_mode, self.dev_roots)
+
+
+def is_dev_mode(environ=None):
+    env = os.environ if environ is None else environ
+    return str(env.get("DUP_CLEANER_DEV", "")).strip().lower() in (
+        "1", "true", "yes", "on")

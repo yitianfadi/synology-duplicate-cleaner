@@ -1,0 +1,9 @@
+#!/bin/sh
+# 本脚本由 DSM 套件框架以 root 身份调用；目标路径可由环境变量覆盖。
+PKG_NAME="DuplicateCleaner"
+PKG_DIR="${SYNOPKG_PKGDEST:-/var/packages/${PKG_NAME}/target}"
+VAR_DIR="${SYNOPKG_PKGVAR:-/var/packages/${PKG_NAME}/var}"
+
+# DSM 在卸载前会停止套件；这里只做最后检查，不删除用户数据。
+echo "DuplicateCleaner preuninst: keeping data/logs at $VAR_DIR (manual removal only)."
+exit 0

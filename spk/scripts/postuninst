@@ -1,0 +1,11 @@
+#!/bin/sh
+# 本脚本由 DSM 套件框架以 root 身份调用；目标路径可由环境变量覆盖。
+PKG_NAME="DuplicateCleaner"
+PKG_DIR="${SYNOPKG_PKGDEST:-/var/packages/${PKG_NAME}/target}"
+VAR_DIR="${SYNOPKG_PKGVAR:-/var/packages/${PKG_NAME}/var}"
+
+# 为满足“日志持久化”，卸载时默认保留 $VAR_DIR（含扫描报告与操作日志）。
+# 如需彻底清除，请在确认不需要审计记录后手动删除该目录。
+rm -f "$VAR_DIR/backend.pid" 2>/dev/null
+echo "DuplicateCleaner postuninst: data retained at $VAR_DIR"
+exit 0

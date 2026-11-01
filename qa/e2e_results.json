@@ -1,0 +1,780 @@
+{
+  "generated_at": "2026-11-01T20:47:22+0800",
+  "python": "3.12.9 | packaged by Anaconda, Inc. | (main, Feb  6 2025, 18:49:16) [MSC v.1929 64 bit (AMD64)]",
+  "repo": "D:\\code\\zhouyi\\qunhui",
+  "summary": {
+    "PASS": 112,
+    "FAIL": 0,
+    "UNVERIFIED": 1
+  },
+  "evidence": {
+    "fixture_files": 46,
+    "python": "3.12.9",
+    "birthtime_supported": true,
+    "backend_port": 3826,
+    "csrf_token_len": 43,
+    "meta": {
+      "ok": true,
+      "app_version": "1.0.0-0001",
+      "dsm_version": "dev",
+      "python_version": "3.12.9",
+      "creation_time_supported": true,
+      "statx_supported": false,
+      "platform": "AMD64",
+      "dev_mode": true,
+      "defaults": {
+        "hash_algo": "sha256",
+        "keep_mode": "latest",
+        "pinned_path": "",
+        "skip_empty": true,
+        "skip_hidden": true,
+        "skip_symlinks": true,
+        "include_extensions": [],
+        "exclude_extensions": [],
+        "ignore_case_ext": true,
+        "min_size_bytes": 0,
+        "max_size_bytes": 0,
+        "quick_sample_kb": 64,
+        "concurrency": 2,
+        "hash_rate_mbps": 0,
+        "recycle_default": true,
+        "create_recycle_dir": false,
+        "max_files": 500000,
+        "allow_ctime_fallback": false
+      },
+      "limits": {
+        "max_files": 500000,
+        "max_roots": 20,
+        "max_excludes": 200
+      }
+    },
+    "main_scan_id": "20261101-204715-946fa3",
+    "main_scan_final": "completed",
+    "main_stats": {
+      "files_seen": 38,
+      "dirs_scanned": 18,
+      "files_scanned": 33,
+      "candidate_files": 29,
+      "groups": 12,
+      "duplicate_groups": 12,
+      "duplicate_files": 27,
+      "reclaimable_bytes": 4403200,
+      "selectable_duplicate_files": 15,
+      "selectable_reclaimable_bytes": 4403200,
+      "bytes_hashed": 8753152,
+      "bytes_per_sec": 256061854,
+      "errors": 0,
+      "skipped": {
+        "symlink": 0,
+        "hidden": 2,
+        "empty": 2,
+        "extension": 0,
+        "size": 0,
+        "hardlink": 1,
+        "excluded": 4,
+        "permission": 0,
+        "other": 0
+      }
+    },
+    "main_groups_total": 12,
+    "recycle_plan": {
+      "plan_id": "plan-88ee11947f46a3f0",
+      "count": 2,
+      "bytes": 40960,
+      "groups_affected": 1
+    },
+    "recycle_job": {
+      "job_id": "del-20261101-204715-692405",
+      "status": "completed",
+      "done": 2,
+      "failed": 0,
+      "bytes_done": 40960
+    }
+  },
+  "results": [
+    {
+      "id": "AUTH-01",
+      "name": "未登录 /api/meta 返回 401 AUTH_REQUIRED",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "AUTH-02",
+      "name": "错误密码登录返回 401 AUTH_FAILED",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "AUTH-03",
+      "name": "admin/admin dev 登录成功并返回 csrf_token",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "AUTH-04",
+      "name": "登录后 /api/auth/me 返回当前管理员",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "AUTH-05",
+      "name": "非 GET 请求缺少 X-CSRF-Token 返回 403 CSRF_FAILED",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "META-01",
+      "name": "/api/meta 返回 dev_mode/creation_time_supported/版本/限制",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SHARES-01",
+      "name": "/api/shares 返回两个 dev 共享根",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "BROWSE-01",
+      "name": "空 path 浏览返回共享根列表",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "BROWSE-02",
+      "name": "目录浏览标记 @eaDir 等系统目录 excluded 且不返回文件",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "BROWSE-03",
+      "name": "include_files=true 返回文件元数据（size/created_at/modified_at）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "BROWSE-04",
+      "name": "浏览隐藏路径被拒绝",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "BROWSE-05",
+      "name": "浏览共享根之外路径被拒绝",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "STATIC-01",
+      "name": "静态首页包含精确风险提示文案",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "STATIC-02",
+      "name": "静态 app.js 可访问且非空",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SET-01",
+      "name": "GET /api/settings 返回契约默认键",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SET-02",
+      "name": "PUT /api/settings 可保存 concurrency=3",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SET-03",
+      "name": "未知设置键返回 INVALID_ARGUMENT",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SET-04",
+      "name": "concurrency 越界（9）被拒绝",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SET-05",
+      "name": "min_size_bytes > max_size_bytes 被拒绝",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SET-06",
+      "name": "quick_sample_kb 越界（2）被拒绝",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SET-07",
+      "name": "skip_symlinks=false 被后端强制为 true",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SEC-01",
+      "name": "扫描共享根之外目录被拒绝",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SEC-02",
+      "name": "扫描 Windows 系统目录被拒绝",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SEC-03",
+      "name": "roots 为空被拒绝",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SEC-04",
+      "name": "exclude 不在 root 内被拒绝",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SEC-05",
+      "name": "预览共享根之外文件被拒绝",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SEC-06",
+      "name": "预览目录被拒绝（4xx，不返回目录内容）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SEC-08",
+      "name": "preview 路径穿越（..）被拒绝",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SEC-07",
+      "name": "日志下载路径穿越被拒绝",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SCAN-01",
+      "name": "创建扫描返回 202 与 scan_id",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SCAN-02",
+      "name": "主扫描完成（status=completed, progress=1）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SCAN-03",
+      "name": "扫描阶段状态机有 enumerate/size/sample/hash/finalize/done",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "GROUP-01",
+      "name": "groups 分页 total 与拉取数量一致且 >0",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "STATS-01",
+      "name": "stats.groups/duplicate_groups/duplicate_files/reclaimable_bytes 自洽",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "STATS-02",
+      "name": "每组的 wasted_bytes = size*(count-1)",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "KEEP-01",
+      "name": "photo 组保留创建时间最晚的 photo3（latest_created）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "KEEP-02",
+      "name": "保留项时间来源为 statx/birthtime 且非 ctime",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "KEEP-03",
+      "name": "mtime 与创建时间相反时仍按创建时间保留（未用 mtime 冒充）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "GROUP-02",
+      "name": "photo 组内哈希全部一致且为 64 位 SHA256",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "REQ-HASH-ONLY",
+      "name": "同内容不同文件名归入同一重复组",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "HASH-01",
+      "name": "大小相同但内容不同的文件不成组",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "BROWSE-MULTIROOT",
+      "name": "跨两个共享根的重复文件进入同一组，保留较晚创建的 crossA",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "EXCLUDE-01",
+      "name": "excludes 目录内的文件未进入扫描结果",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "EXCLUDE-02",
+      "name": "excludes 命中计数（stats.skipped.excluded）>0",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SKIP-01",
+      "name": "系统目录（@eaDir/#snapshot/#recycle）内容未被扫描",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SKIP-02",
+      "name": "隐藏文件被跳过（skipped.hidden>=2）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SKIP-03",
+      "name": "空文件被跳过（skipped.empty>=2）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SKIP-04",
+      "name": "符号链接跳过（当前环境无法创建 symlink）",
+      "status": "UNVERIFIED",
+      "detail": "os.symlink failed: [WinError 1314] 客户端没有所需的特权。: 'C:\\\\Users\\\\zhouyi\\\\AppData\\\\Local\\\\Temp\\\\dupqa-n8z87a5u\\\\qa-share-a\\\\dup' -> 'C:\\\\Users\\\\zhouyi\\\\AppData\\\\Local\\\\Temp\\\\dupqa-n8z87a5u\\\\qa-share-a\\\\link_to_dup'"
+    },
+    {
+      "id": "HARDLINK-01",
+      "name": "硬链接只保留一个路径参与判重，wasted 不虚高",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SCAN-BIG",
+      "name": "4MB 大文件经快速指纹+全量哈希成组",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "GROUP-03",
+      "name": "安全组内非保留项 default_selected=true，保留项 false",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "GROUP-04",
+      "name": "文件行包含契约字段（file_id/path/size/hash/created_ts/source/mtime_ns）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "GROUP-05",
+      "name": "所有组 needs_manual_keep=false（创建时间均可区分）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "GROUP-06",
+      "name": "groups 支持 limit 与 sort=size_desc 排序",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "GROUP-07",
+      "name": "groups offset/limit 分页返回不同组",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "GROUP-08",
+      "name": "groups 支持 q 搜索",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SAFETY-01",
+      "name": "扫描完成后未发生任何自动/静默删除",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "CSV-01",
+      "name": "CSV 返回 200/text-csv/UTF-8 BOM",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "CSV-02",
+      "name": "CSV Content-Disposition 文件名正确",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "CSV-03",
+      "name": "CSV 表头与契约列完全一致",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "CSV-04",
+      "name": "CSV 行数覆盖全部重复文件",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "CSV-05",
+      "name": "CSV 保留行标记保留且时间来源为 statx/birthtime",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "PREVIEW-01",
+      "name": "图片预览 200 且 content-type=image/png",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "PREVIEW-02",
+      "name": "文本预览 200 且内容正确",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "PREVIEW-03",
+      "name": "媒体预览支持 Range 返回 206",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "PREVIEW-03T",
+      "name": "文本预览支持 Range（契约 §8 字面要求）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "PREVIEW-04",
+      "name": "大于 1MB 文本预览被截断并标记 X-Preview-Truncated",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "PREVIEW-05",
+      "name": "不支持预览的类型返回 415 PREVIEW_UNSUPPORTED",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "PREVIEW-06",
+      "name": "preview 未登录返回 401 AUTH_REQUIRED",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "LOGS-01",
+      "name": "/api/logs 返回 scan 日志与 audit 事件",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "LOGS-02",
+      "name": "audit 包含 scan_start / scan_end",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "LOGS-03",
+      "name": "日志下载返回内容且包含 scan_id",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "DEL-01",
+      "name": "尝试删除保留项被拒绝并标记 IS_KEEPER",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "DEL-02",
+      "name": "删除保留项后文件仍然存在",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "DEL-03",
+      "name": "扫描后被修改的文件进入 skipped 且不被删除",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "DEL-04",
+      "name": "回收站删除计划包含 2 个副本、字节数与过期时间",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "DEL-05",
+      "name": "缺少 confirm=DELETE 被拒绝",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "DEL-06",
+      "name": "confirm 非精确 DELETE 被拒绝",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "DEL-07",
+      "name": "确认后返回 202 与后台任务 job_id",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "DEL-08",
+      "name": "回收站删除任务完成且逐文件结果为 recycled",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "DEL-09",
+      "name": "副本原路径已不存在，保留项仍存在",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "DEL-10",
+      "name": "文件移动到 <share>/#recycle/@duplicate-cleaner/<ts>/<relpath>",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "DEL-11",
+      "name": "删除计划一次性：重放已消费的 plan 被拒绝",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "DEL-12",
+      "name": "无 #recycle 的共享根：回收站计划被拒绝/跳过并列出 recycle_unavailable",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "DEL-12-NOTE",
+      "name": "契约偏差（低）：全部候选因回收站不可用被跳过时，后端返回 409 RECYCLE_UNAVAILABLE 而非契约 §7 的 200+plan(recycle_unavailable)。前端 app.js 已对 RECYCLE_UNAVAILABLE 做中文提示，功能安全。",
+      "status": "INFO",
+      "detail": ""
+    },
+    {
+      "id": "DEL-13",
+      "name": "永久删除计划创建成功（recycle=false）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "DEL-14",
+      "name": "永久删除缺少精确短语被拒绝",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "DEL-15",
+      "name": "永久删除任务完成且文件已 unlink",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "DEL-16",
+      "name": "永久删除不会在 #recycle 留下文件",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "AUDIT-01",
+      "name": "audit.jsonl 落盘并包含扫描/计划/逐文件删除事件",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "AUDIT-02",
+      "name": "deletions/*.jsonl 逐文件删除记录已持久化",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "AUDIT-03",
+      "name": "/api/logs 审计接口可见 delete 事件",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "DEL-17",
+      "name": "scope=all_duplicates 计划覆盖每个组的一个副本",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "DEL-18",
+      "name": "scope=all_duplicates 删除任务完成且保留项仍存在",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "DEL-19",
+      "name": "include_manual_groups=true 被明确拒绝",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "FILT-01",
+      "name": "keep_mode=earliest 保留最早创建的 e1，算法 md5 生效",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "FILT-02",
+      "name": "keep_mode=pinned 按指定路径保留 p2",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "FILT-03",
+      "name": "include_extensions=.jpg + ignore_case_ext=true 命中大写 .JPG",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "FILT-04",
+      "name": "include_extensions=.jpg + ignore_case_ext=false 不命中 .JPG",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "FILT-05",
+      "name": "exclude_extensions=.tmp 排除 tmp 重复组",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "FILT-06",
+      "name": "min_size_bytes 过滤后仅保留 >=2MB 的组",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "PAUSE-00",
+      "name": "创建限速扫描用于暂停/停止测试",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "PAUSE-05",
+      "name": "已停止的扫描不能 resume（INVALID_ARGUMENT）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "PAUSE-01",
+      "name": "扫描可暂停（status=paused）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "PAUSE-02",
+      "name": "扫描进行中创建新扫描返回 409 SCAN_BUSY",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "PAUSE-03",
+      "name": "扫描可继续（resume）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "PAUSE-04",
+      "name": "扫描可停止（stop -> stopped/completed）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "RESTART-01",
+      "name": "重启后扫描历史仍可列出（含主扫描）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "RESTART-02",
+      "name": "重启后主扫描报告 JSON 可读取",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "RESTART-03",
+      "name": "重启后主扫描 groups 仍可分页读取",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "RESTART-04",
+      "name": "重启后设置持久化（concurrency=3）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "RESTART-05",
+      "name": "重启后 /api/logs 仍返回持久化日志/审计",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "RESTART-06",
+      "name": "重启后删除任务历史可读取（job status）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "RESTART-07",
+      "name": "重启后 /api/healthz 正常",
+      "status": "PASS",
+      "detail": ""
+    }
+  ]
+}

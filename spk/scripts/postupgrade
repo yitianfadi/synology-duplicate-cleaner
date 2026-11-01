@@ -1,0 +1,13 @@
+#!/bin/sh
+# 本脚本由 DSM 套件框架以 root 身份调用；目标路径可由环境变量覆盖。
+PKG_NAME="DuplicateCleaner"
+PKG_DIR="${SYNOPKG_PKGDEST:-/var/packages/${PKG_NAME}/target}"
+VAR_DIR="${SYNOPKG_PKGVAR:-/var/packages/${PKG_NAME}/var}"
+
+# 升级时保留扫描报告/日志/审计记录，只补齐目录与清理缓存。
+mkdir -p "$VAR_DIR" "$VAR_DIR/log" "$VAR_DIR/scans" "$VAR_DIR/deletions" "$VAR_DIR/plans" "$VAR_DIR/tmp" 2>/dev/null
+chmod 700 "$VAR_DIR" "$VAR_DIR/log" "$VAR_DIR/scans" "$VAR_DIR/deletions" "$VAR_DIR/plans" "$VAR_DIR/tmp" 2>/dev/null
+rm -f "$VAR_DIR/backend.pid" 2>/dev/null
+find "$PKG_DIR" -type d -name __pycache__ -prune -exec rm -rf {} + 2>/dev/null
+echo "DuplicateCleaner postupgrade: data preserved at $VAR_DIR"
+exit 0

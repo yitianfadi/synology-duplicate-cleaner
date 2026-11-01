@@ -1,0 +1,554 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<meta name="referrer" content="same-origin">
+<title>重复文件清理 · DuplicateCleaner</title>
+<link rel="icon" href="./assets/favicon.svg?v=1.0.0-0001" type="image/svg+xml">
+<link rel="stylesheet" href="./styles.css?v=1.0.0-0001">
+</head>
+<body>
+<a class="skip-link" href="#main">跳到主要内容</a>
+
+<!-- ===== 登录页（静态打开 index.html 时显示此页，不依赖接口） ===== -->
+<div id="loginView" class="login-view">
+  <div class="login-backdrop" aria-hidden="true"></div>
+  <main class="login-card" role="main">
+    <div class="login-brand">
+      <svg class="login-logo" viewBox="0 0 48 48" aria-hidden="true" focusable="false">
+        <rect x="4" y="4" width="40" height="40" rx="10" fill="#2f6fed"></rect>
+        <path d="M15 18.5h11M15 24h11M15 29.5h7" stroke="#ffffff" stroke-width="2.6" stroke-linecap="round"></path>
+        <path d="M29 28l4 4 8-8" stroke="#9fe1b7" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round" fill="none" transform="translate(-2 -1)"></path>
+      </svg>
+      <div>
+        <h1 class="login-title">重复文件清理</h1>
+        <p class="login-subtitle">DuplicateCleaner · Synology DSM 7</p>
+      </div>
+    </div>
+    <form id="loginForm" class="login-form" novalidate>
+      <div class="field">
+        <label for="loginUsername">DSM 账号</label>
+        <input id="loginUsername" name="username" type="text" autocomplete="username" autocapitalize="off" spellcheck="false" required>
+      </div>
+      <div class="field">
+        <label for="loginPassword">密码</label>
+        <input id="loginPassword" name="password" type="password" autocomplete="current-password" required>
+      </div>
+      <details class="login-otp" id="loginOtpDetails">
+        <summary>使用双重验证（可选）</summary>
+        <div class="field">
+          <label for="loginOtp">动态验证码（OTP）</label>
+          <input id="loginOtp" name="otp" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="8" placeholder="6 位验证码">
+        </div>
+      </details>
+      <p id="loginError" class="form-error-banner" role="alert" hidden></p>
+      <button id="loginSubmit" type="submit" class="btn btn-primary btn-block">登录</button>
+      <p class="login-note">登录凭据仅用于开启本次会话，不会保存在浏览器中。请勿在公共设备上保存密码。</p>
+    </form>
+    <p class="login-footer">本工具仅基于文件哈希判定重复，删除前请务必核对扫描结果。</p>
+  </main>
+</div>
+
+<!-- ===== 主应用 ===== -->
+<div id="app" class="app" hidden>
+  <div class="top-stack">
+    <!-- 常驻风险提示：不可关闭，文案为验收口径固定文本 -->
+    <div class="risk-banner" id="riskBanner" role="alert">
+      <svg class="icon risk-icon" aria-hidden="true"><use href="#i-warning"></use></svg>
+      <p class="risk-text">删除文件存在数据丢失风险，重要数据建议先备份；本工具仅基于哈希判定重复，无法保证业务文件适用性，请核对扫描结果再操作。</p>
+    </div>
+    <header class="topbar">
+      <div class="brand">
+        <svg class="brand-logo" viewBox="0 0 40 40" aria-hidden="true" focusable="false">
+          <rect x="3" y="3" width="34" height="34" rx="9" fill="#2f6fed"></rect>
+          <path d="M12 15h10M12 20h10M12 25h6" stroke="#fff" stroke-width="2.4" stroke-linecap="round"></path>
+          <path d="M27 23.5l3 3 6-6" stroke="#9fe1b7" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" fill="none" transform="translate(-2 -1)"></path>
+        </svg>
+        <div class="brand-text">
+          <span class="brand-name">重复文件清理</span>
+          <span class="brand-sub">DuplicateCleaner</span>
+        </div>
+      </div>
+      <nav class="main-nav" aria-label="主导航">
+        <button type="button" class="nav-item" data-nav="scan" aria-current="page">扫描</button>
+        <button type="button" class="nav-item" data-nav="history">历史记录</button>
+        <button type="button" class="nav-item" data-nav="logs">操作日志</button>
+        <button type="button" class="nav-item" data-nav="settings">设置</button>
+      </nav>
+      <div class="topbar-right">
+        <span class="env-badge" id="envBadge" hidden></span>
+        <span class="user-chip" id="userChip" title="当前登录账号">
+          <svg class="icon" aria-hidden="true"><use href="#i-user"></use></svg>
+          <span id="userName">—</span>
+        </span>
+        <button type="button" class="btn btn-ghost btn-sm" id="logoutBtn">
+          <svg class="icon" aria-hidden="true"><use href="#i-logout"></use></svg>退出
+        </button>
+      </div>
+    </header>
+  </div>
+
+  <main id="main" class="main" tabindex="-1">
+    <!-- ========== 扫描页 ========== -->
+    <section id="view-scan" class="view" data-view="scan" aria-labelledby="scanHeading">
+      <div class="page-head">
+        <div>
+          <h1 id="scanHeading">扫描重复文件</h1>
+          <p class="page-desc">选择扫描范围与选项，扫描完成后按组核对结果，再进行可回退的删除操作。</p>
+        </div>
+      </div>
+
+      <div class="scan-grid">
+        <section class="card range-card" aria-labelledby="rangeHeading">
+          <div class="card-head">
+            <h2 id="rangeHeading">1. 扫描范围</h2>
+            <span class="muted" id="rootsCount">未选择</span>
+          </div>
+          <div id="rootsList" class="roots-list">
+            <div class="empty-inline">尚未选择扫描目录。请点击“选择文件夹”从共享文件夹中添加。</div>
+          </div>
+          <p class="field-error" id="rootsError" role="alert" hidden></p>
+          <div class="row-actions">
+            <button type="button" class="btn btn-primary" id="pickRootsBtn">
+              <svg class="icon" aria-hidden="true"><use href="#i-folder-plus"></use></svg>选择文件夹…
+            </button>
+            <button type="button" class="btn btn-link" id="clearRootsBtn">清空</button>
+          </div>
+          <div class="exclude-section">
+            <div class="card-subhead">
+              <h3>排除目录</h3>
+              <span class="muted" id="excludeCount">0 个</span>
+            </div>
+            <div id="excludeChips" class="chips"></div>
+            <button type="button" class="btn btn-ghost btn-sm" id="pickExcludesBtn">
+              <svg class="icon" aria-hidden="true"><use href="#i-plus"></use></svg>添加排除目录…
+            </button>
+            <p class="hint">排除目录必须位于所选扫描目录内；其中的文件不会被扫描或删除。</p>
+          </div>
+        </section>
+
+        <section class="card options-card" aria-labelledby="optionsHeading">
+          <div class="card-head">
+            <h2 id="optionsHeading">2. 扫描选项</h2>
+            <button type="button" class="btn btn-link btn-sm" id="resetOptionsBtn">恢复默认</button>
+          </div>
+          <form id="optionsForm" novalidate>
+            <div class="form-grid">
+              <div class="field">
+                <label for="hashAlgo">哈希算法</label>
+                <select id="hashAlgo" name="hash_algo">
+                  <option value="sha256">SHA-256（更安全，推荐）</option>
+                  <option value="md5">MD5（更快，安全性较低）</option>
+                </select>
+                <p class="hint">用于判定文件内容是否完全相同。</p>
+              </div>
+              <div class="field">
+                <label for="keepMode">保留策略</label>
+                <select id="keepMode" name="keep_mode">
+                  <option value="latest">最晚创建（保留最新）</option>
+                  <option value="earliest">最早创建（保留最旧）</option>
+                  <option value="pinned">指定路径（优先保留）</option>
+                </select>
+                <p class="hint" id="keepModeHint">保留创建时间最晚的文件为“保留项”。</p>
+              </div>
+              <div class="field field-wide" id="pinnedField" hidden>
+                <label for="pinnedValue">指定保留路径</label>
+                <div class="path-picker-row">
+                  <div id="pinnedValue" class="path-value is-empty">未选择路径</div>
+                  <button type="button" class="btn btn-ghost btn-sm" id="pickPinnedBtn">选择路径…</button>
+                  <button type="button" class="btn btn-link btn-sm" id="clearPinnedBtn">清除</button>
+                </div>
+                <p class="hint">匹配该路径或目录前缀的副本会优先作为保留项；未匹配时按时间兜底。</p>
+                <p class="field-error" id="pinnedError" role="alert" hidden></p>
+              </div>
+              <div class="field">
+                <label for="minSize">最小文件大小</label>
+                <div class="input-unit">
+                  <input id="minSize" name="min_size" type="number" inputmode="numeric" min="0" step="1" placeholder="0">
+                  <select id="minUnit" aria-label="最小大小的单位">
+                    <option value="kb">KB</option>
+                    <option value="mb" selected>MB</option>
+                    <option value="gb">GB</option>
+                  </select>
+                </div>
+                <p class="hint">0 表示不限制；小于此值的文件会被跳过。</p>
+                <p class="field-error" id="minSizeError" role="alert" hidden></p>
+              </div>
+              <div class="field">
+                <label for="maxSize">最大文件大小</label>
+                <div class="input-unit">
+                  <input id="maxSize" name="max_size" type="number" inputmode="numeric" min="0" step="1" placeholder="0">
+                  <select id="maxUnit" aria-label="最大大小的单位">
+                    <option value="kb">KB</option>
+                    <option value="mb" selected>MB</option>
+                    <option value="gb">GB</option>
+                  </select>
+                </div>
+                <p class="hint">0 表示不限制；必须大于或等于最小值。</p>
+                <p class="field-error" id="maxSizeError" role="alert" hidden></p>
+              </div>
+              <div class="field">
+                <label for="includeExt">包含后缀（可选）</label>
+                <input id="includeExt" name="include_extensions" type="text" placeholder=".jpg,.png" autocomplete="off" spellcheck="false">
+                <p class="hint">逗号分隔，留空表示全部；如 .jpg,.png。</p>
+                <p class="field-error" id="includeExtError" role="alert" hidden></p>
+              </div>
+              <div class="field">
+                <label for="excludeExt">排除后缀（可选）</label>
+                <input id="excludeExt" name="exclude_extensions" type="text" placeholder=".tmp,.part" autocomplete="off" spellcheck="false">
+                <p class="hint">逗号分隔，排除以这些后缀结尾的文件。</p>
+                <p class="field-error" id="excludeExtError" role="alert" hidden></p>
+              </div>
+              <div class="field">
+                <label class="check"><input id="ignoreCaseExt" type="checkbox" checked>忽略后缀大小写</label>
+                <label class="check"><input id="skipEmpty" type="checkbox" checked>跳过空文件（0 字节）</label>
+                <label class="check"><input id="skipHidden" type="checkbox" checked>跳过隐藏 / 系统文件</label>
+                <label class="check"><input id="recycleDefault" type="checkbox" checked>删除时默认移动到回收站</label>
+              </div>
+            </div>
+
+            <details class="advanced" id="advancedOptions">
+              <summary>高级选项</summary>
+              <div class="form-grid">
+                <div class="field">
+                  <label for="quickSampleKb">快速指纹采样（KB）</label>
+                  <input id="quickSampleKb" name="quick_sample_kb" type="number" inputmode="numeric" min="4" max="1024" step="1" value="64">
+                  <p class="hint">大文件先按头/尾各 N KB 快速比对，范围 4–1024。</p>
+                  <p class="field-error" id="quickSampleError" role="alert" hidden></p>
+                </div>
+                <div class="field">
+                  <label for="concurrency">哈希并发数</label>
+                  <input id="concurrency" name="concurrency" type="number" inputmode="numeric" min="1" max="8" step="1" value="2">
+                  <p class="hint">1–8；并发越高占用内存与磁盘 IO 越多。</p>
+                  <p class="field-error" id="concurrencyError" role="alert" hidden></p>
+                </div>
+                <div class="field">
+                  <label for="hashRate">全量哈希限速（MB/s）</label>
+                  <input id="hashRate" name="hash_rate_mbps" type="number" inputmode="numeric" min="0" max="2000" step="1" value="0">
+                  <p class="hint">0 表示不限速；建议在业务时段限制 I/O。</p>
+                  <p class="field-error" id="hashRateError" role="alert" hidden></p>
+                </div>
+                <div class="field">
+                  <label for="maxFiles">最大扫描文件数</label>
+                  <input id="maxFiles" name="max_files" type="number" inputmode="numeric" min="1" step="1" value="500000">
+                  <p class="hint">超过该数量将停止扫描并报错，防止拖垮 NAS。</p>
+                  <p class="field-error" id="maxFilesError" role="alert" hidden></p>
+                </div>
+                <div class="field field-wide">
+                  <label class="check"><input id="allowCtimeFallback" type="checkbox">允许用 ctime 降级作为“创建时间”（有风险）</label>
+                  <p class="hint">关闭时，无法读取文件系统创建时间的文件会标记为“需手动选择”。开启后使用 ctime 判断，可能选错保留项。</p>
+                  <label class="check"><input id="createRecycleDir" type="checkbox">共享文件夹无 #recycle 时自动创建回收站目录</label>
+                  <label class="check"><input id="skipSymlinks" type="checkbox" checked disabled>跳过符号链接（后端强制，不可关闭）</label>
+                </div>
+              </div>
+            </details>
+
+            <p class="form-error-banner" id="optionsError" role="alert" hidden></p>
+          </form>
+        </section>
+      </div>
+
+      <div class="scan-actions">
+        <p class="scan-summary" id="scanSummary">请选择扫描目录后开始扫描。</p>
+        <button type="button" class="btn btn-primary btn-lg" id="startScanBtn">
+          <svg class="icon" aria-hidden="true"><use href="#i-search"></use></svg>开始扫描
+        </button>
+      </div>
+
+      <!-- 扫描进度 -->
+      <section id="progressPanel" class="card progress-card" hidden aria-labelledby="progressHeading">
+        <div class="card-head">
+          <h2 id="progressHeading">扫描进度</h2>
+          <div class="progress-head-right">
+            <span id="progressStatus" class="badge">—</span>
+            <span class="muted mono" id="progressScanId"></span>
+          </div>
+        </div>
+        <div class="progress-stage-row">
+          <span class="progress-stage" id="progressStage">等待开始</span>
+          <span class="progress-pct" id="progressPct">0%</span>
+        </div>
+        <div class="progress-bar" id="progressBar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-label="扫描进度">
+          <div class="progress-fill" id="progressFill"></div>
+        </div>
+        <p class="progress-message" id="progressMessage">—</p>
+        <dl class="counter-grid">
+          <div><dt>已读取文件</dt><dd id="counterFilesSeen">0</dd></div>
+          <div><dt>已扫描文件</dt><dd id="counterFilesScanned">0</dd></div>
+          <div><dt>候选文件</dt><dd id="counterCandidates">0</dd></div>
+          <div><dt>重复组</dt><dd id="counterGroups">0</dd></div>
+          <div><dt>重复文件</dt><dd id="counterDuplicateFiles">0</dd></div>
+          <div><dt>可释放空间</dt><dd id="counterReclaimable">0 B</dd></div>
+          <div><dt>哈希速度</dt><dd id="counterRate">0 B/s</dd></div>
+          <div><dt>错误数</dt><dd id="counterErrors">0</dd></div>
+        </dl>
+        <div class="progress-meta">
+          <div class="path-line" title=""><span class="meta-label">当前路径</span><span class="mono" id="progressPath">—</span></div>
+          <div><span class="meta-label">已用时间</span><span id="progressElapsed">0 秒</span></div>
+        </div>
+        <div class="progress-actions" id="progressActions">
+          <button type="button" class="btn btn-ghost" id="pauseBtn" hidden>暂停</button>
+          <button type="button" class="btn btn-ghost" id="resumeBtn" hidden>继续</button>
+          <button type="button" class="btn btn-danger-ghost" id="stopBtn" hidden>停止扫描</button>
+          <button type="button" class="btn btn-primary" id="viewResultsBtn" hidden>查看扫描结果</button>
+        </div>
+      </section>
+
+      <!-- 扫描结果 -->
+      <section id="resultsSection" class="results-section" hidden aria-labelledby="resultsHeading">
+        <div class="page-head results-head">
+          <div>
+            <h2 id="resultsHeading">扫描结果</h2>
+            <p class="page-desc" id="resultsSubtitle">按组列出内容相同的文件。保留项已高亮，需手动选择的组请先指定保留项。</p>
+          </div>
+          <div class="results-head-actions">
+            <button type="button" class="btn btn-ghost btn-sm" id="refreshResultsBtn">
+              <svg class="icon" aria-hidden="true"><use href="#i-refresh"></use></svg>刷新
+            </button>
+          </div>
+        </div>
+
+        <div id="resultsSummary" class="summary-grid"></div>
+
+        <div class="results-toolbar card">
+          <div class="toolbar-row toolbar-row-main">
+            <div class="search-box">
+              <svg class="icon" aria-hidden="true"><use href="#i-search"></use></svg>
+              <input id="searchGroups" type="search" placeholder="搜索文件路径或哈希…" aria-label="搜索分组结果" autocomplete="off">
+            </div>
+            <div class="toolbar-selects">
+              <label class="inline-label" for="sortGroups">排序</label>
+              <select id="sortGroups">
+                <option value="wasted_desc">可释放空间从大到小</option>
+                <option value="size_desc">文件大小从大到小</option>
+                <option value="created_desc">创建时间从新到旧</option>
+              </select>
+            </div>
+            <div class="toolbar-count" id="resultsCountLabel">—</div>
+          </div>
+          <div class="toolbar-row">
+            <div class="toolbar-buttons">
+              <button type="button" class="btn btn-ghost btn-sm" id="selectAllBtn">全选待删除副本</button>
+              <button type="button" class="btn btn-link btn-sm" id="clearSelectionBtn">清空选择</button>
+              <a class="btn btn-ghost btn-sm is-disabled" id="csvLink" href="#" download role="button" aria-disabled="true">导出 CSV</a>
+              <button type="button" class="btn btn-danger btn-sm" id="deleteSelectedBtn" disabled>
+                <svg class="icon" aria-hidden="true"><use href="#i-trash"></use></svg>删除所选副本
+              </button>
+            </div>
+            <div class="selection-summary" id="selectionSummary">未选择任何文件</div>
+          </div>
+        </div>
+
+        <div class="state-box" id="resultsLoading" hidden><span class="spinner" aria-hidden="true"></span>正在加载扫描结果…</div>
+        <div class="state-box state-error" id="resultsError" role="alert" hidden></div>
+        <div class="state-box state-empty" id="resultsEmpty" hidden>没有找到重复文件。</div>
+
+        <div id="groupsList" class="groups-list"></div>
+
+        <div class="load-more-row">
+          <button type="button" class="btn btn-ghost" id="loadMoreBtn" hidden>加载更多</button>
+          <span class="muted" id="loadMoreStatus"></span>
+        </div>
+      </section>
+    </section>
+
+    <!-- ========== 历史记录 ========== -->
+    <section id="view-history" class="view" data-view="history" aria-labelledby="historyHeading" hidden>
+      <div class="page-head">
+        <div>
+          <h1 id="historyHeading">扫描历史</h1>
+          <p class="page-desc">查看历史扫描任务的结果摘要，可重新打开结果或导出 CSV。</p>
+        </div>
+        <button type="button" class="btn btn-ghost btn-sm" id="historyRefreshBtn">
+          <svg class="icon" aria-hidden="true"><use href="#i-refresh"></use></svg>刷新
+        </button>
+      </div>
+      <div class="state-box" id="historyLoading" hidden><span class="spinner" aria-hidden="true"></span>正在加载历史记录…</div>
+      <div class="state-box state-error" id="historyError" role="alert" hidden></div>
+      <div class="state-box state-empty" id="historyEmpty" hidden>暂无扫描历史。完成一次扫描后会显示在这里。</div>
+      <div id="historyList" class="history-list"></div>
+    </section>
+
+    <!-- ========== 操作日志 ========== -->
+    <section id="view-logs" class="view" data-view="logs" aria-labelledby="logsHeading" hidden>
+      <div class="page-head">
+        <div>
+          <h1 id="logsHeading">操作日志</h1>
+          <p class="page-desc">审计事件与扫描/删除日志文件都持久化保存在数据目录中，便于事后追溯。</p>
+        </div>
+        <div class="page-head-actions">
+          <label class="inline-label" for="logLimitSelect">条数</label>
+          <select id="logLimitSelect" class="select-compact">
+            <option value="50">50</option>
+            <option value="100">100</option>
+            <option value="200">200</option>
+          </select>
+          <button type="button" class="btn btn-ghost btn-sm" id="logsRefreshBtn">
+            <svg class="icon" aria-hidden="true"><use href="#i-refresh"></use></svg>刷新
+          </button>
+        </div>
+      </div>
+      <div class="state-box" id="logsLoading" hidden><span class="spinner" aria-hidden="true"></span>正在加载日志…</div>
+      <div class="state-box state-error" id="logsError" role="alert" hidden></div>
+      <div class="two-col">
+        <section class="card" aria-labelledby="auditHeading">
+          <div class="card-head"><h2 id="auditHeading">审计事件</h2><span class="muted" id="auditCount"></span></div>
+          <div class="state-box state-empty" id="auditEmpty" hidden>暂无审计事件。</div>
+          <div class="table-wrap">
+            <table class="data-table" id="auditTable">
+              <caption class="visually-hidden">最近的审计事件</caption>
+              <thead><tr><th scope="col">时间</th><th scope="col">操作</th><th scope="col">用户</th><th scope="col">详情</th></tr></thead>
+              <tbody id="auditList"></tbody>
+            </table>
+          </div>
+        </section>
+        <section class="card" aria-labelledby="logFilesHeading">
+          <div class="card-head"><h2 id="logFilesHeading">日志文件</h2><span class="muted" id="logFilesCount"></span></div>
+          <div class="state-box state-empty" id="logFilesEmpty" hidden>暂无日志文件。</div>
+          <ul class="log-file-list" id="logFilesList"></ul>
+          <p class="hint">下载链接需要登录会话，文件仅保存在 NAS 本地。</p>
+        </section>
+      </div>
+    </section>
+
+    <!-- ========== 设置 ========== -->
+    <section id="view-settings" class="view" data-view="settings" aria-labelledby="settingsHeading" hidden>
+      <div class="page-head">
+        <div>
+          <h1 id="settingsHeading">设置</h1>
+          <p class="page-desc">这些默认值会用于新扫描；扫描页面的选项可临时覆盖。</p>
+        </div>
+      </div>
+      <div class="state-box" id="settingsLoading" hidden><span class="spinner" aria-hidden="true"></span>正在加载设置…</div>
+      <div class="state-box state-error" id="settingsLoadError" role="alert" hidden></div>
+      <form id="settingsForm" class="card settings-card" novalidate>
+        <div class="form-grid">
+          <div class="field">
+            <label for="setHashAlgo">哈希算法</label>
+            <select id="setHashAlgo" name="hash_algo">
+              <option value="sha256">SHA-256（推荐）</option>
+              <option value="md5">MD5</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="setKeepMode">保留策略</label>
+            <select id="setKeepMode" name="keep_mode">
+              <option value="latest">最晚创建（保留最新）</option>
+              <option value="earliest">最早创建（保留最旧）</option>
+              <option value="pinned">指定路径（优先保留）</option>
+            </select>
+          </div>
+          <div class="field field-wide">
+            <label for="setPinnedPath">指定保留路径</label>
+            <input id="setPinnedPath" name="pinned_path" type="text" placeholder="/volume1/photo/keep" autocomplete="off" spellcheck="false">
+            <p class="hint">选择“指定路径”策略时使用；匹配该路径或目录前缀的副本优先保留。</p>
+          </div>
+          <div class="field">
+            <label for="setMinSizeMb">最小文件大小（MB）</label>
+            <input id="setMinSizeMb" name="min_size" type="number" inputmode="numeric" min="0" step="1" value="0">
+            <p class="hint">0 表示不限制。</p>
+            <p class="field-error" id="setMinSizeError" role="alert" hidden></p>
+          </div>
+          <div class="field">
+            <label for="setMaxSizeMb">最大文件大小（MB）</label>
+            <input id="setMaxSizeMb" name="max_size" type="number" inputmode="numeric" min="0" step="1" value="0">
+            <p class="hint">0 表示不限制；必须大于或等于最小值。</p>
+            <p class="field-error" id="setMaxSizeError" role="alert" hidden></p>
+          </div>
+          <div class="field">
+            <label for="setIncludeExt">包含后缀</label>
+            <input id="setIncludeExt" name="include_extensions" type="text" placeholder=".jpg,.png" autocomplete="off" spellcheck="false">
+            <p class="hint">逗号分隔，留空表示全部。</p>
+            <p class="field-error" id="setIncludeExtError" role="alert" hidden></p>
+          </div>
+          <div class="field">
+            <label for="setExcludeExt">排除后缀</label>
+            <input id="setExcludeExt" name="exclude_extensions" type="text" placeholder=".tmp,.part" autocomplete="off" spellcheck="false">
+            <p class="field-error" id="setExcludeExtError" role="alert" hidden></p>
+          </div>
+          <div class="field">
+            <label class="check"><input id="setIgnoreCase" type="checkbox" checked>忽略后缀大小写</label>
+            <label class="check"><input id="setSkipEmpty" type="checkbox" checked>跳过空文件（0 字节）</label>
+            <label class="check"><input id="setSkipHidden" type="checkbox" checked>跳过隐藏 / 系统文件</label>
+            <label class="check"><input id="setSkipSymlinks" type="checkbox" checked disabled>跳过符号链接（后端强制）</label>
+          </div>
+          <div class="field">
+            <label for="setQuickSampleKb">快速指纹采样（KB）</label>
+            <input id="setQuickSampleKb" name="quick_sample_kb" type="number" inputmode="numeric" min="4" max="1024" step="1" value="64">
+            <p class="field-error" id="setQuickSampleError" role="alert" hidden></p>
+          </div>
+          <div class="field">
+            <label for="setConcurrency">哈希并发数</label>
+            <input id="setConcurrency" name="concurrency" type="number" inputmode="numeric" min="1" max="8" step="1" value="2">
+            <p class="field-error" id="setConcurrencyError" role="alert" hidden></p>
+          </div>
+          <div class="field">
+            <label for="setHashRate">全量哈希限速（MB/s）</label>
+            <input id="setHashRate" name="hash_rate_mbps" type="number" inputmode="numeric" min="0" max="2000" step="1" value="0">
+            <p class="field-error" id="setHashRateError" role="alert" hidden></p>
+          </div>
+          <div class="field">
+            <label for="setMaxFiles">最大扫描文件数</label>
+            <input id="setMaxFiles" name="max_files" type="number" inputmode="numeric" min="1" step="1" value="500000">
+            <p class="field-error" id="setMaxFilesError" role="alert" hidden></p>
+          </div>
+          <div class="field">
+            <label class="check"><input id="setRecycleDefault" type="checkbox" checked>删除默认移动到回收站</label>
+            <label class="check"><input id="setCreateRecycleDir" type="checkbox">共享文件夹无 #recycle 时自动创建</label>
+            <label class="check"><input id="setAllowCtime" type="checkbox">允许 ctime 降级作为创建时间（有风险）</label>
+            <p class="hint">关闭 ctime 降级时，创建时间未知的组需要人工指定保留项，更安全。</p>
+          </div>
+        </div>
+        <p class="form-error-banner" id="settingsError" role="alert" hidden></p>
+        <div class="form-actions">
+          <button type="button" class="btn btn-primary" id="saveSettingsBtn">保存设置</button>
+          <button type="button" class="btn btn-link" id="resetSettingsBtn">恢复默认值</button>
+        </div>
+      </form>
+    </section>
+
+    <footer class="app-footer">
+      <span>重复文件清理 · DuplicateCleaner</span>
+      <span class="footer-meta" id="footerMeta"></span>
+    </footer>
+  </main>
+</div>
+
+<noscript>
+  <div class="noscript">此界面需要启用 JavaScript 才能使用。</div>
+</noscript>
+
+<div id="toastRoot" class="toast-root" role="status" aria-live="polite" aria-atomic="false"></div>
+<div id="modalRoot" class="modal-root" hidden></div>
+
+<!-- ===== 图标精灵（内联，无外部资源） ===== -->
+<svg xmlns="http://www.w3.org/2000/svg" class="icon-sprite" aria-hidden="true" focusable="false" style="position:absolute;width:0;height:0;overflow:hidden">
+  <symbol id="i-warning" viewBox="0 0 24 24"><path d="M12 3.2 21.3 19a1.6 1.6 0 0 1-1.4 2.4H4.1A1.6 1.6 0 0 1 2.7 19L12 3.2Z" fill="currentColor" opacity=".16"/><path d="M12 3.2 21.3 19a1.6 1.6 0 0 1-1.4 2.4H4.1A1.6 1.6 0 0 1 2.7 19L12 3.2Z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M12 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="12" cy="17.4" r="1.1" fill="currentColor"/></symbol>
+  <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 6.6A1.6 1.6 0 0 1 4.6 5h4.2l2 2.4h8.6A1.6 1.6 0 0 1 21 9v9.4A1.6 1.6 0 0 1 19.4 20H4.6A1.6 1.6 0 0 1 3 18.4V6.6Z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></symbol>
+  <symbol id="i-folder-plus" viewBox="0 0 24 24"><path d="M3 6.6A1.6 1.6 0 0 1 4.6 5h4.2l2 2.4h8.6A1.6 1.6 0 0 1 21 9v9.4A1.6 1.6 0 0 1 19.4 20H4.6A1.6 1.6 0 0 1 3 18.4V6.6Z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M12 11.5v5M9.5 14h5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></symbol>
+  <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-chevron-down" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="10.8" cy="10.8" r="6.4" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="m15.6 15.6 4.4 4.4" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></symbol>
+  <symbol id="i-user" viewBox="0 0 24 24"><circle cx="12" cy="8.2" r="3.7" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M4.8 20c.6-3.6 3.5-5.6 7.2-5.6s6.6 2 7.2 5.6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></symbol>
+  <symbol id="i-logout" viewBox="0 0 24 24"><path d="M14 5h4.2A1.8 1.8 0 0 1 20 6.8v10.4A1.8 1.8 0 0 1 18.2 19H14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><path d="M10 8l-4 4 4 4M6 12h9" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
+  <symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12.5 4.6 4.5L19 6.8" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8.5" y="8.5" width="11" height="11" rx="1.8" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M15.5 8.5V6.3A1.8 1.8 0 0 0 13.7 4.5H6.3A1.8 1.8 0 0 0 4.5 6.3v7.4a1.8 1.8 0 0 0 1.8 1.8h2.2" fill="none" stroke="currentColor" stroke-width="1.6"/></symbol>
+  <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2.8 12S6.3 5.8 12 5.8 21.2 12 21.2 12 17.7 18.2 12 18.2 2.8 12 2.8 12Z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><circle cx="12" cy="12" r="2.8" fill="none" stroke="currentColor" stroke-width="1.6"/></symbol>
+  <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16M9 7V5.2A1.2 1.2 0 0 1 10.2 4h3.6A1.2 1.2 0 0 1 15 5.2V7M6.5 7l.8 12a1.6 1.6 0 0 0 1.6 1.5h6.2a1.6 1.6 0 0 0 1.6-1.5l.8-12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M10 10.5v6M14 10.5v6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></symbol>
+  <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.6-5.9" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><path d="M20 4.5v4.8h-4.8" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-pause" viewBox="0 0 24 24"><rect x="7" y="5" width="3.4" height="14" rx="1" fill="currentColor"/><rect x="13.6" y="5" width="3.4" height="14" rx="1" fill="currentColor"/></symbol>
+  <symbol id="i-play" viewBox="0 0 24 24"><path d="M8 5.5v13l10-6.5-10-6.5Z" fill="currentColor"/></symbol>
+  <symbol id="i-stop" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="1.6" fill="currentColor"/></symbol>
+  <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4v10.5M7.8 10.5 12 14.7l4.2-4.2" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/><path d="M5 19.2h14" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></symbol>
+  <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="10" width="14" height="9.6" rx="1.8" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M8.2 10V7.8a3.8 3.8 0 0 1 7.6 0V10" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></symbol>
+  <symbol id="i-file" viewBox="0 0 24 24"><path d="M6 3.8h7.5L19 9.3v10.9H6V3.8Z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M13.4 3.8v5.6H19" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></symbol>
+  <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.6" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M12 10.8v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="12" cy="7.6" r="1.05" fill="currentColor"/></symbol>
+</svg>
+
+<script src="./app.js?v=1.0.0-0001" defer></script>
+</body>
+</html>
