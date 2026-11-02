@@ -16,6 +16,7 @@ import concurrent.futures
 import copy
 import csv
 import heapq
+import logging
 import os
 import secrets
 import stat as stat_module
@@ -26,6 +27,9 @@ import traceback
 from . import (config, fsutil, hashing, settings as settings_module,
                similarity, timeutil, video_similarity, xlsx)
 from .errors import ApiError, invalid, not_found
+from .store import RESUME_STAGES
+
+logger = logging.getLogger("dupcleaner.scanner")
 
 STAGES = ("enumerate", "size", "sample", "hash", "similarity", "video",
           "finalize", "done")
@@ -45,6 +49,10 @@ DEFAULT_LIST_LIMIT = 50
 
 class ScanStopped(Exception):
     pass
+
+
+class ScanPaused(Exception):
+    """扫描在安全点请求暂停：由 _run 捕获后写 checkpoint 快照并退出线程。"""
 
 
 class ScanLimitError(Exception):
@@ -68,6 +76,40 @@ class FileRecord(object):
         self.nlink = int(nlink)
         self.quick_hash = None
         self.hash = None
+
+    def to_checkpoint(self):
+        """断点快照（docs/RESUME_CONTRACT.md §2）。"""
+        return {
+            "path": self.path,
+            "size": self.size,
+            "mtime_ns": self.mtime_ns,
+            "inode": self.inode,
+            "dev": self.dev,
+            "nlink": self.nlink,
+            "quick_hash": self.quick_hash,
+            "hash": self.hash,
+        }
+
+    @classmethod
+    def from_checkpoint(cls, item):
+        if not isinstance(item, dict):
+            return None
+        path = item.get("path")
+        if not isinstance(path, str) or not path:
+            return None
+        try:
+            record = cls(path, int(item.get("size") or 0),
+                         int(item.get("mtime_ns") or 0),
+                         int(item.get("inode") or 0),
+                         int(item.get("dev") or 0),
+                         int(item.get("nlink") or 1))
+        except (TypeError, ValueError):
+            return None
+        quick_hash = item.get("quick_hash")
+        digest = item.get("hash")
+        record.quick_hash = quick_hash if isinstance(quick_hash, str) else None
+        record.hash = digest if isinstance(digest, str) else None
+        return record
 
 
 def _empty_skipped():
@@ -269,11 +311,18 @@ class ScanState(object):
         self.needs_manual_keep_groups = 0
         self.lock = threading.RLock()
         self.stop_event = threading.Event()
+        self.pause_event = threading.Event()
+        self.pause_ready = threading.Event()
         self.running_event = threading.Event()
         self.running_event.set()
         self.thread = None
         self.last_persist = 0.0
         self.keep_reason = options.get("keep_mode") or "latest"
+        # 暂停/升级断点（docs/RESUME_CONTRACT.md）
+        self.pause_reason = ""
+        self.resumable = False
+        self.resume_stage = None
+        self.resume_records = None
 
     def snapshot(self):
         with self.lock:
@@ -305,6 +354,8 @@ class ScanState(object):
                 "needs_manual_keep_groups": int(self.needs_manual_keep_groups),
                 "options": copy.deepcopy(self.options),
                 "error": copy.deepcopy(self.error),
+                "resumable": bool(self.resumable),
+                "pause_reason": self.pause_reason or None,
                 "config": {
                     "roots": list(self.roots),
                     "excludes": list(self.excludes),
@@ -402,8 +453,14 @@ class ScanManager(object):
             merged["pinned_path"] = pinned_norm
 
         with self._lock:
-            active = self._states.get(self._active_id) if self._active_id else None
-            if active is not None and active.status in ACTIVE_STATUSES:
+            # 同进程内 paused 也算占用（保留现有 API 语义：暂停后需继续或停止
+            # 才能开始新扫描）；只在内存里判断，重启后的暂停扫描不阻塞新扫描。
+            active = None
+            for existing in self._states.values():
+                if existing.status in ACTIVE_STATUSES:
+                    active = existing
+                    break
+            if active is not None:
                 raise ApiError("SCAN_BUSY", u"已有扫描正在进行，请等待完成或停止")
             scan_id = make_scan_id()
             state = ScanState(scan_id, normalized_roots, normalized_excludes,
@@ -459,46 +516,171 @@ class ScanManager(object):
             return state
         return None
 
-    def pause(self, scan_id):
+    def pause(self, scan_id, reason=None):
+        """请求暂停：设置 pause_event，线程到安全点后写 records 断点并退出。
+
+        docs/RESUME_CONTRACT.md §3：状态立即变 paused（API 反馈），
+        实际 checkpoint 由扫描线程写入；resume 会等待落盘完成。
+        """
         state = self._require_state(scan_id)
         with state.lock:
             if state.status != "running":
                 raise invalid(u"当前状态不允许暂停: %s" % state.status)
             state.status = "paused"
-            state.running_event.clear()
-            state.message = u"扫描已暂停"
+            state.pause_reason = reason or "user"
+            state.message = u"扫描已暂停，升级后可继续"
+            state.pause_ready.clear()
+            state.pause_event.set()
         self._persist(state, force=True)
         return state.snapshot()
 
     def resume(self, scan_id):
-        state = self._require_state(scan_id)
-        with state.lock:
-            if state.status != "paused":
-                raise invalid(u"当前状态不允许继续: %s" % state.status)
-            state.status = "running"
-            state.running_event.set()
-            state.message = u"扫描继续"
-        self._persist(state, force=True)
-        return state.snapshot()
+        """继续 paused 扫描（同进程或进程重启后，均从 SQLite 断点重建）。"""
+        if not isinstance(scan_id, str) or not config.SCAN_ID_RE.match(scan_id):
+            raise not_found(u"扫描不存在")
+        with self._lock:
+            state = self._states.get(scan_id)
+        if state is not None and state.status == "running":
+            raise invalid(u"当前状态不允许继续: running")
+        if state is not None and state.status not in ("paused", "interrupted"):
+            raise invalid(u"当前状态不允许继续: %s" % state.status)
+        # 等待暂停线程在安全点写完 checkpoint 后退出。
+        if state is not None and state.thread is not None:
+            thread = state.thread
+            if thread.is_alive():
+                state.pause_event.set()
+                state.pause_ready.wait(timeout=15.0)
+                thread.join(timeout=15.0)
+            if thread.is_alive():
+                raise ApiError("SCAN_BUSY", u"扫描正在暂停，请稍后重试")
+        meta = self.store.load_scan_meta(scan_id)
+        if not isinstance(meta, dict):
+            raise not_found(u"扫描不存在: %s" % scan_id)
+        status = meta.get("status")
+        if status == "interrupted":
+            raise invalid(u"扫描已中断，需重新扫描")
+        if status != "paused":
+            raise invalid(u"当前状态不允许继续: %s" % status)
+        payload = self.store.load_resumable_checkpoint(scan_id)
+        if payload is None:
+            raise invalid(u"扫描断点不可用，请重新扫描")
+        resume_state = self._build_resume_state(scan_id, meta, payload)
+        with self._lock:
+            active_id = self._active_id
+            if active_id and active_id != scan_id:
+                active = self._states.get(active_id)
+                if active is not None and active.status in ACTIVE_STATUSES:
+                    raise ApiError("SCAN_BUSY", u"已有扫描正在进行，请等待完成或停止")
+            resume_state.thread = threading.Thread(
+                target=self._run, args=(resume_state,),
+                name="scan-" + scan_id, daemon=True)
+            self._states[scan_id] = resume_state
+            self._active_id = scan_id
+        try:
+            self.store.write_log(
+                "scan-%s.log" % scan_id,
+                u"resumed_at: %s\n" % timeutil.iso_local(time.time()),
+                append=True)
+        except Exception:
+            pass
+        self._persist(resume_state, force=True)
+        self.store.audit("scan_resume", resume_state.user, {
+            "scan_id": scan_id,
+            "stage": payload.get("stage"),
+            "resume_invalidated": int(
+                resume_state.stats.get("resume_invalidated") or 0),
+        })
+        resume_state.thread.start()
+        return resume_state.snapshot()
+
+    def pause_for_upgrade(self, timeout=25.0):
+        """升级 drain：暂停活动扫描并等待断点落盘；返回是否已安全暂停/空闲。"""
+        try:
+            deadline = time.time() + max(0.0, float(timeout))
+        except (TypeError, ValueError):
+            deadline = time.time() + 25.0
+        while True:
+            state = self._current_state()
+            if state is None:
+                return True
+            if state.status == "running":
+                try:
+                    self.pause(state.scan_id, reason="upgrade")
+                except ApiError:
+                    pass
+            elif state.status == "paused":
+                thread = state.thread
+                if (thread is None or not thread.is_alive()
+                        or state.pause_ready.is_set()):
+                    return True
+            elif state.status not in ACTIVE_STATUSES:
+                return True
+            if time.time() >= deadline:
+                return False
+            time.sleep(0.05)
 
     def stop(self, scan_id):
-        state = self._require_state(scan_id)
+        if not isinstance(scan_id, str) or not config.SCAN_ID_RE.match(scan_id):
+            raise not_found(u"扫描不存在")
+        with self._lock:
+            state = self._states.get(scan_id)
+        if state is None:
+            # 进程重启后的 paused 扫描不在内存：允许直接放弃（删除断点）。
+            return self._stop_persisted_scan(scan_id)
         with state.lock:
             if state.status not in ("running", "paused", "queued", "stopping"):
                 raise invalid(u"当前状态不允许停止: %s" % state.status)
             state.stop_event.set()
+            state.pause_event.set()
             state.running_event.set()
             if state.status != "stopping":
                 state.status = "stopping"
                 state.message = u"正在停止扫描"
+            thread_alive = (state.thread is not None
+                            and state.thread.is_alive())
         self._persist(state, force=True)
+        if not thread_alive:
+            # 暂停后线程已退出：直接收敛为 stopped，避免卡在 stopping。
+            self._finalize_stopped(state)
         return state.snapshot()
+
+    def _stop_persisted_scan(self, scan_id):
+        meta = self.store.load_scan_meta(scan_id)
+        if not isinstance(meta, dict):
+            raise not_found(u"扫描不存在: %s" % scan_id)
+        status = meta.get("status")
+        if status != "paused":
+            raise invalid(u"当前状态不允许停止: %s" % status)
+        now = time.time()
+        meta = dict(meta)
+        meta["status"] = "stopped"
+        meta["resumable"] = False
+        meta["message"] = u"扫描已停止"
+        meta["finished_epoch"] = now
+        meta["finished_at"] = timeutil.iso_local(now)
+        meta["current_path"] = ""
+        try:
+            self.store.delete_checkpoint(scan_id)
+        except Exception:
+            pass
+        self.store.save_scan_meta(scan_id, meta)
+        self.store.audit("scan_stopped", meta.get("user"), {
+            "scan_id": scan_id, "status": "stopped",
+            "reason": "paused_discarded"})
+        try:
+            self.store.write_log("scan-%s.log" % scan_id,
+                                 u"finished_at: %s\nstatus: stopped\n"
+                                 % timeutil.iso_local(now), append=True)
+        except Exception:
+            pass
+        return meta
 
     def stop_all(self, timeout=10.0):
         with self._lock:
             states = list(self._states.values())
         for state in states:
-            if state.status in ACTIVE_STATUSES:
+            # paused 不主动停止：升级/用户暂停的断点要保留给手动继续。
+            if state.status in ("queued", "running", "stopping"):
                 try:
                     self.stop(state.scan_id)
                 except ApiError:
@@ -508,6 +690,31 @@ class ScanManager(object):
             thread = state.thread
             if thread is not None and thread.is_alive():
                 thread.join(timeout=max(0.1, deadline - time.time()))
+
+    def _current_state(self):
+        with self._lock:
+            active_id = self._active_id
+            if not active_id:
+                return None
+            return self._states.get(active_id)
+
+    def _finalize_stopped(self, state):
+        with state.lock:
+            state.status = "stopped"
+            state.message = u"扫描已停止"
+            state.current_path = ""
+            state.resumable = False
+            if state.finished_epoch is None:
+                state.finished_epoch = time.time()
+        if self._active_id == state.scan_id:
+            self._active_id = None
+        self._persist(state, force=True)
+        try:
+            self.store.delete_checkpoint(state.scan_id)
+        except Exception:
+            pass
+        self._audit_finish(state, "scan_stopped")
+        self._write_log_finish(state)
 
     def _require_state(self, scan_id):
         if not isinstance(scan_id, str) or not config.SCAN_ID_RE.match(scan_id):
@@ -567,6 +774,8 @@ class ScanManager(object):
                 "error": meta.get("error"),
                 "needs_manual_keep_groups": meta.get("needs_manual_keep_groups", 0),
                 "creation_time_unsafe": meta.get("creation_time_unsafe", False),
+                "resumable": bool(meta.get("resumable")),
+                "pause_reason": meta.get("pause_reason"),
             })
         return items
 
@@ -803,56 +1012,88 @@ class ScanManager(object):
     def _run(self, state):
         started = time.time()
         state.started_epoch = started
+        records = list(getattr(state, "resume_records", None) or [])
+        state.resume_records = None
+        stage = state.resume_stage or "enumerate"
+        state.resume_stage = None
         try:
             with state.lock:
                 state.status = "running"
-                state.stage = "enumerate"
-                state.message = u"正在枚举文件"
-                state.progress = 0.01
+                if stage == "enumerate":
+                    state.stage = "enumerate"
+                    state.message = u"正在枚举文件"
+                    state.progress = 0.01
+                else:
+                    state.stage = stage
+                    state.message = u"正在继续扫描"
             self._persist(state, force=True)
-            self._save_checkpoint(state, "enumerate")
 
-            records = self._enumerate(state)
-            self._save_checkpoint(state, "size")
-            self._check_control(state)
+            buckets = None
+            candidate_buckets = None
+            hashed_buckets = None
+            if stage == "enumerate":
+                self._save_checkpoint(state, "enumerate")
+                records = self._enumerate(state)
+                stage = "size"
+                self._save_checkpoint(state, "size")
+                self._check_control(state)
 
-            buckets = self._size_stage(state, records)
-            self._save_checkpoint(state, "sample")
-            self._check_control(state)
+            if stage == "size":
+                self._check_control(state)
+                buckets = self._size_stage(state, records)
+                stage = "sample"
+                self._save_checkpoint(state, "sample")
+                self._check_control(state)
 
-            candidate_buckets = self._sample_stage(state, buckets)
-            del buckets
-            self._save_checkpoint(state, "hash")
-            self._check_control(state)
+            if stage == "sample":
+                if buckets is None:
+                    buckets = self._rebuild_size_buckets(records)
+                candidate_buckets = self._sample_stage(state, buckets)
+                buckets = None
+                stage = "hash"
+                self._save_checkpoint(state, "hash")
+                self._check_control(state)
 
-            hashed_buckets = self._hash_stage(state, candidate_buckets)
-            del candidate_buckets
-            self._save_checkpoint(state, "similarity")
-            self._check_control(state)
+            if stage == "hash":
+                if candidate_buckets is None:
+                    candidate_buckets = self._rebuild_quick_buckets(records)
+                hashed_buckets = self._hash_stage(state, candidate_buckets,
+                                                  reuse_existing=True)
+                candidate_buckets = None
+                stage = "similarity"
+                self._save_checkpoint(state, "similarity")
+                self._check_control(state)
 
-            # 精准组内文件不参与相似计算；相似阶段在精准哈希之后执行
+            # similarity / video / finalize 断点：用 records + 已有 hash 重建精准组，
+            # 相似/视频缓存可复用；必要时重跑该阶段（docs/RESUME_CONTRACT.md §3）。
+            if hashed_buckets is None:
+                hashed_buckets = self._rebuild_hashed_buckets(records)
             exact_paths = set()
             for bucket in hashed_buckets:
                 for record in bucket:
                     exact_paths.add(record.path)
+
             similar_clusters = []
             if (state.options.get("scan_mode") or "exact") == "similar":
+                with state.lock:
+                    state.stage = "similarity"
                 similar_clusters = self._similarity_stage(state, records,
                                                           exact_paths)
-            self._check_control(state)
-            video_clusters = []
-            if state.options.get("video_similarity_enabled"):
-                self._save_checkpoint(state, "video")
-                video_clusters = self._video_stage(state, records, exact_paths)
-            del records
+            self._save_checkpoint(state, "video")
             self._check_control(state)
 
+            video_clusters = []
+            if state.options.get("video_similarity_enabled"):
+                with state.lock:
+                    state.stage = "video"
+                video_clusters = self._video_stage(state, records, exact_paths)
             self._save_checkpoint(state, "finalize")
+            self._check_control(state)
+
+            with state.lock:
+                state.stage = "finalize"
             self._finalize_stage(state, hashed_buckets, similar_clusters,
                                  video_clusters)
-            del hashed_buckets
-            del similar_clusters
-            del video_clusters
 
             with state.lock:
                 state.status = "completed"
@@ -861,6 +1102,7 @@ class ScanManager(object):
                 state.message = u"扫描完成"
                 state.finished_epoch = time.time()
                 state.current_path = ""
+                state.resumable = False
             self._persist(state, force=True)
             try:
                 self.store.delete_checkpoint(state.scan_id)
@@ -868,13 +1110,20 @@ class ScanManager(object):
                 pass
             self._audit_finish(state, "scan_end")
             self._write_log_finish(state)
+        except ScanPaused:
+            self._finish_paused(state, records, stage)
         except ScanStopped:
             with state.lock:
                 state.status = "stopped"
                 state.message = u"扫描已停止"
                 state.finished_epoch = time.time()
                 state.current_path = ""
+                state.resumable = False
             self._persist(state, force=True)
+            try:
+                self.store.delete_checkpoint(state.scan_id)
+            except Exception:
+                pass
             self._audit_finish(state, "scan_stopped")
             self._write_log_finish(state)
         except ScanLimitError as exc:
@@ -888,6 +1137,7 @@ class ScanManager(object):
                 state.message = state.error["message"]
                 state.finished_epoch = time.time()
                 state.current_path = ""
+                state.resumable = False
             self._persist(state, force=True)
             self._audit_finish(state, "scan_failed")
             self._write_log_finish(state)
@@ -902,6 +1152,7 @@ class ScanManager(object):
                 state.message = state.error["message"]
                 state.finished_epoch = time.time()
                 state.current_path = ""
+                state.resumable = False
             self._persist(state, force=True)
             try:
                 self.store.write_log("scan-%s.log" % state.scan_id,
@@ -912,12 +1163,178 @@ class ScanManager(object):
             self._audit_finish(state, "scan_failed")
             self._write_log_finish(state)
         finally:
-            with state.lock:
-                state.running_event.set()
-                if state.finished_epoch is None:
-                    state.finished_epoch = time.time()
+            self._finish_run(state)
+
+    def _finish_paused(self, state, records, stage):
+        """暂停：状态 paused + 写 records 断点快照 + 退出扫描线程（不 finalize）。"""
+        if state.stop_event.is_set():
+            self._finalize_stopped(state)
+            state.pause_ready.set()
+            return
+        snapshot_stage = stage if stage in RESUME_STAGES else "enumerate"
+        if snapshot_stage == "enumerate":
+            snapshot_records = []
+        else:
+            snapshot_records = [record.to_checkpoint() for record in records]
+        with state.lock:
+            snapshot_stats = copy.deepcopy(state.stats)
+            snapshot_progress = round(float(state.progress), 4)
+            snapshot_reason = state.pause_reason or "user"
+            state.status = "paused"
+            state.stage = snapshot_stage
+            state.message = u"扫描已暂停，升级后可继续"
+            state.current_path = ""
+        self._persist(state, force=True)
+        payload = {
+            "stage": snapshot_stage,
+            "progress": snapshot_progress,
+            "stats": snapshot_stats,
+            "records": snapshot_records,
+            "pause_reason": snapshot_reason,
+            "paused_epoch": time.time(),
+            "message": u"扫描已暂停，升级后可继续",
+        }
+        saved = False
+        try:
+            self.store.save_checkpoint(state.scan_id, snapshot_stage, payload)
+            saved = True
+        except Exception:
+            logger.warning(u"保存暂停断点失败: %s", state.scan_id, exc_info=True)
+        with state.lock:
+            state.resumable = bool(saved)
+            if not saved:
+                state.message = u"扫描已暂停（断点保存失败，无法继续）"
+        self._persist(state, force=True)
+        state.pause_ready.set()
+        self._audit_finish(state, "scan_paused")
+        self._write_log_finish(state)
+
+    def _finish_run(self, state):
+        stopped_now = False
+        with state.lock:
+            state.running_event.set()
+            if state.status == "paused" and state.stop_event.is_set():
+                state.status = "stopped"
+                state.message = u"扫描已停止"
+                state.current_path = ""
+                state.resumable = False
+                stopped_now = True
+            if (state.status in ("completed", "failed", "stopped")
+                    and state.finished_epoch is None):
+                state.finished_epoch = time.time()
+            if self._active_id == state.scan_id:
                 self._active_id = None
-            self._persist(state, force=True)
+            if state.status == "paused":
+                state.pause_ready.set()
+        self._persist(state, force=True)
+        if stopped_now:
+            try:
+                self.store.delete_checkpoint(state.scan_id)
+            except Exception:
+                pass
+            self._audit_finish(state, "scan_stopped")
+            self._write_log_finish(state)
+
+    @staticmethod
+    def _stats_from_checkpoint(saved):
+        stats = _empty_stats()
+        if not isinstance(saved, dict):
+            return stats
+        for key, value in saved.items():
+            if (key in stats and isinstance(stats[key], dict)
+                    and isinstance(value, dict)):
+                stats[key] = dict(value)
+            else:
+                stats[key] = copy.deepcopy(value)
+        return stats
+
+    @staticmethod
+    def _rebuild_size_buckets(records):
+        by_size = {}
+        for record in records:
+            by_size.setdefault(record.size, []).append(record)
+        return [items for items in by_size.values() if len(items) >= 2]
+
+    @staticmethod
+    def _rebuild_quick_buckets(records):
+        by_size = {}
+        for record in records:
+            by_size.setdefault(record.size, []).append(record)
+        result = []
+        for items in by_size.values():
+            if len(items) < 2:
+                continue
+            groups = {}
+            for record in items:
+                if not record.quick_hash:
+                    continue
+                groups.setdefault(record.quick_hash, []).append(record)
+            for group in groups.values():
+                if len(group) >= 2:
+                    result.append(group)
+        return result
+
+    @staticmethod
+    def _rebuild_hashed_buckets(records):
+        groups = {}
+        for record in records:
+            if not record.hash:
+                continue
+            groups.setdefault(record.hash, []).append(record)
+        return [items for items in groups.values() if len(items) >= 2]
+
+    def _build_resume_state(self, scan_id, meta, payload):
+        config_block = meta.get("config")
+        if not isinstance(config_block, dict):
+            config_block = {}
+        roots = config_block.get("roots") or []
+        excludes = config_block.get("excludes") or []
+        options = meta.get("options")
+        if not isinstance(options, dict):
+            options = {}
+        state = ScanState(scan_id, roots, excludes, options, meta.get("user"))
+        try:
+            state.created_epoch = float(meta.get("created_epoch") or time.time())
+        except (TypeError, ValueError):
+            pass
+        stage = payload.get("stage") or "enumerate"
+        try:
+            progress = float(payload.get("progress") or 0.0)
+        except (TypeError, ValueError):
+            progress = 0.0
+        state.status = "running"
+        state.stage = stage
+        state.progress = max(0.0, min(1.0, progress))
+        state.message = u"正在继续扫描"
+        state.pause_reason = meta.get("pause_reason") or ""
+        state.stats = self._stats_from_checkpoint(payload.get("stats"))
+        state.resumable = True
+        records = []
+        invalidated = 0
+        raw_records = payload.get("records")
+        if not isinstance(raw_records, list):
+            raw_records = []
+        if stage != "enumerate":
+            for item in raw_records:
+                record = FileRecord.from_checkpoint(item)
+                if record is None:
+                    invalidated += 1
+                    continue
+                identity = fsutil.file_identity(record.path)
+                if (identity is None
+                        or identity.get("size") != record.size
+                        or identity.get("mtime_ns") != record.mtime_ns
+                        or int(identity.get("inode") or 0) != record.inode
+                        or int(identity.get("dev") or 0) != record.dev):
+                    # 文件变化：丢弃旧记录，绝不沿用旧 hash（§3 恢复语义）。
+                    invalidated += 1
+                    continue
+                records.append(record)
+        state.stats["resume_invalidated"] = invalidated
+        state.resume_stage = stage
+        state.resume_records = records
+        return state
+
 
     def _audit_finish(self, state, action):
         try:
@@ -1041,17 +1458,15 @@ class ScanManager(object):
             pass
 
     def _check_control(self, state):
+        """安全点检查：停止优先，其次暂停（docs/RESUME_CONTRACT.md §3）。"""
         if state.stop_event.is_set():
             raise ScanStopped()
-        while not state.running_event.wait(0.2):
-            if state.stop_event.is_set():
-                raise ScanStopped()
+        if state.pause_event.is_set():
+            raise ScanPaused()
 
     def _should_stop(self, state):
-        while not state.running_event.wait(0.1):
-            if state.stop_event.is_set():
-                return True
-        return state.stop_event.is_set()
+        """哈希/视频 worker 的取消回调：暂停或停止都要求尽快中断。"""
+        return state.stop_event.is_set() or state.pause_event.is_set()
 
     def _set_progress(self, state, stage, progress, message=None):
         with state.lock:
@@ -1259,6 +1674,11 @@ class ScanManager(object):
             groups = {}
             for record in bucket:
                 self._check_control(state)
+                if record.quick_hash:
+                    # 断点恢复：已算过快速指纹的记录直接复用（文件已重新 stat 校验）。
+                    groups.setdefault(record.quick_hash, []).append(record)
+                    done += 1
+                    continue
                 try:
                     # 哈希计算点：快速采样指纹（非最终判定）
                     record.quick_hash = hashing.quick_sample_hash(
@@ -1286,7 +1706,7 @@ class ScanManager(object):
     # ------------------------------------------------------------------
     # 阶段四：全量哈希（哈希计算点）
     # ------------------------------------------------------------------
-    def _hash_stage(self, state, buckets):
+    def _hash_stage(self, state, buckets, reuse_existing=False):
         algo = state.options.get("hash_algo") or "sha256"
         concurrency = max(1, min(8, int(state.options.get("concurrency") or 1)))
         rate_mbps = int(state.options.get("hash_rate_mbps") or 0)
@@ -1295,17 +1715,27 @@ class ScanManager(object):
         if total == 0:
             self._set_progress(state, "hash", 0.85, u"没有需要全量哈希的文件")
             return []
-        self._set_progress(state, "hash", 0.46,
-                           u"正在计算哈希 0/%d" % total)
         report_every = max(1, min(64, total // 50))
         done = 0
         results = {}
-        executor = self._executor_factory(concurrency)
-        try:
-            flat = []
+        flat = []
+        if reuse_existing:
+            # 断点恢复：已有 hash 的记录直接进入结果，跳过重新哈希。
+            for bucket_index, bucket in enumerate(buckets):
+                for record in bucket:
+                    if record.hash:
+                        results.setdefault(bucket_index, []).append(record)
+                        done += 1
+                    else:
+                        flat.append((bucket_index, record))
+        else:
             for bucket_index, bucket in enumerate(buckets):
                 for record in bucket:
                     flat.append((bucket_index, record))
+        self._set_progress(state, "hash", 0.46,
+                           u"正在计算哈希 %d/%d" % (done, total))
+        executor = self._executor_factory(concurrency)
+        try:
             batch_size = max(64, concurrency * 32)
             for start in range(0, len(flat), batch_size):
                 self._check_control(state)
@@ -1317,9 +1747,11 @@ class ScanManager(object):
                 for bucket_index, record, future in futures:
                     try:
                         digest = future.result()
+                    except ScanPaused:
+                        raise
                     except hashing.HashCancelled:
-                        if state.stop_event.is_set():
-                            raise ScanStopped()
+                        if state.pause_event.is_set():
+                            raise ScanPaused()
                         raise ScanStopped()
                     except (OSError, IOError):
                         self._inc_skip(state, "permission")
@@ -1389,12 +1821,11 @@ class ScanManager(object):
             counters[reason] = counters.get(reason, 0) + 1
 
     def _wait_worker(self, state):
-        """worker 内检查暂停/停止：暂停时阻塞，停止时抛 ScanStopped。"""
-        while not state.running_event.wait(0.1):
-            if state.stop_event.is_set():
-                raise ScanStopped()
+        """worker 内检查暂停/停止：暂停抛 ScanPaused，停止抛 ScanStopped。"""
         if state.stop_event.is_set():
             raise ScanStopped()
+        if state.pause_event.is_set():
+            raise ScanPaused()
 
     def _extract_feature(self, state, record, kind, extension, options,
                          cache, limiter):
@@ -1482,9 +1913,11 @@ class ScanManager(object):
                         result = future.result()
                     except similarity.SimilaritySkip as exc:
                         self._inc_similarity_skip(state, exc.reason)
-                    except ScanStopped:
+                    except (ScanPaused, ScanStopped):
                         raise
                     except hashing.HashCancelled:
+                        if state.pause_event.is_set():
+                            raise ScanPaused()
                         raise ScanStopped()
                     except (OSError, IOError):
                         self._inc_similarity_skip(state, "error")
@@ -1617,7 +2050,11 @@ class ScanManager(object):
                 for record, future in futures:
                     try:
                         analysis = future.result()
+                    except ScanPaused:
+                        raise
                     except video_similarity.VideoStopped:
+                        if state.pause_event.is_set():
+                            raise ScanPaused()
                         raise ScanStopped()
                     except video_similarity.VideoSkip as exc:
                         self._inc_video_skip(state, exc.reason)

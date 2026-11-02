@@ -2802,7 +2802,7 @@
     els.progressStatus.className = 'badge ' + (STATUS_BADGE[status] || 'badge-gray');
     setText(els.progressScanId, scan.scan_id || state.scan.id || '');
     var stageText = STAGE_LABEL[scan.stage] || scan.stage || '准备中';
-    if (status === 'paused') { stageText += '（已暂停）'; }
+    if (status === 'paused') { stageText += (scan.pause_reason === 'upgrade' ? '（升级前暂停）' : '（已暂停）'); }
     else if (status === 'stopped') { stageText = '扫描已停止'; }
     else if (status === 'failed') { stageText = '扫描失败'; }
     else if (status === 'completed') { stageText = '扫描完成'; }
@@ -2816,6 +2816,9 @@
     els.progressBar.classList.toggle('is-error', status === 'failed');
     els.progressBar.classList.toggle('is-warn', status === 'paused' || status === 'stopped' || status === 'stopping' || status === 'interrupted');
     var message = scan.message || '';
+    if (status === 'paused' && scan.pause_reason === 'upgrade') {
+      message = '扫描已在升级前暂停，断点已保存；升级完成后点击“继续扫描”恢复。';
+    }
     if (status === 'completed' && !message) { message = '扫描完成。'; }
     if (status === 'interrupted' && !message) {
       message = '扫描因服务重启或套件升级中断，请重新发起扫描。';
@@ -6011,6 +6014,7 @@
         : null
     ]);
     var metaParts = ['开始：' + fmtDateTime(startedAt), '结束：' + (finishedAt ? fmtDateTime(finishedAt) : '—')];
+    if (status === 'paused' && scan.pause_reason === 'upgrade') { metaParts.push('暂停原因：升级前暂停'); }
     if (keepMode) { metaParts.push('保留策略：' + (KEEP_MODE_LABEL[keepMode] || keepMode)); }
     if (scanMode === 'similar') {
       var thresholdText = options.similarity_threshold !== undefined ? options.similarity_threshold
@@ -6110,8 +6114,12 @@
     show(els.progressPanel);
     renderScanProgress(scan);
     if (ACTIVE_STATUS.indexOf(scan.status) !== -1) {
-      startScanPolling(scanId);
-      toast('已打开正在运行的扫描任务进度。', 'info');
+      if (scan.status === 'paused') {
+        toast('扫描已暂停；点击“继续扫描”从断点恢复。', 'info');
+      } else {
+        startScanPolling(scanId);
+        toast('已打开正在运行的扫描任务进度。', 'info');
+      }
     } else {
       hide(els.resultsSection);
       api('/api/scans/' + encodePath(scanId), { timeout: 15000 }).then(function (res) {

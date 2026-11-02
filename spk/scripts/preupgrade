@@ -1,11 +1,52 @@
 #!/bin/sh
 # 本脚本由 DSM 套件框架在升级前以套件用户身份调用。
-# 只做安全清理，避免旧 PID/字节码缓存影响升级后的服务启动。
+# v0014（docs/RESUME_CONTRACT.md §4）：
+#   1) 若服务在运行，创建 <var>/upgrade.drain；
+#   2) 等待后端写 <var>/upgrade.done，最长 30 秒；
+#   3) 超时也退出 0，让 DSM 继续停止服务（未暂停的扫描会变 interrupted）；
+#   4) 其余清理与旧版一致（PID/字节码缓存）。
 PKG_NAME="DuplicateCleaner"
 PKG_DIR="${SYNOPKG_PKGDEST:-/var/packages/${PKG_NAME}/target}"
 VAR_DIR="${SYNOPKG_PKGVAR:-/var/packages/${PKG_NAME}/var}"
+PID_FILE="$VAR_DIR/backend.pid"
+DRAIN_FILE="$VAR_DIR/upgrade.drain"
+DONE_FILE="$VAR_DIR/upgrade.done"
+DRAIN_WAIT_SECONDS=30
 
-rm -f "$VAR_DIR/backend.pid" 2>/dev/null
+is_running() {
+  [ -r "$PID_FILE" ] || return 1
+  _pid=$(cat "$PID_FILE" 2>/dev/null)
+  [ -n "$_pid" ] || return 1
+  kill -0 "$_pid" 2>/dev/null || return 1
+  return 0
+}
+
+# 清理上次升级可能残留的握手文件，避免误判。
+rm -f "$DONE_FILE" 2>/dev/null
+
+if is_running && [ -d "$VAR_DIR" ]; then
+  if (: > "$DRAIN_FILE") 2>/dev/null; then
+    echo "DuplicateCleaner preupgrade: 请求暂停活动扫描并保存断点（最长 ${DRAIN_WAIT_SECONDS}s）"
+    _waited=0
+    while [ "$_waited" -lt "$DRAIN_WAIT_SECONDS" ]; do
+      if [ -f "$DONE_FILE" ]; then
+        echo "DuplicateCleaner preupgrade: 扫描已暂停，断点已保存"
+        break
+      fi
+      sleep 1
+      _waited=$((_waited + 1))
+    done
+    if [ ! -f "$DONE_FILE" ]; then
+      echo "DuplicateCleaner preupgrade: 等待超时（${DRAIN_WAIT_SECONDS}s），交给 DSM 停止服务；未暂停的扫描将标记为已中断"
+    fi
+  else
+    echo "DuplicateCleaner preupgrade: 数据目录不可写，跳过 drain 握手" >&2
+  fi
+fi
+
+# 握手结束：后端已写 done 或已超时，残留文件不再需要。
+rm -f "$DRAIN_FILE" "$DONE_FILE" 2>/dev/null
+rm -f "$PID_FILE" 2>/dev/null
 find "$PKG_DIR" -type d -name __pycache__ -prune -exec rm -rf {} + 2>/dev/null
 echo "DuplicateCleaner preupgrade: prepared for upgrade (data preserved at $VAR_DIR)"
 exit 0

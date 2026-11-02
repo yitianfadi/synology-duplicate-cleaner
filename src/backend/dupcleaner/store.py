@@ -34,8 +34,12 @@ logger = logging.getLogger("dupcleaner.store")
 
 AUDIT_MAX_BYTES = 5 * 1024 * 1024
 
-# 进程启动时需要标记为 interrupted 的活动状态（不自动续跑）。
+# 进程启动时需要处理的未完成扫描状态（不自动续跑）。
 INTERRUPTED_STATUSES = ("queued", "running", "paused", "stopping")
+
+# 可恢复暂停的断点阶段（docs/RESUME_CONTRACT.md §1/§3）。
+RESUME_STAGES = ("enumerate", "size", "sample", "hash", "similarity",
+                 "video", "finalize")
 
 _MIGRATED_KEY = "migrated_v1"
 _GROUP_BATCH = 200
@@ -973,6 +977,28 @@ class Store(object):
             "updated_epoch": row["updated_epoch"],
         }
 
+    @staticmethod
+    def checkpoint_payload_resumable(payload):
+        """暂停断点是否可恢复：阶段合法且带 records 快照（可为空列表）。"""
+        if not isinstance(payload, dict):
+            return False
+        stage = payload.get("stage")
+        if not isinstance(stage, str) or stage not in RESUME_STAGES:
+            return False
+        return isinstance(payload.get("records"), list)
+
+    def load_resumable_checkpoint(self, scan_id):
+        """返回可恢复的暂停断点 payload；不存在/不可恢复返回 None。"""
+        checkpoint = self.load_checkpoint(scan_id)
+        if checkpoint is None:
+            return None
+        payload = checkpoint.get("payload")
+        if not self.checkpoint_payload_resumable(payload):
+            return None
+        result = dict(payload)
+        result["updated_epoch"] = checkpoint.get("updated_epoch")
+        return result
+
     def delete_checkpoint(self, scan_id):
         scan_id = self._check_scan_id(scan_id)
         self.db.execute("DELETE FROM scan_checkpoints WHERE scan_id=?", (scan_id,))
@@ -1050,6 +1076,12 @@ class Store(object):
     # 启动状态：活动扫描标记 interrupted（不自动续跑）
     # ------------------------------------------------------------------
     def mark_interrupted_scans(self, epoch=None):
+        """启动状态收敛（docs/RESUME_CONTRACT.md §1）。
+
+        - paused 且有可恢复断点（records 快照）：保持 paused，供手动继续；
+        - queued/running/stopping，或 paused 但无可用断点：标记 interrupted；
+        - 已完成/失败/停止状态不动；绝不自动继续。
+        """
         now = time.time() if epoch is None else float(epoch)
         placeholders = ", ".join(["?"] * len(INTERRUPTED_STATUSES))
         rows = self.db.query(
@@ -1066,8 +1098,22 @@ class Store(object):
                 if not isinstance(meta, dict):
                     meta = {"scan_id": scan_id}
                 meta["scan_id"] = scan_id
+                if previous == "paused" and self._checkpoint_resumable(scan_id):
+                    meta["status"] = "paused"
+                    meta["interrupted"] = False
+                    meta["resumable"] = True
+                    if not meta.get("pause_reason"):
+                        meta["pause_reason"] = "paused"
+                    if not meta.get("message"):
+                        meta["message"] = u"扫描已暂停，升级后可继续"
+                    self.db.execute(
+                        "UPDATE scans SET meta_json=?, updated_epoch=?,"
+                        " status='paused', interrupted=0 WHERE scan_id=?",
+                        (json.dumps(meta, ensure_ascii=False), now, scan_id))
+                    continue
                 meta["status"] = "interrupted"
                 meta["interrupted"] = True
+                meta["resumable"] = False
                 meta["interrupted_previous_status"] = previous
                 meta["interrupted_epoch"] = now
                 meta["finished_epoch"] = now
@@ -1084,6 +1130,15 @@ class Store(object):
                 })
                 changed.append(scan_id)
         return changed
+
+    def _checkpoint_resumable(self, scan_id):
+        try:
+            checkpoint = self.load_checkpoint(scan_id)
+        except Exception:  # pragma: no cover
+            return False
+        if checkpoint is None:
+            return False
+        return self.checkpoint_payload_resumable(checkpoint.get("payload"))
 
     # ------------------------------------------------------------------
     # 生命周期

@@ -33,7 +33,7 @@
 ```bash
 python build/fetch_ffmpeg.py   # 首次构建：下载两个架构的静态 FFmpeg 到 vendor/ffmpeg/
 python build/build_spk.py
-# 生成 dist/DuplicateCleaner-1.1.0-0013.spk
+# 生成 dist/DuplicateCleaner-1.1.0-0015.spk
 ```
 
 构建机需要 Python 3.8+；FFmpeg 二进制不提交到 Git，首次构建需运行 `build/fetch_ffmpeg.py`。重新生成图标需要 Pillow（仓库已带 PNG，可 `--no-icons`）。
@@ -41,7 +41,7 @@ python build/build_spk.py
 ### 2. 安装到 DSM
 
 1. DSM 套件中心先安装 **Python3**（3.8+）。
-2. 套件中心 → 手动安装 → 选择 `dist/DuplicateCleaner-1.1.0-0013.spk`。
+2. 套件中心 → 手动安装 → 选择 `dist/DuplicateCleaner-1.1.0-0015.spk`。
 3. 启动套件；从 DSM 主菜单打开“重复文件清理与字幕”，或访问 `http://<NAS>:8787/`。
 4. 使用 administrators 组账号登录。
 5. 按页面黄色“权限提示”给 `duplicatecleaner` 系统内部用户授权目标共享文件夹（读取；删除副本需读取/写入）。
@@ -83,6 +83,7 @@ node --check ../web/app.js
 - [视频视觉相似契约](docs/VIDEO_CONTRACT.md)：FFmpeg、动态采样、指纹、DTW、缓存、视频批量删除与 Excel
 - [云端字幕契约](docs/SUBTITLE_CONTRACT.md)：OpenAI 兼容 ASR/LLM、分块、SRT/VTT、双语字幕、密钥与隐私
 - [存储层契约](docs/STORAGE_CONTRACT.md)：SQLite 元数据、旧 JSON 迁移、检查点、WAL 与备份
+- [扫描暂停/升级 drain 契约](docs/RESUME_CONTRACT.md)：暂停断点、升级前 drain、重启后手动继续
 - [QA 验收报告](qa/REPORT.md)：需求逐项对照与测试证据
 
 ## 仓库结构
@@ -124,6 +125,7 @@ dist/               构建产物（.spk 与 SHA256）
 - 云端字幕默认关闭：启用后音频和字幕文本会发送到所配置的 ASR/LLM 服务；API Key 保存在 `var/settings.json`，GET 接口不回传明文；请只在可信网络/合规场景使用。
 - 云端字幕为 OpenAI 兼容接口，不绑定厂商；ASR 模型必须返回带时间戳的 `verbose_json` 片段或 SRT，纯文本模型无法生成字幕。
 - v0012 起扫描/组/文件/删除任务/特征缓存/字幕任务元数据存入 `<var>/dupcleaner.sqlite3`；设置、审计、运行日志、字幕文件仍保留文件形式。升级/备份时请连同 `dupcleaner.sqlite3` 与 `var/` 一起备份。
+- v0014 起支持升级前暂停扫描并写断点；升级后需在扫描历史中手动点“继续扫描”，不会自动续跑。字幕任务仍会因重启失败，需要重新提交；删除任务不会续跑。
 
 ## License
 

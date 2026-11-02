@@ -13,12 +13,14 @@ from .settings import SettingsManager
 from .shares import ShareService
 from .store import Store
 from .subtitles import SubtitleService
+from .upgrade import UpgradeDrainMonitor
 
 
 class Services(object):
     def __init__(self, runtime_config, store, settings_manager, auth_manager,
                  share_service, browse_service, preview_service, scan_manager,
-                 deletion_manager, subtitle_service=None):
+                 deletion_manager, subtitle_service=None,
+                 upgrade_monitor=None):
         self.config = runtime_config
         self.store = store
         self.settings = settings_manager
@@ -29,8 +31,15 @@ class Services(object):
         self.scanner = scan_manager
         self.deletion = deletion_manager
         self.subtitles = subtitle_service
+        self.upgrade_monitor = upgrade_monitor
 
     def shutdown(self, timeout=5.0):
+        # 先停升级 drain 监视，避免正常退出时又把扫描暂停。
+        try:
+            if self.upgrade_monitor is not None:
+                self.upgrade_monitor.stop(timeout=timeout)
+        except Exception:
+            pass
         try:
             self.scanner.stop_all(timeout=timeout)
         except Exception:
@@ -66,6 +75,10 @@ def build_services(runtime_config):
                                        scan_manager, settings_manager)
     subtitle_service = SubtitleService(runtime_config, store, share_service,
                                        settings_manager.get)
+    # 升级 drain 握手：preupgrade 写 <var>/upgrade.drain，后端暂停扫描后写 done。
+    upgrade_monitor = UpgradeDrainMonitor(runtime_config.data_dir, scan_manager)
+    upgrade_monitor.start()
     return Services(runtime_config, store, settings_manager, auth_manager,
                     share_service, browse_service, preview_service,
-                    scan_manager, deletion_manager, subtitle_service)
+                    scan_manager, deletion_manager, subtitle_service,
+                    upgrade_monitor)
