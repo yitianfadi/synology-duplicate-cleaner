@@ -224,7 +224,8 @@ def check_backend():
                        "shlex", "locale", "getpass", "pwd", "grp", "resource", "fcntl",
                        "select", "queue", "math", "decimal", "calendar", "codecs",
                        "heapq", "mimetypes", "tests", "stringprep", "encodings",
-                       "zipfile", "zlib", "html", "PIL", "logging.handlers")
+                       "zipfile", "zlib", "html", "PIL", "logging.handlers", "sqlite3",
+                       "xml")
     for path in py_files:
         rel = os.path.relpath(path, REPO)
         src = read(path)
@@ -267,8 +268,8 @@ def check_backend():
           and "_check_int(key, value, 1, 4)" in settings_src
           and "_check_int(key, value, 1, 1024)" in settings_src,
           "similarity settings markers missing")
-    check("BE-SIM-STAGE", "scanner 新增 similarity 阶段与分类统计",
-          '"similarity", "finalize"' in scanner_src
+    check("BE-SIM-STAGE", "scanner 新增 similarity/video 阶段与分类统计",
+          '"similarity"' in scanner_src and '"video"' in scanner_src
           and "similarity_cache_hits" in scanner_src
           and "similarity_skipped" in scanner_src
           and '"exact_groups"' in scanner_src
@@ -304,10 +305,10 @@ def check_backend():
           and "reviewed_similar_group_ids" in del_src
           and "SIMILAR_REVIEW_REQUIRED" in del_src,
           "review gating markers missing")
-    check("BE-SIM-SCOPE", "scope=all_duplicates 永不包含相似组",
-          "scope=all_duplicates 永不包含相似组" in del_src
-          and '(group.get("match_type") or "exact") == "similar"' in del_src,
-          "scope similar exclusion marker missing")
+    check("BE-SIM-SCOPE", "scope=all_duplicates 永不包含相似/视频组",
+          "scope=all_duplicates" in del_src
+          and 'in ("similar", "video")' in del_src,
+          "scope similar/video exclusion marker missing")
     check("BE-SIM-REVALIDATE", "相似文件删除前按各自 content_sha256 重校验（不要求二者相等）",
           "match_type == \"similar\"" in del_src
           and "不要求哈希相等" in del_src
@@ -525,7 +526,7 @@ def check_frontend():
           and u"禁止批量删除" in app and "similarReview" in app,
           "similar bulk-delete prohibition markers missing")
     check("FE-SIM-DELETE-GATE", "删除计划提交 confirm_similar + reviewed_similar_group_ids，前端按复核门控",
-          "confirm_similar: true" in app
+          ("confirm_similar: true" in app or "body.confirm_similar = true" in app)
           and "reviewed_similar_group_ids" in app
           and "SIMILAR_REVIEW_REQUIRED" in app
           and u"存在未人工复核的相似组，无法删除" in app,
@@ -570,11 +571,11 @@ def check_spk_source():
     check("SPK-INFO-REQ", "SPK/INFO 包含必需字段",
           all(key in info for key in required),
           "missing=%s" % [key for key in required if key not in info])
-    check("SPK-INFO-VALUES", "INFO 字段值符合契约（版本与 config 一致 / DSM7 / noarch / 8787 / ui）",
+    check("SPK-INFO-VALUES", "INFO 字段值符合契约（版本与 config 一致 / DSM7 / 架构 / 8787 / ui）",
           info.get("package") == "DuplicateCleaner"
           and info.get("version") == expected_app_version()
           and info.get("os_min_ver", "").startswith("7.0")
-          and info.get("arch") == "noarch"
+          and info.get("arch") in ("noarch", "x86_64", "armv8", "x86_64 armv8")
           and info.get("adminport") == "8787"
           and info.get("dsmuidir") == "ui"
           and info.get("startable") == "yes",
@@ -882,6 +883,12 @@ def check_dist():
                 elif name.startswith("port_conf/"):
                     if not name.endswith(".sc"):
                         whitelist_bad.append(name)
+                elif name.startswith("bin/"):
+                    if name not in ("bin/ffmpeg-x86_64", "bin/ffmpeg-aarch64",
+                                    "bin/LICENSE-FFMPEG-GPLv3.txt"):
+                        whitelist_bad.append(name)
+                elif name == "THIRD_PARTY_NOTICES.txt":
+                    continue
                 else:
                     whitelist_bad.append(name)
             check("SPK-PKG-WHITELIST", "package.tgz 内容符合白名单（app 仅 .py，无临时/输出文件）",

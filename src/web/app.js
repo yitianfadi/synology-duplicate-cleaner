@@ -40,7 +40,8 @@
   };
   var STAGE_LABEL = {
     enumerate: '枚举文件', size: '按大小分组', sample: '快速指纹采样',
-    hash: '计算哈希', similarity: '内容相似度分析', finalize: '归并结果', done: '完成'
+    hash: '计算哈希', similarity: '内容相似度分析', video: '视频视觉分析',
+    finalize: '归并结果', done: '完成'
   };
   var KEEP_LABEL = {
     latest_created: '最晚创建', earliest_created: '最早创建',
@@ -61,6 +62,20 @@
   var SIMILARITY_OPTION_KEYS = ['scan_mode', 'similarity_threshold', 'similarity_extensions',
     'similarity_exclude_extensions', 'similarity_concurrency', 'similarity_cache',
     'similarity_max_file_mb', 'similarity_allow_binary'];
+  var DEFAULT_VIDEO_EXTENSIONS = ['.mp4', '.mkv', '.mov', '.avi', '.flv', '.wmv', '.webm', '.m4v', '.ts', '.mpg', '.mpeg'];
+  var DEFAULT_VIDEO_SETTINGS = {
+    video_similarity_enabled: false,
+    video_extensions: DEFAULT_VIDEO_EXTENSIONS.slice(),
+    video_sample_frames: 20,
+    video_max_sample_interval_sec: 300,
+    video_similarity_threshold: 90,
+    video_concurrency: 1,
+    video_hwaccel: 'auto',
+    video_max_file_mb: 8192,
+    video_timeout_sec: 180,
+    video_cache: true
+  };
+  var VIDEO_HWACCEL_LABEL = { none: '软件解码', vaapi: 'VA-API', qsv: 'Intel QSV', nvdec: 'NVDEC', auto: '自动' };
   var SOURCE_INFO = {
     statx: { short: 'statx', title: 'statx：文件系统创建时间（可靠）', cls: 'is-ok' },
     birthtime: { short: 'birthtime', title: 'birthtime：系统提供的创建时间', cls: 'is-ok' },
@@ -111,7 +126,11 @@
     create_recycle_dir: false, max_files: 500000, allow_ctime_fallback: false,
     scan_mode: 'exact', similarity_threshold: 85, similarity_extensions: [],
     similarity_exclude_extensions: [], similarity_concurrency: 2, similarity_cache: true,
-    similarity_max_file_mb: 32, similarity_allow_binary: false
+    similarity_max_file_mb: 32, similarity_allow_binary: false,
+    video_similarity_enabled: false, video_extensions: DEFAULT_VIDEO_EXTENSIONS.slice(),
+    video_sample_frames: 20, video_max_sample_interval_sec: 300, video_similarity_threshold: 90,
+    video_concurrency: 1, video_hwaccel: 'auto', video_max_file_mb: 8192,
+    video_timeout_sec: 180, video_cache: true
   };
   var SIZE_UNITS = { kb: 1024, mb: 1048576, gb: 1073741824 };
 
@@ -132,6 +151,7 @@
     recycleDefault: true,
     scanMode: 'exact',
     similarity: { supported: true, extensions: DEFAULT_SIMILARITY_EXTENSIONS.slice(), defaultThreshold: 85, maxConcurrency: 4, binaryExtensions: [] },
+    video: { supported: true, available: true, extensions: DEFAULT_VIDEO_EXTENSIONS.slice(), ffmpegPath: '', ffmpegVersion: '', hwaccels: [], gpuHint: '', cache: '' },
     // 当前扫描
     scan: { id: null, data: null, stats: null, timer: null, abort: null, polling: false, errors: 0, handled: false },
     // 结果
@@ -141,7 +161,9 @@
       loading: false, seq: 0, loaded: false,
       scanMode: 'exact', exactTotal: 0, similarTotal: 0,
       similarGroups: [], similarOffset: 0, similarLoading: false, similarLoaded: false,
-      similarSeq: 0, similarReview: new Set(), similarSelected: new Map()
+      similarSeq: 0, similarReview: new Set(), similarSelected: new Map(),
+      videoGroups: [], videoTotal: 0, videoOffset: 0, videoLoading: false, videoLoaded: false,
+      videoSeq: 0, videoSelected: new Map(), videoSelectAllMode: false
     },
     // 删除流程
     deleteFlow: { plan: null, job: null, timer: null, abort: null, running: false, busy: false, modal: null, recycle: true, override: null },
@@ -178,7 +200,15 @@
     'similarGroupsList similarLoadMoreBtn similarLoadMoreStatus settingsSimilarityDetails setScanMode setSimilarityThreshold ' +
     'setSimilarityThresholdError setSimilarityConcurrency setSimilarityConcurrencyError setSimilarityMaxMb setSimilarityMaxFileError ' +
     'setSimilarityCache setSimilarityAllowBinary setSimExtList setSimilarityExtError setSimilarityExcludeExt ' +
-    'setSimilarityExcludeExtError footerMeta toastRoot modalRoot').split(' ');
+    'setSimilarityExcludeExtError videoOptionsDetails videoStatusBadge videoStatusHint videoEnabled videoFields ' +
+    'videoThreshold videoThresholdError videoSampleFrames videoFramesError videoMaxInterval videoIntervalError ' +
+    'videoConcurrency videoConcurrencyError videoHwaccel videoMaxFileMb videoMaxFileError videoTimeout videoTimeoutError ' +
+    'videoCache videoExtList videoExtError videoCounters videoCandidates videoCacheHits videoFfmpegUsed videoSkipped ' +
+    'xlsxLink videoPartition videoPartitionCount selectAllVideoBtn videoLoading videoError videoEmpty videoGroupsList ' +
+    'videoLoadMoreBtn videoLoadMoreStatus settingsVideoDetails setVideoStatusBadge setVideoStatusHint setVideoEnabled ' +
+    'setVideoFields setVideoThreshold setVideoThresholdError setVideoSampleFrames setVideoFramesError setVideoMaxInterval ' +
+    'setVideoIntervalError setVideoConcurrency setVideoConcurrencyError setVideoHwaccel setVideoMaxMb setVideoMaxFileError ' +
+    'setVideoTimeout setVideoTimeoutError setVideoCache setVideoExtList setVideoExtError footerMeta toastRoot modalRoot').split(' ');
 
   var activeModal = null;
   var modalSeq = 0;
@@ -793,6 +823,7 @@
     state.recycleDefault = true;
     state.scanMode = 'exact';
     state.similarity = { supported: true, extensions: DEFAULT_SIMILARITY_EXTENSIONS.slice(), defaultThreshold: 85, maxConcurrency: 4, binaryExtensions: [] };
+    state.video = { supported: true, available: true, extensions: DEFAULT_VIDEO_EXTENSIONS.slice(), ffmpegPath: '', ffmpegVersion: '', hwaccels: [], gpuHint: '', cache: '' };
     state.historyCache = null;
     state.logsLoaded = false;
     state.settingsLoaded = false;
@@ -838,6 +869,7 @@
     }
     state.recycleDefault = state.settings.recycle_default !== false;
     state.similarity = similarityCapability();
+    state.video = videoCapability();
     state.scanMode = state.settings.scan_mode === 'similar' ? 'similar' : 'exact';
     applySettingsToScanForm(state.settings);
     renderRoots();
@@ -856,7 +888,9 @@
     if (meta.python_version) { parts.push('Python ' + meta.python_version); }
     setText(els.footerMeta, parts.join(' · '));
     state.similarity = similarityCapability();
+    state.video = videoCapability();
     updateModeAvailability();
+    updateVideoAvailabilityUi();
   }
 
   // ==================== 7. 导航 ====================
@@ -1460,7 +1494,14 @@
     simThreshold: { input: 'simThreshold', error: 'simThresholdError' },
     simConcurrency: { input: 'simConcurrency', error: 'simConcurrencyError' },
     simMaxFile: { input: 'simMaxFileMb', error: 'simMaxFileError' },
-    simExt: { input: 'simExtList', error: 'simExtError' }
+    simExt: { input: 'simExtList', error: 'simExtError' },
+    videoThreshold: { input: 'videoThreshold', error: 'videoThresholdError' },
+    videoFrames: { input: 'videoSampleFrames', error: 'videoFramesError' },
+    videoInterval: { input: 'videoMaxInterval', error: 'videoIntervalError' },
+    videoConcurrency: { input: 'videoConcurrency', error: 'videoConcurrencyError' },
+    videoMaxFile: { input: 'videoMaxFileMb', error: 'videoMaxFileError' },
+    videoTimeout: { input: 'videoTimeout', error: 'videoTimeoutError' },
+    videoExt: { input: 'videoExtList', error: 'videoExtError' }
   };
 
   function renderRoots() {
@@ -1564,6 +1605,10 @@
       var threshold = parseInt(els.simThreshold ? els.simThreshold.value : '85', 10);
       parts.push('相似阈值 ' + (isFinite(threshold) ? clamp(threshold, 0, 100) : 85) + '%');
       if (els.simConcurrency && els.simConcurrency.value) { parts.push('相似并发 ' + els.simConcurrency.value); }
+    }
+    if (state.video && state.video.supported !== false && els.videoEnabled && els.videoEnabled.checked) {
+      var frames = parseInt(els.videoSampleFrames ? els.videoSampleFrames.value : '20', 10);
+      parts.push('视频视觉相似（抽样 ' + (isFinite(frames) ? frames : 20) + ' 帧）');
     }
     setText(els.scanSummary, parts.join(' · ') + '。');
   }
@@ -1720,6 +1765,235 @@
     return 'exact';
   }
 
+  // ---------- 视频视觉相似（FFmpeg 抽样帧） ----------
+  function videoCapability() {
+    var meta = state.meta;
+    var video = meta && meta.video;
+    var supported = meta ? !!(video && typeof video === 'object') : true;
+    var videoDefaults = (video && (video.default_settings || video.defaults)) || (meta && meta.defaults) || (state.settings || {});
+    var extensions = [];
+    if (video && Array.isArray(video.video_extensions) && video.video_extensions.length) {
+      extensions = video.video_extensions.slice();
+    } else if (Array.isArray(videoDefaults.video_extensions) && videoDefaults.video_extensions.length) {
+      extensions = videoDefaults.video_extensions.slice();
+    }
+    if (!extensions.length) { extensions = DEFAULT_VIDEO_EXTENSIONS.slice(); }
+    var ffmpegPath = (video && video.ffmpeg_path) || '';
+    var ffmpegVersion = (video && video.ffmpeg_version) || '';
+    var ffmpegAvailable = false;
+    if (video) {
+      if (typeof video.available === 'boolean') {
+        ffmpegAvailable = video.available;
+      } else {
+        ffmpegAvailable = !!ffmpegPath && !!ffmpegVersion && ffmpegVersion !== 'unavailable';
+      }
+    }
+    return {
+      supported: supported,
+      available: supported && ffmpegAvailable,
+      extensions: extensions,
+      ffmpegPath: ffmpegPath,
+      ffmpegVersion: ffmpegVersion,
+      hwaccels: video && Array.isArray(video.hwaccels) ? video.hwaccels : [],
+      gpuHint: (video && video.gpu_hint) || '',
+      cache: (video && video.cache) || ''
+    };
+  }
+
+  function videoStatusInfo() {
+    var cap = state.video || videoCapability();
+    if (cap.supported === false) {
+      return {
+        text: '后端未提供视频相似能力',
+        cls: 'is-unavailable',
+        hint: '当前后端未启用视频视觉相似，视频选项不可用；精准哈希与内容相似功能不受影响。'
+      };
+    }
+    if (cap.available === false) {
+      return {
+        text: 'FFmpeg 不可用',
+        cls: 'is-unavailable',
+        hint: '未检测到可用的 FFmpeg，视频视觉相似不可用；请安装 FFmpeg 或检查 SPK 内置路径。'
+      };
+    }
+    var details = [];
+    if (cap.ffmpegVersion) { details.push('FFmpeg ' + cap.ffmpegVersion); }
+    if (cap.hwaccels && cap.hwaccels.length) { details.push('硬件加速：' + cap.hwaccels.join('/')); }
+    else if (cap.gpuHint === true) { details.push('检测到硬件加速提示'); }
+    return {
+      text: 'FFmpeg 可用',
+      cls: 'is-available',
+      hint: '使用 FFmpeg 抽样帧比对；' +
+        (details.length ? details.join(' · ') : '未检测到硬件加速，将使用 CPU，可能较慢。') +
+        ' 语音/ASR 辅助未实现（默认关闭，无内置模型、不联网）。'
+    };
+  }
+
+  function updateVideoAvailabilityUi() {
+    var cap = state.video || videoCapability();
+    var info = videoStatusInfo();
+    [els.videoStatusBadge, els.setVideoStatusBadge].forEach(function (badge) {
+      if (!badge) { return; }
+      setText(badge, info.text);
+      badge.className = 'badge video-status-badge ' + info.cls;
+    });
+    [els.videoStatusHint, els.setVideoStatusHint].forEach(function (hint) {
+      if (hint) { setText(hint, info.hint); }
+    });
+    var canEnable = cap.supported !== false && cap.available !== false;
+    if (els.videoEnabled) {
+      els.videoEnabled.disabled = !canEnable;
+      if (!canEnable) { els.videoEnabled.checked = false; }
+    }
+    if (els.setVideoEnabled) {
+      els.setVideoEnabled.disabled = !canEnable;
+      if (!canEnable) { els.setVideoEnabled.checked = false; }
+    }
+    updateVideoFieldsState();
+    updateSettingsVideoFieldsState();
+  }
+
+  function updateVideoFieldsState() {
+    if (!els.videoFields) { return; }
+    var canUse = state.video && state.video.supported !== false && state.video.available !== false;
+    els.videoFields.disabled = !(canUse && els.videoEnabled && els.videoEnabled.checked);
+  }
+
+  function updateSettingsVideoFieldsState() {
+    if (!els.setVideoFields) { return; }
+    var canUse = state.video && state.video.supported !== false && state.video.available !== false;
+    els.setVideoFields.disabled = !(canUse && els.setVideoEnabled && els.setVideoEnabled.checked);
+  }
+
+  function setVideoNumberValue(input, value, fallback, min, max) {
+    if (!input) { return; }
+    var num = parseInt(value, 10);
+    input.value = String(clamp(isFinite(num) ? num : fallback, min, max));
+  }
+
+  function applyVideoSettingsToForm(settings) {
+    if (!settings) { settings = state.settings || DEFAULT_SETTINGS; }
+    var cap = state.video || videoCapability();
+    if (els.videoEnabled) {
+      els.videoEnabled.checked = settings.video_similarity_enabled === true && cap.available !== false;
+    }
+    setVideoNumberValue(els.videoThreshold, settings.video_similarity_threshold, 90, 0, 100);
+    setVideoNumberValue(els.videoSampleFrames, settings.video_sample_frames, 20, 5, 100);
+    setVideoNumberValue(els.videoMaxInterval, settings.video_max_sample_interval_sec, 300, 60, 600);
+    setVideoNumberValue(els.videoConcurrency, settings.video_concurrency, 1, 1, 2);
+    setVideoNumberValue(els.videoMaxFileMb, settings.video_max_file_mb, 8192, 1, 102400);
+    setVideoNumberValue(els.videoTimeout, settings.video_timeout_sec, 180, 30, 1800);
+    if (els.videoHwaccel) { els.videoHwaccel.value = settings.video_hwaccel === 'off' ? 'off' : 'auto'; }
+    if (els.videoCache) { els.videoCache.checked = settings.video_cache !== false; }
+    var selected = (Array.isArray(settings.video_extensions) && settings.video_extensions.length)
+      ? settings.video_extensions : cap.extensions;
+    renderExtChips(els.videoExtList, cap.extensions, selected, null);
+    updateVideoAvailabilityUi();
+  }
+
+  function fillVideoSettingsForm(settings) {
+    if (!settings) { settings = state.settings || DEFAULT_SETTINGS; }
+    var cap = state.video || videoCapability();
+    if (els.setVideoEnabled) {
+      els.setVideoEnabled.checked = settings.video_similarity_enabled === true && cap.available !== false;
+    }
+    setVideoNumberValue(els.setVideoThreshold, settings.video_similarity_threshold, 90, 0, 100);
+    setVideoNumberValue(els.setVideoSampleFrames, settings.video_sample_frames, 20, 5, 100);
+    setVideoNumberValue(els.setVideoMaxInterval, settings.video_max_sample_interval_sec, 300, 60, 600);
+    setVideoNumberValue(els.setVideoConcurrency, settings.video_concurrency, 1, 1, 2);
+    setVideoNumberValue(els.setVideoMaxMb, settings.video_max_file_mb, 8192, 1, 102400);
+    setVideoNumberValue(els.setVideoTimeout, settings.video_timeout_sec, 180, 30, 1800);
+    if (els.setVideoHwaccel) { els.setVideoHwaccel.value = settings.video_hwaccel === 'off' ? 'off' : 'auto'; }
+    if (els.setVideoCache) { els.setVideoCache.checked = settings.video_cache !== false; }
+    var selected = (Array.isArray(settings.video_extensions) && settings.video_extensions.length)
+      ? settings.video_extensions : cap.extensions;
+    renderExtChips(els.setVideoExtList, cap.extensions, selected, null);
+    updateVideoAvailabilityUi();
+  }
+
+  function readVideoScanOptions(options, errors) {
+    var cap = state.video || videoCapability();
+    if (cap.supported === false) { return; }
+    var enabled = !!(els.videoEnabled && els.videoEnabled.checked) && cap.available !== false;
+    options.video_similarity_enabled = enabled;
+    if (!enabled) { return; }
+    var threshold = readIntOption(els.videoThreshold, 0, 100, false, 0, '视频相似度阈值');
+    if (threshold.error) { errors.videoThreshold = threshold.error; } else { options.video_similarity_threshold = threshold.value; }
+    var frames = readIntOption(els.videoSampleFrames, 5, 100, false, 0, '视频抽样帧数');
+    if (frames.error) { errors.videoFrames = frames.error; } else { options.video_sample_frames = frames.value; }
+    var interval = readIntOption(els.videoMaxInterval, 60, 600, false, 0, '最大采样间隔（秒）');
+    if (interval.error) { errors.videoInterval = interval.error; } else { options.video_max_sample_interval_sec = interval.value; }
+    var concurrency = readIntOption(els.videoConcurrency, 1, 2, false, 0, '视频并发数');
+    if (concurrency.error) { errors.videoConcurrency = concurrency.error; } else { options.video_concurrency = concurrency.value; }
+    var maxFile = readIntOption(els.videoMaxFileMb, 1, 102400, false, 0, '单视频大小上限（MB）');
+    if (maxFile.error) { errors.videoMaxFile = maxFile.error; } else { options.video_max_file_mb = maxFile.value; }
+    var timeout = readIntOption(els.videoTimeout, 30, 1800, false, 0, '单视频超时（秒）');
+    if (timeout.error) { errors.videoTimeout = timeout.error; } else { options.video_timeout_sec = timeout.value; }
+    options.video_hwaccel = els.videoHwaccel && els.videoHwaccel.value === 'off' ? 'off' : 'auto';
+    options.video_cache = !!(els.videoCache && els.videoCache.checked);
+    var ext = readExtChips(els.videoExtList);
+    if (!ext.length) { errors.videoExt = '请至少选择一种视频后缀。'; } else { options.video_extensions = ext; }
+  }
+
+  function readVideoSettings(settings, errors) {
+    var cap = state.video || videoCapability();
+    if (cap.supported === false) { return; }
+    settings.video_similarity_enabled = !!(els.setVideoEnabled && els.setVideoEnabled.checked) && cap.available !== false;
+    var threshold = readIntOption(els.setVideoThreshold, 0, 100, false, 0, '视频相似度阈值');
+    if (threshold.error) { errors.videoThreshold = threshold.error; } else { settings.video_similarity_threshold = threshold.value; }
+    var frames = readIntOption(els.setVideoSampleFrames, 5, 100, false, 0, '视频抽样帧数');
+    if (frames.error) { errors.videoFrames = frames.error; } else { settings.video_sample_frames = frames.value; }
+    var interval = readIntOption(els.setVideoMaxInterval, 60, 600, false, 0, '最大采样间隔（秒）');
+    if (interval.error) { errors.videoInterval = interval.error; } else { settings.video_max_sample_interval_sec = interval.value; }
+    var concurrency = readIntOption(els.setVideoConcurrency, 1, 2, false, 0, '视频并发数');
+    if (concurrency.error) { errors.videoConcurrency = concurrency.error; } else { settings.video_concurrency = concurrency.value; }
+    var maxFile = readIntOption(els.setVideoMaxMb, 1, 102400, false, 0, '单视频大小上限（MB）');
+    if (maxFile.error) { errors.videoMaxFile = maxFile.error; } else { settings.video_max_file_mb = maxFile.value; }
+    var timeout = readIntOption(els.setVideoTimeout, 30, 1800, false, 0, '单视频超时（秒）');
+    if (timeout.error) { errors.videoTimeout = timeout.error; } else { settings.video_timeout_sec = timeout.value; }
+    settings.video_hwaccel = els.setVideoHwaccel && els.setVideoHwaccel.value === 'off' ? 'off' : 'auto';
+    settings.video_cache = !!(els.setVideoCache && els.setVideoCache.checked);
+    var ext = readExtChips(els.setVideoExtList);
+    if (!ext.length) { errors.videoExt = '请至少选择一种视频后缀。'; } else { settings.video_extensions = ext; }
+  }
+
+  function videoScanEnabledForResults() {
+    if (state.video && state.video.supported === false) { return false; }
+    var stats = currentScanStats();
+    if (Number(stats.video_groups) > 0 || Number(stats.video_candidates) > 0 ||
+        Number(stats.video_ffmpeg_used) > 0) { return true; }
+    var scan = state.scan.data;
+    if (!scan) { return false; }
+    var options = scan.options || {};
+    var config = scan.config || {};
+    return options.video_similarity_enabled === true || config.video_similarity_enabled === true;
+  }
+
+  function fmtVideoDuration(seconds) {
+    var num = Number(seconds);
+    if (!isFinite(num) || num <= 0) { return '—'; }
+    num = Math.round(num);
+    var hours = Math.floor(num / 3600);
+    var minutes = Math.floor((num % 3600) / 60);
+    var secs = num % 60;
+    if (hours > 0) { return hours + ' 小时 ' + minutes + ' 分'; }
+    if (minutes > 0) { return minutes + ' 分 ' + secs + ' 秒'; }
+    return secs + ' 秒';
+  }
+
+  function videoHwaccelLabel(value) {
+    var key = String(value || '').toLowerCase();
+    return VIDEO_HWACCEL_LABEL[key] || key || '—';
+  }
+
+  function videoSkippedCount(stats) {
+    var skipped = stats && stats.video_skipped;
+    if (!skipped || typeof skipped !== 'object') { return 0; }
+    var total = 0;
+    Object.keys(skipped).forEach(function (key) { total += Number(skipped[key]) || 0; });
+    return total;
+  }
+
   function sizeFieldValue(bytes) {
     var n = Number(bytes) || 0;
     if (n <= 0) { return { value: '0', unit: 'mb' }; }
@@ -1769,6 +2043,7 @@
     state.scanMode = settings.scan_mode === 'similar' ? 'similar' : 'exact';
     setScanMode(state.scanMode, { silent: true });
     applySimilaritySettingsToForm(settings);
+    applyVideoSettingsToForm(settings);
     updateKeepModeUi();
     clearOptionsErrors();
     updateScanSummary();
@@ -1889,6 +2164,7 @@
       options.similarity_cache = !!els.simCache.checked;
       options.similarity_allow_binary = !!els.simAllowBinary.checked;
     }
+    readVideoScanOptions(options, errors);
     return { options: options, errors: errors, valid: Object.keys(errors).length === 0 };
   }
 
@@ -1960,6 +2236,16 @@
     if (els.simExtList) {
       els.simExtList.addEventListener('change', function () { clearOptionsErrors(); updateScanSummary(); });
     }
+    if (els.videoEnabled) {
+      els.videoEnabled.addEventListener('change', function () {
+        updateVideoFieldsState();
+        clearOptionsErrors();
+        updateScanSummary();
+      });
+    }
+    if (els.videoExtList) {
+      els.videoExtList.addEventListener('change', function () { clearOptionsErrors(); updateScanSummary(); });
+    }
   }
 
   // ==================== 10. 启动扫描 / 进度轮询 ====================
@@ -1995,9 +2281,12 @@
       state.results.scanMode = state.scanMode;
       hide(els.resultsSection);
       startScanPolling(res.scan_id);
-      toast(state.scanMode === 'similar'
-        ? '扫描任务已开始：先进行精准哈希，随后进行内容相似度分析。'
-        : '扫描任务已开始，正在枚举文件。', 'success');
+      var videoOn = !!(els.videoEnabled && els.videoEnabled.checked) && (!state.video || state.video.available !== false);
+      var scanStartText = state.scanMode === 'similar'
+        ? '扫描任务已开始：先进行精准哈希，随后进行内容相似度分析'
+        : '扫描任务已开始，正在枚举文件';
+      if (videoOn) { scanStartText += '，随后进行视频视觉分析'; }
+      toast(scanStartText + '。', 'success');
       scrollToNode(els.progressPanel);
     } catch (err) {
       var msg = errorMessage(err, '启动扫描失败，请稍后重试。');
@@ -2093,9 +2382,17 @@
     }
     setText(els.progressMessage, message || '正在处理…');
     var stats = scan.stats || {};
-    if (status === 'completed' && Number(stats.mtime_fallback_groups) > 0) {
-      setText(els.progressMessage, (message || '扫描完成。') + ' 其中 ' +
-        fmtInt(stats.mtime_fallback_groups) + ' 组无创建时间，按修改时间保留。');
+    if (status === 'completed') {
+      var completedExtras = [];
+      if (Number(stats.mtime_fallback_groups) > 0) {
+        completedExtras.push('其中 ' + fmtInt(stats.mtime_fallback_groups) + ' 组无创建时间，按修改时间保留');
+      }
+      if (Number(stats.video_groups) > 0) {
+        completedExtras.push('检测到 ' + fmtInt(stats.video_groups) + ' 组视频视觉相似');
+      }
+      if (completedExtras.length) {
+        setText(els.progressMessage, (message || '扫描完成。') + ' ' + completedExtras.join('；') + '。');
+      }
     }
     setText(els.counterFilesSeen, fmtInt(stats.files_seen));
     setText(els.counterFilesScanned, fmtInt(stats.files_scanned));
@@ -2122,6 +2419,17 @@
     } else {
       hide(els.similarityCounters);
     }
+    if (scan.stage === 'video' || Number(stats.video_candidates) > 0 ||
+        Number(stats.video_groups) > 0 || Number(stats.video_ffmpeg_used) > 0 ||
+        videoScanEnabledForResults()) {
+      show(els.videoCounters);
+      setText(els.videoCandidates, fmtInt(stats.video_candidates));
+      setText(els.videoCacheHits, fmtInt(stats.video_cache_hits));
+      setText(els.videoFfmpegUsed, fmtInt(stats.video_ffmpeg_used));
+      setText(els.videoSkipped, fmtInt(videoSkippedCount(stats)));
+    } else {
+      hide(els.videoCounters);
+    }
     renderProgressActions(scan);
   }
 
@@ -2146,8 +2454,10 @@
         var exactGroups = doneStats.exact_groups !== undefined ? doneStats.exact_groups : doneStats.duplicate_groups;
         var similarGroups = doneStats.similar_groups || 0;
         var fallbackGroups = Number(doneStats.mtime_fallback_groups) || 0;
+        var videoGroups = Number(doneStats.video_groups) || 0;
         toast('扫描完成：精准组 ' + fmtInt(exactGroups) + ' 组' +
           (similarGroups > 0 ? '，内容相似组 ' + fmtInt(similarGroups) + ' 组（需人工复核）' : '') +
+          (videoGroups > 0 ? '，视频视觉相似组 ' + fmtInt(videoGroups) + ' 组' : '') +
           (fallbackGroups > 0 ? '；其中 ' + fmtInt(fallbackGroups) + ' 组无创建时间，按修改时间保留' : '') + '。',
           'success', 6000);
       }
@@ -2238,10 +2548,19 @@
     results.similarSeq += 1;
     results.similarReview = new Set();
     results.similarSelected = new Map();
+    results.videoGroups = [];
+    results.videoTotal = 0;
+    results.videoOffset = 0;
+    results.videoLoading = false;
+    results.videoLoaded = false;
+    results.videoSeq += 1;
+    results.videoSelected = new Map();
+    results.videoSelectAllMode = false;
     if (els.searchGroups) { els.searchGroups.value = ''; }
     if (els.sortGroups) { els.sortGroups.value = 'wasted_desc'; }
     if (els.groupsList) { clear(els.groupsList); }
     if (els.similarGroupsList) { clear(els.similarGroupsList); }
+    if (els.videoGroupsList) { clear(els.videoGroupsList); }
     if (els.resultsSection) { hide(els.resultsSection); }
     if (els.resultsError) { hide(els.resultsError); }
     if (els.resultsLoading) { hide(els.resultsLoading); }
@@ -2249,19 +2568,31 @@
     if (els.similarError) { hide(els.similarError); }
     if (els.similarLoading) { hide(els.similarLoading); }
     if (els.similarEmpty) { hide(els.similarEmpty); }
+    if (els.videoError) { hide(els.videoError); }
+    if (els.videoLoading) { hide(els.videoLoading); }
+    if (els.videoEmpty) { hide(els.videoEmpty); }
     if (els.exactPartitionCount) { setText(els.exactPartitionCount, ''); }
     if (els.similarPartitionCount) { setText(els.similarPartitionCount, ''); }
+    if (els.videoPartitionCount) { setText(els.videoPartitionCount, ''); }
     if (els.resultsCountLabel) { setText(els.resultsCountLabel, ''); }
     if (els.loadMoreStatus) { setText(els.loadMoreStatus, ''); }
     if (els.similarLoadMoreStatus) { setText(els.similarLoadMoreStatus, ''); }
+    if (els.videoLoadMoreStatus) { setText(els.videoLoadMoreStatus, ''); }
     if (els.loadMoreBtn) { hide(els.loadMoreBtn); }
     if (els.similarLoadMoreBtn) { hide(els.similarLoadMoreBtn); }
+    if (els.videoLoadMoreBtn) { hide(els.videoLoadMoreBtn); }
     if (els.similarPartition) { hide(els.similarPartition); }
+    if (els.videoPartition) { hide(els.videoPartition); }
     if (els.mtimeFallbackNotice) { hide(els.mtimeFallbackNotice); }
     if (els.csvLink) {
       els.csvLink.setAttribute('href', '#');
       els.csvLink.setAttribute('aria-disabled', 'true');
       els.csvLink.classList.add('is-disabled');
+    }
+    if (els.xlsxLink) {
+      els.xlsxLink.setAttribute('href', '#');
+      els.xlsxLink.setAttribute('aria-disabled', 'true');
+      els.xlsxLink.classList.add('is-disabled');
     }
     updateSelectionSummary();
   }
@@ -2292,6 +2623,23 @@
     setHidden(els.similarLoading, true);
     setHidden(els.similarError, true);
     setHidden(els.similarEmpty, true);
+  }
+
+  function resetVideoPartition() {
+    var results = state.results;
+    results.videoGroups = [];
+    results.videoTotal = 0;
+    results.videoOffset = 0;
+    results.videoLoaded = false;
+    results.videoLoading = false;
+    results.videoSeq += 1;
+    results.videoSelected = new Map();
+    results.videoSelectAllMode = false;
+    if (els.videoGroupsList) { clear(els.videoGroupsList); }
+    setHidden(els.videoLoading, true);
+    setHidden(els.videoError, true);
+    setHidden(els.videoEmpty, true);
+    setHidden(els.videoPartition, true);
   }
 
   function setResultsStateBoxes(options) {
@@ -2334,7 +2682,9 @@
           'duplicate_files', 'reclaimable_bytes', 'selectable_duplicate_files', 'selectable_reclaimable_bytes',
           'exact_groups', 'exact_files', 'similar_groups', 'similar_files', 'similar_reclaimable_bytes',
           'similarity_candidates', 'similarity_features', 'similarity_cache_hits', 'similarity_cache_misses',
-          'similarity_pairs_checked', 'mtime_fallback_groups', 'bytes_hashed', 'bytes_per_sec', 'errors'].forEach(function (key) {
+          'similarity_pairs_checked', 'mtime_fallback_groups',
+          'video_groups', 'video_files', 'video_candidates', 'video_cache_hits', 'video_cache_misses',
+          'video_ffmpeg_used', 'bytes_hashed', 'bytes_per_sec', 'errors'].forEach(function (key) {
           if (typeof detail[key] === 'number') { merged[key] = detail[key]; }
         });
         if (Object.keys(merged).length) {
@@ -2350,17 +2700,19 @@
   async function loadResults(reset) {
     if (!state.scan.id) { return; }
     var similarMode = state.results.scanMode === 'similar';
+    var videoOn = videoScanEnabledForResults();
     if (reset) {
       resetExactPartition();
       if (similarMode) { resetSimilarPartition(); }
+      if (videoOn) { resetVideoPartition(); }
       clearSelectionState();
     }
-    if (similarMode) {
-      await Promise.all([loadExactPartition(reset), loadSimilarPartition(reset)]);
-    } else {
-      setHidden(els.similarPartition, true);
-      await loadExactPartition(reset);
-    }
+    if (!similarMode) { setHidden(els.similarPartition, true); }
+    if (!videoOn) { setHidden(els.videoPartition, true); }
+    var tasks = [loadExactPartition(reset)];
+    if (similarMode) { tasks.push(loadSimilarPartition(reset)); }
+    if (videoOn) { tasks.push(loadVideoPartition(reset)); }
+    await Promise.all(tasks);
   }
 
   async function loadExactPartition(reset) {
@@ -2377,7 +2729,7 @@
     var offset = reset ? 0 : results.groups.length;
     var query = '?offset=' + offset + '&limit=' + results.limit +
       '&q=' + encodeURIComponent(results.q) + '&sort=' + encodeURIComponent(results.sort);
-    if (results.scanMode === 'similar') { query += '&match_type=exact'; }
+    if (results.scanMode === 'similar' || videoScanEnabledForResults()) { query += '&match_type=exact'; }
     try {
       var res = await api('/api/scans/' + encodePath(state.scan.id) + '/groups' + query, { timeout: 20000 });
       if (seq !== results.seq) { return; }
@@ -2438,10 +2790,50 @@
     }
   }
 
+  async function loadVideoPartition(reset) {
+    var results = state.results;
+    if (!state.scan.id) { return; }
+    if (results.videoLoading && !reset) { return; }
+    if (results.videoLoading && reset) { results.videoSeq += 1; }
+    var seq = results.videoSeq + 1;
+    results.videoSeq = seq;
+    results.videoLoading = true;
+    setHidden(els.videoLoading, false);
+    setHidden(els.videoError, true);
+    setHidden(els.videoEmpty, true);
+    var offset = reset ? 0 : results.videoGroups.length;
+    var query = '?offset=' + offset + '&limit=' + results.limit + '&match_type=video&sort=similarity_desc' +
+      '&q=' + encodeURIComponent(results.q);
+    try {
+      var res = await api('/api/scans/' + encodePath(state.scan.id) + '/groups' + query, { timeout: 25000 });
+      if (seq !== results.videoSeq) { return; }
+      var groups = Array.isArray(res.groups) ? res.groups : [];
+      results.videoTotal = Number(res.video_total !== undefined ? res.video_total : res.total) || 0;
+      if (typeof res.exact_total === 'number') {
+        results.exactTotal = res.exact_total;
+        results.total = res.exact_total;
+      }
+      if (typeof res.similar_total === 'number') { results.similarTotal = res.similar_total; }
+      results.videoOffset = res.offset === undefined ? offset : Number(res.offset);
+      results.videoGroups = reset ? groups : results.videoGroups.concat(groups);
+      results.videoLoaded = true;
+      results.videoLoading = false;
+      if (results.videoSelectAllMode) { autoSelectVideoGroups(groups); }
+      renderResults();
+    } catch (err) {
+      if (seq !== results.videoSeq) { return; }
+      results.videoLoading = false;
+      setHidden(els.videoLoading, true);
+      setHidden(els.videoError, false);
+      setText(els.videoError, errorMessage(err, '加载视频视觉相似组失败，请稍后重试。'));
+    }
+  }
+
   function renderResults() {
     show(els.resultsSection);
     var results = state.results;
     var similarMode = results.scanMode === 'similar';
+    var videoOn = videoScanEnabledForResults();
     var stats = currentScanStats();
     renderResultsSummary(stats);
     renderMtimeFallbackNotice(stats);
@@ -2452,8 +2844,19 @@
       els.csvLink.removeAttribute('aria-disabled');
       els.csvLink.classList.remove('is-disabled');
     }
+    if (els.xlsxLink && state.scan.id) {
+      els.xlsxLink.setAttribute('href', '/api/scans/' + encodePath(state.scan.id) + '/xlsx');
+      els.xlsxLink.setAttribute('download', 'duplicate-scan-' + state.scan.id + '.xlsx');
+      els.xlsxLink.removeAttribute('aria-disabled');
+      els.xlsxLink.classList.remove('is-disabled');
+    }
     renderGroups();
     if (similarMode) { renderSimilarGroups(); }
+    if (videoOn) {
+      renderVideoGroups();
+    } else {
+      setHidden(els.videoPartition, true);
+    }
     updateSelectionSummary();
   }
 
@@ -2488,6 +2891,25 @@
         : (similarMode ? '哈希一致（精准重复）组为空，请查看下方内容相似分区。' : '没有找到重复文件。'));
     }
     setHidden(els.similarPartition, !similarMode);
+    var videoOn = videoScanEnabledForResults();
+    setHidden(els.videoPartition, !videoOn);
+    if (videoOn) {
+      setText(els.videoPartitionCount, '共 ' + fmtInt(results.videoTotal) + ' 组 · 已加载 ' + fmtInt(results.videoGroups.length) + ' 组');
+      setText(els.videoLoadMoreStatus, '已加载 ' + fmtInt(results.videoGroups.length) + ' / ' + fmtInt(results.videoTotal) + ' 组');
+      var videoHasMore = results.videoGroups.length < results.videoTotal;
+      setHidden(els.videoLoadMoreBtn, !videoHasMore);
+      setText(els.videoLoadMoreBtn, '加载更多视频组（剩余 ' + fmtInt(Math.max(0, results.videoTotal - results.videoGroups.length)) + ' 组）');
+      setHidden(els.videoLoading, !results.videoLoading);
+      var videoEmpty = results.videoLoaded && !results.videoLoading && results.videoTotal === 0;
+      setHidden(els.videoEmpty, !videoEmpty);
+      if (videoEmpty) {
+        setText(els.videoEmpty, results.q ? '未找到匹配“' + results.q + '”的视频相似组。' : '没有视频视觉相似的组。');
+      }
+      var baseSubtitle = similarMode
+        ? '结果按“哈希一致（精准重复）”与“内容相似”分区展示。相似组存在误匹配概率，必须逐组人工复核后逐条选择，禁止批量删除。'
+        : '按组列出内容相同的文件。保留项已高亮，需手动选择的组请先指定保留项。';
+      setText(els.resultsSubtitle, baseSubtitle + ' 视频视觉相似为独立分区，默认不勾选，支持组级/全局全选视频副本。');
+    }
     if (similarMode) {
       setText(els.similarPartitionCount, '共 ' + fmtInt(results.similarTotal) + ' 组 · 已加载 ' + fmtInt(results.similarGroups.length) + ' 组');
       setText(els.similarLoadMoreStatus, '已加载 ' + fmtInt(results.similarGroups.length) + ' / ' + fmtInt(results.similarTotal) + ' 组');
@@ -2551,9 +2973,11 @@
       ];
     } else {
       summaryCards = [
-        summaryCard('folder', '', fmtInt(stats.duplicate_groups || stats.groups || 0), '重复组',
+        summaryCard('folder', '',
+          fmtInt(stats.exact_groups !== undefined ? stats.exact_groups : (stats.duplicate_groups || stats.groups || 0)), '重复组',
           '已扫描 ' + fmtInt(stats.files_scanned) + ' 个文件'),
-        summaryCard('file', '', fmtInt(stats.duplicate_files), '重复文件',
+        summaryCard('file', '',
+          fmtInt(stats.exact_files !== undefined ? stats.exact_files : stats.duplicate_files), '重复文件',
           '按组核对后再删除'),
         summaryCard('trash', 'is-green', fmtBytes(stats.reclaimable_bytes), '可释放空间',
           '移动到回收站可恢复'),
@@ -2568,6 +2992,19 @@
     if (fallbackGroups > 0) {
       summaryCards.push(summaryCard('warning', 'is-amber', fmtInt(fallbackGroups) + ' 组', '修改时间降级',
         '无创建时间 · 按修改时间保留'));
+    }
+    var videoGroupCount = Number(stats.video_groups);
+    if (!isFinite(videoGroupCount) || videoGroupCount <= 0) {
+      videoGroupCount = state.results.videoGroups.length;
+    }
+    if (videoGroupCount > 0) {
+      var videoBytes = Number(stats.video_reclaimable_bytes);
+      if (!isFinite(videoBytes) || videoBytes <= 0) {
+        videoBytes = 0;
+        state.results.videoGroups.forEach(function (group) { videoBytes += Number(group.wasted_bytes) || 0; });
+      }
+      summaryCards.push(summaryCard('eye', '', fmtInt(videoGroupCount) + ' 组', '视频视觉相似',
+        '抽样帧比对 · 默认不勾选' + (videoBytes > 0 ? ' · 潜在 ' + fmtBytes(videoBytes) : '')));
     }
     clear(els.resultsSummary);
     els.resultsSummary.classList.toggle('is-similar', similarMode);
@@ -2650,6 +3087,13 @@
       if (!isMtimeFallbackGroup(group)) { return; }
       var hasSelected = (group.files || []).some(function (file) {
         return results.similarSelected.has(file.file_id);
+      });
+      if (hasSelected) { count += 1; }
+    });
+    results.videoGroups.forEach(function (group) {
+      if (!isMtimeFallbackGroup(group)) { return; }
+      var hasSelected = (group.files || []).some(function (file) {
+        return results.videoSelected.has(file.file_id);
       });
       if (hasSelected) { count += 1; }
     });
@@ -3221,6 +3665,341 @@
     return row;
   }
 
+  // ---------- 视频视觉相似组渲染与批量选择 ----------
+  function videoGroupKeeperId(group) {
+    return groupKeeperFileId(group);
+  }
+
+  function videoGroupSelectedCount(group) {
+    var count = 0;
+    (group.files || []).forEach(function (file) {
+      if (state.results.videoSelected.has(file.file_id)) { count += 1; }
+    });
+    return count;
+  }
+
+  function findVideoGroupCard(groupId) {
+    if (!els.videoGroupsList) { return null; }
+    return $('[data-group-key="' + encodePath(groupId) + '"]', els.videoGroupsList);
+  }
+
+  function videoFingerprintShort(fingerprint) {
+    var text = String(fingerprint || '');
+    if (!text) { return ''; }
+    if (text.length <= 30) { return text; }
+    return text.slice(0, 18) + '…' + text.slice(-8);
+  }
+
+  function renderVideoGroups() {
+    if (!els.videoGroupsList) { return; }
+    clear(els.videoGroupsList);
+    state.results.videoGroups.forEach(function (group, index) {
+      els.videoGroupsList.appendChild(renderVideoGroupCard(group, index));
+    });
+    updateVideoSelectAllButtonLabel();
+  }
+
+  function renderVideoGroupCard(group, index) {
+    var manual = !!group.needs_manual_keep;
+    var batchAllowed = group.allow_batch_delete !== false;
+    var keeperId = videoGroupKeeperId(group);
+    var fallback = isMtimeFallbackGroup(group);
+    var score = Number(group.video_similarity_score !== undefined ? group.video_similarity_score : group.similarity_score);
+    if (!isFinite(score)) { score = null; }
+    var lowConfidence = group.video_low_confidence === true;
+    var card = el('article', {
+      className: 'group-card video-group-card' + (manual ? ' needs-keep' : ''),
+      dataset: { groupKey: encodePath(group.group_id), groupId: group.group_id, matchType: 'video' }
+    });
+
+    var badges = [
+      el('span', {
+        className: 'video-score-badge',
+        text: '视频视觉相似' + (score !== null ? ' · ' + score + '%' : '')
+      })
+    ];
+    if (manual) {
+      badges.push(el('span', { className: 'badge badge-amber', text: '需手动选择 · 禁止删除' }));
+    } else if (!fallback) {
+      badges.push(el('span', { className: 'badge badge-green', text: '保留：' + (KEEP_LABEL[group.keep_reason] || '保留项') }));
+    }
+    if (fallback) {
+      badges.push(el('span', {
+        className: 'badge badge-amber mtime-fallback-badge',
+        attrs: { title: '保留依据：修改时间（mtime）；创建时间不可用，请人工核对保留文件。' },
+        text: MTIME_FALLBACK_LABEL
+      }));
+    }
+    if (lowConfidence) { badges.push(el('span', { className: 'badge low-confidence-badge', text: '低置信度' })); }
+    if (!batchAllowed) { badges.push(el('span', { className: 'badge badge-gray', text: '禁止批量删除' })); }
+
+    var subItems = [
+      el('span', { text: '时长 ' + fmtVideoDuration(group.video_duration) }),
+      el('span', { text: '抽样 ' + fmtInt(group.video_sample_frames) + ' 帧' }),
+      el('span', { text: '硬解 ' + videoHwaccelLabel(group.video_hwaccel) }),
+      el('span', { text: '相似度 ' + (score === null ? '—' : score + '%') })
+    ];
+    if (fallback) {
+      subItems.push(el('span', { className: 'keep-source-note', text: '保留依据：修改时间（mtime）' }));
+    }
+    var headMain = el('div', { className: 'group-head-main' }, [
+      el('div', { className: 'group-title', text: '视频组 #' + (index + 1) + ' · ' + fmtInt(group.count) + ' 个视频' }),
+      el('div', { className: 'group-sub' }, subItems)
+    ]);
+
+    var groupCheck = el('input', {
+      attrs: {
+        type: 'checkbox',
+        disabled: manual || !batchAllowed,
+        'aria-label': manual ? '本组禁止删除' : (batchAllowed ? '全选本组视频副本' : '本组禁止批量删除')
+      }
+    });
+    groupCheck.disabled = manual || !batchAllowed;
+    if (!manual && batchAllowed) {
+      groupCheck.addEventListener('change', function () {
+        toggleVideoGroupSelection(group, groupCheck.checked);
+        syncVideoGroupCheckbox(group);
+        updateSelectionSummary();
+      });
+    }
+    var groupCheckLabel = el('label', { className: 'group-check' }, [
+      groupCheck,
+      manual ? '本组不参与删除' : (batchAllowed ? '全选本组视频副本' : '本组禁止批量删除')
+    ]);
+    var head = el('div', { className: 'group-head' }, [
+      headMain,
+      el('div', { className: 'group-head-side' }, [
+        el('div', { className: 'group-badges' }, badges),
+        groupCheckLabel
+      ])
+    ]);
+    if (manual) {
+      head.appendChild(el('p', { className: 'group-hint' }, [
+        icon('warning'),
+        '该组创建时间无法可靠区分，已禁止自动删除；请先在 DSM 中人工确认保留项，本组不参与本次清理。'
+      ]));
+    } else if (fallback) {
+      head.appendChild(el('p', { className: 'group-hint is-fallback' }, [
+        icon('warning'),
+        '该组无可靠创建时间（btime），保留项按修改时间（mtime）选择；请人工核对保留项后再批量删除。'
+      ]));
+    }
+    card.appendChild(head);
+
+    var list = el('div', { className: 'file-list' });
+    (group.files || []).forEach(function (file) {
+      list.appendChild(renderVideoFileRow(group, file, keeperId, manual, batchAllowed));
+    });
+    card.appendChild(list);
+
+    var footInfo = el('span', { className: 'group-foot-info', text: '' });
+    card.appendChild(el('div', { className: 'group-foot' }, [
+      footInfo,
+      el('span', { className: 'hint', text: batchAllowed ? '默认不勾选；组选/全选后进入两步删除确认。' : '本组仅可人工处理，不支持批量删除。' })
+    ]));
+    updateVideoGroupUi(group, card);
+    return card;
+  }
+
+  function buildVideoFingerprint(file, group) {
+    var fingerprint = file.video_fingerprint || (group && group.video_fingerprint) || '';
+    if (!fingerprint) { return null; }
+    var copyBtn = el('button', {
+      className: 'icon-btn',
+      attrs: { type: 'button', title: '复制视频指纹', 'aria-label': '复制视频指纹' }
+    }, [icon('copy')]);
+    copyBtn.addEventListener('click', function () { copyWithFeedback(fingerprint, copyBtn); });
+    return el('span', { className: 'video-file-meta' }, [
+      el('span', { className: 'muted', text: '指纹' }),
+      el('code', { className: 'video-fingerprint', attrs: { title: fingerprint }, text: videoFingerprintShort(fingerprint) }),
+      copyBtn
+    ]);
+  }
+
+  function renderVideoFileRow(group, file, keeperId, manual, batchAllowed) {
+    var isKeeper = !manual && file.file_id === keeperId;
+    var selectable = !manual && !isKeeper && batchAllowed;
+    var selected = state.results.videoSelected.has(file.file_id);
+    var row = el('div', {
+      className: 'file-row' + (isKeeper ? ' is-keeper' : ''),
+      dataset: { fileId: file.file_id, matchType: 'video' }
+    });
+
+    var checkbox = el('input', {
+      attrs: {
+        type: 'checkbox',
+        disabled: !selectable,
+        'aria-label': isKeeper ? '保留项，不可选择删除' : (manual ? '本组禁止删除' : '选择删除 ' + file.path)
+      }
+    });
+    checkbox.checked = selectable && selected;
+    if (!selectable) {
+      checkbox.title = manual ? '该组需人工确认，禁止删除'
+        : (isKeeper ? '保留项不可删除' : '本组禁止批量删除');
+    }
+    if (selectable) {
+      checkbox.addEventListener('change', function () {
+        toggleVideoFileSelection(group, file, checkbox.checked);
+        checkbox.checked = state.results.videoSelected.has(file.file_id);
+        syncVideoGroupCheckbox(group);
+      });
+    }
+    var selectWrap = el('div', { className: 'file-select' }, [checkbox]);
+
+    var score = Number(file.similarity_score);
+    if (!isFinite(score)) { score = isKeeper ? 100 : (Number(group.video_similarity_score) || null); }
+    var subItems = [
+      el('span', { text: fmtBytes(file.size) }),
+      el('span', { className: 'video-meta-badge', text: '相似度 ' + (score === null ? '—' : score + '%') }),
+      el('span', { className: 'video-meta-badge', text: '时长 ' + fmtVideoDuration(file.video_duration !== undefined ? file.video_duration : group.video_duration) }),
+      el('span', { className: 'video-meta-badge', text: '抽样 ' + fmtInt(file.video_sample_frames !== undefined ? file.video_sample_frames : group.video_sample_frames) + ' 帧' }),
+      el('span', { className: 'video-meta-badge', text: '硬解 ' + videoHwaccelLabel(file.video_hwaccel !== undefined ? file.video_hwaccel : group.video_hwaccel) })
+    ];
+    var fingerprintEl = buildVideoFingerprint(file, group);
+    if (fingerprintEl) { subItems.push(fingerprintEl); }
+    if (file.low_confidence || file.video_low_confidence) {
+      subItems.push(el('span', { className: 'badge low-confidence-badge', text: '低置信度' }));
+    }
+    var main = el('div', { className: 'file-main' }, [
+      el('div', { className: 'file-path', attrs: { title: file.path }, text: file.path }),
+      el('div', { className: 'file-sub' }, subItems)
+    ]);
+
+    var times = buildFileTimes(file, group);
+    var actions = buildFileActions(group, file, isKeeper, manual);
+    appendChildren(row, [selectWrap, main, times, actions]);
+    return row;
+  }
+
+  function videoGroupSelectableFiles(group) {
+    if (!group || group.needs_manual_keep || group.allow_batch_delete === false) { return []; }
+    var keeperId = videoGroupKeeperId(group);
+    return (group.files || []).filter(function (file) { return file.file_id !== keeperId; });
+  }
+
+  function syncVideoGroupCheckbox(group, card) {
+    card = card || findVideoGroupCard(group.group_id);
+    if (!card) { return; }
+    var input = $('.group-check input', card);
+    if (!input) { return; }
+    var selectable = videoGroupSelectableFiles(group);
+    if (!selectable.length) {
+      input.checked = false;
+      input.indeterminate = false;
+      input.disabled = true;
+      return;
+    }
+    var selectedCount = selectable.filter(function (file) {
+      return state.results.videoSelected.has(file.file_id);
+    }).length;
+    input.disabled = false;
+    input.checked = selectedCount === selectable.length;
+    input.indeterminate = selectedCount > 0 && selectedCount < selectable.length;
+  }
+
+  function updateVideoGroupUi(group, card) {
+    card = card || findVideoGroupCard(group.group_id);
+    if (!card) { return; }
+    syncVideoGroupCheckbox(group, card);
+    var info = $('.group-foot-info', card);
+    if (info) {
+      var selectedCount = videoGroupSelectedCount(group);
+      setText(info, selectedCount > 0
+        ? '本组已选 ' + fmtInt(selectedCount) + ' 个视频副本（共 ' + fmtInt(group.count) + ' 个）'
+        : '本组默认未选择 · 共 ' + fmtInt(group.count) + ' 个视频');
+    }
+  }
+
+  function isVideoFileSelectable(group, file) {
+    if (!group || !file) { return false; }
+    if (group.needs_manual_keep || group.allow_batch_delete === false) { return false; }
+    return file.file_id !== videoGroupKeeperId(group);
+  }
+
+  function ensureVideoSelectionNotAllScope() {
+    var results = state.results;
+    if (results.mode !== 'all') { return; }
+    results.mode = 'none';
+    results.selected = new Map();
+    results.excluded = new Map();
+    renderGroups();
+    toast('已取消“全选精准组”：视频相似文件需与手动选择的精准组文件混合删除。', 'info', 4600);
+  }
+
+  function toggleVideoFileSelection(group, file, checked) {
+    if (!isVideoFileSelectable(group, file)) { return; }
+    var results = state.results;
+    ensureVideoSelectionNotAllScope();
+    if (checked) {
+      results.videoSelected.set(file.file_id, { size: file.size, groupId: group.group_id, path: file.path });
+    } else {
+      results.videoSelected.delete(file.file_id);
+    }
+    results.videoSelectAllMode = false;
+    updateVideoGroupUi(group);
+    updateSelectionSummary();
+  }
+
+  function toggleVideoGroupSelection(group, checked) {
+    if (!group || group.needs_manual_keep || group.allow_batch_delete === false) { return; }
+    ensureVideoSelectionNotAllScope();
+    var selectable = videoGroupSelectableFiles(group);
+    selectable.forEach(function (file) {
+      if (checked) {
+        state.results.videoSelected.set(file.file_id, { size: file.size, groupId: group.group_id, path: file.path });
+      } else {
+        state.results.videoSelected.delete(file.file_id);
+      }
+    });
+    state.results.videoSelectAllMode = false;
+    var card = findVideoGroupCard(group.group_id);
+    if (card) {
+      $$('.file-row', card).forEach(function (row) {
+        var file = null;
+        selectable.forEach(function (item) { if (item.file_id === row.dataset.fileId) { file = item; } });
+        if (!file) { return; }
+        var cb = $('input[type="checkbox"]', row);
+        if (cb && !cb.disabled) { cb.checked = state.results.videoSelected.has(file.file_id); }
+      });
+    }
+    updateVideoGroupUi(group, card);
+    updateSelectionSummary();
+  }
+
+  function autoSelectVideoGroups(groups) {
+    var results = state.results;
+    (groups || []).forEach(function (group) {
+      videoGroupSelectableFiles(group).forEach(function (file) {
+        results.videoSelected.set(file.file_id, { size: file.size, groupId: group.group_id, path: file.path });
+      });
+    });
+  }
+
+  function selectAllVideoDuplicates() {
+    if (!state.scan.id) { toast('请先完成一次扫描。', 'info'); return; }
+    if (!state.results.videoTotal && !state.results.videoGroups.length) {
+      toast('没有可选择的视频相似组。', 'info');
+      return;
+    }
+    var anySelectable = false;
+    state.results.videoGroups.forEach(function (group) {
+      if (videoGroupSelectableFiles(group).length) { anySelectable = true; }
+    });
+    if (!anySelectable) { toast('当前加载的视频组均禁止批量删除。', 'info'); return; }
+    ensureVideoSelectionNotAllScope();
+    state.results.videoSelectAllMode = true;
+    autoSelectVideoGroups(state.results.videoGroups);
+    renderVideoGroups();
+    updateSelectionSummary();
+    toast('已全选已加载的视频相似组副本；继续“加载更多”会自动选中新加载的视频组。', 'info', 4600);
+  }
+
+  function updateVideoSelectAllButtonLabel() {
+    if (!els.selectAllVideoBtn) { return; }
+    var mode = state.results.videoSelectAllMode;
+    setText(els.selectAllVideoBtn, mode ? '已全选视频相似组副本' : '全选视频相似组副本');
+  }
+
   function bindResultsEvents() {
     els.searchGroups.addEventListener('input', debounce(function () {
       var value = els.searchGroups.value.trim();
@@ -3242,6 +4021,8 @@
     });
     els.loadMoreBtn.addEventListener('click', function () { loadExactPartition(false); });
     if (els.similarLoadMoreBtn) { els.similarLoadMoreBtn.addEventListener('click', function () { loadSimilarPartition(false); }); }
+    if (els.videoLoadMoreBtn) { els.videoLoadMoreBtn.addEventListener('click', function () { loadVideoPartition(false); }); }
+    if (els.selectAllVideoBtn) { els.selectAllVideoBtn.addEventListener('click', selectAllVideoDuplicates); }
     els.selectAllBtn.addEventListener('click', selectAllDuplicates);
     els.clearSelectionBtn.addEventListener('click', clearSelection);
     els.deleteSelectedBtn.addEventListener('click', function () { beginDelete(); });
@@ -3251,6 +4032,14 @@
         toast('暂无可导出的扫描结果。', 'info');
       }
     });
+    if (els.xlsxLink) {
+      els.xlsxLink.addEventListener('click', function (event) {
+        if (els.xlsxLink.getAttribute('aria-disabled') === 'true' || !state.scan.id) {
+          event.preventDefault();
+          toast('暂无可导出的扫描结果。', 'info');
+        }
+      });
+    }
   }
 
   // ==================== 12. 选择逻辑与批量操作 ====================
@@ -3300,6 +4089,16 @@
     var allSimilarReviewed = similarGroupIds.every(function (groupId) {
       return results.similarReview.has(groupId);
     });
+    var videoCount = 0;
+    var videoBytes = 0;
+    var videoGroupIds = [];
+    results.videoSelected.forEach(function (item) {
+      videoCount += 1;
+      videoBytes += Number(item && item.size) || 0;
+      if (item && item.groupId && videoGroupIds.indexOf(item.groupId) === -1) {
+        videoGroupIds.push(item.groupId);
+      }
+    });
     return {
       mode: results.mode,
       exactCount: exactCount,
@@ -3309,8 +4108,11 @@
       similarBytes: similarBytes,
       similarGroupIds: similarGroupIds,
       allSimilarReviewed: allSimilarReviewed,
-      count: exactCount + similarCount,
-      bytes: exactBytes + similarBytes
+      videoCount: videoCount,
+      videoBytes: videoBytes,
+      videoGroupIds: videoGroupIds,
+      count: exactCount + similarCount + videoCount,
+      bytes: exactBytes + similarBytes + videoBytes
     };
   }
 
@@ -3319,7 +4121,8 @@
     var count = Number(stats.needs_manual_keep_groups);
     if (isFinite(count) && count >= 0) { return count; }
     return state.results.groups.filter(function (group) { return group.needs_manual_keep; }).length
-      + state.results.similarGroups.filter(function (group) { return group.needs_manual_keep; }).length;
+      + state.results.similarGroups.filter(function (group) { return group.needs_manual_keep; }).length
+      + state.results.videoGroups.filter(function (group) { return group.needs_manual_keep; }).length;
   }
 
   function updateSelectionSummary() {
@@ -3346,12 +4149,22 @@
           '（已复核 ' + fmtInt(totals.similarGroupIds.length) + ' 组）'
         ]);
       }
+      if (totals.videoCount > 0) {
+        if (totals.exactCount > 0 || totals.similarCount > 0) {
+          els.selectionSummary.appendChild(document.createTextNode('；'));
+        }
+        appendChildren(els.selectionSummary, [
+          '视频视觉：已选 ', el('strong', { text: fmtInt(totals.videoCount) }), ' 个 · ',
+          fmtBytes(totals.videoBytes),
+          '（' + fmtInt(totals.videoGroupIds.length) + ' 组）'
+        ]);
+      }
     }
     var blocked = false;
     var blockedReason = '';
-    if (totals.mode === 'all' && totals.similarCount > 0) {
+    if (totals.mode === 'all' && (totals.similarCount > 0 || totals.videoCount > 0)) {
       blocked = true;
-      blockedReason = '“全选精准组”不能与相似文件混合删除，请手动选择精准组文件。';
+      blockedReason = '“全选精准组”不能与相似/视频文件混合删除，请手动选择精准组文件。';
     } else if (totals.similarCount > 0 && !totals.allSimilarReviewed) {
       blocked = true;
       blockedReason = '存在未人工复核的相似组，无法删除。';
@@ -3367,6 +4180,14 @@
     }
     if (els.clearSelectionBtn) { els.clearSelectionBtn.disabled = totals.mode === 'none' && !totals.count; }
     if (state.results.scanMode === 'similar') { refreshSimilarActionButtons(); }
+    updateVideoSelectAllButtonLabel();
+    if (els.selectAllVideoBtn) {
+      var anyVideoSelectable = false;
+      state.results.videoGroups.forEach(function (group) {
+        if (videoGroupSelectableFiles(group).length) { anyVideoSelectable = true; }
+      });
+      els.selectAllVideoBtn.disabled = !anyVideoSelectable;
+    }
   }
 
   function clearSelectionState() {
@@ -3375,20 +4196,23 @@
     state.results.excluded = new Map();
     state.results.similarSelected = new Map();
     state.results.similarReview = new Set();
+    state.results.videoSelected = new Map();
+    state.results.videoSelectAllMode = false;
   }
 
   function clearSelection() {
     clearSelectionState();
     renderGroups();
     if (state.results.scanMode === 'similar') { renderSimilarGroups(); }
+    if (videoScanEnabledForResults()) { renderVideoGroups(); }
     updateSelectionSummary();
     toast('已清空选择（包含人工复核状态）。', 'info');
   }
 
   function selectAllDuplicates() {
     if (!state.scan.id) { toast('请先完成一次扫描。', 'info'); return; }
-    if (state.results.similarSelected.size > 0) {
-      toast('已选择内容相似文件，不能再“全选”精准组；请手动勾选精准组文件，或先清空选择。', 'error', 5200);
+    if (state.results.similarSelected.size > 0 || state.results.videoSelected.size > 0) {
+      toast('已选择相似/视频文件，不能再“全选”精准组；请手动勾选精准组文件，或先清空选择。', 'error', 5200);
       return;
     }
     if (!state.results.total) { toast('没有可选择的精准组。', 'info'); return; }
@@ -3593,11 +4417,11 @@
         toast('存在未人工复核的相似组，无法删除。', 'error');
         return;
       }
-      if (totals.mode === 'all' && totals.similarCount > 0) {
-        toast('“全选精准组”不能与相似文件混合删除，请手动选择精准组文件。', 'error', 5200);
+      if (totals.mode === 'all' && (totals.similarCount > 0 || totals.videoCount > 0)) {
+        toast('“全选精准组”不能与相似/视频文件混合删除，请手动选择精准组文件。', 'error', 5200);
         return;
       }
-      if (state.results.mode === 'none' && totals.similarCount === 0) {
+      if (state.results.mode === 'none' && totals.similarCount === 0 && totals.videoCount === 0) {
         toast('请先选择要删除的副本。', 'error');
         return;
       }
@@ -3662,6 +4486,7 @@
       var override = flow.override || null;
       var similarIds = [];
       var reviewedGroupIds = [];
+      var videoIds = [];
       if (override && override.similarGroupId) {
         state.results.similarSelected.forEach(function (item, fileId) {
           if (item && item.groupId === override.similarGroupId) { similarIds.push(fileId); }
@@ -3674,18 +4499,23 @@
             reviewedGroupIds.push(item.groupId);
           }
         });
+        state.results.videoSelected.forEach(function (item, fileId) {
+          videoIds.push(fileId);
+        });
       }
-      if (similarIds.length) {
+      if (similarIds.length || videoIds.length) {
         var exactIds = state.results.mode === 'all' ? [] : mapKeyList(state.results.selected);
         if (state.results.mode === 'all' && !override) {
-          throw new ApiError(400, 'SIMILAR_REVIEW_REQUIRED', '“全选精准组”不能与相似文件混合删除，请先手动选择精准组文件。');
+          throw new ApiError(400, 'SIMILAR_REVIEW_REQUIRED', '“全选精准组”不能与相似/视频文件混合删除，请先手动选择精准组文件。');
         }
         body = {
-          file_ids: exactIds.concat(similarIds),
-          recycle: flow.recycle,
-          confirm_similar: true,
-          reviewed_similar_group_ids: reviewedGroupIds
+          file_ids: exactIds.concat(similarIds, videoIds),
+          recycle: flow.recycle
         };
+        if (similarIds.length) {
+          body.confirm_similar = true;
+          body.reviewed_similar_group_ids = reviewedGroupIds;
+        }
       } else if (state.results.mode === 'all') {
         body = {
           scope: 'all_duplicates',
@@ -3771,13 +4601,17 @@
     }
     addKv('待删除文件', fmtInt(plan.count) + ' 个');
     addKv('可释放空间', fmtBytes(plan.bytes));
-    var hasSplit = typeof plan.exact_count === 'number' || typeof plan.similar_count === 'number';
+    var hasSplit = typeof plan.exact_count === 'number' || typeof plan.similar_count === 'number' ||
+      typeof plan.video_count === 'number';
     if (hasSplit) {
       addKv('精准组文件', fmtInt(plan.exact_count) + ' 个 · ' + fmtBytes(plan.exact_bytes));
       addKv('内容相似文件', fmtInt(plan.similar_count) + ' 个 · ' + fmtBytes(plan.similar_bytes));
       var reviewedList = Array.isArray(plan.reviewed_similar_group_ids) ? plan.reviewed_similar_group_ids : [];
       if (reviewedList.length || plan.similar_count > 0) {
         addKv('相似组已复核', fmtInt(reviewedList.length) + ' 组');
+      }
+      if (typeof plan.video_count === 'number') {
+        addKv('视频视觉相似文件', fmtInt(plan.video_count) + ' 个 · ' + fmtBytes(plan.video_bytes));
       }
       if (plan.manual_review) { addKv('人工复核', '已确认（相似组为逐条选择）'); }
     }
@@ -3793,6 +4627,12 @@
       body.appendChild(el('div', { className: 'modal-section modal-warning' }, [
         icon('warning'),
         '本次计划包含内容相似文件：相似度是特征比对结果，存在误匹配概率。请确认已对相似组逐一人工复核，并核对保留项与文件清单。'
+      ]));
+    }
+    if (Number(plan.video_count) > 0) {
+      body.appendChild(el('div', { className: 'modal-section modal-warning' }, [
+        icon('warning'),
+        '本次计划包含视频视觉相似文件：视频相似度基于抽样帧比对，存在误匹配可能。请确认已核对保留视频，且仅对确认为重复副本的视频执行删除。'
       ]));
     }
     if (fallbackInfo.count > 0) {
@@ -3904,11 +4744,15 @@
     }
     addKv('待删除文件', fmtInt(plan.count) + ' 个');
     addKv('可释放空间', fmtBytes(plan.bytes));
-    if (typeof plan.exact_count === 'number' || typeof plan.similar_count === 'number') {
+    if (typeof plan.exact_count === 'number' || typeof plan.similar_count === 'number' ||
+        typeof plan.video_count === 'number') {
       addKv('精准组文件', fmtInt(plan.exact_count) + ' 个 · ' + fmtBytes(plan.exact_bytes));
       addKv('内容相似文件', fmtInt(plan.similar_count) + ' 个 · ' + fmtBytes(plan.similar_bytes));
       var reviewedIds = Array.isArray(plan.reviewed_similar_group_ids) ? plan.reviewed_similar_group_ids : [];
       addKv('相似组已复核', fmtInt(reviewedIds.length) + ' 组');
+      if (typeof plan.video_count === 'number') {
+        addKv('视频视觉相似文件', fmtInt(plan.video_count) + ' 个 · ' + fmtBytes(plan.video_bytes));
+      }
     }
     if (fallbackInfo.count > 0) {
       addKv('修改时间降级', fmtInt(fallbackInfo.count) + ' 组');
@@ -3918,6 +4762,12 @@
     addKv('校验跳过', fmtInt(skippedTotal) + ' 个');
     body.appendChild(el('div', { className: 'modal-section' }, [kv]));
     body.appendChild(el('p', { className: 'modal-note', text: '需人工确认的重复组不在删除范围内；保留项不会被删除。相似组仅包含已人工复核并逐条选择的文件。' }));
+    if (Number(plan.video_count) > 0) {
+      body.appendChild(el('div', { className: 'modal-section modal-warning' }, [
+        icon('warning'),
+        '本计划包含 ' + fmtInt(plan.video_count) + ' 个视频视觉相似文件：抽样帧比对存在误匹配可能，请再次核对保留视频后再确认删除。'
+      ]));
+    }
     if (fallbackInfo.count > 0) {
       body.appendChild(el('div', { className: 'modal-section modal-warning' }, [
         icon('warning'),
@@ -4280,7 +5130,10 @@
       el('span', {
         className: 'badge ' + (scanMode === 'similar' ? 'badge-purple' : 'badge-gray'),
         text: scanMode === 'similar' ? '内容相似模式' : '精准哈希模式'
-      })
+      }),
+      Number(stats.video_groups) > 0
+        ? el('span', { className: 'badge badge-blue', text: '含视频视觉相似' })
+        : null
     ]);
     var metaParts = ['开始：' + fmtDateTime(startedAt), '结束：' + (finishedAt ? fmtDateTime(finishedAt) : '—')];
     if (keepMode) { metaParts.push('保留策略：' + (KEEP_MODE_LABEL[keepMode] || keepMode)); }
@@ -4305,12 +5158,15 @@
           : null,
         Number(stats.mtime_fallback_groups) > 0
           ? el('span', {}, ['修改时间降级 ', el('strong', { text: fmtInt(stats.mtime_fallback_groups) }), ' 组'])
+          : null,
+        Number(stats.video_groups) > 0
+          ? el('span', {}, ['视频相似 ', el('strong', { text: fmtInt(stats.video_groups) }), ' 组'])
           : null
       ];
     } else {
       statsItems = [
-        el('span', {}, ['重复组 ', el('strong', { text: fmtInt(stats.duplicate_groups) })]),
-        el('span', {}, ['重复文件 ', el('strong', { text: fmtInt(stats.duplicate_files) })]),
+        el('span', {}, ['精准组 ', el('strong', { text: fmtInt(stats.exact_groups !== undefined ? stats.exact_groups : stats.duplicate_groups) })]),
+        el('span', {}, ['精准文件 ', el('strong', { text: fmtInt(stats.exact_files !== undefined ? stats.exact_files : stats.duplicate_files) })]),
         el('span', {}, ['可释放 ', el('strong', { text: fmtBytes(stats.reclaimable_bytes) })]),
         el('span', {}, ['已扫描 ', el('strong', { text: fmtInt(stats.files_scanned) })]),
         Number(stats.needs_manual_keep_groups) > 0
@@ -4318,6 +5174,9 @@
           : null,
         Number(stats.mtime_fallback_groups) > 0
           ? el('span', {}, ['修改时间降级 ', el('strong', { text: fmtInt(stats.mtime_fallback_groups) }), ' 组'])
+          : null,
+        Number(stats.video_groups) > 0
+          ? el('span', {}, ['视频相似 ', el('strong', { text: fmtInt(stats.video_groups) }), ' 组'])
           : null
       ];
     }
@@ -4349,6 +5208,13 @@
           download: 'duplicate-scan-' + scan.scan_id + '.csv'
         }
       }, [icon('download'), '导出 CSV']));
+      actions.appendChild(el('a', {
+        className: 'btn btn-ghost btn-sm',
+        attrs: {
+          href: '/api/scans/' + encodePath(scan.scan_id) + '/xlsx',
+          download: 'duplicate-scan-' + scan.scan_id + '.xlsx'
+        }
+      }, [icon('download'), '导出 Excel']));
     }
     item.appendChild(main);
     item.appendChild(actions);
@@ -4489,7 +5355,14 @@
     similarityConcurrency: { input: 'setSimilarityConcurrency', error: 'setSimilarityConcurrencyError' },
     similarityMaxFile: { input: 'setSimilarityMaxMb', error: 'setSimilarityMaxFileError' },
     similarityExt: { input: 'setSimExtList', error: 'setSimilarityExtError' },
-    similarityExcludeExt: { input: 'setSimilarityExcludeExt', error: 'setSimilarityExcludeExtError' }
+    similarityExcludeExt: { input: 'setSimilarityExcludeExt', error: 'setSimilarityExcludeExtError' },
+    videoThreshold: { input: 'setVideoThreshold', error: 'setVideoThresholdError' },
+    videoFrames: { input: 'setVideoSampleFrames', error: 'setVideoFramesError' },
+    videoInterval: { input: 'setVideoMaxInterval', error: 'setVideoIntervalError' },
+    videoConcurrency: { input: 'setVideoConcurrency', error: 'setVideoConcurrencyError' },
+    videoMaxFile: { input: 'setVideoMaxMb', error: 'setVideoMaxFileError' },
+    videoTimeout: { input: 'setVideoTimeout', error: 'setVideoTimeoutError' },
+    videoExt: { input: 'setVideoExtList', error: 'setVideoExtError' }
   };
 
   function bytesToMbValue(bytes) {
@@ -4541,6 +5414,7 @@
       renderExtChips(els.setSimExtList, simMeta.extensions, selectedExt, null);
     }
     if (els.setSimilarityExcludeExt) { els.setSimilarityExcludeExt.value = extListToText(settings.similarity_exclude_extensions); }
+    fillVideoSettingsForm(settings);
     clearSettingsErrors();
   }
 
@@ -4570,7 +5444,9 @@
       }
       state.settingsLoaded = true;
       state.similarity = similarityCapability();
+      state.video = videoCapability();
       updateModeAvailability();
+      updateVideoAvailabilityUi();
       var simSupported = !(state.meta && state.similarity && state.similarity.supported === false);
       if (els.settingsSimilarityDetails) { setHidden(els.settingsSimilarityDetails, !simSupported); }
       fillSettingsForm(state.settings || DEFAULT_SETTINGS);
@@ -4649,6 +5525,7 @@
       settings.similarity_cache = !!(els.setSimilarityCache && els.setSimilarityCache.checked);
       settings.similarity_allow_binary = !!(els.setSimilarityAllowBinary && els.setSimilarityAllowBinary.checked);
     }
+    readVideoSettings(settings, errors);
     return { settings: settings, errors: errors, valid: Object.keys(errors).length === 0 };
   }
 
@@ -4687,7 +5564,9 @@
       if (res && res.settings) {
         state.settings = Object.assign({}, DEFAULT_SETTINGS, res.settings);
         state.similarity = similarityCapability();
+        state.video = videoCapability();
         updateModeAvailability();
+        updateVideoAvailabilityUi();
         fillSettingsForm(state.settings);
       }
       state.settingsLoaded = true;
@@ -4715,6 +5594,13 @@
     els.settingsForm.addEventListener('input', clearSettingsErrors);
     els.settingsForm.addEventListener('change', clearSettingsErrors);
     if (els.setSimExtList) { els.setSimExtList.addEventListener('change', clearSettingsErrors); }
+    if (els.setVideoEnabled) {
+      els.setVideoEnabled.addEventListener('change', function () {
+        updateSettingsVideoFieldsState();
+        clearSettingsErrors();
+      });
+    }
+    if (els.setVideoExtList) { els.setVideoExtList.addEventListener('change', clearSettingsErrors); }
   }
 
   // ==================== 18. 启动 ====================

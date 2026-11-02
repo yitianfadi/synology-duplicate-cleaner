@@ -21,6 +21,16 @@ if [ -r "$VAR_DIR/tls.env" ]; then
     SCHEME="https"
   fi
 fi
+# 捆绑 FFmpeg：按 DSM 架构选择静态二进制；不存在时后端可回退 PATH/外部路径。
+FFMPEG_BIN=""
+case "$(uname -m 2>/dev/null)" in
+  x86_64|amd64) FFMPEG_BIN="$PKG_DIR/bin/ffmpeg-x86_64" ;;
+  aarch64|arm64) FFMPEG_BIN="$PKG_DIR/bin/ffmpeg-aarch64" ;;
+esac
+if [ -n "$FFMPEG_BIN" ] && [ -x "$FFMPEG_BIN" ]; then
+  export DUP_FFMPEG_PATH="$FFMPEG_BIN"
+fi
+
 PYTHON=""
 for p in /usr/local/bin/python3 /usr/bin/python3 \
          /var/packages/Python3/target/usr/local/bin/python3 \

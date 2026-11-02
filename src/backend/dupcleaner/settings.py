@@ -39,6 +39,17 @@ DEFAULT_SETTINGS = {
     "similarity_cache": True,
     "similarity_max_file_mb": 32,
     "similarity_allow_binary": False,
+    # --- 视频视觉相似度（docs/VIDEO_CONTRACT.md §1）---
+    "video_similarity_enabled": False,
+    "video_extensions": list(config.DEFAULT_VIDEO_EXTENSIONS),
+    "video_sample_frames": config.VIDEO_DEFAULT_SAMPLE_FRAMES,
+    "video_max_sample_interval_sec": config.VIDEO_DEFAULT_MAX_INTERVAL,
+    "video_similarity_threshold": config.VIDEO_DEFAULT_THRESHOLD,
+    "video_concurrency": 1,
+    "video_hwaccel": "auto",
+    "video_max_file_mb": config.VIDEO_DEFAULT_MAX_FILE_MB,
+    "video_timeout_sec": config.VIDEO_DEFAULT_TIMEOUT_SEC,
+    "video_cache": True,
 }
 
 SETTINGS_KEYS = tuple(DEFAULT_SETTINGS)
@@ -126,6 +137,27 @@ def _normalize_value(key, value):
         return _check_int(key, value, 1, 1024)
     if key == "similarity_allow_binary":
         return _check_bool(key, value)
+    if key in ("video_similarity_enabled", "video_cache"):
+        return _check_bool(key, value)
+    if key == "video_extensions":
+        return _check_ext_list(key, value)
+    if key == "video_sample_frames":
+        return _check_int(key, value, config.VIDEO_MIN_SAMPLE_FRAMES,
+                          config.VIDEO_MAX_SAMPLE_FRAMES)
+    if key == "video_max_sample_interval_sec":
+        return _check_int(key, value, 60, 600)
+    if key == "video_similarity_threshold":
+        return _check_int(key, value, 0, 100)
+    if key == "video_concurrency":
+        return _check_int(key, value, 1, 2)
+    if key == "video_hwaccel":
+        if value not in config.VIDEO_HWACCEL_MODES:
+            _err(u"video_hwaccel 只能是 auto 或 off", {"key": key})
+        return value
+    if key == "video_max_file_mb":
+        return _check_int(key, value, 1, 102400)
+    if key == "video_timeout_sec":
+        return _check_int(key, value, 30, 1800)
     if key == "skip_symlinks":
         # 无论前端传什么，符号链接一律跳过（安全强制）
         if not isinstance(value, bool):

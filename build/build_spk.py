@@ -3,7 +3,7 @@
 """构建群晖 DSM 7 SPK 套件（跨平台，无需 DSM 工具链）。
 
 用法：
-    python build/build_spk.py                 # 默认 HTTP 后端，生成 dist/DuplicateCleaner-1.1.0-0007.spk
+    python build/build_spk.py                 # 默认 HTTP 后端，生成 dist/DuplicateCleaner-1.1.0-0008.spk
     python build/build_spk.py --scheme https  # 后端启用 TLS 时，让 DSM 入口跳转 https://nas:8787/
     python build/build_spk.py --no-icons      # 不重新生成图标（使用仓库内已生成 PNG）
 
@@ -34,7 +34,7 @@ from pathlib import Path
 from typing import Optional
 
 ROOT = Path(__file__).resolve().parent.parent
-VERSION = "1.1.0-0007"
+VERSION = "1.1.0-0008"
 PKG_NAME = "DuplicateCleaner"
 SPK_FILENAME = "%s-%s.spk" % (PKG_NAME, VERSION)
 
@@ -47,6 +47,11 @@ REQUIRED_APP = [
 ]
 EXCLUDE_NAMES = {"__pycache__", ".DS_Store", "Thumbs.db", "desktop.ini", ".pytest_cache", "test_output.txt"}
 EXCLUDE_SUFFIXES = {".pyc", ".pyo", ".log", ".swp"}
+FFMPEG_VENDOR = ROOT / "vendor" / "ffmpeg"
+FFMPEG_BINS = {
+    "ffmpeg-x86_64": FFMPEG_VENDOR / "ffmpeg-x86_64",
+    "ffmpeg-aarch64": FFMPEG_VENDOR / "ffmpeg-aarch64",
+}
 ARGS = None
 
 
@@ -58,6 +63,13 @@ def assert_required() -> None:
     missing = [str(p.relative_to(ROOT)) for p in REQUIRED_APP if not p.exists()]
     if missing:
         raise SystemExit("缺少构建所需文件:\n  " + "\n  ".join(missing))
+    missing_ffmpeg = [str(p.relative_to(ROOT)) for p in FFMPEG_BINS.values() if not p.exists()]
+    if missing_ffmpeg:
+        raise SystemExit(
+            "缺少捆绑 FFmpeg 二进制，请先运行:\n"
+            "  python build/fetch_ffmpeg.py\n"
+            "缺少:\n  " + "\n  ".join(missing_ffmpeg)
+        )
 
 
 def norm_text(data: bytes) -> bytes:
@@ -126,6 +138,29 @@ def add_tree(tar: tarfile.TarFile, root: Path, top: str, exec_all: bool = False)
             add_tar_file(tar, p, arc, mode)
 
 
+def stage_ffmpeg(target: Path) -> None:
+    """把两个架构的静态 FFmpeg 和第三方声明放进 package.tgz。"""
+    bindir = target / "bin"
+    bindir.mkdir(parents=True, exist_ok=True)
+    for name, src in FFMPEG_BINS.items():
+        dst = bindir / name
+        shutil.copy2(str(src), str(dst))
+        try:
+            dst.chmod(0o755)
+        except OSError:
+            pass
+    notices = [
+        "DuplicateCleaner bundles FFmpeg 4.1 static binaries for x86_64 and aarch64.",
+        "Source: https://registry.npmmirror.com/@ffmpeg-installer/linux-x64 and linux-arm64 (ffmpeg-installer).",
+        "FFmpeg is licensed under the GNU General Public License v3; see bin/LICENSE-FFMPEG-GPLv3.txt.",
+        "The bundled binaries are used only for local video frame extraction.",
+    ]
+    gpl = FFMPEG_VENDOR / "GPL-3.0.txt"
+    if gpl.exists():
+        shutil.copy2(str(gpl), str(bindir / "LICENSE-FFMPEG-GPLv3.txt"))
+    write_text_lf(target / "THIRD_PARTY_NOTICES.txt", "\n".join(notices) + "\n")
+
+
 def build_package_tgz(stage: Path) -> Path:
     """package.tgz = 安装到 /var/packages/DuplicateCleaner/target/ 的内容。"""
     target = stage / "target"
@@ -145,6 +180,7 @@ def build_package_tgz(stage: Path) -> Path:
     copy_tree(ROOT / "src" / "web", target / "web", normalize_text=True)
     copy_tree(ROOT / "spk" / "ui", target / "ui", normalize_text=True)
     copy_tree(ROOT / "spk" / "port_conf", target / "port_conf", normalize_text=True)
+    stage_ffmpeg(target)
 
     # 把 DSM 桌面入口里的协议/主机占位符替换为构建参数。
     scheme = "https" if ARGS.scheme == "https" else "http"
@@ -164,6 +200,14 @@ def build_package_tgz(stage: Path) -> Path:
                 add_tree(tar, target / "web", "web")
                 add_tree(tar, target / "ui", "ui")
                 add_tree(tar, target / "port_conf", "port_conf")
+                add_tar_dir(tar, "bin")
+                for name in sorted(FFMPEG_BINS):
+                    add_tar_file(tar, target / "bin" / name, "bin/" + name, 0o755)
+                for name in ("LICENSE-FFMPEG-GPLv3.txt",):
+                    p = target / "bin" / name
+                    if p.exists():
+                        add_tar_file(tar, p, "bin/" + name, 0o644)
+                add_tar_file(tar, target / "THIRD_PARTY_NOTICES.txt", "THIRD_PARTY_NOTICES.txt", 0o644)
                 add_tar_file(tar, target / "VERSION", "VERSION", 0o644)
     log("package.tgz: %.1f KB" % (pkg.stat().st_size / 1024.0))
     return pkg

@@ -7,3 +7,6 @@ qa/.tmp/
 *.log
 .DS_Store
 Thumbs.db
+
+# Bundled FFmpeg binaries are fetched by build/fetch_ffmpeg.py, not committed.
+vendor/ffmpeg/

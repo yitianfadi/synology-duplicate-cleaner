@@ -24,10 +24,20 @@ import time
 import traceback
 
 from . import (config, fsutil, hashing, settings as settings_module,
-               similarity, timeutil)
+               similarity, timeutil, video_similarity, xlsx)
 from .errors import ApiError, invalid, not_found
 
-STAGES = ("enumerate", "size", "sample", "hash", "similarity", "finalize", "done")
+STAGES = ("enumerate", "size", "sample", "hash", "similarity", "video",
+          "finalize", "done")
+MATCH_TYPE_LABELS = {
+    "exact": u"哈希一致",
+    "similar": u"内容相似",
+    "video": u"视频视觉相似",
+}
+
+
+def match_type_label(match_type):
+    return MATCH_TYPE_LABELS.get(match_type or "exact", u"哈希一致")
 FINISHED_STATUSES = ("stopped", "completed", "failed")
 ACTIVE_STATUSES = ("queued", "running", "paused", "stopping")
 DEFAULT_LIST_LIMIT = 50
@@ -106,6 +116,18 @@ def _empty_stats():
         "similarity_skipped": {
             "type": 0, "size": 0, "binary": 0,
             "decode": 0, "no_text": 0, "error": 0,
+        },
+        # 视频视觉相似统计（docs/VIDEO_CONTRACT.md §4）
+        "video_groups": 0,
+        "video_files": 0,
+        "video_candidates": 0,
+        "video_reclaimable_bytes": 0,
+        "video_cache_hits": 0,
+        "video_cache_misses": 0,
+        "video_ffmpeg_used": 0,
+        "video_skipped": {
+            "type": 0, "size": 0, "decode": 0,
+            "no_duration": 0, "timeout": 0, "error": 0,
         },
     }
 
@@ -295,7 +317,8 @@ class ScanState(object):
 
 class ScanManager(object):
     def __init__(self, runtime_config, store, share_service, settings_manager,
-                 time_reader=None, executor_factory=None):
+                 time_reader=None, executor_factory=None,
+                 video_engine_factory=None):
         self.config = runtime_config
         self.store = store
         self.shares = share_service
@@ -303,6 +326,8 @@ class ScanManager(object):
         self._time_reader = time_reader or timeutil.read_creation_time
         self._executor_factory = executor_factory or (
             lambda workers: concurrent.futures.ThreadPoolExecutor(max_workers=workers))
+        self._video_engine_factory = video_engine_factory or (
+            lambda cfg: video_similarity.VideoEngine(cfg))
         self._lock = threading.RLock()
         self._active_id = None
         self._states = {}
@@ -409,6 +434,9 @@ class ScanManager(object):
             u"hash_rate_mbps: %s" % state.options.get("hash_rate_mbps"),
             u"scan_mode: %s" % (state.options.get("scan_mode") or "exact"),
             u"similarity_threshold: %s" % state.options.get("similarity_threshold"),
+            u"video_similarity_enabled: %s" % state.options.get("video_similarity_enabled"),
+            u"video_similarity_threshold: %s" % state.options.get(
+                "video_similarity_threshold"),
             u"",
         ]
         return "\n".join(lines) + "\n"
@@ -558,8 +586,9 @@ class ScanManager(object):
             raise invalid(u"不支持的排序方式: %s" % sort)
         if match_type in ("", "all"):
             match_type = None
-        if match_type is not None and match_type not in ("exact", "similar"):
-            raise invalid(u"match_type 只能是 exact 或 similar")
+        if match_type is not None and match_type not in ("exact", "similar",
+                                                         "video"):
+            raise invalid(u"match_type 只能是 exact、similar 或 video")
 
         def group_match_type(group):
             return group.get("match_type") or "exact"
@@ -588,21 +617,25 @@ class ScanManager(object):
                 return (created, wasted, group.get("group_id") or "")
             if sort == "similarity_desc":
                 similarity = 100
-                if group_match_type(group) == "similar":
+                if group_match_type(group) in ("similar", "video"):
                     similarity = int(group.get("similarity_score") or 0)
                 return (similarity, wasted, size, group.get("group_id") or "")
             return (wasted, size, group.get("group_id") or "")
 
         exact_total = 0
         similar_total = 0
+        video_total = 0
         total = 0
         wanted = offset + limit
         top = []
         for group in self.store.iter_scan_groups(scan_id):
             if not isinstance(group, dict):
                 continue
-            if group_match_type(group) == "similar":
+            group_type = group_match_type(group)
+            if group_type == "similar":
                 similar_total += 1
+            elif group_type == "video":
+                video_total += 1
             else:
                 exact_total += 1
             if match_type is not None and group_match_type(group) != match_type:
@@ -625,6 +658,7 @@ class ScanManager(object):
             "match_type": match_type,
             "exact_total": exact_total,
             "similar_total": similar_total,
+            "video_total": video_total,
             "groups": page,
         }
 
@@ -671,7 +705,7 @@ class ScanManager(object):
                              u"时间回退", u"保留时间来源"])
             for group in self.store.iter_scan_groups(scan_id):
                 match_type = group.get("match_type") or "exact"
-                match_label = u"内容相似" if match_type == "similar" else u"哈希一致"
+                match_label = match_type_label(match_type)
                 for file_info in group.get("files") or []:
                     if file_info.get("is_keep"):
                         status = u"保留"
@@ -701,6 +735,60 @@ class ScanManager(object):
 
     def filename_for_csv(self, scan_id):
         return "duplicate-scan-%s.csv" % scan_id
+
+    XLSX_HEADER = [
+        u"组号", u"匹配类型", u"状态", u"文件路径", u"大小(字节)",
+        u"SHA256/MD5", u"创建时间", u"修改时间", u"保留", u"默认勾选",
+        u"时间来源", u"相似度分值", u"时间回退", u"保留时间来源",
+        u"视频指纹", u"采样帧数", u"硬解", u"视频时长(秒)",
+    ]
+
+    def write_xlsx(self, scan_id, dest_path=None):
+        """标准库 OOXML 导出（GET /api/scans/{id}/xlsx）。"""
+        self.require_completed(scan_id)
+        path = dest_path or self.store.temp_path(prefix="xlsx-",
+                                                 suffix=".xlsx")
+        header = list(self.XLSX_HEADER)
+
+        def rows():
+            for group in self.store.iter_scan_groups(scan_id):
+                match_type = group.get("match_type") or "exact"
+                match_label = match_type_label(match_type)
+                for file_info in group.get("files") or []:
+                    if file_info.get("is_keep"):
+                        status = u"保留"
+                    elif file_info.get("default_selected"):
+                        status = u"待删除"
+                    else:
+                        status = u"需人工确认"
+                    yield [
+                        group.get("group_id") or "",
+                        match_label,
+                        status,
+                        file_info.get("path") or "",
+                        int(file_info.get("size") or 0),
+                        file_info.get("hash") or "",
+                        file_info.get("created_at") or "",
+                        file_info.get("modified_at") or "",
+                        u"是" if file_info.get("is_keep") else u"否",
+                        u"是" if file_info.get("default_selected") else u"否",
+                        file_info.get("created_source") or "unknown",
+                        int(file_info.get("similarity_score")
+                            if file_info.get("similarity_score") is not None
+                            else 100),
+                        u"是" if group.get("time_fallback") else u"否",
+                        group.get("keep_time_source") or "btime",
+                        file_info.get("video_fingerprint") or "",
+                        int(file_info.get("video_sample_frames") or 0),
+                        file_info.get("video_hwaccel") or "",
+                        int(file_info.get("video_duration") or 0),
+                    ]
+
+        xlsx.write_xlsx(path, header, rows())
+        return path
+
+    def filename_for_xlsx(self, scan_id):
+        return "duplicate-scan-%s.xlsx" % scan_id
 
     # ------------------------------------------------------------------
     # 扫描执行
@@ -739,12 +827,18 @@ class ScanManager(object):
             if (state.options.get("scan_mode") or "exact") == "similar":
                 similar_clusters = self._similarity_stage(state, records,
                                                           exact_paths)
+            self._check_control(state)
+            video_clusters = []
+            if state.options.get("video_similarity_enabled"):
+                video_clusters = self._video_stage(state, records, exact_paths)
             del records
             self._check_control(state)
 
-            self._finalize_stage(state, hashed_buckets, similar_clusters)
+            self._finalize_stage(state, hashed_buckets, similar_clusters,
+                                 video_clusters)
             del hashed_buckets
             del similar_clusters
+            del video_clusters
 
             with state.lock:
                 state.status = "completed"
@@ -821,6 +915,7 @@ class ScanManager(object):
                     "groups": snapshot["stats"]["groups"],
                     "exact_groups": snapshot["stats"].get("exact_groups", 0),
                     "similar_groups": snapshot["stats"].get("similar_groups", 0),
+                    "video_groups": snapshot["stats"].get("video_groups", 0),
                     "duplicate_files": snapshot["stats"]["duplicate_files"],
                     "reclaimable_bytes": snapshot["stats"]["reclaimable_bytes"],
                     "similar_reclaimable_bytes": snapshot["stats"].get(
@@ -863,6 +958,18 @@ class ScanManager(object):
                     "similarity_pairs_checked", 0),
                 u"similarity_skipped: %s" % snapshot["stats"].get(
                     "similarity_skipped", {}),
+                u"video_groups: %s" % snapshot["stats"].get("video_groups", 0),
+                u"video_files: %s" % snapshot["stats"].get("video_files", 0),
+                u"video_candidates: %s" % snapshot["stats"].get(
+                    "video_candidates", 0),
+                u"video_cache_hits: %s" % snapshot["stats"].get(
+                    "video_cache_hits", 0),
+                u"video_cache_misses: %s" % snapshot["stats"].get(
+                    "video_cache_misses", 0),
+                u"video_ffmpeg_used: %s" % snapshot["stats"].get(
+                    "video_ffmpeg_used", 0),
+                u"video_skipped: %s" % snapshot["stats"].get(
+                    "video_skipped", {}),
                 u"duplicate_files: %s" % snapshot["stats"]["duplicate_files"],
                 u"reclaimable_bytes: %s" % snapshot["stats"]["reclaimable_bytes"],
                 u"errors: %s" % snapshot["stats"]["errors"],
@@ -1287,6 +1394,10 @@ class ScanManager(object):
                 # 精准组内文件不参与相似组，避免重复
                 continue
             extension = fsutil.extension_of(record.path)
+            if extension.lower() in video_similarity.video_extension_set(options):
+                # 视频不进入图片/文档相似阶段（独立视频阶段处理）
+                self._inc_similarity_skip(state, "binary")
+                continue
             kind, reason, _detail = similarity.classify_extension(extension, options)
             if reason:
                 self._inc_similarity_skip(state, reason)
@@ -1299,7 +1410,7 @@ class ScanManager(object):
             state.stats["similarity_candidates"] = len(candidates)
         if not candidates:
             cache.save()
-            self._set_progress(state, "similarity", 0.97,
+            self._set_progress(state, "similarity", 0.92,
                                u"没有需要相似计算的文件")
             return []
 
@@ -1356,7 +1467,7 @@ class ScanManager(object):
                                                 "feature": feature})
                     done += 1
                     if done % report_every == 0 or done == total:
-                        fraction = 0.85 + 0.12 * (float(done) / max(1, total))
+                        fraction = 0.85 + 0.07 * (float(done) / max(1, total))
                         self._set_progress(
                             state, "similarity", fraction,
                             u"正在分析内容相似度 %d/%d" % (done, total))
@@ -1392,12 +1503,137 @@ class ScanManager(object):
             stats["similarity_pairs_checked"] = (
                 stats.get("similarity_pairs_checked", 0)
                 + int(group_stats.get("pairs_checked") or 0))
-        self._set_progress(state, "similarity", 0.97,
+        self._set_progress(state, "similarity", 0.92,
                            u"相似度分析完成：%d 组" % len(cluster_entries))
         return cluster_entries
 
     # ------------------------------------------------------------------
-    # 阶段六：分组 + 保留策略（精准组 + 相似组）
+    # 阶段五之二：视频视觉相似（FFmpeg 抽帧 + pHash + DTW）
+    # ------------------------------------------------------------------
+    def _inc_video_skip(self, state, reason):
+        if reason not in ("type", "size", "decode", "no_duration",
+                          "timeout", "error"):
+            reason = "error"
+        with state.lock:
+            counters = state.stats["video_skipped"]
+            counters[reason] = counters.get(reason, 0) + 1
+
+    def _analyze_video(self, state, engine, record, options):
+        self._wait_worker(state)
+        return engine.analyze(record.path, options,
+                              stop_check=lambda: self._should_stop(state))
+
+    def _video_stage(self, state, records, exact_paths):
+        options = state.options
+        if not options.get("video_similarity_enabled"):
+            self._set_progress(state, "video", 0.973, u"视频视觉分析未启用")
+            return []
+        extensions = video_similarity.video_extension_set(options)
+        max_mb = int(options.get("video_max_file_mb")
+                     or config.VIDEO_DEFAULT_MAX_FILE_MB)
+        threshold = int(options.get("video_similarity_threshold")
+                        or config.VIDEO_DEFAULT_THRESHOLD)
+        concurrency = max(1, min(2, int(options.get("video_concurrency") or 1)))
+        candidates = []
+        for record in records:
+            if record.path in exact_paths:
+                # 精准组内视频不进入视频相似组
+                continue
+            extension = fsutil.extension_of(record.path).lower()
+            if extension not in extensions:
+                continue
+            if record.size > max_mb * 1024 * 1024:
+                self._inc_video_skip(state, "size")
+                continue
+            candidates.append(record)
+        with state.lock:
+            state.stats["video_candidates"] = len(candidates)
+        if not candidates:
+            self._set_progress(state, "video", 0.973, u"没有需要视频分析的文件")
+            return []
+
+        engine = self._video_engine_factory(self.config)
+        self._set_progress(state, "video", 0.92,
+                           u"正在分析视频 0/%d" % len(candidates))
+        total = len(candidates)
+        done = 0
+        cache_hits = 0
+        cache_misses = 0
+        entries = []
+        report_every = max(1, min(8, total // 20 or 1))
+        executor = self._executor_factory(concurrency)
+        try:
+            for start in range(0, total, max(1, concurrency)):
+                self._check_control(state)
+                batch = candidates[start:start + max(1, concurrency)]
+                futures = [(record, executor.submit(
+                    self._analyze_video, state, engine, record, options))
+                    for record in batch]
+                for record, future in futures:
+                    try:
+                        analysis = future.result()
+                    except video_similarity.VideoStopped:
+                        raise ScanStopped()
+                    except video_similarity.VideoSkip as exc:
+                        self._inc_video_skip(state, exc.reason)
+                    except Exception:
+                        self._inc_video_skip(state, "error")
+                        self._inc_error(state)
+                    else:
+                        if analysis.get("cache_hit"):
+                            cache_hits += 1
+                        else:
+                            cache_misses += 1
+                        entries.append({"record": record,
+                                        "analysis": analysis})
+                    done += 1
+                    if done % report_every == 0 or done == total:
+                        fraction = 0.92 + 0.05 * (float(done) / max(1, total))
+                        self._set_progress(
+                            state, "video", fraction,
+                            u"正在分析视频 %d/%d" % (done, total))
+                        with state.lock:
+                            state.current_path = record.path
+                del futures
+        finally:
+            executor.shutdown(wait=False)
+        with state.lock:
+            stats = state.stats
+            stats["video_cache_hits"] = stats.get("video_cache_hits", 0) + cache_hits
+            stats["video_cache_misses"] = stats.get("video_cache_misses", 0) + cache_misses
+            stats["video_ffmpeg_used"] = (
+                stats.get("video_ffmpeg_used", 0)
+                + int(getattr(engine, "ffmpeg_used", 0)))
+        if getattr(engine, "cache", None) is not None:
+            try:
+                engine.cache.close()
+            except Exception:
+                pass
+        if len(entries) < 2:
+            self._set_progress(state, "video", 0.973,
+                               u"视频视觉分析完成：0 组")
+            return []
+        clusters = video_similarity.build_video_groups(entries, threshold)
+        result = []
+        for cluster in clusters:
+            indices = list(cluster.get("indices") or [])
+            position_of = {index: position
+                           for position, index in enumerate(indices)}
+            local_scores = {}
+            for (first, second), score in (cluster.get("scores") or {}).items():
+                if first in position_of and second in position_of:
+                    local_scores[(position_of[first],
+                                  position_of[second])] = score
+            result.append({
+                "entries": [entries[index] for index in indices],
+                "scores": local_scores,
+            })
+        self._set_progress(state, "video", 0.973,
+                           u"视频视觉分析完成：%d 组" % len(result))
+        return result
+
+    # ------------------------------------------------------------------
+    # 阶段六：分组 + 保留策略（精准组 + 相似组 + 视频组）
     # ------------------------------------------------------------------
     def _file_info(self, state, record, match_type, content_sha256=None):
         # 创建时间读取点：statx/btime 优先，ctime 仅显式允许时降级
@@ -1541,10 +1777,98 @@ class ScanManager(object):
                                        group["files"][0]["path"]))
         return groups
 
-    def _finalize_stage(self, state, hashed_buckets, similar_clusters=None):
+    def _build_video_groups(self, state, video_clusters):
+        options = state.options
+        groups = []
+        for cluster in video_clusters:
+            self._check_control(state)
+            members = cluster.get("entries") or []
+            scores = cluster.get("scores") or {}
+            files = []
+            for entry in members:
+                record = entry["record"]
+                analysis = entry["analysis"]
+                file_info = self._file_info(state, record, "video",
+                                            content_sha256="")
+                file_info["hash"] = ""
+                file_info["match_type"] = "video"
+                file_info["video_fingerprint"] = analysis.get("fingerprint") or ""
+                file_info["video_sample_frames"] = int(analysis.get("n_eff") or 0)
+                file_info["video_hwaccel"] = analysis.get("hwaccel") or "none"
+                file_info["video_duration"] = int(round(
+                    float(analysis.get("duration") or 0)))
+                file_info["video_low_confidence"] = bool(
+                    analysis.get("low_confidence"))
+                file_info["similarity_score"] = 0
+                files.append(file_info)
+            (keeper, reason, needs_manual, suspect, time_fallback,
+             keep_time_source) = choose_keeper(files, options)
+            group_suspect = (suspect or time_fallback
+                             or any(file_info["created_unsafe"]
+                                    for file_info in files))
+            for position, file_info in enumerate(files):
+                if position == keeper:
+                    file_info["similarity_score"] = 100
+                else:
+                    score = scores.get((min(keeper, position),
+                                        max(keeper, position)))
+                    file_info["similarity_score"] = int(score or 0)
+                file_info["is_keep"] = position == keeper
+                # 视频组默认不勾选，但允许一键全选批量删除
+                file_info["default_selected"] = False
+            non_keeper_scores = [file_info["similarity_score"]
+                                 for position, file_info in enumerate(files)
+                                 if position != keeper]
+            group_score = int(round(
+                float(sum(non_keeper_scores)) / max(1, len(non_keeper_scores))))
+            files.sort(key=lambda item: (
+                0 if item["is_keep"] else 1,
+                -int(item["similarity_score"] or 0),
+                -int(item["size"] or 0),
+                item["path"],
+            ))
+            keeper_file = files[0]
+            groups.append({
+                "hash": "",
+                "algo": "",
+                "match_type": "video",
+                "similarity_score": group_score,
+                "video_similarity_score": group_score,
+                "video_fingerprint": keeper_file.get("video_fingerprint") or "",
+                "video_sample_frames": max(
+                    int(item.get("video_sample_frames") or 0)
+                    for item in files),
+                "video_hwaccel": keeper_file.get("video_hwaccel") or "none",
+                "video_duration": max(
+                    int(item.get("video_duration") or 0) for item in files),
+                "video_low_confidence": any(
+                    bool(item.get("video_low_confidence")) for item in files),
+                "manual_review_required": False,
+                "allow_batch_delete": True,
+                "size": max(int(item.get("size") or 0) for item in files),
+                "count": len(files),
+                "wasted_bytes": sum(int(item.get("size") or 0) for item in files
+                                    if not item["is_keep"]),
+                "keep_reason": reason,
+                "needs_manual_keep": bool(needs_manual),
+                "creation_time_suspect": bool(group_suspect),
+                "time_fallback": bool(time_fallback),
+                "keep_time_source": keep_time_source,
+                "files": files,
+            })
+        groups.sort(key=lambda group: (-int(group["similarity_score"] or 0),
+                                       -group["wasted_bytes"],
+                                       -group["count"],
+                                       group["files"][0]["path"]))
+        return groups
+
+    def _finalize_stage(self, state, hashed_buckets, similar_clusters=None,
+                        video_clusters=None):
         similar_clusters = similar_clusters or []
+        video_clusters = video_clusters or []
         exact_groups = self._build_exact_groups(state, hashed_buckets)
         similar_groups = self._build_similar_groups(state, similar_clusters)
+        video_groups = self._build_video_groups(state, video_clusters)
 
         file_counter = 0
         for group_index, group in enumerate(exact_groups):
@@ -1564,22 +1888,33 @@ class ScanManager(object):
                 file_info["group_id"] = group["group_id"]
             group["keep_file_id"] = group["files"][0]["file_id"]
 
-        groups = exact_groups + similar_groups
+        video_file_counter = 0
+        for group_index, group in enumerate(video_groups):
+            group["group_id"] = "v-%06d" % (group_index + 1)
+            for file_info in group["files"]:
+                video_file_counter += 1
+                file_info["file_id"] = "vf-%06d" % video_file_counter
+                file_info["group_id"] = group["group_id"]
+            group["keep_file_id"] = group["files"][0]["file_id"]
+
+        groups = exact_groups + similar_groups + video_groups
         exact_files = sum(group["count"] for group in exact_groups)
         similar_files = sum(group["count"] for group in similar_groups)
+        video_files = sum(group["count"] for group in video_groups)
         exact_safe = [group for group in exact_groups
                       if not group["needs_manual_keep"]]
         reclaimable = sum(group["wasted_bytes"] for group in exact_safe)
         selectable_files = sum(group["count"] - 1 for group in exact_safe)
         similar_reclaimable = sum(group["wasted_bytes"]
                                   for group in similar_groups)
+        video_reclaimable = sum(group["wasted_bytes"] for group in video_groups)
         needs_manual_groups = sum(1 for group in groups
                                   if group["needs_manual_keep"])
         fallback_groups = [group for group in groups
                            if group.get("time_fallback")]
         mtime_fallback_groups = len(fallback_groups)
         mtime_fallback_files = sum(group["count"] for group in fallback_groups)
-        duplicate_files = exact_files + similar_files
+        duplicate_files = exact_files + similar_files + video_files
         creation_unsafe = any(group["creation_time_suspect"] for group in groups)
         with state.lock:
             stats = state.stats
@@ -1588,6 +1923,9 @@ class ScanManager(object):
             stats["similar_groups"] = len(similar_groups)
             stats["similar_files"] = similar_files
             stats["similar_reclaimable_bytes"] = similar_reclaimable
+            stats["video_groups"] = len(video_groups)
+            stats["video_files"] = video_files
+            stats["video_reclaimable_bytes"] = video_reclaimable
             stats["groups"] = len(groups)
             stats["duplicate_groups"] = len(groups)
             stats["duplicate_files"] = duplicate_files

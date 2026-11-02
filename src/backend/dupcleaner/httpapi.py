@@ -10,7 +10,7 @@ import platform
 import re
 import urllib.parse
 
-from . import config, similarity, timeutil
+from . import config, similarity, timeutil, video_similarity
 from .errors import ApiError, forbidden, invalid, not_found, auth_required
 from .settings import default_settings
 
@@ -171,6 +171,8 @@ class Api(object):
              self._scan_stats, False),
             ("GET", re.compile(r"^/api/scans/(?P<scan_id>[^/]+)/csv$"),
              self._scan_csv, False),
+            ("GET", re.compile(r"^/api/scans/(?P<scan_id>[^/]+)/xlsx$"),
+             self._scan_xlsx, False),
             ("POST", re.compile(r"^/api/scans/(?P<scan_id>[^/]+)/delete-plan$"),
              self._delete_plan, False),
             ("POST", re.compile(r"^/api/scans/(?P<scan_id>[^/]+)/delete$"),
@@ -288,6 +290,9 @@ class Api(object):
             },
             # 相似度模式能力（docs/SIMILARITY_CONTRACT.md §3）
             "similarity": similarity.capabilities(),
+            # 视频视觉相似能力（docs/VIDEO_CONTRACT.md §2）
+            "video": video_similarity.video_capabilities(
+                self.config, self.services.settings.get()),
         })
 
     def _shares(self, request, session, params):
@@ -420,6 +425,23 @@ class Api(object):
         return Response(
             status=200,
             content_type="text/csv; charset=utf-8",
+            file_path=path,
+            file_size=os.path.getsize(path),
+            headers={
+                "Content-Disposition": 'attachment; filename="%s"' % filename,
+                "Cache-Control": "no-store",
+            },
+            delete_after=True,
+        )
+
+    def _scan_xlsx(self, request, session, params):
+        scan_id = params["scan_id"]
+        path = self.services.scanner.write_xlsx(scan_id)
+        filename = self.services.scanner.filename_for_xlsx(scan_id)
+        return Response(
+            status=200,
+            content_type=("application/vnd.openxmlformats-officedocument"
+                          ".spreadsheetml.sheet"),
             file_path=path,
             file_size=os.path.getsize(path),
             headers={

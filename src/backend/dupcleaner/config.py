@@ -7,9 +7,9 @@ import os
 import re
 
 APP_NAME = "DuplicateCleaner"
-APP_VERSION = "1.1.0-0007"
+APP_VERSION = "1.1.0-0008"
 DISPLAY_NAME = "重复文件清理"
-SPK_VERSION = "1.1.0-0007"
+SPK_VERSION = "1.1.0-0008"
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8787
@@ -70,6 +70,30 @@ SIMILARITY_TEXT_EXTENSIONS = frozenset([
 ])
 SIMILARITY_DOCUMENT_EXTENSIONS = frozenset([".pdf", ".docx", ".odt"])
 SIMILARITY_IMAGE_EXTENSIONS = frozenset([".png", ".jpg", ".jpeg", ".webp"])
+
+# ---------------------------------------------------------------------------
+# 视频视觉相似度常量（docs/VIDEO_CONTRACT.md）
+# ---------------------------------------------------------------------------
+DEFAULT_VIDEO_EXTENSIONS = (
+    ".mp4", ".mkv", ".mov", ".avi", ".flv", ".wmv", ".webm", ".m4v",
+    ".ts", ".mpg", ".mpeg",
+)
+VIDEO_ALGO_VERSION = "video-v1"
+VIDEO_CACHE_FILENAME = "video_cache.sqlite3"
+VIDEO_CACHE_MAX_ENTRIES = 20000
+VIDEO_FRAME_SIZE = 32
+VIDEO_FRAME_BYTES = 1024
+VIDEO_MIN_SAMPLE_FRAMES = 5
+VIDEO_MAX_SAMPLE_FRAMES = 100
+VIDEO_DEFAULT_SAMPLE_FRAMES = 20
+VIDEO_DEFAULT_MAX_INTERVAL = 300
+VIDEO_DEFAULT_THRESHOLD = 90
+VIDEO_HWACCEL_MODES = ("auto", "off")
+VIDEO_MIN_COVERAGE = 0.6
+VIDEO_DURATION_RATIO_MIN = 0.7
+VIDEO_DURATION_RATIO_MAX = 1.4
+VIDEO_DEFAULT_MAX_FILE_MB = 8192
+VIDEO_DEFAULT_TIMEOUT_SEC = 180
 
 # 系统 / 隐藏目录名：任何一层路径出现都必须拒绝（回收站目标除外）。
 SYSTEM_DIR_NAMES = frozenset([
@@ -152,6 +176,8 @@ class RuntimeConfig(object):
             raw_admin = env.get("DUP_ADMIN_USERS", "") or ""
             admin_users = [item.strip() for item in raw_admin.split(",") if item.strip()]
         self.admin_users = [str(item) for item in admin_users]
+
+        self.ffmpeg_path = env.get("DUP_FFMPEG_PATH") or None
 
         self.tls_cert = tls_cert or None
         self.tls_key = tls_key or None

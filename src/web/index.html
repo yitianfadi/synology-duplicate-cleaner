@@ -6,8 +6,8 @@
 <meta name="color-scheme" content="light">
 <meta name="referrer" content="same-origin">
 <title>重复文件清理 · DuplicateCleaner</title>
-<link rel="icon" href="./assets/favicon.svg?v=1.1.0-0007" type="image/svg+xml">
-<link rel="stylesheet" href="./styles.css?v=1.1.0-0007">
+<link rel="icon" href="./assets/favicon.svg?v=1.1.0-0008" type="image/svg+xml">
+<link rel="stylesheet" href="./styles.css?v=1.1.0-0008">
 </head>
 <body>
 <a class="skip-link" href="#main">跳到主要内容</a>
@@ -270,6 +270,72 @@
               </p>
             </div>
 
+            <details class="advanced video-advanced" id="videoOptionsDetails">
+              <summary>视频视觉相似（实验功能，默认关闭）<span class="badge badge-gray video-status-badge" id="videoStatusBadge">检测中…</span></summary>
+              <div class="video-options-panel">
+                <p class="hint" id="videoStatusHint">使用 FFmpeg 对视频均匀抽样帧并比对视觉指纹；仅对视频后缀生效，可能较慢。语音/ASR 辅助未实现（默认关闭）。</p>
+                <label class="check video-enable-row"><input id="videoEnabled" type="checkbox">启用视频视觉相似（总开关，默认关闭）</label>
+                <fieldset id="videoFields" class="video-fields" disabled>
+                  <div class="form-grid">
+                    <div class="field">
+                      <label for="videoThreshold">视频相似度阈值（0–100，默认 90）</label>
+                      <input id="videoThreshold" type="number" inputmode="numeric" min="0" max="100" step="1" value="90">
+                      <p class="hint">分数越高越严格；包含帧对齐覆盖率，建议保持 85–95。</p>
+                      <p class="field-error" id="videoThresholdError" role="alert" hidden></p>
+                    </div>
+                    <div class="field">
+                      <label for="videoSampleFrames">抽样帧数（5–100，默认 20）</label>
+                      <input id="videoSampleFrames" type="number" inputmode="numeric" min="5" max="100" step="1" value="20">
+                      <p class="hint">长视频会按时长自动增加有效采样帧数（上限 100）。</p>
+                      <p class="field-error" id="videoFramesError" role="alert" hidden></p>
+                    </div>
+                    <div class="field">
+                      <label for="videoMaxInterval">最大采样间隔（秒，60–600）</label>
+                      <input id="videoMaxInterval" type="number" inputmode="numeric" min="60" max="600" step="1" value="300">
+                      <p class="field-error" id="videoIntervalError" role="alert" hidden></p>
+                    </div>
+                    <div class="field">
+                      <label for="videoConcurrency">视频并发数（1–2）</label>
+                      <input id="videoConcurrency" type="number" inputmode="numeric" min="1" max="2" step="1" value="1">
+                      <p class="hint">每个视频启动一个 FFmpeg 子进程，建议保持 1。</p>
+                      <p class="field-error" id="videoConcurrencyError" role="alert" hidden></p>
+                    </div>
+                    <div class="field">
+                      <label for="videoHwaccel">硬件加速</label>
+                      <select id="videoHwaccel">
+                        <option value="auto">自动（失败回退软件解码）</option>
+                        <option value="off">关闭（仅软件解码）</option>
+                      </select>
+                    </div>
+                    <div class="field">
+                      <label for="videoMaxFileMb">单视频大小上限（MB，1–102400）</label>
+                      <input id="videoMaxFileMb" type="number" inputmode="numeric" min="1" max="102400" step="1" value="8192">
+                      <p class="hint">超过上限的视频只做精准哈希，不参与视频相似计算。</p>
+                      <p class="field-error" id="videoMaxFileError" role="alert" hidden></p>
+                    </div>
+                    <div class="field">
+                      <label for="videoTimeout">单视频超时（秒，30–1800）</label>
+                      <input id="videoTimeout" type="number" inputmode="numeric" min="30" max="1800" step="1" value="180">
+                      <p class="field-error" id="videoTimeoutError" role="alert" hidden></p>
+                    </div>
+                    <div class="field">
+                      <label class="check"><input id="videoCache" type="checkbox" checked>使用持久化视频指纹缓存（推荐）</label>
+                      <p class="hint">缓存只用于加速，不改变删除前重校验。</p>
+                    </div>
+                    <div class="field field-wide">
+                      <span class="field-label" id="videoExtLabel">允许视频相似的后缀</span>
+                      <div id="videoExtList" class="ext-chip-grid" role="group" aria-labelledby="videoExtLabel"></div>
+                      <p class="field-error" id="videoExtError" role="alert" hidden></p>
+                    </div>
+                  </div>
+                </fieldset>
+                <p class="mode-warning">
+                  <svg class="icon" aria-hidden="true"><use href="#i-warning"></use></svg>
+                  视频扫描可能很慢（CPU/GPU 限制）；建议先少量目录或关闭。语音/ASR 辅助未实现、默认关闭（无内置模型、不联网）。
+                </p>
+              </div>
+            </details>
+
             <details class="advanced" id="advancedOptions">
               <summary>高级选项</summary>
               <div class="form-grid">
@@ -351,6 +417,12 @@
           <div><dt>相似候选</dt><dd id="simCandidates">0</dd></div>
           <div><dt>相似跳过</dt><dd id="simSkipped">0</dd></div>
         </dl>
+        <dl class="counter-grid similarity-counter-grid video-counter-grid" id="videoCounters" hidden>
+          <div><dt>视频候选</dt><dd id="videoCandidates">0</dd></div>
+          <div><dt>视频缓存命中</dt><dd id="videoCacheHits">0</dd></div>
+          <div><dt>FFmpeg 完成</dt><dd id="videoFfmpegUsed">0</dd></div>
+          <div><dt>视频跳过</dt><dd id="videoSkipped">0</dd></div>
+        </dl>
         <div class="progress-meta">
           <div class="path-line" title=""><span class="meta-label">当前路径</span><span class="mono" id="progressPath">—</span></div>
           <div><span class="meta-label">已用时间</span><span id="progressElapsed">0 秒</span></div>
@@ -405,6 +477,7 @@
               <button type="button" class="btn btn-ghost btn-sm" id="selectAllBtn">全选待删除副本</button>
               <button type="button" class="btn btn-link btn-sm" id="clearSelectionBtn">清空选择</button>
               <a class="btn btn-ghost btn-sm is-disabled" id="csvLink" href="#" download role="button" aria-disabled="true">导出 CSV</a>
+              <a class="btn btn-ghost btn-sm is-disabled" id="xlsxLink" href="#" download role="button" aria-disabled="true">导出 Excel</a>
               <button type="button" class="btn btn-danger btn-sm" id="deleteSelectedBtn" disabled>
                 <svg class="icon" aria-hidden="true"><use href="#i-trash"></use></svg>删除所选副本
               </button>
@@ -446,6 +519,27 @@
           <div class="load-more-row">
             <button type="button" class="btn btn-ghost" id="similarLoadMoreBtn" hidden>加载更多相似组</button>
             <span class="muted" id="similarLoadMoreStatus"></span>
+          </div>
+        </div>
+
+        <div id="videoPartition" class="result-partition video-partition" hidden>
+          <div class="video-warning" role="note">
+            <svg class="icon" aria-hidden="true"><use href="#i-warning"></use></svg>
+            <p>视频视觉相似基于抽样帧比对，存在误匹配可能；视频组默认不勾选，请核对保留项后使用组级或全局“全选视频副本”批量选择。语音/ASR 辅助未实现，不参与判定。</p>
+          </div>
+          <div class="partition-head">
+            <h3>视频视觉相似</h3>
+            <span class="badge badge-blue">FFmpeg 抽样比对</span>
+            <span class="muted partition-count" id="videoPartitionCount"></span>
+            <button type="button" class="btn btn-ghost btn-sm partition-action" id="selectAllVideoBtn">全选视频相似组副本</button>
+          </div>
+          <div class="state-box" id="videoLoading" hidden><span class="spinner" aria-hidden="true"></span>正在加载视频相似组…</div>
+          <div class="state-box state-error" id="videoError" role="alert" hidden></div>
+          <div class="state-box state-empty" id="videoEmpty" hidden>没有视频视觉相似的组。</div>
+          <div id="videoGroupsList" class="groups-list"></div>
+          <div class="load-more-row">
+            <button type="button" class="btn btn-ghost" id="videoLoadMoreBtn" hidden>加载更多视频组</button>
+            <span class="muted" id="videoLoadMoreStatus"></span>
           </div>
         </div>
       </section>
@@ -643,6 +737,62 @@
             </div>
           </div>
         </details>
+
+        <details class="advanced" id="settingsVideoDetails">
+          <summary>视频视觉相似默认值（视频模式）<span class="badge badge-gray video-status-badge" id="setVideoStatusBadge">检测中…</span></summary>
+          <p class="hint" id="setVideoStatusHint">使用 FFmpeg 抽样帧比对；语音/ASR 辅助未实现（默认关闭）。</p>
+          <label class="check video-enable-row"><input id="setVideoEnabled" type="checkbox">默认启用视频视觉相似（默认关闭）</label>
+          <p class="hint">视频视觉相似为实验功能：使用 FFmpeg 抽样帧，可能较慢；语音/ASR 辅助未实现、默认关闭。</p>
+          <fieldset id="setVideoFields" class="video-fields" disabled>
+          <div class="form-grid">
+            <div class="field">
+              <label for="setVideoThreshold">视频相似度阈值（0–100）</label>
+              <input id="setVideoThreshold" type="number" inputmode="numeric" min="0" max="100" step="1" value="90">
+              <p class="field-error" id="setVideoThresholdError" role="alert" hidden></p>
+            </div>
+            <div class="field">
+              <label for="setVideoSampleFrames">抽样帧数（5–100）</label>
+              <input id="setVideoSampleFrames" type="number" inputmode="numeric" min="5" max="100" step="1" value="20">
+              <p class="field-error" id="setVideoFramesError" role="alert" hidden></p>
+            </div>
+            <div class="field">
+              <label for="setVideoMaxInterval">最大采样间隔（秒，60–600）</label>
+              <input id="setVideoMaxInterval" type="number" inputmode="numeric" min="60" max="600" step="1" value="300">
+              <p class="field-error" id="setVideoIntervalError" role="alert" hidden></p>
+            </div>
+            <div class="field">
+              <label for="setVideoConcurrency">视频并发数（1–2）</label>
+              <input id="setVideoConcurrency" type="number" inputmode="numeric" min="1" max="2" step="1" value="1">
+              <p class="field-error" id="setVideoConcurrencyError" role="alert" hidden></p>
+            </div>
+            <div class="field">
+              <label for="setVideoHwaccel">硬件加速</label>
+              <select id="setVideoHwaccel">
+                <option value="auto">自动（失败回退软件解码）</option>
+                <option value="off">关闭（仅软件解码）</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="setVideoMaxMb">单视频大小上限（MB，1–102400）</label>
+              <input id="setVideoMaxMb" type="number" inputmode="numeric" min="1" max="102400" step="1" value="8192">
+              <p class="field-error" id="setVideoMaxFileError" role="alert" hidden></p>
+            </div>
+            <div class="field">
+              <label for="setVideoTimeout">单视频超时（秒，30–1800）</label>
+              <input id="setVideoTimeout" type="number" inputmode="numeric" min="30" max="1800" step="1" value="180">
+              <p class="field-error" id="setVideoTimeoutError" role="alert" hidden></p>
+            </div>
+            <div class="field">
+              <label class="check"><input id="setVideoCache" type="checkbox" checked>启用持久化视频指纹缓存</label>
+            </div>
+            <div class="field field-wide">
+              <span class="field-label" id="setVideoExtLabel">允许视频相似的后缀</span>
+              <div id="setVideoExtList" class="ext-chip-grid" role="group" aria-labelledby="setVideoExtLabel"></div>
+              <p class="field-error" id="setVideoExtError" role="alert" hidden></p>
+            </div>
+          </div>
+          </fieldset>
+        </details>
         <p class="form-error-banner" id="settingsError" role="alert" hidden></p>
         <div class="form-actions">
           <button type="button" class="btn btn-primary" id="saveSettingsBtn">保存设置</button>
@@ -691,6 +841,6 @@
   <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.6" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M12 10.8v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="12" cy="7.6" r="1.05" fill="currentColor"/></symbol>
 </svg>
 
-<script src="./app.js?v=1.1.0-0007" defer></script>
+<script src="./app.js?v=1.1.0-0008" defer></script>
 </body>
 </html>
