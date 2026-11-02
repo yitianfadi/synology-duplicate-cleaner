@@ -1960,3 +1960,8 @@ input[type="checkbox"]:disabled { cursor: not-allowed; }
   gap: 3px;
 }
 .batch-subtitle-paths .mono { overflow-wrap: anywhere; }
+
+/* 子目录已包含在已选父目录范围：显示选中态但不可单独取消 */
+.tree-row.is-inherited { background: rgba(11, 127, 171, 0.04); }
+.tree-row.is-inherited .tree-check { opacity: 0.72; }
+.tree-row.is-inherited .tree-note { color: #6b7c88; }

@@ -993,7 +993,7 @@
   // ==================== 8. 文件夹选择器（共享文件夹 / 懒加载目录树） ====================
   var PICKER_TITLES = { roots: '选择扫描范围', excludes: '选择排除目录', pinned: '选择指定保留路径' };
   var PICKER_HINTS = {
-    roots: '勾选一个或多个目录作为扫描范围；点击文件夹名称进入下一级，点击左侧箭头可展开子目录。',
+    roots: '勾选目录作为扫描范围；选中父目录会递归包含全部子目录（子目录显示为已选中但不可单独取消）。点击文件夹名称进入下一级，左侧箭头展开子目录。',
     excludes: '勾选需要排除的目录；排除目录必须位于扫描范围内，其中的文件不会被扫描或删除。',
     pinned: '选择目录或文件作为“指定路径”保留策略的匹配前缀。'
   };
@@ -1168,8 +1168,15 @@
     return picker.pinned === path;
   }
 
+  function pickerInheritedByRoot(picker, path) {
+    if (!picker || picker.mode !== 'roots' || !path) { return false; }
+    return picker.roots.some(function (r) {
+      return r.path && r.path !== path && (path === r.path || path.indexOf(r.path.replace(/\/+$/, '') + '/') === 0);
+    });
+  }
+
   function pickerPathState(picker, path, entry) {
-    var result = { disabled: false, note: '', warn: false };
+    var result = { disabled: false, note: '', warn: false, included: false };
     if (entry && entry.is_symlink) {
       result.disabled = true; result.note = '符号链接，不可选择'; result.warn = true; return result;
     }
@@ -1184,6 +1191,11 @@
       return result;
     }
     if (!path) { result.disabled = true; return result; }
+    if (picker.mode === 'roots' && pickerInheritedByRoot(picker, path)) {
+      result.included = true;
+      result.note = '已包含在扫描范围（父目录已选中）';
+      return result;
+    }
     if (picker.mode === 'excludes') {
       var roots = picker.roots;
       if (!roots.length) {
@@ -1218,6 +1230,11 @@
       var index = -1;
       picker.roots.forEach(function (r, i) { if (r.path === path) { index = i; } });
       if (checked && index === -1) {
+        // 选择父目录时，自动移除已被它递归包含的子目录根，避免重复扫描。
+        picker.roots = picker.roots.filter(function (r) {
+          return r.path !== path && !isUnderRoots(r.path, [path]);
+        });
+        index = -1;
         var maxRoots = pickerLimit(picker, 'roots');
         if (picker.roots.length >= maxRoots) { toast('最多只能选择 ' + maxRoots + ' 个扫描目录。', 'error'); return; }
         picker.roots.push({ path: path, name: name });
@@ -1244,11 +1261,18 @@
     if (!picker || !picker.listEl) { return; }
     $$('.tree-row', picker.listEl).forEach(function (row) {
       var path = row.dataset.path;
-      if (pickerIsSelected(picker, path)) { row.classList.add('is-selected'); }
+      var info = pickerPathState(picker, path, null);
+      var active = pickerIsSelected(picker, path) || info.included;
+      if (active) { row.classList.add('is-selected'); }
       else { row.classList.remove('is-selected'); }
+      if (info.included) { row.classList.add('is-inherited'); }
+      else { row.classList.remove('is-inherited'); }
     });
     $$('.tree-check', picker.listEl).forEach(function (input) {
-      input.checked = pickerIsSelected(picker, input.dataset.path);
+      var info = pickerPathState(picker, input.dataset.path, null);
+      input.checked = pickerIsSelected(picker, input.dataset.path) || info.included;
+      input.disabled = info.disabled || info.included;
+      if (info.note) { input.title = info.note; }
     });
   }
 
@@ -1284,9 +1308,11 @@
     setText(picker.countEl, countText);
     if (picker.currentBtn) {
       var label = '选择当前目录';
-      var disabled = !picker.currentPath || pickerPathState(picker, picker.currentPath, null).disabled;
+      var currentState = pickerPathState(picker, picker.currentPath, null);
+      var disabled = !picker.currentPath || currentState.disabled || currentState.included;
       if (picker.mode === 'excludes') { label = pickerIsSelected(picker, picker.currentPath) ? '取消排除当前目录' : '排除当前目录'; }
       else if (picker.mode === 'pinned') { label = pickerIsSelected(picker, picker.currentPath) ? '当前目录已指定' : '使用当前目录'; }
+      else if (currentState.included) { label = '已包含在扫描范围'; }
       else { label = pickerIsSelected(picker, picker.currentPath) ? '取消选择当前目录' : '选择当前目录'; }
       setText(picker.currentBtn, label);
       picker.currentBtn.disabled = disabled;
@@ -1379,8 +1405,10 @@
     var isDir = entry.type === 'dir';
     var selectionState = pickerPathState(picker, entry.path, entry);
     var selected = pickerIsSelected(picker, entry.path);
-    var rowClass = 'tree-row' + (selected ? ' is-selected' : '');
+    var included = selectionState.included === true;
+    var rowClass = 'tree-row' + ((selected || included) ? ' is-selected' : '');
     if (selectionState.disabled) { rowClass += entry.excluded ? ' is-excluded' : ' is-disabled'; }
+    if (included) { rowClass += ' is-inherited'; }
     var row = el('div', {
       className: rowClass,
       dataset: { path: entry.path, key: encodePath(entry.path) }
@@ -1408,14 +1436,14 @@
       attrs: {
         type: picker.mode === 'pinned' ? 'radio' : 'checkbox',
         name: picker.mode === 'pinned' ? 'picker-pinned' : 'picker-' + picker.mode,
-        disabled: selectionState.disabled,
-        'aria-label': (selected ? '取消选择 ' : '选择 ') + (entry.name || entry.path),
+        disabled: selectionState.disabled || included,
+        'aria-label': (included ? '已包含在扫描范围：' : (selected ? '取消选择 ' : '选择 ')) + (entry.name || entry.path),
         'data-key': encodePath(entry.path)
       }
     });
-    input.checked = selected;
+    input.checked = selected || included;
     input.dataset.path = entry.path;
-    if (selectionState.disabled) { input.title = selectionState.note || '不可选择'; }
+    if (selectionState.disabled || included) { input.title = selectionState.note || '不可选择'; }
     input.addEventListener('change', function () {
       selectPickerPath(picker, entry.path, input.checked, entry);
       input.checked = pickerIsSelected(picker, entry.path);
