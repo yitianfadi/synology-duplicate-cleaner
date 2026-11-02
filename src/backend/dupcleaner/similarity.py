@@ -743,19 +743,40 @@ def cache_key(size, mtime_ns, inode, dev, feature_type):
                                    feature_type)
 
 
-class FeatureCache(object):
-    """<data>/feature_cache.json（原子写，最大 50k 条，LRU 淘汰）。"""
+_CACHE_FLUSH_BATCH = 200
 
-    def __init__(self, path, max_entries=None, enabled=True):
-        self.path = path
+
+class FeatureCache(object):
+    """内容特征缓存（docs/STORAGE_CONTRACT.md）。
+
+    - 传入 Store（或 store=）时使用 SQLite 表 feature_cache：WAL、短事务、
+      last_used LRU 淘汰；写入按批提交，扫描结束 save() 时统一 touch/prune。
+    - 传入 .json 路径时保持旧版 <data>/feature_cache.json 原子写实现
+      （旧数据导入/测试/离线兼容），不复用 SQLite。
+
+    构造签名保持 path, max_entries=None, enabled=True 兼容。
+    """
+
+    def __init__(self, path, max_entries=None, enabled=True, store=None):
         self.max_entries = int(max_entries or config.SIMILARITY_CACHE_MAX_ENTRIES)
         self.enabled = bool(enabled)
         self._lock = threading.RLock()
         self._entries = OrderedDict()
         self._dirty = False
-        if self.enabled:
-            self._load()
+        self._pending = {}
+        self._touched = set()
+        if store is None and hasattr(path, "feature_cache_get"):
+            store = path
+        self._store = store
+        if store is not None:
+            db = getattr(store, "db", None)
+            self.path = getattr(db, "path", None)
+        else:
+            self.path = path
+            if self.enabled:
+                self._load()
 
+    # -- 旧 JSON 后端 ---------------------------------------------------
     def _load(self):
         try:
             with open(self.path, "rb") as handle:
@@ -772,9 +793,42 @@ class FeatureCache(object):
             while len(self._entries) > self.max_entries:
                 self._entries.popitem(last=False)
 
+    # -- SQLite 后端 ----------------------------------------------------
+    @staticmethod
+    def _kind_of(value):
+        if not isinstance(value, dict):
+            return None
+        kind = value.get("kind")
+        if kind:
+            return kind
+        feature = value.get("feature")
+        if isinstance(feature, dict):
+            return feature.get("kind")
+        return None
+
+    def _flush_locked(self):
+        if not self._pending:
+            return
+        items = [(key, self._kind_of(value), value)
+                 for key, value in self._pending.items()]
+        self._pending = {}
+        self._store.feature_cache_put_many(items)
+
+    # -- 公共 API -------------------------------------------------------
     def get(self, key):
         if not self.enabled:
             return None
+        if self._store is not None:
+            with self._lock:
+                if key in self._pending:
+                    return self._pending[key]
+            value = self._store.feature_cache_get(key)
+            if value is None:
+                return None
+            with self._lock:
+                self._touched.add(key)
+                self._dirty = True
+            return value
         with self._lock:
             value = self._entries.pop(key, None)
             if value is None:
@@ -784,6 +838,14 @@ class FeatureCache(object):
 
     def put(self, key, value):
         if not self.enabled:
+            return
+        if self._store is not None:
+            with self._lock:
+                # 新写入行自带 last_used，不需要再 touch；只有命中读取才更新 LRU。
+                self._pending[key] = value
+                self._dirty = True
+                if len(self._pending) >= _CACHE_FLUSH_BATCH:
+                    self._flush_locked()
             return
         with self._lock:
             self._entries[key] = value
@@ -795,6 +857,16 @@ class FeatureCache(object):
     def save(self):
         if not self.enabled:
             return False
+        if self._store is not None:
+            with self._lock:
+                dirty = self._dirty
+                self._flush_locked()
+                if self._touched:
+                    self._store.feature_cache_touch(self._touched)
+                    self._touched = set()
+                self._store.feature_cache_prune(self.max_entries)
+                self._dirty = False
+                return dirty
         with self._lock:
             if not self._dirty:
                 return False
@@ -817,5 +889,9 @@ class FeatureCache(object):
             return False
 
     def __len__(self):
+        if self._store is not None:
+            with self._lock:
+                self._flush_locked()
+            return self._store.feature_cache_len()
         with self._lock:
             return len(self._entries)

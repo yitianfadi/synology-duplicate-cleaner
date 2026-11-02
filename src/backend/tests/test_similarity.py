@@ -513,9 +513,8 @@ class SimilarScanTest(unittest.TestCase):
         _first_id, first_meta = self.harness.run_scan(options=options)
         self.assertEqual(first_meta["stats"]["similarity_cache_hits"], 0)
         self.assertGreater(first_meta["stats"]["similarity_cache_misses"], 0)
-        cache_file = os.path.join(self.harness.data_dir,
-                                  config.SIMILARITY_CACHE_FILENAME)
-        self.assertTrue(os.path.isfile(cache_file))
+        # v0012：特征缓存持久化到 SQLite feature_cache 表（不再写旧 JSON）。
+        self.assertGreater(self.harness.services.store.feature_cache_len(), 0)
         _second_id, second_meta = self.harness.run_scan(options=options)
         self.assertGreater(second_meta["stats"]["similarity_cache_hits"], 0)
         # 修改文件后缓存 key 变化，必须重新计算

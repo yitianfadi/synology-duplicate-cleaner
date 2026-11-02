@@ -44,6 +44,11 @@ class Services(object):
                 self.subtitles.shutdown(timeout=timeout)
         except Exception:
             pass
+        # 退出前 WAL checkpoint(TRUNCATE) 并关闭 SQLite 元数据库。
+        try:
+            self.store.close()
+        except Exception:
+            pass
 
 
 def build_services(runtime_config):

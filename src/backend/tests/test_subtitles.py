@@ -214,7 +214,8 @@ class SubtitleTestBase(unittest.TestCase):
             return handle.read()
 
     SKIP_FILES = {"settings.json", "video_cache.sqlite3",
-                  "feature_cache.json"}
+                  "feature_cache.json", "dupcleaner.sqlite3",
+                  "dupcleaner.sqlite3-wal", "dupcleaner.sqlite3-shm"}
 
     def data_files_text(self):
         chunks = []

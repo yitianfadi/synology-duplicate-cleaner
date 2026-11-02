@@ -578,10 +578,19 @@ class SubtitleService(object):
         return os.path.join(self._jobs_dir, job_id + ".json")
 
     def _load_jobs(self):
+        """DB 优先加载；字幕 JSON 文件保留为任务目录事实源/兜底。"""
+        records = {}
+        try:
+            for record in self.store.load_subtitle_jobs(limit=1000):
+                job_id = record.get("job_id")
+                if isinstance(job_id, str) and JOB_ID_RE.match(job_id):
+                    records[job_id] = record
+        except Exception:
+            pass
         try:
             names = sorted(os.listdir(self._jobs_dir))
         except OSError:
-            return
+            names = []
         for name in names:
             if not name.endswith(".json"):
                 continue
@@ -596,16 +605,26 @@ class SubtitleService(object):
             job_id = record.get("job_id")
             if not isinstance(job_id, str) or not JOB_ID_RE.match(job_id):
                 continue
+            if job_id in records:
+                continue
+            records[job_id] = record
+            try:
+                self.store.save_subtitle_job(job_id, record)
+            except Exception:
+                pass
+        for job_id, record in records.items():
             job = SubtitleJob.from_record(record)
             if job.status in (STATUS_QUEUED, STATUS_RUNNING):
                 job.status = STATUS_FAILED
                 job.error = {"code": "SERVICE_RESTART",
                              "message": u"服务重启导致任务中断，请重新提交"}
                 job.message = job.error["message"]
+                self._persist(job)
             self._jobs[job.job_id] = job
 
     def _persist(self, job):
-        record = job.to_record()
+        with job.lock:
+            record = job.to_record()
         os.makedirs(self._jobs_dir, exist_ok=True)
         temporary = os.path.join(self._jobs_dir, "." + job.job_id + ".tmp")
         try:
@@ -614,6 +633,11 @@ class SubtitleService(object):
                 handle.flush()
             os.replace(temporary, self._job_json(job.job_id))
         except OSError:
+            pass
+        # 元数据镜像到 SQLite subtitle_jobs（旧 JSON 文件仍是任务目录事实源）。
+        try:
+            self.store.save_subtitle_job(job.job_id, record)
+        except Exception:
             pass
 
     def _list_files(self, job_id):
@@ -799,7 +823,9 @@ class SubtitleService(object):
             for key, value in changes.items():
                 setattr(job, key, value)
             job.updated_epoch = time.time()
-        self._persist(job)
+            # 在释放 job.lock 前完成持久化，避免其它线程读到新状态时
+            # JSON/SQLite 里还是旧状态（重载会把 done 误判为 SERVICE_RESTART）。
+            self._persist(job)
 
     def _check_cancel(self, job):
         if job.cancel_event.is_set():
@@ -872,7 +898,7 @@ class SubtitleService(object):
                     job.message = u"任务已取消"
                     job.error = None
                     job.updated_epoch = time.time()
-            self._persist(job)
+                self._persist(job)
             self.store.audit("subtitle_cancel", job.user, {"job_id": job.job_id})
         except video_similarity.VideoStopped:
             self.cancel(job.job_id)
@@ -1032,6 +1058,10 @@ class SubtitleService(object):
             try:
                 os.unlink(self._job_json(job.job_id))
             except OSError:
+                pass
+            try:
+                self.store.delete_subtitle_job(job.job_id)
+            except Exception:
                 pass
 
     def _remove_job_files(self, job_id):

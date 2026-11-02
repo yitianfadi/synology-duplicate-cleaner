@@ -810,19 +810,24 @@ class ScanManager(object):
                 state.message = u"正在枚举文件"
                 state.progress = 0.01
             self._persist(state, force=True)
+            self._save_checkpoint(state, "enumerate")
 
             records = self._enumerate(state)
+            self._save_checkpoint(state, "size")
             self._check_control(state)
 
             buckets = self._size_stage(state, records)
+            self._save_checkpoint(state, "sample")
             self._check_control(state)
 
             candidate_buckets = self._sample_stage(state, buckets)
             del buckets
+            self._save_checkpoint(state, "hash")
             self._check_control(state)
 
             hashed_buckets = self._hash_stage(state, candidate_buckets)
             del candidate_buckets
+            self._save_checkpoint(state, "similarity")
             self._check_control(state)
 
             # 精准组内文件不参与相似计算；相似阶段在精准哈希之后执行
@@ -837,10 +842,12 @@ class ScanManager(object):
             self._check_control(state)
             video_clusters = []
             if state.options.get("video_similarity_enabled"):
+                self._save_checkpoint(state, "video")
                 video_clusters = self._video_stage(state, records, exact_paths)
             del records
             self._check_control(state)
 
+            self._save_checkpoint(state, "finalize")
             self._finalize_stage(state, hashed_buckets, similar_clusters,
                                  video_clusters)
             del hashed_buckets
@@ -855,6 +862,10 @@ class ScanManager(object):
                 state.finished_epoch = time.time()
                 state.current_path = ""
             self._persist(state, force=True)
+            try:
+                self.store.delete_checkpoint(state.scan_id)
+            except Exception:
+                pass
             self._audit_finish(state, "scan_end")
             self._write_log_finish(state)
         except ScanStopped:
@@ -1007,6 +1018,25 @@ class ScanManager(object):
         state.last_persist = now
         try:
             self.store.save_scan_meta(state.scan_id, state.to_meta())
+        except Exception:
+            pass
+
+    def _save_checkpoint(self, state, stage=None, extra=None):
+        """阶段级 checkpoint（SQLite scan_checkpoints）；失败不影响扫描。"""
+        try:
+            with state.lock:
+                snapshot_stage = stage or state.stage
+                payload = {
+                    "stage": snapshot_stage,
+                    "progress": round(float(state.progress), 4),
+                    "stats": {
+                        "files_seen": state.stats.get("files_seen", 0),
+                        "groups": state.stats.get("groups", 0),
+                    },
+                }
+            if extra:
+                payload.update(extra)
+            self.store.save_checkpoint(state.scan_id, snapshot_stage, payload)
         except Exception:
             pass
 
@@ -1393,8 +1423,10 @@ class ScanManager(object):
         threshold = int(options.get("similarity_threshold") or 85)
         concurrency = max(1, min(4, int(options.get("similarity_concurrency") or 2)))
         max_mb = int(options.get("similarity_max_file_mb") or 32)
+        # 特征缓存落 SQLite（<data>/dupcleaner.sqlite3 的 feature_cache 表）；
+        # FeatureCache 仍兼容旧 feature_cache.json 路径构造。
         cache = similarity.FeatureCache(
-            os.path.join(self.store.data_dir, config.SIMILARITY_CACHE_FILENAME),
+            self.store,
             max_entries=config.SIMILARITY_CACHE_MAX_ENTRIES,
             enabled=bool(options.get("similarity_cache", True)))
         limiter = hashing.get_global_limiter()
