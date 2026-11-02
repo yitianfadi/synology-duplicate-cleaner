@@ -2346,6 +2346,9 @@ class ScanManager(object):
                                             content_sha256="")
                 file_info["hash"] = ""
                 file_info["match_type"] = "video"
+                # 删除安全：内容快速校验哈希（size+head/tail 64KB SHA256）
+                file_info["content_quick_hash"] = analysis.get(
+                    "content_quick_hash")
                 file_info["video_fingerprint"] = analysis.get("fingerprint") or ""
                 file_info["video_sample_frames"] = int(analysis.get("n_eff") or 0)
                 file_info["video_hwaccel"] = analysis.get("hwaccel") or "none"

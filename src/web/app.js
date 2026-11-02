@@ -238,6 +238,8 @@
     'setVideoAsrEnabled setVideoAsrFields setVideoAsrCommand setVideoAsrCommandError setVideoAsrWeight ' +
     'setVideoAsrWeightError setVideoAsrTimeout setVideoAsrTimeoutError setVideoAsrMaxSec setVideoAsrMaxSecError ' +
     'settingsSubtitleDetails subtitleStatusBadge subtitleStatusHint subtitleFields subtitleEnabled subtitleAsrBaseUrl ' +
+    'settingsOverview settingsScanGroup settingsScanSummary settingsSimilaritySummary settingsVideoSummary ' +
+    'settingsSubtitleSummary settingsStorageGroup settingsStorageSummary settingsStatusSummary ' +
     'subtitleAsrBaseUrlError subtitleAsrModel subtitleAsrModelError subtitleAsrApiKey subtitleAsrApiKeyError ' +
     'subtitleAsrKeySetBadge subtitleClearAsrKey subtitleAsrLanguage subtitleAsrTimeout subtitleAsrTimeoutError ' +
     'subtitleAsrChunk subtitleAsrChunkError subtitleAsrMaxAudioMb subtitleAsrMaxAudioMbError subtitleTranslateEnabled ' +
@@ -488,6 +490,15 @@
   function scrollToNode(node) {
     if (!node) { return; }
     try { node.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch (e) { node.scrollIntoView(); }
+  }
+
+  function syncTopStackHeight() {
+    var stack = document.querySelector('.top-stack');
+    if (!stack) { return; }
+    var height = stack.offsetHeight;
+    if (height > 0) {
+      document.documentElement.style.setProperty('--top-stack-h', height + 'px');
+    }
   }
 
   function statusBadge(status) {
@@ -883,6 +894,7 @@
     state.booted = true;
     hide(els.loginView);
     show(els.app);
+    syncTopStackHeight();
     setText(els.userName, state.user && state.user.name ? state.user.name : '—');
     els.userChip.title = state.user ? '当前登录账号：' + state.user.name : '当前登录账号';
     await loadBootstrapData();
@@ -930,6 +942,8 @@
     state.video = videoCapability();
     updateModeAvailability();
     updateVideoAvailabilityUi();
+    renderSettingsStatusSummary();
+    updateSettingsSummaries();
   }
 
   // ==================== 7. 导航 ====================
@@ -5989,6 +6003,37 @@
     });
   }
 
+  function pauseReasonLabel(reason) {
+    if (!reason) { return ''; }
+    var labels = {
+      upgrade: '升级前暂停', user: '用户暂停', manual: '手动暂停', drain: '升级 drain 暂停'
+    };
+    return labels[reason] || String(reason);
+  }
+
+  async function resumeHistoryScan(scan, button) {
+    if (!scan || !scan.scan_id) { return; }
+    var ok = await confirmDialog({
+      title: '继续扫描？',
+      message: '暂停期间文件可能发生变化；继续时会重新校验并跳过已完成的缓存。任务不会自动继续，确定现在继续扫描？',
+      confirmText: '继续扫描',
+      danger: false
+    });
+    if (!ok) { return; }
+    if (button) { button.disabled = true; setText(button, '正在继续…'); }
+    try {
+      await api('/api/scans/' + encodePath(scan.scan_id) + '/resume', {
+        method: 'POST', body: {}, timeout: 15000
+      });
+      state.historyCache = null;
+      toast('已提交继续扫描请求，可在历史记录中查看进度。', 'success', 5000);
+      await loadHistory();
+    } catch (err) {
+      toast(errorMessage(err, '继续扫描失败，请稍后重试。'), 'error', 6000);
+      if (button) { button.disabled = false; setText(button, '继续扫描'); }
+    }
+  }
+
   function renderHistoryItem(scan) {
     var status = scan.status || 'completed';
     var stats = scan.stats || {};
@@ -6014,7 +6059,12 @@
         : null
     ]);
     var metaParts = ['开始：' + fmtDateTime(startedAt), '结束：' + (finishedAt ? fmtDateTime(finishedAt) : '—')];
-    if (status === 'paused' && scan.pause_reason === 'upgrade') { metaParts.push('暂停原因：升级前暂停'); }
+    if (status === 'paused') {
+      var reasonLabel = pauseReasonLabel(scan.pause_reason);
+      metaParts.push(reasonLabel ? '暂停原因：' + reasonLabel : '已暂停，可继续');
+    } else if (status === 'interrupted') {
+      metaParts.push('已中断，需重新扫描（无可用断点）');
+    }
     if (keepMode) { metaParts.push('保留策略：' + (KEEP_MODE_LABEL[keepMode] || keepMode)); }
     if (scanMode === 'similar') {
       var thresholdText = options.similarity_threshold !== undefined ? options.similarity_threshold
@@ -6072,12 +6122,22 @@
     var actions = el('div', { className: 'history-actions' });
     var canViewProgress = ACTIVE_STATUS.indexOf(status) !== -1;
     var canViewResults = status === 'completed' || status === 'stopped';
+    if (status === 'paused') {
+      var resumeHistoryBtn = el('button', {
+        className: 'btn btn-primary btn-sm', attrs: { type: 'button' }, text: '继续扫描'
+      });
+      resumeHistoryBtn.addEventListener('click', function () { resumeHistoryScan(scan, resumeHistoryBtn); });
+      actions.appendChild(resumeHistoryBtn);
+    }
     var viewBtn = el('button', {
       className: 'btn btn-ghost btn-sm', attrs: { type: 'button' },
       text: canViewProgress ? '查看进度' : '查看结果',
       on: { click: function () { openHistoryScan(scan); } }
     });
     viewBtn.disabled = !(canViewProgress || canViewResults);
+    if (status === 'interrupted') {
+      viewBtn.title = '扫描已中断，需重新扫描；没有可用断点。';
+    }
     actions.appendChild(viewBtn);
     if (canViewResults) {
       actions.appendChild(el('a', {
@@ -6268,6 +6328,97 @@
     return String(Math.round(mb * 100) / 100);
   }
 
+  function settingsOptionText(select, fallback) {
+    if (!select || !select.options || select.selectedIndex < 0) { return fallback || '—'; }
+    return select.options[select.selectedIndex].textContent || fallback || '—';
+  }
+
+  function updateSettingsSummaries() {
+    if (els.settingsScanSummary) {
+      var scanBits = [els.setHashAlgo ? settingsOptionText(els.setHashAlgo, 'SHA-256') : 'SHA-256'];
+      if (els.setKeepMode) { scanBits.push(KEEP_MODE_LABEL[els.setKeepMode.value] || els.setKeepMode.value || '—'); }
+      var rate = els.setHashRate ? Number(els.setHashRate.value) || 0 : 0;
+      scanBits.push(rate > 0 ? '限速 ' + rate + ' MB/s' : '不限速');
+      setText(els.settingsScanSummary, scanBits.join(' · '));
+    }
+    if (els.settingsSimilaritySummary) {
+      var simBits = [els.setScanMode && els.setScanMode.value === 'similar' ? '默认相似模式' : '默认精准模式'];
+      if (els.setSimilarityThreshold) { simBits.push('阈值 ' + els.setSimilarityThreshold.value + '%'); }
+      if (els.setSimilarityConcurrency) { simBits.push('并发 ' + els.setSimilarityConcurrency.value); }
+      setText(els.settingsSimilaritySummary, simBits.join(' · '));
+    }
+    if (els.settingsVideoSummary) {
+      var vcap = state.video || videoCapability();
+      var videoBits = [els.setVideoEnabled && els.setVideoEnabled.checked ? '默认开启' : '默认关闭'];
+      videoBits.push(vcap.available ? 'FFmpeg ' + (vcap.ffmpegVersion || '可用') : 'FFmpeg 不可用');
+      setText(els.settingsVideoSummary, videoBits.join(' · '));
+    }
+    if (els.settingsSubtitleSummary) {
+      var sub = state.subtitle || subtitleCapability();
+      var subBits = [];
+      if (!sub.supported) { subBits.push('后端未提供'); }
+      else {
+        subBits.push(sub.enabled ? '已启用' : '默认关闭');
+        if (sub.enabled) { subBits.push(sub.asrKeySet ? 'ASR Key 已配置' : 'ASR Key 未配置'); }
+      }
+      setText(els.settingsSubtitleSummary, subBits.join(' · '));
+    }
+    if (els.settingsStorageSummary) {
+      var storageBits = [els.setRecycleDefault && els.setRecycleDefault.checked ? '默认回收站' : '默认永久删除'];
+      storageBits.push(els.setAllowCtime && els.setAllowCtime.checked ? '允许 ctime 降级' : 'ctime 降级关闭');
+      if (state.meta && state.meta.app_version) { storageBits.push('v' + state.meta.app_version); }
+      setText(els.settingsStorageSummary, storageBits.join(' · '));
+    }
+    if (els.settingsOverview) {
+      setText(els.settingsOverview,
+        '共 5 组设置：扫描 / 相似 / 视频 / 云端字幕 / 存储 · 修改后点击底部“保存设置”生效');
+    }
+  }
+
+  function settingsStatusItem(label, value, cls) {
+    return el('div', { className: 'settings-status-item' }, [
+      el('span', { className: 'settings-status-label', text: label }),
+      el('span', { className: 'settings-status-value' + (cls ? ' ' + cls : ''), text: value })
+    ]);
+  }
+
+  function renderSettingsStatusSummary() {
+    if (!els.settingsStatusSummary) { return; }
+    clear(els.settingsStatusSummary);
+    var meta = state.meta || {};
+    var vcap = state.video || videoCapability();
+    var platformBits = [];
+    if (meta.platform) { platformBits.push(meta.platform); }
+    if (meta.dsm_version) { platformBits.push('DSM ' + meta.dsm_version); }
+    if (meta.python_version) { platformBits.push('Python ' + meta.python_version); }
+    var timeBits = [];
+    timeBits.push(meta.creation_time_supported === true ? '创建时间可用' : '创建时间不可用');
+    timeBits.push(meta.statx_supported === true ? 'statx 可用' : 'statx 不可用');
+    var ffmpegText = '不可用';
+    if (vcap.available) {
+      ffmpegText = '可用' + (vcap.ffmpegVersion ? ' · ' + vcap.ffmpegVersion : '');
+      if (vcap.hwaccels && vcap.hwaccels.length) { ffmpegText += ' · 硬解 ' + vcap.hwaccels.join('/'); }
+    }
+    var asrText = '未启用';
+    var metaAsr = meta.video && meta.video.asr;
+    if (metaAsr) {
+      if (metaAsr.enabled === false) { asrText = '未启用（默认关闭）'; }
+      else if (metaAsr.available === true) { asrText = '可用（本地命令）'; }
+      else if (metaAsr.configured === true) { asrText = '已配置但不可用'; }
+      else { asrText = '未配置'; }
+    } else {
+      asrText = '后端未提供';
+    }
+    appendChildren(els.settingsStatusSummary, [
+      settingsStatusItem('应用版本', meta.app_version ? 'v' + meta.app_version : '—'),
+      settingsStatusItem('平台 / DSM / Python', platformBits.length ? platformBits.join(' · ') : '—'),
+      settingsStatusItem('创建时间支持', timeBits.join(' · ')),
+      settingsStatusItem('FFmpeg', ffmpegText, vcap.available ? 'is-ok' : 'is-warn'),
+      settingsStatusItem('ASR 语音辅助', asrText, metaAsr && metaAsr.available === true ? 'is-ok' : ''),
+      settingsStatusItem('元数据存储', 'SQLite 元数据 + 视频指纹缓存（由后端管理）')
+    ]);
+  }
+
   function fillSettingsForm(settings) {
     if (!settings) { return; }
     els.setHashAlgo.value = settings.hash_algo === 'md5' ? 'md5' : 'sha256';
@@ -6313,6 +6464,8 @@
     fillVideoSettingsForm(settings);
     fillSubtitleSettingsForm(settings);
     clearSettingsErrors();
+    updateSettingsSummaries();
+    renderSettingsStatusSummary();
   }
 
   function clearSettingsErrors() {
@@ -6492,8 +6645,8 @@
   function bindSettingsEvents() {
     els.saveSettingsBtn.addEventListener('click', saveSettings);
     els.resetSettingsBtn.addEventListener('click', resetSettingsToDefaults);
-    els.settingsForm.addEventListener('input', clearSettingsErrors);
-    els.settingsForm.addEventListener('change', clearSettingsErrors);
+    els.settingsForm.addEventListener('input', function () { clearSettingsErrors(); updateSettingsSummaries(); });
+    els.settingsForm.addEventListener('change', function () { clearSettingsErrors(); updateSettingsSummaries(); });
     if (els.setSimExtList) { els.setSimExtList.addEventListener('change', clearSettingsErrors); }
     if (els.setVideoEnabled) {
       els.setVideoEnabled.addEventListener('change', function () {
@@ -6552,6 +6705,7 @@
   }
 
   function bindGlobalEvents() {
+    window.addEventListener('resize', syncTopStackHeight, { passive: true });
     document.addEventListener('keydown', trapModalKeys);
     document.addEventListener('focusin', function (event) {
       if (!activeModal) { return; }

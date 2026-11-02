@@ -86,6 +86,11 @@ if "-f" in args and "mp3" in args:
         fail("cannot write mp3")
     sys.exit(0)
 rawvideo = ("-f" in args and "rawvideo" in args)
+# v0018 批处理抽帧：单进程多个 "-y <frame.raw>" 输出文件。
+outputs = []
+for _index, _token in enumerate(args):
+    if _token == "-y" and _index + 1 < len(args):
+        outputs.append(args[_index + 1])
 if not rawvideo:
     if "NODURATION" in text:
         fail("no duration info")
@@ -116,6 +121,16 @@ for y in range(32):
     for x in range(32):
         block = (seed * 37 + (x // 4) * 5 + (y // 4) * 11 + (x // 8) * 3) % 13
         frame[y * 32 + x] = (block * 19) & 0xFF
+if rawvideo and len(outputs) > 1:
+    if os.environ.get("FAKE_FFMPEG_BATCH_FAIL") == "1":
+        fail("batch decode failed")
+    for out_path in outputs:
+        try:
+            with open(out_path, "wb") as handle:
+                handle.write(bytes(frame))
+        except OSError:
+            fail("cannot write batch frame")
+    sys.exit(0)
 sys.stdout.buffer.write(bytes(frame))
 sys.stdout.buffer.flush()
 sys.exit(0)

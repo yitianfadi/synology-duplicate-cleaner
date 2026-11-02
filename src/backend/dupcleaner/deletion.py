@@ -22,7 +22,7 @@ import threading
 import time
 import traceback
 
-from . import config, fsutil, hashing, timeutil
+from . import config, fsutil, hashing, timeutil, video_similarity
 from .errors import ApiError, forbidden, invalid, not_found, path_not_allowed
 
 # 删除结果状态
@@ -134,9 +134,43 @@ def revalidate(record, keeper_record, share_service, algo="sha256",
     match_type = (record.get("match_type")
                   or (keeper_record or {}).get("match_type") or "exact")
     if match_type == "video":
-        # 视频相似删除：不要求候选与 keeper 字节相等，也不做 fresh hash；
-        # 存在、路径、普通文件、size/mtime_ns/inode/dev、keeper 已在上方校验。
-        return _result(True)
+        # 视频相似删除：不要求候选与 keeper 字节相等。
+        # 安全增强（v0018）：比较扫描时保存的内容快速哈希（size+head/tail 64KB
+        # SHA256），防止“size/mtime/inode 未变但内容被替换”的误删。
+        # 历史扫描缺少该哈希时：按契约回退到既有身份校验，但显式标记
+        # content_hash_verified=false（计划 warning，不 fail-open 到字节相等假设）。
+        content_verified = True
+        content_missing = False
+        stored_candidate = record.get("content_quick_hash")
+        stored_keeper = (keeper_record or {}).get("content_quick_hash")
+        try:
+            if stored_candidate:
+                if (video_similarity.content_quick_hash(normalized)
+                        != stored_candidate):
+                    return _result(
+                        False, REASON_HASH_MISMATCH,
+                        u"候选视频内容已变化（快速内容哈希不一致）: %s"
+                        % normalized)
+            else:
+                content_verified = False
+                content_missing = True
+            if stored_keeper:
+                if (video_similarity.content_quick_hash(keeper_norm)
+                        != stored_keeper):
+                    return _result(
+                        False, REASON_HASH_MISMATCH,
+                        u"保留视频内容已变化（快速内容哈希不一致）: %s"
+                        % keeper_norm)
+            else:
+                content_verified = False
+                content_missing = True
+        except (OSError, IOError) as exc:
+            return _result(False, REASON_FILE_CHANGED,
+                           u"读取视频内容失败: %s" % exc)
+        result = _result(True)
+        result["content_hash_verified"] = bool(content_verified)
+        result["content_hash_missing"] = bool(content_missing)
+        return result
     candidate_hash = record.get("hash") or ""
     keeper_hash = (keeper_record or {}).get("hash") or ""
     if match_type == "similar":
@@ -422,6 +456,8 @@ class DeletionManager(object):
         recycle_unavailable = []
         recycle_seen = set()
         hash_cache = {}
+        content_hash_verified = True
+        content_hash_missing_videos = 0
         candidate_bytes = sum(int(file_info.get("size") or 0)
                               for _, file_info, _keeper in candidates)
         hash_verify_budget = config.PLAN_HASH_VERIFY_BUDGET_BYTES
@@ -441,7 +477,11 @@ class DeletionManager(object):
                                 "reason": result["code"],
                                 "message": result["message"]})
                 continue
-            snapshot = result.get("identity")
+            if (match_type == "video"
+                    and not result.get("content_hash_verified", True)):
+                # 历史扫描缺少视频内容快速哈希：允许按身份校验删除，但计划显式告警。
+                content_hash_verified = False
+                content_hash_missing_videos += 1
             # 回收站可用性
             if recycle:
                 try:
@@ -559,6 +599,8 @@ class DeletionManager(object):
             "recycle_unavailable": recycle_unavailable,
             "hash_verified": bool(hash_check),
             "hash_verification_deferred": not hash_check,
+            "content_hash_verified": bool(content_hash_verified),
+            "content_hash_missing_videos": int(content_hash_missing_videos),
             "internal_path": internal_path,
             "consumed": False,
         }
@@ -579,6 +621,9 @@ class DeletionManager(object):
             "reviewed_similar_group_ids": plan["reviewed_similar_group_ids"],
             "skipped": len(skipped),
             "hash_verified": plan["hash_verified"],
+            "content_hash_verified": plan.get("content_hash_verified", True),
+            "content_hash_missing_videos": plan.get(
+                "content_hash_missing_videos", 0),
         })
         return self._public_plan(plan)
 
@@ -611,6 +656,9 @@ class DeletionManager(object):
             "recycle_unavailable": plan["recycle_unavailable"],
             "hash_verified": plan["hash_verified"],
             "hash_verification_deferred": plan["hash_verification_deferred"],
+            "content_hash_verified": plan.get("content_hash_verified", True),
+            "content_hash_missing_videos": plan.get(
+                "content_hash_missing_videos", 0),
         }
 
     @staticmethod
@@ -830,6 +878,9 @@ class DeletionManager(object):
         }
         result = revalidate(file_info, keeper, self.shares, algo=algo,
                             hash_check=True, hash_cache=hash_cache)
+        if result.get("content_hash_verified") is not None:
+            base["content_hash_verified"] = bool(
+                result.get("content_hash_verified"))
         if not result["ok"]:
             base.update({"status": STATUS_SKIPPED, "reason": result["code"],
                          "message": result["message"]})

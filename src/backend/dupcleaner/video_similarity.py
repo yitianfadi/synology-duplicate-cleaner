@@ -29,7 +29,7 @@ import tempfile
 import threading
 import time
 
-from . import config, similarity
+from . import config, hashing, similarity
 
 DURATION_RE = re.compile(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)")
 VIDEO_FILTER = ("scale=32:32:force_original_aspect_ratio=decrease,"
@@ -39,6 +39,21 @@ _MASK64 = 0xFFFFFFFFFFFFFFFF
 _PROBE_LOCK = threading.RLock()
 _PROBE_CACHE = {}
 _COS_TABLE = None
+
+CONTENT_QUICK_HASH_ALGO = config.VIDEO_CONTENT_QUICK_HASH_ALGO
+CONTENT_QUICK_HASH_SAMPLE_KB = config.VIDEO_CONTENT_QUICK_HASH_SAMPLE_KB
+FRAME_BATCH_SIZE = config.VIDEO_BATCH_FRAMES
+
+
+def content_quick_hash(path):
+    """视频内容快速校验哈希：size + 头/尾 64KB，SHA256（删除前重校验用）。
+
+    该哈希不是视觉指纹；只用于确认“候选/保留视频内容未变化”，
+    不依赖 ffmpeg，读取成本低（约 128KB/文件）。
+    """
+    return hashing.quick_sample_hash(
+        path, algo=CONTENT_QUICK_HASH_ALGO,
+        sample_kb=CONTENT_QUICK_HASH_SAMPLE_KB)
 
 
 class VideoSkip(Exception):
@@ -525,6 +540,64 @@ class FFmpegTool(object):
             raise VideoSkip("decode", u"帧数据不足 %d 字节" % len(stdout))
         return stdout[:config.VIDEO_FRAME_BYTES]
 
+    def extract_frames_batch(self, path, timestamps, timeout,
+                             hwaccel_label="none", stop_check=None):
+        """单进程顺序抽取 2-4 帧（每帧一个 rawvideo 输出文件）。
+
+        ffmpeg 只打开/输入 seek 一次（-ss 定位到首帧），其余帧用 output -ss
+        相对偏移，避免每个时间戳单独起进程；返回按输入顺序的帧字节列表。
+        任一输出缺失/不足一帧则抛 VideoSkip，由调用方回退逐帧抽取。
+        """
+        timestamps = [float(item) for item in timestamps]
+        if not timestamps:
+            return []
+        tempdir = tempfile.mkdtemp(prefix="dc-batch-frames-")
+        try:
+            outputs = [os.path.join(tempdir, "frame-%03d.raw" % index)
+                       for index in range(len(timestamps))]
+            base_ts = timestamps[0]
+            args = ["-nostdin", "-hide_banner", "-loglevel", "error",
+                    "-threads", "1"]
+            if hwaccel_label and hwaccel_label != "none":
+                args += ["-hwaccel", "auto"]
+            args += ["-ss", "%.6f" % base_ts, "-i", path]
+            for index, (timestamp, out_path) in enumerate(
+                    zip(timestamps, outputs)):
+                if index > 0:
+                    args += ["-ss", "%.6f" % max(0.0, timestamp - base_ts)]
+                args += ["-frames:v", "1", "-vf", VIDEO_FILTER,
+                         "-f", "rawvideo", "-pix_fmt", "gray", "-y", out_path]
+            code, stdout, stderr = self._run(args, timeout, stop_check)
+            frames = self._read_batch_outputs(outputs, code, stdout)
+            if frames is not None:
+                return frames
+            detail = stderr.decode("utf-8", "replace").strip()[-300:]
+            raise VideoSkip("decode", detail or ("batch ffmpeg exit=%s" % code))
+        finally:
+            shutil.rmtree(tempdir, ignore_errors=True)
+
+    @staticmethod
+    def _read_batch_outputs(outputs, code, stdout):
+        """读取批量输出；兼容把 N 帧写 stdout 的测试 ffmpeg。失败返回 None。"""
+        frame_bytes = config.VIDEO_FRAME_BYTES
+        frames = []
+        for out_path in outputs:
+            try:
+                with open(out_path, "rb") as handle:
+                    data = handle.read(frame_bytes + 1)
+            except OSError:
+                data = b""
+            if len(data) < frame_bytes:
+                frames = None
+                break
+            frames.append(data[:frame_bytes])
+        if frames is not None:
+            return frames
+        if code == 0 and stdout and len(stdout) >= frame_bytes * len(outputs):
+            return [stdout[index * frame_bytes:(index + 1) * frame_bytes]
+                    for index in range(len(outputs))]
+        return None
+
     def extract_audio(self, path, audio_path, max_sec, timeout,
                       stop_check=None):
         """抽取 16k mono WAV（临时文件，-t 限制最大秒数），供外部 ASR 使用。"""
@@ -828,8 +901,18 @@ class VideoEngine(object):
     def capabilities(self, settings=None):
         return video_capabilities(self.config, settings)
 
+    @staticmethod
+    def _frame_batch_size(options):
+        try:
+            value = options.get("video_batch_frames")
+            if value is None:
+                value = config.VIDEO_BATCH_FRAMES
+            return max(1, min(4, int(value)))
+        except (TypeError, ValueError):
+            return max(1, min(4, int(config.VIDEO_BATCH_FRAMES)))
+
     def _analyze_visual(self, path, options, stop_check=None):
-        """视觉分析（帧指纹 + 缓存），返回 dict。"""
+        """视觉分析（批处理抽帧 + 帧指纹 + 缓存），返回 dict。"""
         identity = fsutil_identity(path)
         if identity is None:
             raise VideoSkip("error", u"文件不存在")
@@ -880,35 +963,70 @@ class VideoEngine(object):
             hw_label = self.ffmpeg.hwaccel_label()
         frames = []
         software_fallback = False
+        batch_size = self._frame_batch_size(options)
+        timestamps = [(index + 0.5) * duration / n_eff
+                      for index in range(n_eff)]
         index = 0
         while index < n_eff:
             if stop_check is not None and stop_check():
                 raise VideoStopped()
-            timestamp = (index + 0.5) * duration / n_eff
-            label = "none" if software_fallback else hw_label
-            try:
-                raw = self.ffmpeg.extract_frame(path, timestamp, timeout, label,
-                                                stop_check)
-            except VideoTimeout:
-                self._cache_failure(cache, key, "timeout", u"抽帧超时")
-                raise VideoSkip("timeout", u"抽帧超时")
-            except VideoStopped:
-                raise
-            except VideoSkip as exc:
-                if not software_fallback and hw_label != "none":
-                    # 硬件解码失败 → 自动回退软件解码后重试当前帧
-                    software_fallback = True
-                    hw_label = "none"
-                    continue
-                self._cache_failure(cache, key, "decode", exc.detail)
-                raise VideoSkip("decode", exc.detail)
-            try:
-                digest = phash_from_gray(raw)
-            except ValueError as exc:
-                self._cache_failure(cache, key, "decode", str(exc))
-                raise VideoSkip("decode", str(exc))
-            frames.append(digest)
-            index += 1
+            batch_ts = timestamps[index:index + batch_size]
+            raws = None
+            if len(batch_ts) > 1:
+                while True:
+                    label = "none" if software_fallback else hw_label
+                    try:
+                        raws = self.ffmpeg.extract_frames_batch(
+                            path, batch_ts, timeout, label, stop_check)
+                        break
+                    except VideoTimeout:
+                        self._cache_failure(cache, key, "timeout", u"抽帧超时")
+                        raise VideoSkip("timeout", u"抽帧超时")
+                    except VideoStopped:
+                        raise
+                    except VideoSkip as exc:
+                        if not software_fallback and hw_label != "none":
+                            # 硬件解码失败 → 软件解码重试同一批
+                            software_fallback = True
+                            hw_label = "none"
+                            continue
+                        raws = None
+                        break
+            if raws is None:
+                # 批处理失败/单帧：回退逐帧抽取（保持原顺序）
+                raws = []
+                for timestamp in batch_ts:
+                    if stop_check is not None and stop_check():
+                        raise VideoStopped()
+                    while True:
+                        label = "none" if software_fallback else hw_label
+                        try:
+                            raw = self.ffmpeg.extract_frame(
+                                path, timestamp, timeout, label, stop_check)
+                            break
+                        except VideoTimeout:
+                            self._cache_failure(cache, key, "timeout",
+                                                u"抽帧超时")
+                            raise VideoSkip("timeout", u"抽帧超时")
+                        except VideoStopped:
+                            raise
+                        except VideoSkip as exc:
+                            if not software_fallback and hw_label != "none":
+                                software_fallback = True
+                                hw_label = "none"
+                                continue
+                            self._cache_failure(cache, key, "decode",
+                                                exc.detail)
+                            raise VideoSkip("decode", exc.detail)
+                    raws.append(raw)
+            for raw in raws:
+                try:
+                    digest = phash_from_gray(raw)
+                except ValueError as exc:
+                    self._cache_failure(cache, key, "decode", str(exc))
+                    raise VideoSkip("decode", str(exc))
+                frames.append(digest)
+            index += len(batch_ts)
         hex_frames = ["%016x" % value for value in frames]
         fingerprint = "v1:%d:%s" % (n_eff, "".join(hex_frames))
         result = {
@@ -951,6 +1069,12 @@ class VideoEngine(object):
                 asr_info = {"asr_status": "failed", "asr_signature": None,
                             "asr_cache_hit": False}
         visual.update(asr_info)
+        # 删除安全：内容快速校验哈希（size+head/tail 64KB SHA256）。
+        # 每次 analyze 都按当前文件重新计算（缓存命中也会补算，兼容旧缓存）。
+        try:
+            visual["content_quick_hash"] = content_quick_hash(path)
+        except (OSError, IOError):
+            visual["content_quick_hash"] = None
         if visual.get("asr_signature"):
             with self._lock:
                 self.asr_used += 1
