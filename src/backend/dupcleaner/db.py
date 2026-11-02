@@ -16,6 +16,7 @@ checkpoint、字幕任务）由 store.Store 封装。Python 3.8 标准库 sqlite
 from __future__ import absolute_import
 
 import contextlib
+import json
 import logging
 import os
 import sqlite3
@@ -25,7 +26,9 @@ import time
 logger = logging.getLogger("dupcleaner.db")
 
 DB_FILENAME = "dupcleaner.sqlite3"
-CURRENT_SCHEMA_VERSION = 1
+# v2（v0016 优化 plan A）：scan_groups 增加结果索引列 + scan_files 明细表，
+# 让结果分页/搜索/排序/统计走 SQL，不再整份 JSON 遍历。
+CURRENT_SCHEMA_VERSION = 2
 BUSY_TIMEOUT_MS = 5000
 BATCH_SIZE = 200
 
@@ -66,12 +69,42 @@ _SCHEMA_STATEMENTS = (
         group_id TEXT NOT NULL,
         match_type TEXT,
         payload_json TEXT NOT NULL,
+        wasted_bytes INTEGER NOT NULL DEFAULT 0,
+        size INTEGER NOT NULL DEFAULT 0,
+        similarity_score INTEGER NOT NULL DEFAULT 0,
+        created_epoch REAL NOT NULL DEFAULT 0,
+        group_hash TEXT,
         PRIMARY KEY (scan_id, ordinal)
     )
     """,
     """
     CREATE INDEX IF NOT EXISTS idx_scan_groups_type
         ON scan_groups(scan_id, match_type)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_scan_groups_gid
+        ON scan_groups(scan_id, group_id)
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS scan_files (
+        scan_id TEXT NOT NULL,
+        group_id TEXT NOT NULL,
+        file_id TEXT NOT NULL,
+        path TEXT NOT NULL,
+        size INTEGER NOT NULL DEFAULT 0,
+        is_keep INTEGER NOT NULL DEFAULT 0,
+        default_selected INTEGER NOT NULL DEFAULT 0,
+        payload_json TEXT NOT NULL,
+        PRIMARY KEY (scan_id, group_id, file_id)
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_scan_files_path
+        ON scan_files(scan_id, path)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_scan_files_group
+        ON scan_files(scan_id, group_id)
     """,
     """
     CREATE TABLE IF NOT EXISTS deletion_jobs (
@@ -114,6 +147,120 @@ _SCHEMA_STATEMENTS = (
     )
     """,
 )
+
+# v2：v1 数据库升级时需要补的 scan_groups 结果索引列。
+V2_SCAN_GROUP_COLUMNS = (
+    ("wasted_bytes", "INTEGER NOT NULL DEFAULT 0"),
+    ("size", "INTEGER NOT NULL DEFAULT 0"),
+    ("similarity_score", "INTEGER NOT NULL DEFAULT 0"),
+    ("created_epoch", "REAL NOT NULL DEFAULT 0"),
+    ("group_hash", "TEXT"),
+)
+
+# v2 迁移兜底建表/建索引（幂等；正常新建库已在 _SCHEMA_STATEMENTS 中创建）。
+_V2_MIGRATION_STATEMENTS = (
+    """
+    CREATE TABLE IF NOT EXISTS scan_files (
+        scan_id TEXT NOT NULL,
+        group_id TEXT NOT NULL,
+        file_id TEXT NOT NULL,
+        path TEXT NOT NULL,
+        size INTEGER NOT NULL DEFAULT 0,
+        is_keep INTEGER NOT NULL DEFAULT 0,
+        default_selected INTEGER NOT NULL DEFAULT 0,
+        payload_json TEXT NOT NULL,
+        PRIMARY KEY (scan_id, group_id, file_id)
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_scan_files_path
+        ON scan_files(scan_id, path)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_scan_files_group
+        ON scan_files(scan_id, group_id)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_scan_groups_gid
+        ON scan_groups(scan_id, group_id)
+    """,
+)
+
+
+def _as_int(value, default=0):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _loads(raw):
+    try:
+        return json.loads(raw)
+    except (TypeError, ValueError, UnicodeError):
+        return None
+
+
+def group_identity(payload, ordinal):
+    """分组稳定 ID：payload 内 group_id 优先，否则按 ordinal 生成。"""
+    group_id = payload.get("group_id") if isinstance(payload, dict) else None
+    if not group_id:
+        group_id = "g-%06d" % (_as_int(ordinal) + 1)
+    return str(group_id)
+
+
+def group_index_columns(payload, ordinal):
+    """从 group payload 提取 v2 索引列；写入与 v1→v2 回填共用。"""
+    if not isinstance(payload, dict):
+        payload = {}
+    match_type = payload.get("match_type")
+    files = payload.get("files")
+    created = 0
+    if isinstance(files, list):
+        for item in files:
+            if isinstance(item, dict):
+                created = max(created, _as_int(item.get("created_ts")))
+    similarity = 100
+    if match_type in ("similar", "video"):
+        similarity = _as_int(payload.get("similarity_score"))
+    group_hash = payload.get("hash")
+    return {
+        "group_id": group_identity(payload, ordinal),
+        "match_type": match_type,
+        "wasted_bytes": _as_int(payload.get("wasted_bytes")),
+        "size": _as_int(payload.get("size")),
+        "similarity_score": similarity,
+        "created_epoch": float(created),
+        "group_hash": group_hash if isinstance(group_hash, str) else "",
+    }
+
+
+def group_file_rows(scan_id, ordinal, payload):
+    """从 group payload 提取 scan_files 明细行（搜索/统计用）。"""
+    if not isinstance(payload, dict):
+        payload = {}
+    group_id = group_identity(payload, ordinal)
+    files = payload.get("files")
+    rows = []
+    if not isinstance(files, list):
+        return rows
+    for index, item in enumerate(files):
+        if not isinstance(item, dict):
+            continue
+        file_id = item.get("file_id")
+        if not file_id:
+            file_id = "f-%06d" % (index + 1)
+        rows.append((
+            scan_id,
+            group_id,
+            str(file_id),
+            str(item.get("path") or ""),
+            _as_int(item.get("size")),
+            1 if item.get("is_keep") else 0,
+            1 if item.get("default_selected") else 0,
+            json.dumps(item, ensure_ascii=False),
+        ))
+    return rows
 
 
 class Database(object):
@@ -247,14 +394,76 @@ class Database(object):
                         version, CURRENT_SCHEMA_VERSION)
 
     def _apply_migrations(self, from_version):
-        """按版本迁移；v1 为首个 SQLite 版本，无历史迁移步骤。"""
+        """按版本迁移；迁移与版本号写入在同一事务内（失败整体回滚）。"""
         version = int(from_version)
         while version < CURRENT_SCHEMA_VERSION:
-            version += 1
+            next_version = version + 1
+            if next_version == 2:
+                self._migrate_v2()
+            version = next_version
             self._conn.execute(
                 "INSERT OR REPLACE INTO schema_meta(key, value) "
                 "VALUES('schema_version', ?)", (str(version),))
             self._conn.execute("PRAGMA user_version = %d" % version)
+
+    def _migrate_v2(self):
+        """v1→v2：scan_groups 增加结果索引列，新建 scan_files 并回填历史数据。
+
+        幂等：列/表/索引按需创建；回填用 UPDATE + INSERT OR IGNORE，
+        重复执行不会产生重复行。历史 JSON 源文件不动。
+        """
+        conn = self._conn
+        existing = {str(row[1]) for row in
+                    conn.execute("PRAGMA table_info(scan_groups)").fetchall()}
+        for column, declaration in V2_SCAN_GROUP_COLUMNS:
+            if column not in existing:
+                conn.execute("ALTER TABLE scan_groups ADD COLUMN %s %s"
+                             % (column, declaration))
+        for statement in _V2_MIGRATION_STATEMENTS:
+            conn.execute(statement)
+        groups, files = self._backfill_scan_group_columns()
+        logger.info(u"SQLite schema 迁移到 v2 完成：回填 %d 组 / %d 文件",
+                    groups, files)
+
+    def _backfill_scan_group_columns(self):
+        """按 rowid 分批回填 scan_groups 索引列与 scan_files（不整表载入）。"""
+        conn = self._conn
+        last_rowid = 0
+        groups = 0
+        files = 0
+        while True:
+            rows = conn.execute(
+                "SELECT rowid AS rid, scan_id, ordinal, payload_json"
+                " FROM scan_groups WHERE rowid > ? ORDER BY rowid ASC LIMIT ?",
+                (last_rowid, BATCH_SIZE)).fetchall()
+            if not rows:
+                break
+            updates = []
+            file_rows = []
+            for row in rows:
+                last_rowid = int(row["rid"])
+                payload = _loads(row["payload_json"])
+                meta = group_index_columns(payload, row["ordinal"])
+                updates.append((
+                    meta["wasted_bytes"], meta["size"],
+                    meta["similarity_score"], meta["created_epoch"],
+                    meta["group_hash"], last_rowid,
+                ))
+                file_rows.extend(group_file_rows(
+                    row["scan_id"], row["ordinal"], payload))
+                groups += 1
+            conn.executemany(
+                "UPDATE scan_groups SET wasted_bytes=?, size=?,"
+                " similarity_score=?, created_epoch=?, group_hash=?"
+                " WHERE rowid=?", updates)
+            if file_rows:
+                conn.executemany(
+                    "INSERT OR IGNORE INTO scan_files"
+                    "(scan_id, group_id, file_id, path, size, is_keep,"
+                    " default_selected, payload_json)"
+                    " VALUES(?, ?, ?, ?, ?, ?, ?, ?)", file_rows)
+                files += len(file_rows)
+        return groups, files
 
     # ------------------------------------------------------------------
     # 事务 / 查询

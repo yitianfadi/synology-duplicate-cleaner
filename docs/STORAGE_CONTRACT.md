@@ -33,9 +33,24 @@ scan_groups(
   ordinal INTEGER NOT NULL,
   group_id TEXT NOT NULL,
   match_type TEXT,
+  wasted_bytes INTEGER DEFAULT 0,
+  size INTEGER DEFAULT 0,
+  similarity_score INTEGER DEFAULT 0,
+  created_epoch REAL DEFAULT 0,
   payload_json TEXT NOT NULL,
   PRIMARY KEY (scan_id, ordinal)
 );
+CREATE TABLE scan_files(
+  scan_id TEXT NOT NULL,
+  group_id TEXT NOT NULL,
+  file_id TEXT,
+  path TEXT NOT NULL,
+  size INTEGER,
+  is_keep INTEGER,
+  default_selected INTEGER,
+  payload_json TEXT
+);
+CREATE INDEX idx_scan_files_path ON scan_files(scan_id,path);
 CREATE INDEX idx_scan_groups_type ON scan_groups(scan_id, match_type);
 
 deletion_jobs(
@@ -85,7 +100,8 @@ subtitle_jobs(
 - settings/audit/log 保持文件。
 
 旧 JSON 兼容：
-- 启动时检测 `scans/*/meta.json`、`groups.jsonl`、`deletions/*.meta.json`、`*.jsonl`、`feature_cache.json`，导入 SQLite。
+- v2 起 scan_groups 增加 wasted_bytes/size/similarity_score/created_epoch，scan_files 保存路径/保留/勾选明细，供 SQL 分页/搜索/排序。
+- 启动时检测 `scans/*/meta.json`、`groups.jsonl`、`deletions/*.meta.json`、`*.jsonl`、`feature_cache.json`，导入 SQLite；v1→v2 从 payload 回填。
 - 导入使用 INSERT OR IGNORE，幂等；不删除源文件；写 `schema_meta('migrated_v1')=1`。
 - 读取时 DB 优先；空则回退旧 JSON。
 - 删除扫描/任务时同时清理旧 JSON 文件（如果存在）。

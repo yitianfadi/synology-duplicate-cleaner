@@ -119,8 +119,9 @@ class UpgradeDrainMonitor(object):
                 u"升级 drain 超时（%.1fs）：活动扫描未能暂停，交由 DSM 停止服务",
                 self.timeout)
             return False
-        self._write_done()
+        # 先移除 drain 再写 done：preupgrade 看到 done 时 drain 一定已清理。
         self._remove_drain()
+        self._write_done()
         self.last_result = "done"
         return True
 

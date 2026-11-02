@@ -805,7 +805,18 @@ class ScanManager(object):
         if match_type is not None and match_type not in ("exact", "similar",
                                                          "video"):
             raise invalid(u"match_type 只能是 exact、similar 或 video")
+        # v2：SQL 分页/搜索/排序（不遍历全部 group payload）。
+        page = self.store.query_scan_groups_page(
+            scan_id, offset=offset, limit=limit, needle=needle,
+            sort=sort, match_type=match_type)
+        if page is not None:
+            return page
+        # 兼容旧 JSON / v1 未回填数据：回退逐组内存实现（响应不变）。
+        return self._groups_page_memory(scan_id, offset, limit, needle, sort,
+                                        match_type)
 
+    def _groups_page_memory(self, scan_id, offset, limit, needle, sort,
+                            match_type):
         def group_match_type(group):
             return group.get("match_type") or "exact"
 
@@ -880,6 +891,26 @@ class ScanManager(object):
 
     def stats_full(self, scan_id):
         meta = self.get_scan(scan_id)
+        rows = self.store.scan_file_stats(scan_id)
+        if not rows:
+            # v1 未回填 / 旧 JSON / 无文件：回退逐组实现（保持旧语义）。
+            return self._stats_full_memory(scan_id, meta)
+        extension_counts = {}
+        extension_bytes = {}
+        dir_counts = {}
+        for path, group_size in rows:
+            path = path or ""
+            extension = fsutil.extension_of(os.path.basename(path)).lower()
+            if not extension:
+                extension = u"(无后缀)"
+            extension_counts[extension] = extension_counts.get(extension, 0) + 1
+            extension_bytes[extension] = extension_bytes.get(extension, 0) + group_size
+            directory = os.path.dirname(path)
+            dir_counts[directory] = dir_counts.get(directory, 0) + 1
+        return self._stats_payload(scan_id, meta, extension_counts,
+                                   extension_bytes, dir_counts)
+
+    def _stats_full_memory(self, scan_id, meta):
         extension_counts = {}
         extension_bytes = {}
         dir_counts = {}
@@ -892,6 +923,12 @@ class ScanManager(object):
                 extension_bytes[extension] = extension_bytes.get(extension, 0) + size
                 directory = os.path.dirname(file_info.get("path") or "")
                 dir_counts[directory] = dir_counts.get(directory, 0) + 1
+        return self._stats_payload(scan_id, meta, extension_counts,
+                                   extension_bytes, dir_counts)
+
+    @staticmethod
+    def _stats_payload(scan_id, meta, extension_counts, extension_bytes,
+                       dir_counts):
         by_extension = sorted(
             [{"extension": key, "count": value,
               "bytes": extension_bytes.get(key, 0)}

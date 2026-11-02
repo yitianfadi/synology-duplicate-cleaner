@@ -368,6 +368,7 @@ class Store(object):
         try:
             ordinal = 0
             batch = []
+            file_batch = []
             for raw in handle:
                 raw = raw.strip()
                 if not raw:
@@ -383,11 +384,13 @@ class Store(object):
                 if not isinstance(payload, dict):
                     continue
                 batch.append(self._group_row(scan_id, index, payload))
+                file_batch.extend(self._group_file_rows(scan_id, index, payload))
                 if len(batch) >= _GROUP_BATCH:
-                    self._insert_scan_group_batch(batch)
+                    self._insert_scan_group_batch(batch, file_batch)
                     batch = []
+                    file_batch = []
             if batch:
-                self._insert_scan_group_batch(batch)
+                self._insert_scan_group_batch(batch, file_batch)
         finally:
             handle.close()
 
@@ -581,6 +584,7 @@ class Store(object):
         scan_id = self._check_scan_id(scan_id)
         with self.db.transaction():
             self.db.execute("DELETE FROM scan_groups WHERE scan_id=?", (scan_id,))
+            self.db.execute("DELETE FROM scan_files WHERE scan_id=?", (scan_id,))
             self.db.execute("DELETE FROM scan_checkpoints WHERE scan_id=?", (scan_id,))
             self.db.execute("DELETE FROM scans WHERE scan_id=?", (scan_id,))
         # 同时清理旧版 JSON 文件（如存在）。
@@ -596,47 +600,76 @@ class Store(object):
             pass
 
     # ------------------------------------------------------------------
-    # 扫描分组（按 ordinal 流式读取，绝不整文件加载）
+    # 扫描分组（按 ordinal 流式读取；v2 索引列 + scan_files 支撑 SQL 分页）
     # ------------------------------------------------------------------
+    _GROUP_COLUMNS = ("scan_id, ordinal, group_id, match_type, payload_json,"
+                      " wasted_bytes, size, similarity_score, created_epoch,"
+                      " group_hash")
+    _GROUP_INSERT_SQL = ("INSERT OR IGNORE INTO scan_groups("
+                         "scan_id, ordinal, group_id, match_type, payload_json,"
+                         " wasted_bytes, size, similarity_score, created_epoch,"
+                         " group_hash) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+    _GROUP_REPLACE_SQL = ("INSERT OR REPLACE INTO scan_groups("
+                          "scan_id, ordinal, group_id, match_type, payload_json,"
+                          " wasted_bytes, size, similarity_score, created_epoch,"
+                          " group_hash) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+    _FILE_INSERT_SQL = ("INSERT OR IGNORE INTO scan_files("
+                        "scan_id, group_id, file_id, path, size, is_keep,"
+                        " default_selected, payload_json)"
+                        " VALUES(?, ?, ?, ?, ?, ?, ?, ?)")
+    _PAGE_SORTS = {
+        "wasted_desc": "g.wasted_bytes DESC, g.size DESC, g.group_id DESC",
+        "size_desc": "g.size DESC, g.wasted_bytes DESC, g.group_id DESC",
+        "created_desc": ("g.created_epoch DESC, g.wasted_bytes DESC,"
+                         " g.group_id DESC"),
+        "similarity_desc": ("g.similarity_score DESC, g.wasted_bytes DESC,"
+                            " g.size DESC, g.group_id DESC"),
+    }
+
     @staticmethod
     def _group_row(scan_id, ordinal, payload):
-        group_id = payload.get("group_id")
-        if not group_id:
-            group_id = "g-%06d" % (int(ordinal) + 1)
-        return (scan_id, int(ordinal), str(group_id),
-                payload.get("match_type"),
-                json.dumps(payload, ensure_ascii=False))
+        meta = db_module.group_index_columns(payload, ordinal)
+        return (scan_id, int(ordinal), meta["group_id"], meta["match_type"],
+                json.dumps(payload, ensure_ascii=False),
+                meta["wasted_bytes"], meta["size"], meta["similarity_score"],
+                meta["created_epoch"], meta["group_hash"])
 
-    def _insert_scan_group_batch(self, rows):
+    @staticmethod
+    def _group_file_rows(scan_id, ordinal, payload):
+        return db_module.group_file_rows(scan_id, ordinal, payload)
+
+    def _insert_scan_group_batch(self, rows, file_rows=None, replace=False):
         with self.db.transaction():
-            self.db.executemany(
-                "INSERT OR IGNORE INTO scan_groups"
-                "(scan_id, ordinal, group_id, match_type, payload_json)"
-                " VALUES(?, ?, ?, ?, ?)", rows)
+            sql = self._GROUP_REPLACE_SQL if replace else self._GROUP_INSERT_SQL
+            self.db.executemany(sql, rows)
+            if file_rows:
+                self.db.executemany(self._FILE_INSERT_SQL, file_rows)
 
     def write_scan_groups(self, scan_id, groups):
         """整组原子替换（事务内 DELETE + 分批 INSERT），返回写入组数。"""
         scan_id = self._check_scan_id(scan_id)
         count = 0
         batch = []
+        file_batch = []
         with self.db.transaction():
             self.db.execute("DELETE FROM scan_groups WHERE scan_id=?", (scan_id,))
+            self.db.execute("DELETE FROM scan_files WHERE scan_id=?", (scan_id,))
             for group in groups:
                 if not isinstance(group, dict):
                     continue
                 batch.append(self._group_row(scan_id, count, group))
+                file_batch.extend(self._group_file_rows(scan_id, count, group))
                 count += 1
                 if len(batch) >= _GROUP_BATCH:
-                    self.db.executemany(
-                        "INSERT OR REPLACE INTO scan_groups"
-                        "(scan_id, ordinal, group_id, match_type, payload_json)"
-                        " VALUES(?, ?, ?, ?, ?)", batch)
+                    self.db.executemany(self._GROUP_REPLACE_SQL, batch)
+                    if file_batch:
+                        self.db.executemany(self._FILE_INSERT_SQL, file_batch)
                     batch = []
+                    file_batch = []
             if batch:
-                self.db.executemany(
-                    "INSERT OR REPLACE INTO scan_groups"
-                    "(scan_id, ordinal, group_id, match_type, payload_json)"
-                    " VALUES(?, ?, ?, ?, ?)", batch)
+                self.db.executemany(self._GROUP_REPLACE_SQL, batch)
+            if file_batch:
+                self.db.executemany(self._FILE_INSERT_SQL, file_batch)
         return count
 
     def append_scan_groups(self, scan_id, groups):
@@ -648,16 +681,20 @@ class Store(object):
                 (scan_id,), -1)) + 1
             count = 0
             batch = []
+            file_batch = []
             for group in groups:
                 if not isinstance(group, dict):
                     continue
                 batch.append(self._group_row(scan_id, start + count, group))
+                file_batch.extend(
+                    self._group_file_rows(scan_id, start + count, group))
                 count += 1
                 if len(batch) >= _GROUP_BATCH:
-                    self._insert_scan_group_batch(batch)
+                    self._insert_scan_group_batch(batch, file_batch)
                     batch = []
+                    file_batch = []
             if batch:
-                self._insert_scan_group_batch(batch)
+                self._insert_scan_group_batch(batch, file_batch)
             return count
 
     def iter_scan_groups(self, scan_id):
@@ -707,6 +744,93 @@ class Store(object):
         scan_id = self._check_scan_id(scan_id)
         return int(self.db.scalar(
             "SELECT COUNT(*) FROM scan_groups WHERE scan_id=?", (scan_id,), 0) or 0)
+
+    def count_scan_files(self, scan_id):
+        scan_id = self._check_scan_id(scan_id)
+        return int(self.db.scalar(
+            "SELECT COUNT(*) FROM scan_files WHERE scan_id=?", (scan_id,), 0) or 0)
+
+    @staticmethod
+    def _escape_like(value):
+        return (value.replace("\\", "\\\\")
+                .replace("%", "\\%")
+                .replace("_", "\\_"))
+
+    def query_scan_groups_page(self, scan_id, offset=0, limit=100, needle="",
+                               sort="wasted_desc", match_type=None):
+        """SQL 分页/搜索/排序（docs/STORAGE_CONTRACT.md §4）。
+
+        返回与旧内存实现相同的响应字段；DB 无分组或未回填 scan_files 时返回
+        None，由 scanner 回退旧 JSON/内存实现（兼容 v1 数据与旧 JSON）。
+        """
+        scan_id = self._check_scan_id(scan_id)
+        groups_total = self.count_scan_groups(scan_id)
+        if groups_total == 0 or self.count_scan_files(scan_id) == 0:
+            return None
+        try:
+            offset = max(0, int(offset or 0))
+            limit = max(0, int(limit if limit is not None else 100))
+        except (TypeError, ValueError):
+            return None
+        type_expr = "COALESCE(NULLIF(g.match_type, ''), 'exact')"
+        counts = {}
+        for row in self.db.query(
+                "SELECT " + type_expr + " AS mt, COUNT(*) AS count"
+                " FROM scan_groups g WHERE g.scan_id=? GROUP BY mt", (scan_id,)):
+            counts[str(row["mt"] or "exact")] = int(row["count"])
+        similar_total = int(counts.get("similar", 0))
+        video_total = int(counts.get("video", 0))
+        exact_total = max(0, groups_total - similar_total - video_total)
+
+        where = ["g.scan_id = ?"]
+        params = [scan_id]
+        if match_type == "exact":
+            where.append(type_expr + " NOT IN ('similar', 'video')")
+        elif match_type in ("similar", "video"):
+            where.append(type_expr + " = ?")
+            params.append(match_type)
+        needle = (needle or "").strip().lower()
+        if needle:
+            pattern = "%" + self._escape_like(needle) + "%"
+            where.append(
+                "(lower(COALESCE(g.group_hash, '')) LIKE ? ESCAPE '\\'"
+                " OR EXISTS (SELECT 1 FROM scan_files f"
+                " WHERE f.scan_id = g.scan_id AND f.group_id = g.group_id"
+                " AND lower(f.path) LIKE ? ESCAPE '\\'))")
+            params.extend([pattern, pattern])
+        where_sql = " AND ".join(where)
+        total = int(self.db.scalar(
+            "SELECT COUNT(*) FROM scan_groups g WHERE " + where_sql,
+            tuple(params), 0) or 0)
+        order_sql = self._PAGE_SORTS.get(sort) or self._PAGE_SORTS["wasted_desc"]
+        rows = self.db.query(
+            "SELECT g.payload_json FROM scan_groups g WHERE " + where_sql
+            + " ORDER BY " + order_sql + " LIMIT ? OFFSET ?",
+            tuple(params) + (limit, offset))
+        groups = []
+        for row in rows:
+            payload = self._loads(row["payload_json"], None)
+            if isinstance(payload, dict):
+                groups.append(payload)
+        return {
+            "total": total,
+            "offset": offset,
+            "limit": limit,
+            "match_type": match_type,
+            "exact_total": exact_total,
+            "similar_total": similar_total,
+            "video_total": video_total,
+            "groups": groups,
+        }
+
+    def scan_file_stats(self, scan_id):
+        """扩展名/目录统计用明细（不加载 group payload；group size 语义同旧版）。"""
+        scan_id = self._check_scan_id(scan_id)
+        rows = self.db.query(
+            "SELECT f.path AS path, g.size AS group_size FROM scan_files f"
+            " JOIN scan_groups g ON g.scan_id = f.scan_id"
+            " AND g.group_id = f.group_id WHERE f.scan_id = ?", (scan_id,))
+        return [(row["path"], int(row["group_size"] or 0)) for row in rows]
 
     # ------------------------------------------------------------------
     # 删除任务 meta + 结果
