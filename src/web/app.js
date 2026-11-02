@@ -806,7 +806,7 @@
       els.loginPassword.value = '';
       els.loginOtp.value = '';
       await bootApp();
-      toast('登录成功，欢迎使用重复文件清理。', 'success');
+      toast('登录成功，欢迎使用重复文件清理与字幕。', 'success');
     } catch (err) {
       setText(els.loginError, errorMessage(err, '登录失败，请检查账号和密码。'));
       show(els.loginError);

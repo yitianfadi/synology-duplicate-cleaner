@@ -942,7 +942,7 @@ class DeletionManager(object):
             snapshot = job.snapshot()
             status = final_status or snapshot["status"]
             lines = [
-                u"DuplicateCleaner 删除任务日志",
+                u"重复文件清理与字幕 删除任务日志",
                 u"job_id: %s" % job.job_id,
                 u"scan_id: %s" % job.scan_id,
                 u"plan_id: %s" % job.plan_id,

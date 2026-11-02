@@ -63,7 +63,7 @@ def create_server(runtime_config=None, services=None):
 
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(
-        prog="app.py", description=u"DuplicateCleaner 重复文件清理后端")
+        prog="app.py", description=u"Duplicate Cleaner & Subtitles 后端")
     parser.add_argument("--host", default=None,
                         help=u"监听地址（默认 127.0.0.1；SPK 传 0.0.0.0）")
     parser.add_argument("--port", type=int, default=None,
@@ -107,7 +107,7 @@ def main(argv=None):
     if display_host in ("0.0.0.0", "::", ""):
         display_host = "127.0.0.1"
     url = "%s://%s:%d/" % (runtime_config.scheme, display_host, bound_port)
-    logger.info(u"DuplicateCleaner %s 已启动: %s（数据目录 %s，静态目录 %s）",
+    logger.info(u"Duplicate Cleaner & Subtitles %s 已启动: %s（数据目录 %s，静态目录 %s）",
                 config.APP_VERSION, url, runtime_config.data_dir,
                 runtime_config.web_dir)
     if runtime_config.dev_mode:

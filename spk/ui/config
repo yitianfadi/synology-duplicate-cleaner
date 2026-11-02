@@ -3,8 +3,8 @@
     "com.zhouyi.DuplicateCleaner": {
       "type": "url",
       "icon": "images/icon_{0}.png",
-      "title": "重复文件清理",
-      "desc": "基于哈希与内容相似度的重复文件扫描与安全清理（仅管理员）",
+      "title": "重复文件清理与字幕",
+      "desc": "重复文件清理、视频视觉相似与云端字幕（仅管理员）",
       "url": "/webman/3rdparty/DuplicateCleaner/index.html",
       "allUsers": false
     }

@@ -429,7 +429,7 @@ class ScanManager(object):
 
     def _log_header(self, state):
         lines = [
-            u"DuplicateCleaner 扫描日志",
+            u"重复文件清理与字幕 扫描日志",
             u"scan_id: %s" % state.scan_id,
             u"started_at: %s" % timeutil.iso_local(state.created_epoch),
             u"user: %s" % state.user,
