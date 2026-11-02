@@ -6740,6 +6740,12 @@
           ]));
         });
         body.appendChild(wrap);
+        var previewBtn = el('button', {
+          className: 'btn btn-ghost btn-sm subtitle-preview-btn',
+          attrs: { type: 'button' },
+          on: { click: function () { openSubtitlePreview(job); } }
+        }, [icon('search'), '预览字幕']);
+        body.appendChild(previewBtn);
       } else if (status === 'done') {
         body.appendChild(el('p', { className: 'subtitle-empty', text: '任务已完成，但没有可下载的字幕文件。' }));
       }
@@ -6749,6 +6755,95 @@
       text: '任务进度与字幕文件保存在 NAS 本地；下载需要当前登录会话。音频临时文件已在任务结束/取消后清理。'
     }));
     return body;
+  }
+
+  var SUBTITLE_SRT_TIME = /(\d{2}:\d{2}:\d{2}[,.]\d{3})\s*-->\s*(\d{2}:\d{2}:\d{2}[,.]\d{3})/;
+
+  function parseSubtitleSrt(text) {
+    var blocks = String(text || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n').split(/\n\s*\n/);
+    var cues = [];
+    blocks.forEach(function (block) {
+      var lines = block.split('\n').filter(function (line) { return line.length; });
+      if (!lines.length) { return; }
+      var timeIndex = -1;
+      for (var i = 0; i < Math.min(lines.length, 3); i++) {
+        if (SUBTITLE_SRT_TIME.test(lines[i])) { timeIndex = i; break; }
+      }
+      if (timeIndex < 0) { return; }
+      var match = lines[timeIndex].match(SUBTITLE_SRT_TIME);
+      var bodyLines = lines.slice(timeIndex + 1).join(' ').trim();
+      if (!bodyLines) { return; }
+      cues.push({
+        start: match[1].replace(',', '.'),
+        end: match[2].replace(',', '.'),
+        text: bodyLines
+      });
+    });
+    return cues;
+  }
+
+  async function fetchSubtitleText(job, name) {
+    var response = await fetch(subtitleJobDownloadUrl(job, name), {
+      credentials: 'same-origin', cache: 'no-store'
+    });
+    if (!response.ok) { throw new Error('HTTP ' + response.status); }
+    return response.text();
+  }
+
+  async function openSubtitlePreview(job) {
+    var files = subtitleJobSafeFiles(job);
+    if (!files.length) { toast('没有可预览的字幕文件。', 'info'); return; }
+    var names = files.map(function (item) { return String(item.name).toLowerCase(); });
+    var original = files[names.indexOf('original.srt') >= 0 ? names.indexOf('original.srt') : 0].name;
+    var target = '';
+    if (job.translate && job.target_lang) {
+      var wanted = String(job.target_lang).toLowerCase();
+      var exact = files.filter(function (item) { return String(item.name).toLowerCase() === wanted + '.srt'; });
+      if (exact.length) { target = exact[0].name; }
+      else {
+        var bilingual = files.filter(function (item) {
+          return String(item.name).toLowerCase().indexOf('bilingual.') === 0 && String(item.name).toLowerCase().slice(-4) === '.srt';
+        });
+        if (bilingual.length) { target = bilingual[0].name; }
+      }
+    }
+    var previewClose = el('button', {
+      className: 'btn btn-ghost', attrs: { type: 'button' }, text: '关闭',
+      on: { click: function () { closeModal(true); } }
+    });
+    var modal = openModal({
+      title: '字幕预览', subtitle: job.path || '', size: 'xl',
+      body: el('p', { className: 'subtitle-empty', text: '正在加载字幕…' }),
+      footer: [previewClose]
+    });
+    try {
+      var originalCues = parseSubtitleSrt(await fetchSubtitleText(job, original));
+      var translatedCues = target ? parseSubtitleSrt(await fetchSubtitleText(job, target)) : [];
+      var rows = [];
+      originalCues.slice(0, 500).forEach(function (cue, index) {
+        rows.push(el('tr', {}, [
+          el('td', { className: 'mono', text: String(index + 1) }),
+          el('td', { className: 'mono subtitle-cue-time', text: cue.start + ' → ' + cue.end }),
+          el('td', { text: cue.text }),
+          el('td', { text: translatedCues[index] ? translatedCues[index].text : '—' })
+        ]));
+      });
+      var table = el('table', { className: 'subtitle-cue-table' }, [
+        el('thead', {}, [el('tr', {}, [
+          el('th', { text: '#' }), el('th', { text: '时间' }),
+          el('th', { text: '原文' }), el('th', { text: target ? '译文' : '译文（未启用）' })
+        ])]),
+        el('tbody', {}, rows)
+      ]);
+      var body = el('div', {}, [
+        el('p', { className: 'hint', text: '共 ' + fmtInt(originalCues.length) + ' 条字幕；最多预览前 500 条。原文：' + original + (target ? '；译文：' + target : '') }),
+        table
+      ]);
+      if (!rows.length) { body = el('p', { className: 'subtitle-empty', text: '字幕内容为空或时间轴无法解析。' }); }
+      modal.setBody(body);
+    } catch (err) {
+      modal.setBody(el('p', { className: 'modal-error', text: '字幕预览失败：' + errorMessage(err, '无法读取字幕文件。') }));
+    }
   }
 
   function buildSubtitleJobDetailFooter(job) {

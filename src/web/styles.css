@@ -2095,3 +2095,10 @@ input[type="checkbox"]:disabled { cursor: not-allowed; }
   .diag-list dd { margin-bottom: 3px; }
   .diag-actions .btn { flex: 1 1 auto; }
 }
+
+.subtitle-cue-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.subtitle-cue-table th, .subtitle-cue-table td { border-bottom: 1px solid #e3eaef; padding: 8px 10px; text-align: left; vertical-align: top; }
+.subtitle-cue-table th { background: #f4f8fa; position: sticky; top: 0; z-index: 1; }
+.subtitle-cue-table td:nth-child(3), .subtitle-cue-table td:nth-child(4) { max-width: 420px; white-space: pre-wrap; }
+.subtitle-cue-time { white-space: nowrap; color: #5c6b76; }
+@media (max-width: 680px) { .subtitle-cue-table { font-size: 12px; } .subtitle-cue-table th, .subtitle-cue-table td { padding: 6px; } }

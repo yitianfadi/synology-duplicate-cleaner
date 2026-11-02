@@ -46,14 +46,29 @@ FRAME_BATCH_SIZE = config.VIDEO_BATCH_FRAMES
 
 
 def content_quick_hash(path):
-    """视频内容快速校验哈希：size + 头/尾 64KB，SHA256（删除前重校验用）。
+    """视频内容快速校验哈希：size + 头/中/尾各 64KB，SHA256（删除前重校验用）。
 
-    该哈希不是视觉指纹；只用于确认“候选/保留视频内容未变化”，
-    不依赖 ffmpeg，读取成本低（约 128KB/文件）。
+    该哈希不是视觉指纹；只用于确认“候选/保留视频内容未变化”。
+    中间采样用于发现仅替换中段的伪原创/篡改；仍不是全量校验。
+    不依赖 ffmpeg，读取成本约 192KB/文件。
     """
-    return hashing.quick_sample_hash(
-        path, algo=CONTENT_QUICK_HASH_ALGO,
-        sample_kb=CONTENT_QUICK_HASH_SAMPLE_KB)
+    sample = max(1, int(CONTENT_QUICK_HASH_SAMPLE_KB)) * 1024
+    stat_result = os.stat(path)
+    size = int(stat_result.st_size)
+    positions = [0]
+    if size > sample * 2:
+        positions.append(max(sample, (size // 2) - (sample // 2)))
+    positions.append(max(0, size - sample))
+    digest = hashing.hasher_factory(CONTENT_QUICK_HASH_ALGO)()
+    digest.update(b"VCQ2" + int(size).to_bytes(8, "big", signed=False))
+    with open(path, "rb") as handle:
+        for offset in positions:
+            handle.seek(offset)
+            data = handle.read(sample)
+            digest.update(int(offset).to_bytes(8, "big", signed=False))
+            digest.update(len(data).to_bytes(8, "big", signed=False))
+            digest.update(data)
+    return digest.hexdigest()
 
 
 class VideoSkip(Exception):
