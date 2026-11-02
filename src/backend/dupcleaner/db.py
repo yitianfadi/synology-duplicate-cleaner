@@ -19,6 +19,7 @@ import contextlib
 import json
 import logging
 import os
+import re
 import sqlite3
 import threading
 import time
@@ -641,6 +642,79 @@ class Database(object):
         self.execute(
             "INSERT OR REPLACE INTO schema_meta(key, value) VALUES(?, ?)",
             (str(key), str(value)))
+
+    # ------------------------------------------------------------------
+    # 诊断 / 备份 / 维护（v0021 P0）
+    # ------------------------------------------------------------------
+    _TABLE_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+    def file_stats(self):
+        """数据库主文件/WAL/SHM 尺寸（诊断与维护前后对比用）。"""
+        with self._lock:
+            self._require_open()
+            result = {"path": self.path, "size": 0, "wal_size": 0,
+                      "shm_size": 0, "total_size": 0}
+            for key, suffix in (("size", ""), ("wal_size", "-wal"),
+                                ("shm_size", "-shm")):
+                try:
+                    result[key] = int(os.path.getsize(self.path + suffix))
+                except OSError:
+                    result[key] = 0
+            result["total_size"] = (result["size"] + result["wal_size"]
+                                    + result["shm_size"])
+            return result
+
+    def table_row_counts(self, tables):
+        """指定表的行数（表名白名单校验，避免拼接注入）。"""
+        counts = {}
+        with self._lock:
+            self._require_open()
+            for table in tables or ():
+                table = str(table)
+                if not self._TABLE_NAME_RE.match(table):
+                    continue
+                try:
+                    row = self._conn.execute(
+                        "SELECT COUNT(*) FROM " + table).fetchone()
+                    counts[table] = int(row[0]) if row is not None else 0
+                except sqlite3.Error:
+                    counts[table] = 0
+        return counts
+
+    def backup_to(self, target_path):
+        """sqlite3 在线备份 API（WAL 中已提交内容一并写入）。
+
+        备份文件是独立可打开的数据库，不依赖源库的 WAL/SHM。
+        """
+        target_path = os.path.abspath(target_path)
+        directory = os.path.dirname(target_path)
+        if directory:
+            os.makedirs(directory, exist_ok=True)
+        with self._lock:
+            self._require_open()
+            destination = sqlite3.connect(target_path)
+            try:
+                self._conn.backup(destination)
+                destination.commit()
+            finally:
+                destination.close()
+            try:
+                os.chmod(target_path, 0o600)
+            except OSError:
+                pass
+        return target_path
+
+    def optimize(self):
+        """PRAGMA optimize：更新查询计划统计（轻量、可在运行期执行）。"""
+        with self._lock:
+            self._require_open()
+            self._conn.execute("PRAGMA optimize")
+
+    def vacuum(self):
+        """VACUUM 重建数据库（不能在事务内执行；调用方需先检查磁盘空间）。"""
+        with self._lock:
+            self._require_open()
+            self._conn.execute("VACUUM")
 
     # ------------------------------------------------------------------
     # WAL checkpoint / 关闭

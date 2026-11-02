@@ -9,6 +9,7 @@ import os
 import platform
 import re
 import urllib.parse
+import uuid
 
 from . import config, similarity, timeutil, video_similarity
 from .errors import ApiError, forbidden, invalid, not_found, auth_required
@@ -184,6 +185,12 @@ class Api(object):
             ("GET", re.compile(r"^/api/preview$"), self._preview, False),
             ("GET", re.compile(r"^/api/logs$"), self._logs, False),
             ("GET", re.compile(r"^/api/logs/download$"), self._logs_download, False),
+            # v0021 P0：诊断 / 存储维护 / 删除任务历史（仅管理员）
+            ("GET", re.compile(r"^/api/diagnostics$"), self._diagnostics, False),
+            ("POST", re.compile(r"^/api/storage/backup$"), self._storage_backup, False),
+            ("POST", re.compile(r"^/api/storage/maintenance$"),
+             self._storage_maintenance, False),
+            ("GET", re.compile(r"^/api/deletions$"), self._deletions, False),
             # 云端字幕（管理员；POST /api/subtitles 等）
             ("POST", re.compile(r"^/api/subtitles$"),
              self._create_subtitle, False),
@@ -209,11 +216,17 @@ class Api(object):
             return self._dispatch(request)
         except ApiError as exc:
             return error_response(exc)
-        except Exception as exc:  # pragma: no cover - 防御性兜底
-            logger.exception("API 处理异常: %s %s", request.method, request.path)
-            return error_response(ApiError("INTERNAL_ERROR",
-                                           u"服务器内部错误: %s" % exc,
-                                           details={}))
+        except Exception:  # pragma: no cover - 防御性兜底
+            # v0021：全局异常绝不把异常文本/堆栈返回给客户端（可能含密钥）。
+            # 完整堆栈只写服务器日志；客户端只拿到固定中文提示 + request_id。
+            request_id = uuid.uuid4().hex[:16]
+            logger.exception("API 处理异常 [%s]: %s %s",
+                             request_id, request.method, request.path)
+            response = error_response(ApiError(
+                "INTERNAL_ERROR", u"服务器内部错误，请稍后重试",
+                details={"request_id": request_id}))
+            response.headers["X-Request-Id"] = request_id
+            return response
 
     def _dispatch(self, request):
         self._verify_origin(request)
@@ -392,6 +405,153 @@ class Api(object):
                                   {"keys": sorted(str(key) for key in patch)})
         return json_response({"ok": True,
                               "settings": public_settings(updated)})
+
+    # ------------------------------------------------------------------
+    # 诊断 / 存储维护 / 删除任务历史（v0021 P0；仅管理员）
+    # ------------------------------------------------------------------
+    def _require_admin(self, session, message=u"仅管理员可以执行该操作"):
+        if session is None or not getattr(session, "is_admin", False):
+            raise forbidden(message)
+        return session
+
+    def _diagnostics(self, request, session, params):
+        """只读运行诊断：DB/WAL、schema、行数、缓存、FFmpeg/ASR、活动任务。
+
+        密钥只返回是否已设置（布尔），绝不返回任何密钥值。
+        """
+        self._require_admin(session, u"仅管理员可以查看系统诊断")
+        store = self.services.store
+        settings = self.services.settings.get()
+        public = public_settings(settings)
+        database = store.database_info()
+        row_counts = store.table_row_counts()
+        feature_entries = store.feature_cache_len()
+        video_cache = video_similarity.video_cache_stats(self.config)
+        ffmpeg_info = video_similarity.probe_ffmpeg(self.config)
+        asr = video_similarity.asr_availability(
+            settings, ffmpeg_info.get("available"))
+        scan_counts = self.services.scanner.active_stats()
+        subtitle_counts = {"active": 0, "total": 0}
+        if self.services.subtitles is not None:
+            try:
+                subtitle_counts = self.services.subtitles.counts()
+            except Exception:
+                subtitle_counts = {"active": 0, "total": 0}
+        return json_response({
+            "ok": True,
+            "app_version": config.APP_VERSION,
+            "data_dir": self.config.data_dir,
+            "database": database,
+            "row_counts": row_counts,
+            "feature_cache": {"entries": int(feature_entries)},
+            "video_cache": video_cache,
+            "ffmpeg": {
+                "available": bool(ffmpeg_info.get("available")),
+                "path": ffmpeg_info.get("ffmpeg_path") or "",
+                "version": ffmpeg_info.get("ffmpeg_version") or "unavailable",
+                "hwaccels": list(ffmpeg_info.get("hwaccels") or []),
+                "gpu_hint": bool(ffmpeg_info.get("hwaccels")),
+            },
+            "asr": {
+                "enabled": bool(asr.get("enabled")),
+                "configured": bool(asr.get("configured")),
+                "available": bool(asr.get("available")),
+                "reason": asr.get("reason") or "",
+                "weight": asr.get("weight"),
+            },
+            "active": {
+                "scans": int(scan_counts.get("scans", 0) or 0),
+                "paused_scans": int(scan_counts.get("paused_scans", 0) or 0),
+                "subtitle_jobs": int(subtitle_counts.get("active", 0) or 0),
+            },
+            "keys": {
+                "subtitle_asr_api_key_set": bool(
+                    public.get("subtitle_asr_api_key_set")),
+                "subtitle_llm_api_key_set": bool(
+                    public.get("subtitle_llm_api_key_set")),
+            },
+        })
+
+    def _storage_backup(self, request, session, params):
+        """用 sqlite3 在线备份 API 生成 <var>/backups/ 下的独立备份（600）。"""
+        self._require_admin(session, u"仅管理员可以备份数据库")
+        try:
+            backup = self.services.store.backup_database()
+        except ApiError:
+            raise
+        except Exception:
+            request_id = uuid.uuid4().hex[:16]
+            logger.exception("数据库备份失败 [%s]", request_id)
+            raise ApiError("INTERNAL_ERROR", u"数据库备份失败，请稍后重试",
+                           details={"request_id": request_id})
+        self.services.store.audit("storage_backup", session.user, {
+            "filename": backup.get("filename"),
+            "size": backup.get("size"),
+        })
+        return json_response({"ok": True, "backup": backup})
+
+    def _storage_maintenance(self, request, session, params):
+        """WAL checkpoint(TRUNCATE) + PRAGMA optimize，可选 VACUUM（需确认）。"""
+        self._require_admin(session, u"仅管理员可以执行存储维护")
+        body = _json_body(request)
+        if body.get("confirm") is not True:
+            raise invalid(u"存储维护需要 confirm=true 确认")
+        vacuum = body.get("vacuum") is True
+        try:
+            result = self.services.store.maintenance(vacuum=vacuum)
+        except ApiError:
+            raise
+        except Exception:
+            request_id = uuid.uuid4().hex[:16]
+            logger.exception("存储维护失败 [%s]", request_id)
+            raise ApiError("INTERNAL_ERROR", u"存储维护失败，请稍后重试",
+                           details={"request_id": request_id})
+        self.services.store.audit("storage_maintenance", session.user, {
+            "vacuum": vacuum,
+            "reclaimed_bytes": result.get("reclaimed_bytes"),
+        })
+        return json_response({"ok": True, "maintenance": result})
+
+    _DELETION_JOB_FIELDS = (
+        "job_id", "scan_id", "plan_id", "status", "total", "done", "failed",
+        "skipped", "bytes_total", "bytes_done", "recycle", "started_at",
+        "finished_at", "started_epoch", "finished_epoch",
+    )
+
+    @classmethod
+    def _public_deletion_job(cls, job):
+        """删除任务历史的脱敏视图：不含 results、文件路径或密钥。"""
+        if not isinstance(job, dict):
+            return {}
+        data = {}
+        for key in cls._DELETION_JOB_FIELDS:
+            if key in job:
+                data[key] = job.get(key)
+        for key in ("total", "done", "failed", "skipped", "bytes_total",
+                    "bytes_done"):
+            try:
+                data[key] = int(data.get(key) or 0)
+            except (TypeError, ValueError):
+                data[key] = 0
+        data["files"] = data.get("total", 0)
+        data["deleted"] = data.get("done", 0)
+        data["bytes"] = data.get("bytes_total", 0)
+        data["recycle"] = bool(data.get("recycle"))
+        return data
+
+    def _deletions(self, request, session, params):
+        self._require_admin(session, u"仅管理员可以查看删除任务历史")
+        limit = _query_int(request, "limit", 50)
+        limit = max(1, min(int(limit), 500))
+        jobs = self.services.deletion.list_jobs(limit=limit)
+        public_jobs = [self._public_deletion_job(job) for job in jobs
+                       if isinstance(job, dict)]
+        return json_response({
+            "ok": True,
+            "limit": limit,
+            "total": len(public_jobs),
+            "jobs": public_jobs,
+        })
 
     # ------------------------------------------------------------------
     # 云端字幕（仅管理员）

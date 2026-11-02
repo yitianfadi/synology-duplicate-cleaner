@@ -134,6 +134,13 @@ subtitle_jobs(
 - 每 N 组批量事务；WAL checkpoint 在退出/低峰执行。
 - 数据库损坏：启动时备份 `dupcleaner.sqlite3.corrupt-<ts>` 并重建空库；旧 JSON 可重新导入。
 
+## 5. 诊断/备份/维护
+
+- GET /api/diagnostics（管理员）：DB/WAL/SHM、schema、表行数、缓存、FFmpeg/ASR、活动任务、密钥是否已设置；不返回密钥值。
+- POST /api/storage/backup（管理员）：sqlite3 backup API 生成 <var>/backups/dupcleaner-<ts>.sqlite3，权限 600。
+- POST /api/storage/maintenance（管理员，confirm=true）：WAL checkpoint(TRUNCATE) + PRAGMA optimize；vacuum=true 需空间检查。
+- 设置/TLS 文件 chmod 600；全局异常只返回固定文案+request_id。
+
 ## 5. 备份/升级
 
 - 升级/停止前执行 `PRAGMA wal_checkpoint(TRUNCATE)`；关闭连接。

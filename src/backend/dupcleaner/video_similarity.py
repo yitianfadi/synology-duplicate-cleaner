@@ -734,6 +734,30 @@ def probe_ffmpeg(runtime_config=None):
     return dict(info)
 
 
+def video_cache_stats(runtime_config):
+    """视频指纹缓存统计（诊断用；只读计数，不创建/迁移缓存文件）。"""
+    path = os.path.join(runtime_config.data_dir, config.VIDEO_CACHE_FILENAME)
+    result = {"path": path, "available": False, "entries": 0, "size": 0}
+    try:
+        result["size"] = int(os.path.getsize(path))
+    except OSError:
+        return result
+    result["available"] = True
+    try:
+        connection = sqlite3.connect(path, timeout=2.0)
+        try:
+            row = connection.execute(
+                "SELECT COUNT(*) FROM video_cache").fetchone()
+            result["entries"] = int(row[0]) if row is not None else 0
+        except sqlite3.Error:
+            result["entries"] = 0
+        finally:
+            connection.close()
+    except sqlite3.Error:
+        pass
+    return result
+
+
 def video_capabilities(runtime_config, settings=None):
     settings = settings or {}
     info = probe_ffmpeg(runtime_config)

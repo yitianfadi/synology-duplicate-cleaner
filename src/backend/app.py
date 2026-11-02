@@ -55,6 +55,9 @@ def create_server(runtime_config=None, services=None):
     httpd.runtime_config = cfg
     httpd.services = services
     if cfg.tls_enabled:
+        # 加载 TLS 前再次收紧证书/私钥权限（防升级后权限被放宽）。
+        config.secure_permissions(cfg.tls_cert)
+        config.secure_permissions(cfg.tls_key)
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         context.load_cert_chain(cfg.tls_cert, cfg.tls_key)
         httpd.socket = context.wrap_socket(httpd.socket, server_side=True)

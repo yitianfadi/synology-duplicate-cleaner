@@ -1965,3 +1965,133 @@ input[type="checkbox"]:disabled { cursor: not-allowed; }
 .tree-row.is-inherited { background: rgba(11, 127, 171, 0.04); }
 .tree-row.is-inherited .tree-check { opacity: 0.72; }
 .tree-row.is-inherited .tree-note { color: #6b7c88; }
+
+/* ==========================================================================
+   v0021 任务中心：标签页 / 删除任务 / 存储诊断
+   ========================================================================== */
+.task-tabs {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  margin: 0 0 4px;
+  border-bottom: 1px solid var(--border);
+  -webkit-overflow-scrolling: touch;
+}
+.task-tab {
+  appearance: none;
+  -webkit-appearance: none;
+  flex: 0 0 auto;
+  margin-bottom: -1px;
+  padding: 10px 16px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.task-tab:hover { color: var(--text); background: var(--card-soft); }
+.task-tab.is-active,
+.task-tab[aria-selected="true"] {
+  color: var(--primary);
+  border-bottom-color: var(--primary);
+  background: var(--card);
+  font-weight: 700;
+}
+.task-tab:focus-visible { outline: 2px solid var(--primary); outline-offset: -3px; }
+
+.task-panel { padding-top: 16px; }
+.task-panel[hidden] { display: none !important; }
+.task-panel:focus { outline: none; }
+
+.deletion-jobs-panel .card-head,
+.storage-diagnostics-panel .card-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.deletion-jobs-panel .card-head h2,
+.storage-diagnostics-panel .card-head h2 { margin: 0; }
+.deletion-jobs-panel .card-head .muted,
+.storage-diagnostics-panel .card-head .muted { margin-left: auto; }
+.deletion-jobs-panel .state-box,
+.storage-diagnostics-panel .state-box { margin: 10px 0 0; }
+.deletion-jobs-panel .hint,
+.storage-diagnostics-panel .hint { margin-top: 10px; }
+.deletion-scan-id {
+  display: inline-block;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+  font-size: 11.5px;
+}
+.deletion-failed { color: var(--danger); font-weight: 600; }
+
+.diag-summary { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.diag-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+.diag-section {
+  min-width: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--card-soft);
+}
+.diag-section h3 {
+  margin: 0 0 8px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+}
+.diag-list {
+  display: grid;
+  grid-template-columns: minmax(92px, 40%) minmax(0, 1fr);
+  gap: 6px 12px;
+  margin: 0;
+  font-size: 12.5px;
+}
+.diag-list dt { color: var(--muted); }
+.diag-list dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.diag-list dd .mono { font-size: 11.5px; word-break: break-all; }
+.diag-other { margin-top: 14px; }
+.diag-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+.diag-vacuum { flex: 1 1 100%; font-size: 12.5px; color: var(--text-soft); }
+.diag-value-ok { color: var(--success); font-weight: 600; }
+.diag-value-warn { color: var(--warning); font-weight: 600; }
+.diag-value-bad { color: var(--danger); font-weight: 600; }
+.storage-diagnostics-panel #storageActionResult { margin-top: 10px; }
+.storage-diagnostics-panel #storageActionResult p { margin: 0; }
+
+@media (max-width: 900px) {
+  .diag-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .diag-grid { grid-template-columns: minmax(0, 1fr); }
+  .deletion-scan-id { max-width: 150px; }
+}
+@media (max-width: 560px) {
+  .task-tab { padding: 9px 12px; font-size: 13px; }
+  .diag-summary { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+  .diag-list { grid-template-columns: minmax(0, 1fr); gap: 2px; }
+  .diag-list dt { margin-top: 5px; }
+  .diag-list dd { margin-bottom: 3px; }
+  .diag-actions .btn { flex: 1 1 auto; }
+}

@@ -725,6 +725,18 @@ class SubtitleService(object):
         jobs.sort(key=lambda item: item.created_epoch, reverse=True)
         return [item.snapshot() for item in jobs[:max(1, int(limit or 50))]]
 
+    def counts(self):
+        """任务状态计数（诊断用；不返回任务内容）。"""
+        with self._lock:
+            jobs = list(self._jobs.values())
+        by_status = {}
+        for job in jobs:
+            status = job.status or "unknown"
+            by_status[status] = by_status.get(status, 0) + 1
+        active = sum(by_status.get(status, 0) for status in ACTIVE_STATUSES)
+        return {"active": active, "total": len(jobs),
+                "by_status": by_status}
+
     def get_file(self, job_id, name):
         self._get_job(job_id)
         if not isinstance(name, str) or not SUBTITLE_FILE_RE.match(name):

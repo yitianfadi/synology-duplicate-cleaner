@@ -734,6 +734,21 @@ class ScanManager(object):
             raise not_found(u"扫描不存在: %s" % scan_id)
         return meta
 
+    def active_stats(self):
+        """进程内扫描状态统计（诊断用；只读，不触发持久化）。"""
+        with self._lock:
+            states = list(self._states.values())
+        by_status = {}
+        for state in states:
+            status = state.status or "unknown"
+            by_status[status] = by_status.get(status, 0) + 1
+        active = sum(by_status.get(status, 0) for status in ACTIVE_STATUSES)
+        return {
+            "scans": active,
+            "paused_scans": by_status.get("paused", 0),
+            "known_scans": len(states),
+        }
+
     def _load_meta(self, scan_id):
         if not isinstance(scan_id, str) or not config.SCAN_ID_RE.match(scan_id):
             raise not_found(u"扫描不存在")

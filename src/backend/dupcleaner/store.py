@@ -21,6 +21,7 @@ import json
 import logging
 import os
 import re
+import shutil
 import tempfile
 import threading
 import time
@@ -56,6 +57,7 @@ class Store(object):
         self.plans_dir = os.path.join(self.data_dir, "plans")
         self.logs_dir = os.path.join(self.data_dir, "logs")
         self.tmp_dir = os.path.join(self.data_dir, "tmp")
+        self.backups_dir = os.path.join(self.data_dir, "backups")
         for path in (self.data_dir, self.scans_dir, self.deletions_dir,
                      self.plans_dir, self.logs_dir, self.tmp_dir):
             os.makedirs(path, exist_ok=True)
@@ -76,7 +78,7 @@ class Store(object):
     # ------------------------------------------------------------------
     # 基础原子读写（settings/审计等文件数据）
     # ------------------------------------------------------------------
-    def _atomic_write(self, path, data):
+    def _atomic_write(self, path, data, mode=None):
         directory = os.path.dirname(path) or self.data_dir
         os.makedirs(directory, exist_ok=True)
         fd, tmp_path = tempfile.mkstemp(prefix=".tmp-", suffix=".part", dir=directory)
@@ -86,6 +88,12 @@ class Store(object):
                 handle.flush()
                 try:
                     os.fsync(handle.fileno())
+                except OSError:
+                    pass
+            # 敏感文件在替换前就设好权限，避免出现短暂的宽权限窗口。
+            if mode is not None:
+                try:
+                    os.chmod(tmp_path, mode)
                 except OSError:
                     pass
             os.replace(tmp_path, path)
@@ -115,10 +123,15 @@ class Store(object):
     # 设置
     # ------------------------------------------------------------------
     def load_settings(self):
+        # settings.json 可能包含云端 ASR/LLM 密钥：读取时收紧为 600。
+        config.secure_permissions(self._settings_path)
         return self.read_json(self._settings_path, None)
 
     def save_settings(self, settings):
-        self.write_json(self._settings_path, settings)
+        payload = json.dumps(settings, ensure_ascii=False, indent=1).encode("utf-8")
+        self._atomic_write(self._settings_path, payload,
+                           mode=config.SECURE_FILE_MODE)
+        config.secure_permissions(self._settings_path)
 
     # ------------------------------------------------------------------
     # 审计日志（append-only JSONL）
@@ -986,6 +999,98 @@ class Store(object):
             legacy.append(meta)
         legacy.sort(key=lambda item: item.get("started_epoch") or 0, reverse=True)
         return legacy[:limit]
+
+    # ------------------------------------------------------------------
+    # 诊断 / 备份 / 维护（v0021 P0）
+    # ------------------------------------------------------------------
+    DIAGNOSTIC_TABLES = ("scans", "scan_groups", "scan_files",
+                         "feature_cache", "subtitle_jobs")
+
+    def database_info(self):
+        """数据库路径/尺寸/schema 版本（只读；不做 checkpoint 以免影响运行）。"""
+        stats = self.db.file_stats()
+        return {
+            "path": stats["path"],
+            "size": stats["size"],
+            "wal_size": stats["wal_size"],
+            "shm_size": stats["shm_size"],
+            "total_size": stats["total_size"],
+            "schema_version": self.db.schema_version(),
+        }
+
+    def table_row_counts(self, tables=None):
+        return self.db.table_row_counts(tables or self.DIAGNOSTIC_TABLES)
+
+    def backup_database(self):
+        """用 sqlite3 在线备份 API 生成 <var>/backups/dupcleaner-<ts>.sqlite3。
+
+        备份文件权限 600，是独立可打开的数据库（含 WAL 中已提交内容）。
+        """
+        config.ensure_private_dir(self.backups_dir)
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        base = "dupcleaner-%s" % stamp
+        filename = base + ".sqlite3"
+        path = os.path.join(self.backups_dir, filename)
+        index = 1
+        while os.path.exists(path):
+            filename = "%s-%d.sqlite3" % (base, index)
+            path = os.path.join(self.backups_dir, filename)
+            index += 1
+        self.db.backup_to(path)
+        try:
+            size = int(os.path.getsize(path))
+        except OSError:
+            size = 0
+        return {
+            "filename": filename,
+            "path": path,
+            "size": size,
+            "schema_version": self.db.schema_version(),
+            "created_at": now_iso(),
+        }
+
+    def maintenance(self, vacuum=False):
+        """WAL checkpoint(TRUNCATE) + PRAGMA optimize；可选 VACUUM（先检查空间）。"""
+        before = self.db.file_stats()
+        if vacuum:
+            try:
+                free = int(shutil.disk_usage(self.data_dir).free)
+            except OSError:
+                free = 0
+            required = max(int(before["total_size"]) * 2,
+                           16 * 1024 * 1024)
+            if free < required:
+                raise ApiError(
+                    "INSUFFICIENT_SPACE",
+                    u"磁盘剩余空间不足，无法执行 VACUUM",
+                    details={"free_bytes": free, "required_bytes": required})
+        self.db.wal_checkpoint("TRUNCATE")
+        self.db.optimize()
+        vacuumed = False
+        if vacuum:
+            self.db.vacuum()
+            vacuumed = True
+            self.db.wal_checkpoint("TRUNCATE")
+        after = self.db.file_stats()
+        return {
+            "checkpoint": "truncate",
+            "optimized": True,
+            "vacuumed": vacuumed,
+            "before": {
+                "db_size": before["size"],
+                "wal_size": before["wal_size"],
+                "shm_size": before["shm_size"],
+                "total_size": before["total_size"],
+            },
+            "after": {
+                "db_size": after["size"],
+                "wal_size": after["wal_size"],
+                "shm_size": after["shm_size"],
+                "total_size": after["total_size"],
+            },
+            "reclaimed_bytes": max(0, int(before["total_size"])
+                                   - int(after["total_size"])),
+        }
 
     # ------------------------------------------------------------------
     # 内容特征缓存（SQLite；FeatureCache 通过这里持久化）

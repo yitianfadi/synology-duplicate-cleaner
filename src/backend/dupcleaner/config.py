@@ -7,12 +7,16 @@ import os
 import re
 
 APP_NAME = "DuplicateCleaner"
-APP_VERSION = "1.1.0-0020"
+APP_VERSION = "1.1.0-0021"
 DISPLAY_NAME = "重复文件清理与字幕"
-SPK_VERSION = "1.1.0-0020"
+SPK_VERSION = "1.1.0-0021"
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8787
+
+# 敏感文件（settings.json / TLS 证书与私钥）权限：仅属主可读写。
+SECURE_FILE_MODE = 0o600
+SECURE_DIR_MODE = 0o700
 
 SESSION_COOKIE = "dc_session"
 SESSION_TTL_SECONDS = 28800
@@ -153,6 +157,31 @@ PLAN_ID_RE = re.compile(r"^plan-[A-Za-z0-9._-]{6,80}$")
 JOB_ID_RE = re.compile(r"^del-[A-Za-z0-9._-]{6,80}$")
 
 
+def secure_permissions(path, mode=SECURE_FILE_MODE):
+    """把敏感文件权限收紧为 600（失败不阻断；Windows 只支持只读位）。"""
+    if not path:
+        return False
+    try:
+        if os.path.exists(path):
+            os.chmod(path, mode)
+            return True
+    except OSError:
+        pass
+    return False
+
+
+def ensure_private_dir(path):
+    """创建仅属主可访问的私有目录（备份目录等）。"""
+    if not path:
+        return False
+    try:
+        os.makedirs(path, exist_ok=True)
+        os.chmod(path, SECURE_DIR_MODE)
+        return True
+    except OSError:
+        return False
+
+
 def default_web_dir():
     """默认静态资源目录：<repo>/src/web（app.py 位于 <repo>/src/backend）。"""
     here = os.path.dirname(os.path.abspath(__file__))
@@ -199,6 +228,9 @@ class RuntimeConfig(object):
 
         self.tls_cert = tls_cert or None
         self.tls_key = tls_key or None
+        # TLS 证书/私钥在加载时收紧权限（私钥绝不允许组/其他用户可读）。
+        secure_permissions(self.tls_cert)
+        secure_permissions(self.tls_key)
         self.host = host or DEFAULT_HOST
         self.port = int(port if port is not None else DEFAULT_PORT)
 

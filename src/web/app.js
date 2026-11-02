@@ -194,6 +194,10 @@
     picker: null,
     preview: { urls: [], abort: null },
     historyCache: null,
+    // 任务中心标签页：history / subtitles / deletions / storage
+    taskTab: 'history',
+    deletionJobs: { list: [], loading: false, loaded: false, lastError: '' },
+    diagnostics: { data: null, loading: false, loaded: false, busy: false },
     logsLoaded: false,
     settingsLoaded: false,
     logsLimit: 50
@@ -249,6 +253,16 @@
     'subtitleLlmBaseUrl subtitleLlmBaseUrlError subtitleLlmModel subtitleLlmModelError subtitleLlmApiKey ' +
     'subtitleLlmApiKeyError subtitleLlmKeySetBadge subtitleClearLlmKey subtitleTranslateTarget subtitleTranslateTimeout ' +
     'subtitleTranslateTimeoutError subtitleTranslateBatchSize subtitleTranslateBatchSizeError ' +
+    'taskTabHistory taskTabSubtitles taskTabDeletions taskTabStorage ' +
+    'taskPanelHistory taskPanelSubtitles taskPanelDeletions taskPanelStorage ' +
+    'deletionJobsPanel deletionJobsHeading deletionJobsStatus deletionJobsRefreshBtn ' +
+    'deletionJobsLoading deletionJobsError deletionJobsEmpty deletionJobsList ' +
+    'deletionJobsTable deletionJobsTableWrap ' +
+    'storagePanel storagePanelHeading storageStatus storageRefreshBtn storageLoading storageError ' +
+    'storageContent storageSummary storageDbList storageTablesList storageCachesList ' +
+    'storageMediaList storageRuntimeList storageKeysList storageOtherSection storageOtherList ' +
+    'storageBackupBtn storageMaintenanceBtn storageMaintenanceVacuum ' +
+    'storageActionLoading storageActionResult ' +
     'footerMeta toastRoot modalRoot').split(' ');
 
   var activeModal = null;
@@ -980,9 +994,83 @@
       if (heading) { heading.setAttribute('tabindex', '-1'); focusSoon(heading); }
     }
     if (view !== 'history') { stopSubtitleJobsPolling(); }
-    if (view === 'history') { loadHistory(); loadSubtitleJobs(); }
+    if (view === 'history') { setTaskTab(state.taskTab, { load: true }); }
     else if (view === 'logs') { loadLogs(); }
     else if (view === 'settings') { loadSettingsPage(); }
+  }
+
+  // ==================== 7.1 任务中心标签页（键盘 / aria 可访问） ====================
+  var TASK_TABS = ['history', 'subtitles', 'deletions', 'storage'];
+
+  function normalizeTaskTab(tab) {
+    return TASK_TABS.indexOf(tab) === -1 ? 'history' : tab;
+  }
+
+  function taskTabButtonId(tab) {
+    return 'taskTab' + tab.charAt(0).toUpperCase() + tab.slice(1);
+  }
+
+  /**
+   * 切换任务中心标签页：更新 aria-selected / roving tabindex / 面板 hidden，
+   * 并按标签页懒加载数据（字幕任务仅在选中时轮询）。
+   */
+  function setTaskTab(tab, options) {
+    options = options || {};
+    tab = normalizeTaskTab(tab);
+    state.taskTab = tab;
+    $$('.task-tab').forEach(function (btn) {
+      var selected = btn.dataset.taskTab === tab;
+      btn.setAttribute('aria-selected', selected ? 'true' : 'false');
+      btn.tabIndex = selected ? 0 : -1;
+      if (selected) { btn.classList.add('is-active'); }
+      else { btn.classList.remove('is-active'); }
+    });
+    $$('.task-panel').forEach(function (panel) {
+      panel.hidden = panel.dataset.taskPanel !== tab;
+    });
+    if (tab !== 'subtitles') { stopSubtitleJobsPolling(); }
+    if (options.focus) {
+      var btn = byId(taskTabButtonId(tab));
+      if (btn) {
+        try { btn.focus({ preventScroll: true }); } catch (e) { btn.focus(); }
+      }
+    }
+    if (options.load !== false) { loadTaskTab(tab, options); }
+  }
+
+  function loadTaskTab(tab, options) {
+    options = options || {};
+    tab = normalizeTaskTab(tab);
+    if (tab === 'history') { loadHistory(); }
+    else if (tab === 'subtitles') { loadSubtitleJobs(); }
+    else if (tab === 'deletions') { loadDeletionJobs(); }
+    else if (tab === 'storage' && (!state.diagnostics.loaded || options.force)) { loadDiagnostics(); }
+  }
+
+  function refreshTaskCenter() {
+    loadTaskTab(state.taskTab, { force: true });
+  }
+
+  function bindTaskTabs() {
+    var tablist = $('.task-tabs');
+    if (!tablist) { return; }
+    $$('.task-tab', tablist).forEach(function (btn) {
+      btn.addEventListener('click', function () { setTaskTab(btn.dataset.taskTab, { load: true }); });
+    });
+    tablist.addEventListener('keydown', function (event) {
+      var current = event.target;
+      if (!current || current.getAttribute('role') !== 'tab') { return; }
+      var index = TASK_TABS.indexOf(current.dataset.taskTab);
+      if (index === -1) { return; }
+      var next = index;
+      if (event.key === 'ArrowRight') { next = (index + 1) % TASK_TABS.length; }
+      else if (event.key === 'ArrowLeft') { next = (index - 1 + TASK_TABS.length) % TASK_TABS.length; }
+      else if (event.key === 'Home') { next = 0; }
+      else if (event.key === 'End') { next = TASK_TABS.length - 1; }
+      else { return; }
+      event.preventDefault();
+      setTaskTab(TASK_TABS[next], { focus: true, load: true });
+    });
   }
 
   function initialViewFromHash() {
@@ -6297,7 +6385,7 @@
 
   function scheduleSubtitleJobsPoll() {
     stopSubtitleJobsPolling();
-    if (state.view !== 'history' || !state.subtitleJobs) { return; }
+    if (state.view !== 'history' || state.taskTab !== 'subtitles' || !state.subtitleJobs) { return; }
     if (!anyActiveSubtitleJob(state.subtitleJobs.list)) { return; }
     state.subtitleJobs.timer = setTimeout(function () {
       state.subtitleJobs.timer = null;
@@ -6666,8 +6754,8 @@
   }
 
   function goToSubtitleJobs() {
+    state.taskTab = 'subtitles';
     setView('history');
-    loadSubtitleJobs();
     setTimeout(function () {
       if (els.subtitleJobsPanel) { scrollToNode(els.subtitleJobsPanel); }
     }, 350);
@@ -6812,11 +6900,565 @@
     });
   }
 
+  // ---------- 删除任务历史（GET /api/deletions?limit=20） ----------
+  var DELETION_STATUS_LABEL = {
+    queued: '排队中', running: '删除中', completed: '已完成',
+    partial: '部分完成', failed: '失败', stopped: '已停止', cancelled: '已取消'
+  };
+  var DELETION_STATUS_BADGE = {
+    queued: 'badge-gray', running: 'badge-blue', completed: 'badge-green',
+    partial: 'badge-amber', failed: 'badge-red', stopped: 'badge-gray', cancelled: 'badge-gray'
+  };
+
+  function normalizeDeletionJobsResponse(res) {
+    if (!res) { return []; }
+    if (Array.isArray(res)) { return res; }
+    var keys = ['jobs', 'deletions', 'items', 'data', 'results'];
+    for (var i = 0; i < keys.length; i += 1) {
+      if (Array.isArray(res[keys[i]])) { return res[keys[i]]; }
+    }
+    return [];
+  }
+
+  function deletionJobNumber(job, keys) {
+    for (var i = 0; i < keys.length; i += 1) {
+      var value = job[keys[i]];
+      if (value !== undefined && value !== null && value !== '') {
+        var num = Number(value);
+        if (isFinite(num)) { return num; }
+      }
+    }
+    return null;
+  }
+
+  function deletionJobText(job, keys) {
+    for (var i = 0; i < keys.length; i += 1) {
+      var value = job[keys[i]];
+      if (value !== undefined && value !== null && value !== '') { return String(value); }
+    }
+    return '';
+  }
+
+  function deletionJobStartedText(job) {
+    var iso = deletionJobText(job, ['started_at', 'created_at', 'started']);
+    if (iso) { return fmtDateTime(iso); }
+    var epoch = deletionJobNumber(job, ['started_epoch', 'created_epoch']);
+    if (epoch !== null && epoch > 0) {
+      try { return fmtDateTime(new Date(epoch * 1000).toISOString()); } catch (e) { return '—'; }
+    }
+    return '—';
+  }
+
+  async function loadDeletionJobs() {
+    if (!els.deletionJobsList || state.deletionJobs.loading) { return; }
+    state.deletionJobs.loading = true;
+    setHidden(els.deletionJobsLoading, false);
+    setHidden(els.deletionJobsError, true);
+    setHidden(els.deletionJobsEmpty, true);
+    try {
+      var res = await api('/api/deletions?limit=20', { timeout: 15000 });
+      var jobs = normalizeDeletionJobsResponse(res).filter(function (job) {
+        return job && (job.job_id || job.scan_id);
+      });
+      state.deletionJobs.list = jobs;
+      state.deletionJobs.loaded = true;
+      state.deletionJobs.lastError = '';
+      renderDeletionJobs(jobs);
+    } catch (err) {
+      var message = errorMessage(err, '加载删除任务失败，请稍后重试。');
+      if (err && err.status === 404) {
+        message = '当前后端未提供删除任务历史接口；升级后端后可用。';
+      } else if (err && err.status === 403) {
+        message = '仅管理员可查看删除任务历史。';
+      }
+      state.deletionJobs.lastError = message;
+      clear(els.deletionJobsList);
+      setHidden(els.deletionJobsTableWrap, true);
+      setText(els.deletionJobsStatus, '');
+      setText(els.deletionJobsError, message);
+      setHidden(els.deletionJobsError, false);
+    } finally {
+      state.deletionJobs.loading = false;
+      setHidden(els.deletionJobsLoading, true);
+    }
+  }
+
+  function renderDeletionJobs(jobs) {
+    clear(els.deletionJobsList);
+    setText(els.deletionJobsStatus, jobs.length ? '共 ' + fmtInt(jobs.length) + ' 个任务' : '');
+    if (!jobs.length) {
+      setHidden(els.deletionJobsTableWrap, true);
+      setHidden(els.deletionJobsEmpty, false);
+      return;
+    }
+    setHidden(els.deletionJobsEmpty, true);
+    setHidden(els.deletionJobsTableWrap, false);
+    jobs.forEach(function (job) {
+      els.deletionJobsList.appendChild(renderDeletionJobRow(job));
+    });
+  }
+
+  function renderDeletionJobRow(job) {
+    var status = String(job.status || (job.finished_at ? 'completed' : 'running'));
+    var files = deletionJobNumber(job, ['files', 'total', 'file_count', 'total_files']);
+    var deleted = deletionJobNumber(job, ['deleted', 'done', 'deleted_files', 'ok_count']);
+    var failed = deletionJobNumber(job, ['failed', 'failed_files', 'error_count']);
+    var bytes = deletionJobNumber(job, ['bytes', 'bytes_done', 'bytes_total', 'deleted_bytes']);
+    var scanId = deletionJobText(job, ['scan_id']);
+    var row = el('tr');
+    row.appendChild(el('td', { className: 'nowrap', text: deletionJobStartedText(job) }));
+    row.appendChild(el('td', {}, [
+      scanId
+        ? el('span', { className: 'mono deletion-scan-id', attrs: { title: scanId }, text: scanId })
+        : el('span', { className: 'muted', text: '—' })
+    ]));
+    row.appendChild(el('td', {}, [
+      el('span', {
+        className: 'badge ' + (DELETION_STATUS_BADGE[status] || 'badge-gray'),
+        text: DELETION_STATUS_LABEL[status] || status
+      })
+    ]));
+    row.appendChild(el('td', { className: 'nowrap', text: files === null ? '—' : fmtInt(files) }));
+    row.appendChild(el('td', { className: 'nowrap', text: deleted === null ? '—' : fmtInt(deleted) }));
+    row.appendChild(el('td', {
+      className: 'nowrap' + (failed ? ' deletion-failed' : ''),
+      text: failed === null ? '—' : fmtInt(failed)
+    }));
+    row.appendChild(el('td', { className: 'nowrap', text: bytes === null ? '—' : fmtBytes(bytes) }));
+    var actionCell = el('td', { className: 'nowrap' });
+    if (scanId) {
+      var openBtn = el('button', {
+        className: 'btn btn-ghost btn-sm', attrs: { type: 'button' }, text: '打开扫描'
+      });
+      openBtn.addEventListener('click', function () { openDeletionScan(scanId, openBtn); });
+      actionCell.appendChild(openBtn);
+    } else {
+      actionCell.appendChild(el('span', { className: 'muted', text: '—' }));
+    }
+    row.appendChild(actionCell);
+    return row;
+  }
+
+  async function openDeletionScan(scanId, button) {
+    if (!scanId) { return; }
+    var cached = (state.historyCache || []).filter(function (scan) {
+      return scan && scan.scan_id === scanId;
+    })[0];
+    if (cached) { openHistoryScan(cached); return; }
+    if (button) { setBusy(button, true, '正在打开…'); }
+    try {
+      var res = await api('/api/scans/' + encodePath(scanId), { timeout: 15000 });
+      if (res && res.scan) { openHistoryScan(res.scan); }
+      else { toast('未找到对应的扫描任务，可能已被清理。', 'error'); }
+    } catch (err) {
+      toast(errorMessage(err, '打开扫描任务失败，请稍后重试。'), 'error', 6000);
+    } finally {
+      if (button) { setBusy(button, false); }
+    }
+  }
+
+  // ---------- 存储诊断（GET /api/diagnostics、备份、维护） ----------
+  function diagLooseValue(data, paths) {
+    for (var i = 0; i < paths.length; i += 1) {
+      var parts = paths[i].split('.');
+      var node = data;
+      var ok = true;
+      for (var j = 0; j < parts.length; j += 1) {
+        if (!node || typeof node !== 'object' || node[parts[j]] === undefined) { ok = false; break; }
+        node = node[parts[j]];
+      }
+      if (ok && node !== undefined && node !== null) { return node; }
+    }
+    return undefined;
+  }
+
+  function diagIsSensitivePath(pathText) {
+    return /(?:^|[._-])(?:key|keys|secret|token|password|passwd|credential|authorization)(?:$|[._-])/i.test(String(pathText || '')) ||
+      /api_key|api-key|access_key|private_key/i.test(String(pathText || ''));
+  }
+
+  function diagBoolText(value) {
+    if (value === true) { return '是'; }
+    if (value === false) { return '否'; }
+    return '—';
+  }
+
+  function diagBoolClass(value) {
+    return value === true ? 'diag-value-ok' : 'diag-value-warn';
+  }
+
+  function diagText(value, opts) {
+    opts = opts || {};
+    if (value === undefined || value === null || value === '') { return '—'; }
+    if (typeof value === 'boolean') { return diagBoolText(value); }
+    if (typeof value === 'number') { return opts.bytes ? fmtBytes(value) : fmtInt(value); }
+    if (Array.isArray(value)) {
+      var items = value.map(function (item) {
+        if (item === null || item === undefined || typeof item === 'object') { return ''; }
+        return String(item);
+      }).filter(function (text) { return text; });
+      return items.length ? items.join('、') : '—';
+    }
+    if (typeof value === 'object') { return '—'; }
+    return String(value);
+  }
+
+  function diagRow(label, value, opts) {
+    opts = opts || {};
+    var text = diagText(value, opts);
+    return {
+      label: label,
+      text: (text === undefined || text === null || text === '') ? '—' : String(text),
+      mono: !!opts.mono,
+      cls: opts.cls || ''
+    };
+  }
+
+  function appendDiagRows(listEl, rows) {
+    if (!listEl) { return; }
+    clear(listEl);
+    rows.forEach(function (row) {
+      if (!row) { return; }
+      listEl.appendChild(el('dt', { text: row.label }));
+      var dd = el('dd');
+      dd.appendChild(el('span', {
+        className: (row.mono ? 'mono' : '') + (row.cls ? (row.mono ? ' ' : '') + row.cls : ''),
+        attrs: row.mono ? { title: row.text } : null,
+        text: row.text
+      }));
+      listEl.appendChild(dd);
+    });
+  }
+
+  function diagSummaryCard(label, value, iconName, cls, sub) {
+    return el('div', { className: 'summary-card' }, [
+      el('span', { className: 'summary-icon' + (cls ? ' ' + cls : '') }, [icon(iconName || 'info')]),
+      el('div', { className: 'summary-body' }, [
+        el('div', { className: 'summary-value', text: value }),
+        el('div', { className: 'summary-label', text: label }),
+        sub ? el('div', { className: 'summary-sub', text: sub }) : null
+      ])
+    ]);
+  }
+
+  function diagKeyLabel(key) {
+    var labels = {
+      subtitle_asr_api_key_set: 'ASR API Key',
+      subtitle_llm_api_key_set: 'LLM API Key',
+      asr_api_key_set: 'ASR API Key',
+      llm_api_key_set: 'LLM API Key'
+    };
+    if (labels[key]) { return labels[key]; }
+    return '密钥配置（' + String(key) + '）';
+  }
+
+  function diagFlattenExtra(object, prefix, out, depth) {
+    if (!object || typeof object !== 'object' || depth > 3) { return; }
+    Object.keys(object).forEach(function (key) {
+      var value = object[key];
+      var pathText = prefix + '.' + key;
+      if (diagIsSensitivePath(pathText)) { return; }
+      if (value && typeof value === 'object' && !Array.isArray(value)) {
+        diagFlattenExtra(value, pathText, out, depth + 1);
+      } else if (Array.isArray(value) && value.some(function (item) { return item && typeof item === 'object'; })) {
+        return;
+      } else {
+        out.push({ path: pathText, value: value });
+      }
+    });
+  }
+
+  function renderDiagnosticsOthers(diag) {
+    if (!els.storageOtherSection || !els.storageOtherList) { return; }
+    var knownTop = ['app_version', 'version', 'data_dir', 'database', 'db', 'row_counts',
+      'tables', 'feature_cache', 'video_cache', 'ffmpeg', 'asr', 'active', 'active_tasks',
+      'keys', 'paths', 'ok'];
+    var rows = [];
+    Object.keys(diag).forEach(function (key) {
+      if (knownTop.indexOf(key) !== -1 || diagIsSensitivePath(key)) { return; }
+      var value = diag[key];
+      if (value && typeof value === 'object' && !Array.isArray(value)) {
+        var flat = [];
+        diagFlattenExtra(value, key, flat, 0);
+        flat.forEach(function (item) {
+          if (!diagIsSensitivePath(item.path)) { rows.push(diagRow(item.path, item.value)); }
+        });
+      } else if (!(Array.isArray(value) && value.some(function (item) { return item && typeof item === 'object'; }))) {
+        rows.push(diagRow(key, value));
+      }
+    });
+    if (!rows.length) {
+      setHidden(els.storageOtherSection, true);
+      clear(els.storageOtherList);
+      return;
+    }
+    setHidden(els.storageOtherSection, false);
+    appendDiagRows(els.storageOtherList, rows.slice(0, 80));
+  }
+
+  function renderDiagnostics(payload) {
+    if (!els.storageContent) { return; }
+    var diag = payload && payload.diagnostics ? payload.diagnostics : payload;
+    if (!diag || typeof diag !== 'object' || Array.isArray(diag)) {
+      state.diagnostics.data = null;
+      setHidden(els.storageContent, true);
+      setText(els.storageError, '诊断接口未返回可显示的数据。');
+      setHidden(els.storageError, false);
+      return;
+    }
+    state.diagnostics.data = diag;
+    setHidden(els.storageError, true);
+    setHidden(els.storageContent, false);
+
+    var db = diag.database || diag.db || {};
+    var rowCounts = diag.row_counts || diag.tables || {};
+    var featureCache = diag.feature_cache || {};
+    var videoCache = diag.video_cache || {};
+    var ffmpeg = diag.ffmpeg || {};
+    var asr = diag.asr || (diag.subtitle && diag.subtitle.asr) || {};
+    var active = diag.active || diag.active_tasks || {};
+    var keys = diag.keys || {};
+    var appVersion = diagLooseValue(diag, ['app_version', 'version', 'app.version']);
+    var dataDir = diagLooseValue(diag, ['data_dir', 'data.path', 'paths.data_dir']);
+    var dbSize = diagLooseValue(db, ['total_size', 'size', 'file_size']);
+    var featureEntries = diagLooseValue(featureCache, ['entries', 'count']);
+    if (featureEntries === undefined) {
+      featureEntries = diagLooseValue(diag, ['feature_cache_entries', 'feature_cache_count']);
+    }
+    var videoEntries = diagLooseValue(videoCache, ['entries', 'count']);
+    var tableTotal = 0;
+    Object.keys(rowCounts).forEach(function (key) {
+      var num = Number(rowCounts[key]);
+      if (isFinite(num)) { tableTotal += num; }
+    });
+
+    clear(els.storageSummary);
+    els.storageSummary.appendChild(diagSummaryCard(
+      '应用版本', appVersion ? 'v' + appVersion : '—', 'info', '',
+      dataDir ? '数据目录已配置' : ''));
+    els.storageSummary.appendChild(diagSummaryCard(
+      '数据库总大小', dbSize !== undefined ? fmtBytes(dbSize) : '—', 'file', 'is-green',
+      'WAL ' + fmtBytes(diagLooseValue(db, ['wal_size', 'wal'])) + ' · SHM ' + fmtBytes(diagLooseValue(db, ['shm_size', 'shm']))));
+    els.storageSummary.appendChild(diagSummaryCard(
+      '表记录合计', fmtInt(tableTotal), 'search', 'is-amber',
+      '扫描 ' + fmtInt(rowCounts.scans || 0) + ' · 分组 ' + fmtInt(rowCounts.scan_groups || 0)));
+    els.storageSummary.appendChild(diagSummaryCard(
+      '缓存条目', fmtInt((Number(featureEntries) || 0) + (Number(videoEntries) || 0)), 'copy', '',
+      '特征 ' + fmtInt(featureEntries || 0) + ' · 视频 ' + fmtInt(videoEntries || 0)));
+
+    appendDiagRows(els.storageDbList, [
+      diagRow('数据库文件', diagLooseValue(db, ['path', 'file']), { mono: true }),
+      diagRow('数据库大小', diagLooseValue(db, ['size', 'db_size']), { bytes: true }),
+      diagRow('WAL 大小', diagLooseValue(db, ['wal_size', 'wal']), { bytes: true }),
+      diagRow('SHM 大小', diagLooseValue(db, ['shm_size', 'shm']), { bytes: true }),
+      diagRow('合计大小', diagLooseValue(db, ['total_size']), { bytes: true }),
+      diagRow('Schema 版本', diagLooseValue(db, ['schema_version', 'schema'])),
+      diagRow('数据目录', dataDir, { mono: true })
+    ]);
+
+    var tableLabel = {
+      scans: '扫描任务', scan_groups: '结果分组', scan_files: '结果文件',
+      feature_cache: '特征缓存', subtitle_jobs: '字幕任务', deletion_jobs: '删除任务',
+      scan_checkpoints: '扫描断点', subtitle_chunks: '字幕分块'
+    };
+    var tableRows = [];
+    Object.keys(rowCounts).forEach(function (key) {
+      var value = rowCounts[key];
+      if (value && typeof value === 'object') { return; }
+      tableRows.push(diagRow(tableLabel[key] || key, value));
+    });
+    if (!tableRows.length) { tableRows.push(diagRow('表行数', '后端未返回')); }
+    appendDiagRows(els.storageTablesList, tableRows);
+
+    appendDiagRows(els.storageCachesList, [
+      diagRow('特征缓存条目', featureEntries),
+      diagRow('视频指纹缓存可用', diagLooseValue(videoCache, ['available'])),
+      diagRow('视频指纹缓存条目', videoEntries),
+      diagRow('视频指纹缓存大小', diagLooseValue(videoCache, ['size']), { bytes: true }),
+      diagRow('视频缓存路径', diagLooseValue(videoCache, ['path']), { mono: true })
+    ]);
+
+    appendDiagRows(els.storageMediaList, [
+      diagRow('FFmpeg 可用', diagLooseValue(ffmpeg, ['available']),
+        { cls: diagBoolClass(diagLooseValue(ffmpeg, ['available'])) }),
+      diagRow('FFmpeg 版本', diagLooseValue(ffmpeg, ['version']), { mono: true }),
+      diagRow('FFmpeg 路径', diagLooseValue(ffmpeg, ['path']), { mono: true }),
+      diagRow('硬件加速', diagLooseValue(ffmpeg, ['hwaccels', 'hwaccel'])),
+      diagRow('GPU 提示', diagLooseValue(ffmpeg, ['gpu_hint'])),
+      diagRow('ASR 已启用', diagLooseValue(asr, ['enabled'])),
+      diagRow('ASR 已配置', diagLooseValue(asr, ['configured'])),
+      diagRow('ASR 可用', diagLooseValue(asr, ['available'])),
+      diagRow('ASR 原因', diagLooseValue(asr, ['reason'])),
+      diagRow('ASR 权重', diagLooseValue(asr, ['weight']))
+    ]);
+
+    appendDiagRows(els.storageRuntimeList, [
+      diagRow('运行中扫描', diagLooseValue(active, ['scans', 'active_scans'])),
+      diagRow('已暂停扫描', diagLooseValue(active, ['paused_scans', 'paused'])),
+      diagRow('运行中字幕任务', diagLooseValue(active, ['subtitle_jobs', 'subtitles']))
+    ]);
+
+    var keyRows = [];
+    Object.keys(keys).forEach(function (key) {
+      var value = keys[key];
+      var configured;
+      if (typeof value === 'boolean') { configured = value; }
+      else if (typeof value === 'number') { configured = value !== 0; }
+      else if (typeof value === 'string') { configured = value.length > 0; }
+      else { return; }
+      keyRows.push(diagRow(diagKeyLabel(key), configured ? '已配置' : '未配置',
+        { cls: configured ? 'diag-value-ok' : 'diag-value-warn' }));
+    });
+    if (!keyRows.length) {
+      keyRows.push(diagRow('密钥状态', '未配置或后端未返回'));
+    }
+    appendDiagRows(els.storageKeysList, keyRows);
+
+    renderDiagnosticsOthers(diag);
+    setText(els.storageStatus, '已加载 ' + fmtDateTime(new Date().toISOString()));
+  }
+
+  async function loadDiagnostics() {
+    if (!els.storageContent || state.diagnostics.loading) { return; }
+    state.diagnostics.loading = true;
+    setHidden(els.storageLoading, false);
+    setHidden(els.storageError, true);
+    try {
+      var res = await api('/api/diagnostics', { timeout: 15000 });
+      state.diagnostics.loaded = true;
+      renderDiagnostics(res);
+    } catch (err) {
+      var message = errorMessage(err, '读取存储诊断失败，请稍后重试。');
+      if (err && err.status === 404) {
+        message = '当前后端未提供存储诊断接口；升级后端后可用。';
+      } else if (err && err.status === 403) {
+        message = '仅管理员可查看存储诊断。';
+      }
+      state.diagnostics.data = null;
+      setHidden(els.storageContent, true);
+      setText(els.storageStatus, '');
+      setText(els.storageError, message);
+      setHidden(els.storageError, false);
+    } finally {
+      state.diagnostics.loading = false;
+      setHidden(els.storageLoading, true);
+    }
+  }
+
+  function setStorageActionBusy(busy) {
+    state.diagnostics.busy = !!busy;
+    if (els.storageBackupBtn) { setBusy(els.storageBackupBtn, !!busy); }
+    if (els.storageMaintenanceBtn) { setBusy(els.storageMaintenanceBtn, !!busy); }
+    if (els.storageRefreshBtn) { els.storageRefreshBtn.disabled = !!busy; }
+    setHidden(els.storageActionLoading, !busy);
+  }
+
+  function showStorageActionResult(text, isError) {
+    if (!els.storageActionResult) { return; }
+    clear(els.storageActionResult);
+    els.storageActionResult.className = 'state-box' + (isError ? ' state-error' : '');
+    els.storageActionResult.appendChild(el('p', { text: text }));
+    setHidden(els.storageActionResult, false);
+  }
+
+  async function startStorageBackup() {
+    if (state.diagnostics.busy) { return; }
+    var ok = await confirmDialog({
+      title: '备份数据库？',
+      message: '将在数据目录的 backups 子目录创建 SQLite 一致性备份；备份包含扫描元数据与缓存索引，不包含 API Key。备份完成前请勿重复操作。',
+      confirmText: '开始备份',
+      danger: false
+    });
+    if (!ok) { return; }
+    setStorageActionBusy(true);
+    try {
+      var res = await api('/api/storage/backup', { method: 'POST', body: {}, timeout: 120000 });
+      var backup = (res && (res.backup || res)) || {};
+      var pathText = backup.path || backup.file || backup.filename || '备份文件';
+      var parts = ['备份完成：' + pathText];
+      if (backup.size !== undefined && backup.size !== null) { parts.push('大小 ' + fmtBytes(backup.size)); }
+      if (backup.schema_version !== undefined && backup.schema_version !== null) {
+        parts.push('Schema v' + backup.schema_version);
+      }
+      showStorageActionResult(parts.join(' · '), false);
+      toast('数据库备份完成。', 'success');
+      await loadDiagnostics();
+    } catch (err) {
+      var message = errorMessage(err, '数据库备份失败，请稍后重试。');
+      if (err && err.status === 404) { message = '当前后端未提供数据库备份接口；升级后端后可用。'; }
+      else if (err && err.status === 403) { message = '仅管理员可执行数据库备份。'; }
+      showStorageActionResult(message, true);
+      toast(message, 'error', 6000);
+    } finally {
+      setStorageActionBusy(false);
+    }
+  }
+
+  async function startStorageMaintenance() {
+    if (state.diagnostics.busy) { return; }
+    var vacuum = !!(els.storageMaintenanceVacuum && els.storageMaintenanceVacuum.checked);
+    var message = '将执行 WAL 检查点（TRUNCATE）与 PRAGMA optimize' +
+      (vacuum ? '，并执行 VACUUM 压缩数据库（耗时更长，需要至少 2 倍数据库大小的可用空间）' : '') +
+      '。维护不会删除扫描结果，确定继续？';
+    var ok = await confirmDialog({
+      title: '执行存储维护？',
+      message: message,
+      confirmText: '开始维护',
+      danger: false
+    });
+    if (!ok) { return; }
+    setStorageActionBusy(true);
+    try {
+      var res = await api('/api/storage/maintenance', {
+        method: 'POST',
+        body: { confirm: true, vacuum: vacuum },
+        timeout: 180000
+      });
+      var m = (res && (res.maintenance || res)) || {};
+      var before = m.before || {};
+      var after = m.after || {};
+      var parts = ['维护完成：检查点 ' + (m.checkpoint || 'truncate')];
+      if (m.optimized) { parts.push('optimize 已执行'); }
+      parts.push(m.vacuumed ? 'VACUUM 已执行' : '未执行 VACUUM');
+      if (before.total_size !== undefined && after.total_size !== undefined) {
+        parts.push('数据库总大小 ' + fmtBytes(before.total_size) + ' → ' + fmtBytes(after.total_size));
+      }
+      if (m.reclaimed_bytes !== undefined && m.reclaimed_bytes !== null) {
+        parts.push('释放空间 ' + fmtBytes(m.reclaimed_bytes));
+      }
+      showStorageActionResult(parts.join('；'), false);
+      toast('存储维护完成。', 'success');
+      await loadDiagnostics();
+    } catch (err) {
+      var message = errorMessage(err, '存储维护失败，请稍后重试。');
+      if (err && err.code === 'INSUFFICIENT_SPACE') {
+        message = '磁盘可用空间不足，已跳过 VACUUM；可取消勾选 VACUUM 后重试。';
+      } else if (err && err.status === 404) {
+        message = '当前后端未提供存储维护接口；升级后端后可用。';
+      } else if (err && err.status === 403) {
+        message = '仅管理员可执行存储维护。';
+      }
+      showStorageActionResult(message, true);
+      toast(message, 'error', 6000);
+    } finally {
+      setStorageActionBusy(false);
+    }
+  }
+
   function bindHistoryEvents() {
-    els.historyRefreshBtn.addEventListener('click', function () { loadHistory(); loadSubtitleJobs(); });
+    if (els.historyRefreshBtn) { els.historyRefreshBtn.addEventListener('click', refreshTaskCenter); }
     if (els.subtitleJobsRefreshBtn) {
       els.subtitleJobsRefreshBtn.addEventListener('click', function () { loadSubtitleJobs(); });
     }
+    if (els.deletionJobsRefreshBtn) {
+      els.deletionJobsRefreshBtn.addEventListener('click', function () { loadDeletionJobs(); });
+    }
+    if (els.storageRefreshBtn) {
+      els.storageRefreshBtn.addEventListener('click', function () { loadDiagnostics(); });
+    }
+    if (els.storageBackupBtn) { els.storageBackupBtn.addEventListener('click', startStorageBackup); }
+    if (els.storageMaintenanceBtn) { els.storageMaintenanceBtn.addEventListener('click', startStorageMaintenance); }
+    bindTaskTabs();
   }
 
   // ==================== 16. 操作日志 ====================
