@@ -1,7 +1,7 @@
 # 打包、部署与运维（DSM 7 SPK）
 
-> 套件名：`DuplicateCleaner` · 版本：`1.1.0-0002` · 架构：`noarch`（Python 代码，无二进制）
-> 产物：`dist/DuplicateCleaner-1.1.0-0002.spk` + SHA256 校验文件
+> 套件名：`DuplicateCleaner` · 版本：`1.1.0-0003` · 架构：`noarch`（Python 代码，无二进制）
+> 产物：`dist/DuplicateCleaner-1.1.0-0003.spk` + SHA256 校验文件
 
 ## 1. 运行依赖与前置条件
 
@@ -9,7 +9,7 @@
 |---|---|---|
 | DSM | 7.0-40000 及以上 | `INFO` 的 `os_min_ver`；脚本会再次检查主版本为 7 |
 | Python | Python 3.8+ | DSM 7 不预装 Python 3；先在 **套件中心** 安装官方 **Python3**（或兼容的 Python 3.8+ 套件）。`preinst` 会检测并给出中文错误 |
-| 权限 | DSM administrators 组 | Web 界面登录需要管理员；后端以 root 读取共享文件夹、写 `#recycle` |
+| 权限 | DSM administrators 组 + 共享文件夹 ACL | Web 界面登录需要管理员；后端以系统内部用户 `duplicatecleaner` 运行，需在 DSM 中给该用户授予目标共享文件夹读取/写入权限 |
 | 文件系统 | Btrfs / EXT4 | 创建时间依赖 `statx` 的 btime；两类文件系统在 DSM 7 内核下均支持（EXT4 需 inode 256） |
 | 浏览器 | 支持 ES2019 | DSM 7 自带 Chrome/Firefox；无 CDN 依赖 |
 | 可选 Pillow | 非必需 | 相似模式的 JPEG/WebP 感知哈希优先使用 Pillow；未安装时自动降级为字节特征并标记低置信。PNG 使用标准库解码，无需 Pillow |
@@ -50,8 +50,8 @@ python build/build_spk.py
 产物：
 
 ```
-dist/DuplicateCleaner-1.1.0-0002.spk
-dist/DuplicateCleaner-1.1.0-0002.spk.sha256
+dist/DuplicateCleaner-1.1.0-0003.spk
+dist/DuplicateCleaner-1.1.0-0003.spk.sha256
 ```
 
 构建脚本做了：
@@ -79,7 +79,7 @@ rm -rf build/stage/package/app/tests build/stage/package/app/**/__pycache__
 cp -a src/web/. build/stage/package/web/
 cp -a spk/ui/. build/stage/package/ui/
 cp -a spk/port_conf/. build/stage/package/port_conf/
-echo "1.1.0-0002" > build/stage/package/VERSION
+echo "1.1.0-0003" > build/stage/package/VERSION
 # 2) package.tgz
 tar -czf build/stage/package.tgz -C build/stage/package .
 # 3) 外层
@@ -91,7 +91,7 @@ sed -i '/^checksum=/d' build/stage/spk/INFO
 echo "checksum=\"$MD5\"" >> build/stage/spk/INFO
 chmod 755 build/stage/spk/scripts/*
 # 4) 未压缩外层 tar
-tar -cf dist/DuplicateCleaner-1.1.0-0002.spk -C build/stage/spk .
+tar -cf dist/DuplicateCleaner-1.1.0-0003.spk -C build/stage/spk .
 ```
 
 > 注意：手工构建时 `ui/index.html` 里的 `__DUP_BACKEND_SCHEME__` 需要替换为 `http` 或 `https`；`ui` 必须在 package.tgz 里。
@@ -99,9 +99,9 @@ tar -cf dist/DuplicateCleaner-1.1.0-0002.spk -C build/stage/spk .
 ### 3.3 构建后自检
 
 ```bash
-tar -tf dist/DuplicateCleaner-1.1.0-0002.spk
+tar -tf dist/DuplicateCleaner-1.1.0-0003.spk
 # 应包含 INFO、package.tgz、PACKAGE_ICON.PNG、conf/*、scripts/*
-mkdir -p /tmp/dupcheck && tar -xf dist/DuplicateCleaner-1.1.0-0002.spk -C /tmp/dupcheck
+mkdir -p /tmp/dupcheck && tar -xf dist/DuplicateCleaner-1.1.0-0003.spk -C /tmp/dupcheck
 tar -tzf /tmp/dupcheck/package.tgz | head -50
 grep -E '^(package|version|os_min_ver|dsmuidir|dsmappname|adminport)=' /tmp/dupcheck/INFO
 python -m json.tool /tmp/dupcheck/conf/privilege
@@ -115,12 +115,13 @@ Windows 自带 `tar.exe`（bsdtar）也可执行 `tar -tf`、`tar -xf`。
 ### 4.1 上传安装
 
 1. DSM → **套件中心** → **手动安装**（右上角“手动安装”按钮）。
-2. 选择 `DuplicateCleaner-1.1.0-0002.spk`。
+2. 选择 `DuplicateCleaner-1.1.0-0003.spk`。
 3. 阅读风险提示/许可证；如 DSM 提示“未知发布者”，确认信任来源后继续。
    - DSM 7.2+ 若禁止未签名第三方套件，需在 **套件中心 → 设置 → 常规 → 信任层级** 调整为允许（或对套件签名，见 §9）。
 4. 安装前确认已安装 **Python3**；未安装会被 `preinst` 拒绝并提示。
-5. 安装完成后，套件中心显示“重复文件清理”；启动套件。
-6. 打开方式二选一：
+5. 安装完成后，套件中心显示“重复文件清理”。
+6. **授权共享文件夹（首次必做）**：控制面板 → 共享文件夹 → 编辑 → 权限 → 系统内部用户 → `duplicatecleaner` → 读取（扫描）或读取/写入（删除）。详见 §6。
+7. 启动套件，打开方式二选一：
    - DSM 主菜单 → **重复文件清理**（`ui/config` 桌面入口，跳转到 8787）；
    - 套件中心 → 打开（`adminport=8787`）。
 
@@ -157,7 +158,7 @@ sudo synopkg stop DuplicateCleaner
 
 ```
 /var/packages/DuplicateCleaner/target/      只读程序（app/, web/, ui/, port_conf/）
-/var/packages/DuplicateCleaner/var/         数据（root:root 700）
+/var/packages/DuplicateCleaner/var/         数据（duplicatecleaner:duplicatecleaner 700）
   config.json                               设置（无密码）
   scans/*.json                              扫描报告
   plans/*.json                              删除计划（5 分钟）
@@ -181,29 +182,70 @@ sudo synopkg stop DuplicateCleaner
 
 ## 6. 权限模型（必读）
 
-- `conf/privilege` 设置 `"run-as": "root"`。原因：
-  1. 读取所有共享文件夹（普通套件用户默认无权限）；
-  2. 读取 `/usr/syno/etc` / 调用 `synoshare` / 读取 btime；
-  3. 在共享文件夹根写入 `#recycle`。
-- 这是高风险权限。代码通过以下方式收敛风险：
-  - 只暴露经过 DSM 管理员认证的 Web 会话；
-  - 路径白名单（共享文件夹根）+ 系统目录黑名单；
-  - 扫描/删除均不跟随 symlink；
-  - 删除前完整重校验 + 两次确认 + 服务端 `confirm=DELETE`；
-  - 默认回收站而非永久删除；
-  - 审计日志。
-- 如只需扫描、不允许删除：当前版本没有独立只读模式；可在扫描后不使用“删除”按钮。后续可在 `config.json` 增加 `read_only` 开关并由后端强制拒绝删除接口。
+本版本**不再以 root 运行**（DSM 7 会拒绝安装 root 第三方套件）。`conf/privilege` 使用：
+
+```json
+{
+  "defaults": { "run-as": "package" },
+  "username": "duplicatecleaner",
+  "groupname": "duplicatecleaner"
+}
+```
+
+安装后套件以系统内部用户 **`duplicatecleaner`** 运行。首次使用前必须授权共享文件夹：
+
+1. **控制面板 → 共享文件夹 → 选择目标共享文件夹 → 编辑 → 权限**。
+2. 权限对象下拉选择 **系统内部用户**。
+3. 找到 **`duplicatecleaner`**：
+   - 只扫描/预览：授予 **读取**；
+   - 需要删除/移入回收站：授予 **读取/写入**。
+4. 确定。若目标在子目录，父目录需要至少“遍历/列出”权限。
+
+也可在 **File Station → 目标目录 → 属性 → 权限** 中单独授权。权限是 DSM/Windows ACL，
+不是简单的 Unix chmod；请优先用 DSM 图形界面设置。
+
+为什么需要授权：套件后端要读取文件内容计算哈希/特征，并在删除时把文件移动到
+`<共享文件夹>/#recycle/@duplicate-cleaner/...`。没有授权时目录选择器/扫描会提示权限不足，
+不会静默跳过或删除。若回收站提示不可用，请确认 `duplicatecleaner` 对 `#recycle` 也有写入权限（授权时应用到子文件夹/文件），
+或先改用永久删除（需二次确认）。
+
+其他安全收敛：
+
+- 只暴露经过 DSM 管理员认证的 Web 会话；
+- 路径白名单（共享文件夹根）+ 系统目录黑名单；
+- 扫描/删除均不跟随 symlink；
+- 删除前完整重校验 + 两次确认 + 服务端 `confirm=DELETE`；
+- 默认回收站而非永久删除；
+- 审计日志。
+
+如只需扫描、不允许删除：只授予“读取”即可（删除计划会因写入失败被跳过）。
+
+> 从早期 root 版本升级时，旧数据目录可能仍属 root。若启动日志提示“数据目录不可写”，
+> 以管理员 SSH 执行：
+> `sudo chown -R duplicatecleaner:duplicatecleaner /var/packages/DuplicateCleaner/var`
+> 然后重启套件。
 
 ## 7. 可选：启用内置 HTTPS
 
-1. 准备证书（PEM）：`fullchain.pem` + `privkey.pem`（可用 DSM 的 Let's Encrypt 证书，路径通常在 `/usr/syno/etc/certificate/system/default/`）。
-2. 创建 `/var/packages/DuplicateCleaner/var/tls.env`（root 600）：
+1. 准备证书（PEM）：`fullchain.pem` + `privkey.pem`。由于后端以 `duplicatecleaner` 用户运行，
+   不能直接读取 DSM 默认证书私钥；请把证书复制到套件数据目录并只给套件用户读取：
+
+```bash
+sudo mkdir -p /var/packages/DuplicateCleaner/var/tls
+sudo cp /usr/syno/etc/certificate/system/default/fullchain.pem /var/packages/DuplicateCleaner/var/tls/
+sudo cp /usr/syno/etc/certificate/system/default/privkey.pem /var/packages/DuplicateCleaner/var/tls/
+sudo chown -R duplicatecleaner:duplicatecleaner /var/packages/DuplicateCleaner/var/tls
+sudo chmod 700 /var/packages/DuplicateCleaner/var/tls
+sudo chmod 600 /var/packages/DuplicateCleaner/var/tls/*
+```
+2. 创建 `/var/packages/DuplicateCleaner/var/tls.env`（duplicatecleaner 可读）：
 
 ```bash
 sudo tee /var/packages/DuplicateCleaner/var/tls.env >/dev/null <<'EOF'
-DUP_TLS_CERT=/usr/syno/etc/certificate/system/default/fullchain.pem
-DUP_TLS_KEY=/usr/syno/etc/certificate/system/default/privkey.pem
+DUP_TLS_CERT=/var/packages/DuplicateCleaner/var/tls/fullchain.pem
+DUP_TLS_KEY=/var/packages/DuplicateCleaner/var/tls/privkey.pem
 EOF
+sudo chown duplicatecleaner:duplicatecleaner /var/packages/DuplicateCleaner/var/tls.env
 sudo chmod 600 /var/packages/DuplicateCleaner/var/tls.env
 ```
 
@@ -243,8 +285,8 @@ python build/build_spk.py --scheme https
 - 无论是否签名，安装前都应校验 `dist/*.spk.sha256`：
 
 ```powershell
-Get-FileHash dist\DuplicateCleaner-1.1.0-0002.spk -Algorithm SHA256
-Get-Content dist\DuplicateCleaner-1.1.0-0002.spk.sha256
+Get-FileHash dist\DuplicateCleaner-1.1.0-0003.spk -Algorithm SHA256
+Get-Content dist\DuplicateCleaner-1.1.0-0003.spk.sha256
 ```
 
 ## 10. 升级与卸载

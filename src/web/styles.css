@@ -337,6 +337,8 @@ input[type="checkbox"]:disabled { cursor: not-allowed; }
 .page-head h1 { font-size: 22px; font-weight: 700; letter-spacing: .2px; }
 .page-head h2 { font-size: 19px; font-weight: 700; }
 .page-desc { margin-top: 5px; color: var(--muted); font-size: 13px; max-width: 760px; }
+.permission-hint { margin-top: 12px; padding: 10px 12px; border: 1px solid #f0d58c; border-radius: 8px; background: #fff9e8; color: #6b5318; font-size: 12px; line-height: 1.6; max-width: 900px; }
+.permission-hint code { padding: 1px 5px; border-radius: 4px; background: rgba(107, 83, 24, .08); }
 .page-head-actions { display: flex; align-items: center; gap: 8px; }
 
 /* --- 卡片 --- */

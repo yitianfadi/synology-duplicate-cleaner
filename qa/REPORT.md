@@ -103,7 +103,7 @@ skipped={hidden:2, empty:2, hardlink:1, excluded:4}`。
   两次确认（“第 1 步/共 2 步”“第 2 步：最终确认”、永久删除短语）；无定时/自动删除；按钮防重复；
   textContent/createTextNode=8、innerHTML=0；无 CDN/外链；ES2019（无可选链/空值合并/BigInt 等）；中文导航；
   文件夹选择器/多选/排除；保留高亮/徽标；预览/CSV/全选/清空；进度轮询；设置键全覆盖。
-- SPK 源码：INFO 必需字段/取值；conf JSON + run-as=root；port_conf 8787/tcp；ui/config 合法；
+- SPK 源码：INFO 必需字段/取值；conf JSON + run-as=package + username/groupname duplicatecleaner；port_conf 8787/tcp；ui/config 合法；
   ui/index.html 占位符；6 个生命周期脚本齐全且 `#!/bin/sh`；start-stop-status 显式 unset dev 变量、
   nice/ionice、等待 /api/healthz；preinst 检测 Python3.8+；卸载脚本不删 var；Git Bash 对全部脚本 `bash -n` 通过（LF）。
 
@@ -175,7 +175,7 @@ backend-dev 已改为注入固定创建时间；最终连续 3 次运行 109 tes
 4. **删除计划 5 分钟过期**：E2E 未等待 5 分钟，仅验证一次性/重放拒绝；后端单测 `test_plan_expires` 覆盖过期逻辑。
 5. **跨文件系统回收站**：单卷测试，未构造跨设备 rename 失败场景；代码有 CROSS_DEVICE 拒绝分支。
 6. **小 TOCTOU 窗口**：plan 与后台删除各重校验一次，但 revalidate 与 rename/unlink 之间仍有极短竞态；已通过二次校验+审计将风险降到很低。
-7. **高权限运行**：SPK 以 root 运行、默认 HTTP 8787；必须仅在内网使用，公网需 VPN/反代+TLS（文档已说明）。无独立只读模式。
+7. **非 root 权限前置**：SPK 以系统内部用户 duplicatecleaner 运行，需管理员在 DSM 共享文件夹 ACL 中授权；默认 HTTP 8787，仅限内网。无独立只读模式。
 8. **dev 默认密码**：`DUP_DEV_PASSWORD` 默认 admin 仅 dev 模式；生产启动脚本已 unset，未在产物中发现开启 dev 的路径。
 9. **环境限制项**：symlink（D2）、WSL/无 git bash 时 shell 检查会降级；本次已使用 Git for Windows bash。
 10. **手工改动风险**：最终产物为 Lead 构建；QA 已用 bit-identical 独立复现证明 dist 与当前源码一致。
@@ -214,20 +214,29 @@ python build/build_spk.py --no-icons --out-dir $env:TEMP\qa-build2
 
 ---
 
-## 10. 附：v1.1 内容相似度模式复验（2026-11-02）
+## 10. 附：v1.1.0-0003 安装权限修复 + 内容相似度复验（2026-11-02）
 
 > 本节为 v1.1 增量验收摘要；完整报告见 [qa/SIMILARITY_REPORT.md](SIMILARITY_REPORT.md)。v1.0 历史结论保留在上文。
 
-- 最终产物：`dist/DuplicateCleaner-1.1.0-0002.spk`
-  - SHA256 `62a54ed48d20f9255ac9f0788f808a210e4e9121e3d2b6019aeabf88a57cc351`
-  - package.tgz MD5 `14fc3f6c6a4f925e0ac4237a2c7df89b`（= INFO.checksum）
+- 最终产物：`dist/DuplicateCleaner-1.1.0-0003.spk`
+  - SHA256 `bf52609860b1a6b477fa4194597baafc2c22a54055b066ff6eea2f902e763a8d`
+  - package.tgz MD5 `33b31053b5546a743f03401c83730ec6`（= INFO.checksum）
+  - 大小 215,040 B；package.tgz 41 条目
 - 相似模式端到端：`python qa/similarity_e2e.py` → **PASS=44 / FAIL=0 / UNVERIFIED=0**
   （文本相似/低于阈值、精准组隔离、binary/size 跳过、缓存二次命中 8/8、similarity 阶段停止、
   groups match_type 过滤、CSV 12 列、scope 排除相似、无复核 400、复核后回收站删除、keeper 保护、混合删除）。
 - 旧精准模式回归：`python qa/e2e_test.py` → **PASS=113 / FAIL=0 / UNVERIFIED=1**（Windows symlink 权限限制）。
-- 静态检查：`python qa/static_checks.py` → **PASS=104 / FAIL=0 / UNVERIFIED=0**（新增 v1.1 后端/前端/构建检查）。
+- 静态检查：`python qa/static_checks.py` → **PASS=111 / FAIL=0 / UNVERIFIED=0**（v1.1 后端/前端/构建检查 + v1.1.0-0003 非 root 权限/ACL 专项）。
 - 后端 unittest：139 tests PASS（2 skipped）。
-- SPK：checksum/权限/洁净性/源码同步全部 PASS；独立构建 2 次 SHA256 均与 dist bit-identical。
-- 已知风险：相似度质量与性能未做大规模评估；图片/PDF/DOCX 相似仅单测覆盖；真实 DSM/浏览器未验证；
-  CONTRACT §7 CSV 列描述待同步为新 12 列（实现按 SIMILARITY_CONTRACT §4.2）。
-- 结论：v1.1 **PASS（可交付）**，详见 [qa/SIMILARITY_REPORT.md](SIMILARITY_REPORT.md)。
+- 非 root 安装权限修复（v1.1.0-0003）：conf/privilege 改为 run-as=package + username/groupname=duplicatecleaner；
+  产物与源码中已无 root 运行/root 属主配置（static SPK-PRIVILEGE/USER/NO-ROOT/DIST-PRIVILEGE 等 PASS）；
+  启动脚本校验 var 可写并给出 chown 修复提示，非 root 下 ionice 自动降级。
+- **管理员必做 ACL 授权**：首次使用前，在 DSM「控制面板 → 共享文件夹 → 编辑 → 权限 → 系统内部用户」
+  给 duplicatecleaner 授予目标共享文件夹的读取/写入权限（需删除副本时；扫描可只给读取），
+  并须应用到子文件夹/文件；回收站删除要求对共享文件夹根与 #recycle 也有写权限。
+  未授权时目录/扫描会提示权限不足，删除会安全跳过，不会静默删除。旧 root 版本升级需执行
+  chown -R duplicatecleaner:duplicatecleaner /var/packages/DuplicateCleaner/var。
+- SPK：checksum/权限/ACL 提示/洁净性/源码同步全部 PASS；独立构建 2 次 SHA256 均与 dist bit-identical。
+- 已知风险：真实 DSM 安装与 ACL 授权流程未真机验证（环境限制，上线前必做）；相似度质量/性能未大规模评估；
+  图片/PDF/DOCX 相似仅单测覆盖；CONTRACT §7 CSV 列已同步为 12 列；Windows symlink UNVERIFIED。
+- 结论：v1.1.0-0003 **PASS（可交付）**，详见 [qa/SIMILARITY_REPORT.md](SIMILARITY_REPORT.md)。

@@ -1,7 +1,7 @@
 # 整体方案架构
 
 > 项目：**重复文件清理（DuplicateCleaner）** · 群晖 DSM 7.x SPK 套件
-> 版本：1.1.0-0002
+> 版本：1.1.0-0003
 > 原则：**先扫描、出报告、人工确认、二次确认、可回收、全程审计**。任何情况下都不自动静默删除。
 
 ## 1. 目标与边界
@@ -57,7 +57,7 @@
 └────────────────────────┘                    └────────────────────────┘
           │
 ┌─────────▼───────────────────────────────────────────────────────────┐
-│ 数据目录 /var/packages/DuplicateCleaner/var（root 700）             │
+│ 数据目录 /var/packages/DuplicateCleaner/var（duplicatecleaner 700）│
 │  config.json  scans/*.json  deletions/*.jsonl  logs/*.log  audit.jsonl│
 └─────────────────────────────────────────────────────────────────────┘
 ```
@@ -72,7 +72,7 @@
 ### 2.2 部署形态
 
 - 套件安装到 `/var/packages/DuplicateCleaner/target`；数据在 `/var/packages/DuplicateCleaner/var`。
-- `start-stop-status` 以 root 启动后端（需要读取所有共享文件夹、读取 btime、写入 `#recycle`）。
+- `start-stop-status` 以系统内部用户 `duplicatecleaner` 启动后端；管理员需在 DSM 共享文件夹权限中给该用户授予读取/写入。日志/数据目录归套件用户所有。
 - 监听 `8787/tcp`；DSM 桌面入口使用 `ui/config` 注册，点击后由 `ui/index.html` 跳转到当前主机名的 8787 端口。
 - 认证使用 DSM 账号 + `SYNO.API.Auth`，只允许管理员组；后端不保存密码，只保存 DSM sid 对应的本地会话（内存）。
 
@@ -226,7 +226,7 @@ Linux 的 `st_ctime` 是 **inode 状态变更时间**，不是创建时间，复
 | 文件哈希 | POSIX 分片读取 + `hashlib` | 群晖没有公开的“文件哈希”Web API；本地读取是唯一可靠方式 |
 | 删除/回收站 | POSIX `rename` → `<share>/#recycle/...` / `unlink` | 群晖 File Station 的回收站本质也是移动进 `#recycle`；直接操作可精确控制路径与审计。若需接入 File Station 异步删除 API，可在 `deletion.py` 的删除点替换为 `SYNO.FileStation.Delete`，但必须处理异步任务和逐文件结果 |
 
-> 安全说明：本套件以 root 运行以读取所有共享文件夹并写入 `#recycle`。这是高风险权限，
+> 安全说明：本套件以 DSM 系统内部用户 `duplicatecleaner` 运行（非 root），只拥有管理员显式授予的共享文件夹权限。首次使用需在 DSM 控制面板给该用户授权，未授权时不会静默跳过或删除。
 > 因此代码层面强制路径白名单、系统目录黑名单、管理员认证、二次确认和删除前重校验。
 > 若只需要扫描不需要删除，可在设置中关闭删除操作（或后续版本提供只读模式）。
 

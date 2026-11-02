@@ -65,7 +65,8 @@ class BrowseService(object):
             with os.scandir(normalized) as iterator:
                 raw_entries = list(iterator)
         except PermissionError:
-            raise ApiError("PATH_NOT_ALLOWED", u"没有权限访问该目录: %s" % normalized)
+            raise ApiError("PATH_NOT_ALLOWED",
+                           u"没有权限访问该目录；请给系统内部用户 duplicatecleaner 授予读取权限: %s" % normalized)
         except OSError as exc:
             raise ApiError("INVALID_PATH", u"无法读取目录: %s" % exc)
 

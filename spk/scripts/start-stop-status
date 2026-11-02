@@ -1,5 +1,5 @@
 #!/bin/sh
-# 本脚本由 DSM 套件框架以 root 身份调用；目标路径可由环境变量覆盖。
+# 本脚本由 DSM 套件框架以套件用户（duplicatecleaner）身份调用；目标路径可由环境变量覆盖。
 PKG_NAME="DuplicateCleaner"
 PKG_DIR="${SYNOPKG_PKGDEST:-/var/packages/${PKG_NAME}/target}"
 VAR_DIR="${SYNOPKG_PKGVAR:-/var/packages/${PKG_NAME}/var}"
@@ -68,20 +68,24 @@ start_service() {
   fi
   mkdir -p "$LOG_DIR" "$VAR_DIR" 2>/dev/null
   chmod 700 "$VAR_DIR" "$LOG_DIR" 2>/dev/null
+  if [ ! -w "$VAR_DIR" ] || [ ! -w "$LOG_DIR" ]; then
+    echo "数据目录不可写: $VAR_DIR（套件用户 duplicatecleaner）。" >&2
+    echo "如从旧版本升级，请以管理员执行: chown -R duplicatecleaner:duplicatecleaner /var/packages/DuplicateCleaner/var" >&2
+    return 1
+  fi
   # 明确隔离开发模式，生产环境绝不允许跳过 DSM 登录。
   unset DUP_CLEANER_DEV DUP_DEV_ROOTS DUP_DEV_PASSWORD
   ulimit -n 65536 2>/dev/null || true
   cd "$PKG_DIR" || return 1
-  # 低优先级启动：nice 让出 CPU，ionice 让出磁盘 IO，避免影响 DSM 其他服务。
-  if command -v ionice >/dev/null 2>&1; then
-    nohup ionice -c2 -n7 nice -n 10 "$PYTHON" "$PKG_DIR/app/app.py" \
-      --host 0.0.0.0 --port "$PORT" --data-dir "$VAR_DIR" --web-dir "$PKG_DIR/web" $TLS_ARGS \
-      >> "$LOG_FILE" 2>&1 < /dev/null &
-  else
-    nohup nice -n 10 "$PYTHON" "$PKG_DIR/app/app.py" \
-      --host 0.0.0.0 --port "$PORT" --data-dir "$VAR_DIR" --web-dir "$PKG_DIR/web" $TLS_ARGS \
-      >> "$LOG_FILE" 2>&1 < /dev/null &
+  # 低优先级启动：nice 让出 CPU；ionice 只在当前用户允许时使用，避免非 root 启动失败。
+  LAUNCH_PREFIX="nice -n 10"
+  if command -v ionice >/dev/null 2>&1 && ionice -c2 -n7 true >/dev/null 2>&1; then
+    LAUNCH_PREFIX="ionice -c2 -n7 nice -n 10"
   fi
+  # shellcheck disable=SC2086
+  nohup $LAUNCH_PREFIX "$PYTHON" "$PKG_DIR/app/app.py" \
+    --host 0.0.0.0 --port "$PORT" --data-dir "$VAR_DIR" --web-dir "$PKG_DIR/web" $TLS_ARGS \
+    >> "$LOG_FILE" 2>&1 < /dev/null &
   echo $! > "$PID_FILE"
   # 等待健康检查通过（最多 15 秒），失败时返回错误并保留日志。
   _i=0

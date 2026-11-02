@@ -331,6 +331,9 @@ class ShareService(object):
         if has_symlink_component(normalized, share["path"]):
             raise ApiError("PATH_NOT_ALLOWED",
                            u"扫描目录包含符号链接，已拒绝: %s" % normalized)
+        if not os.access(normalized, os.R_OK | os.X_OK):
+            raise ApiError("PATH_NOT_ALLOWED",
+                           u"没有权限读取扫描目录；请给系统内部用户 duplicatecleaner 授予读取权限: %s" % normalized)
         if is_system_name(os.path.basename(normalized)):
             raise path_not_allowed(u"禁止扫描系统目录: %s" % normalized)
         return share
@@ -352,11 +355,15 @@ class ShareService(object):
         return os.path.join(share["path"], "#recycle")
 
     def has_recycle_dir(self, share):
-        """#recycle 必须是真实目录（非符号链接）。"""
+        """#recycle 必须是真实目录（非符号链接）且当前套件用户可写。
+
+        非 root 运行时，仅目录存在不够；无写权限时应走“回收站不可用”
+        分支，让用户选择永久删除或先授权，而不是等删除任务失败。
+        """
         candidate = self.recycle_dir(share)
         if os.path.islink(candidate):
             return False
-        return os.path.isdir(candidate)
+        return os.path.isdir(candidate) and os.access(candidate, os.W_OK)
 
     def is_path_allowed(self, path):
         try:

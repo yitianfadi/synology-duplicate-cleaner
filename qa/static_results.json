@@ -1,7 +1,7 @@
 {
-  "generated_at": "2026-11-02T07:43:08+0800",
+  "generated_at": "2026-11-02T08:06:40+0800",
   "summary": {
-    "PASS": 104,
+    "PASS": 111,
     "FAIL": 0,
     "UNVERIFIED": 0
   },
@@ -52,7 +52,7 @@
       "id": "BE-UNITTEST-LOG",
       "name": "unittest 结果",
       "status": "INFO",
-      "detail": "Ran 139 tests in 13.879s"
+      "detail": "Ran 139 tests in 14.197s"
     },
     {
       "id": "BE-NO-AUTODELETE",
@@ -446,7 +446,19 @@
     },
     {
       "id": "SPK-PRIVILEGE",
-      "name": "conf/privilege 声明 run-as=root",
+      "name": "conf/privilege 声明 run-as=package（非 root）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SPK-USER",
+      "name": "conf/privilege 使用专用系统内部用户名/组名 duplicatecleaner",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SPK-NO-ROOT",
+      "name": "SPK 源码/脚本中不再包含 root 运行或 root 属主设置",
       "status": "PASS",
       "detail": ""
     },
@@ -529,6 +541,24 @@
       "detail": ""
     },
     {
+      "id": "SPK-VAR-WRITABLE",
+      "name": "启动脚本校验 var 目录对套件用户可写并给出 chown 修复提示（非 root）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SPK-IONICE-GUARD",
+      "name": "非 root 启动时 ionice 失败可降级（不阻断启动）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SPK-ACL-HINT",
+      "name": "UI 与文档明确提示：授予系统内部用户 duplicatecleaner 读/写（含 #recycle）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
       "id": "SPK-BUILD-VERSION",
       "name": "build_spk.py 的 VERSION 与 config APP_VERSION 一致",
       "status": "PASS",
@@ -548,7 +578,7 @@
     },
     {
       "id": "SPK-DIST",
-      "name": "构建产物存在（DuplicateCleaner-1.1.0-0002.spk）",
+      "name": "构建产物存在（DuplicateCleaner-1.1.0-0003.spk）",
       "status": "PASS",
       "detail": ""
     },
@@ -560,13 +590,19 @@
     },
     {
       "id": "SPK-VERSION",
-      "name": "SPK INFO.version 与当前源码 APP_VERSION（1.1.0-0002）一致",
+      "name": "SPK INFO.version 与当前源码 APP_VERSION（1.1.0-0003）一致",
       "status": "PASS",
       "detail": ""
     },
     {
       "id": "SPK-CHECKSUM",
       "name": "INFO.checksum 与 package.tgz MD5 一致",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SPK-DIST-PRIVILEGE",
+      "name": "产物 conf/privilege 为 run-as=package + duplicatecleaner（无 root）",
       "status": "PASS",
       "detail": ""
     },
@@ -609,6 +645,12 @@
     {
       "id": "SPK-PKG-RISK",
       "name": "打包后 web/index.html 仍含精确风险提示",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SPK-PKG-ACL",
+      "name": "打包后 UI 含系统内部用户 duplicatecleaner 的读/写 ACL 提示",
       "status": "PASS",
       "detail": ""
     },

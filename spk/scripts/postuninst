@@ -1,5 +1,5 @@
 #!/bin/sh
-# 本脚本由 DSM 套件框架以 root 身份调用；目标路径可由环境变量覆盖。
+# 本脚本由 DSM 套件框架以套件用户（duplicatecleaner）身份调用；目标路径可由环境变量覆盖。
 PKG_NAME="DuplicateCleaner"
 PKG_DIR="${SYNOPKG_PKGDEST:-/var/packages/${PKG_NAME}/target}"
 VAR_DIR="${SYNOPKG_PKGVAR:-/var/packages/${PKG_NAME}/var}"

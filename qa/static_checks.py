@@ -597,8 +597,33 @@ def check_spk_source():
           conf_ok, "errors=%s" % conf_detail)
     privilege = read(os.path.join(conf_dir, "privilege")) if os.path.isfile(
         os.path.join(conf_dir, "privilege")) else ""
-    check("SPK-PRIVILEGE", "conf/privilege 声明 run-as=root",
-          '"run-as"' in privilege and '"root"' in privilege, privilege[:200])
+    try:
+        privilege_json = json.loads(privilege) if privilege else {}
+    except ValueError:
+        privilege_json = {}
+    defaults_json = privilege_json.get("defaults") if isinstance(
+        privilege_json.get("defaults"), dict) else {}
+    check("SPK-PRIVILEGE", "conf/privilege 声明 run-as=package（非 root）",
+          defaults_json.get("run-as") == "package"
+          and '"run-as"' in privilege and '"root"' not in privilege,
+          "privilege=%s" % privilege[:300])
+    check("SPK-USER", "conf/privilege 使用专用系统内部用户名/组名 duplicatecleaner",
+          privilege_json.get("username") == "duplicatecleaner"
+          and privilege_json.get("groupname") == "duplicatecleaner",
+          "username/groupname mismatch: %s" % privilege[:300])
+    root_hits = []
+    root_patterns = [r'"run-as"\s*:\s*"root"', r"chown[^\n]*\broot\b",
+                     r"\broot:root\b", r"(?m)^\s*sudo\s"]
+    for path in walk_files(spk):
+        try:
+            text = read(path)
+        except (UnicodeError, OSError):
+            continue
+        for pattern in root_patterns:
+            if re.search(pattern, text):
+                root_hits.append("%s:%s" % (os.path.relpath(path, REPO), pattern))
+    check("SPK-NO-ROOT", "SPK 源码/脚本中不再包含 root 运行或 root 属主设置",
+          not root_hits, "root_hits=%s" % root_hits[:10])
     port_conf = os.path.join(spk, "port_conf", "DuplicateCleaner.sc")
     port_text = read(port_conf) if os.path.isfile(port_conf) else ""
     check("SPK-PORT", "port_conf 注册 8787/tcp",
@@ -670,6 +695,25 @@ def check_spk_source():
     check("SPK-POSTINST", "postinst 创建 var 目录并保留日志",
           "var" in postinst and "chmod" in postinst,
           "postinst content unexpected")
+    check("SPK-VAR-WRITABLE", "启动脚本校验 var 目录对套件用户可写并给出 chown 修复提示（非 root）",
+          '[ ! -w "$VAR_DIR" ]' in start_script
+          and 'chown -R duplicatecleaner:duplicatecleaner' in start_script
+          and "chown -R root" not in start_script,
+          "var write check missing")
+    check("SPK-IONICE-GUARD", "非 root 启动时 ionice 失败可降级（不阻断启动）",
+          'ionice -c2 -n7 true' in start_script
+          and 'LAUNCH_PREFIX="nice -n 10"' in start_script,
+          "ionice guard missing")
+    web_index_src = read(os.path.join(REPO, "src", "web", "index.html"))
+    packaging_doc = read(os.path.join(REPO, "docs", "SPK_PACKAGING.md"))
+    check("SPK-ACL-HINT", "UI 与文档明确提示：授予系统内部用户 duplicatecleaner 读/写（含 #recycle）",
+          u"系统内部用户" in web_index_src and "duplicatecleaner" in web_index_src
+          and (u"读取/写入" in web_index_src or u"读取" in web_index_src)
+          and (u"回收站" in web_index_src or "#recycle" in web_index_src)
+          and "duplicatecleaner" in packaging_doc
+          and u"系统内部用户" in packaging_doc
+          and "#recycle" in packaging_doc,
+          "ACL hint missing in UI/docs")
     build_script_path = os.path.join(REPO, "build", "build_spk.py")
     build_src = read(build_script_path) if os.path.isfile(build_script_path) else ""
     check("SPK-BUILD-VERSION", "build_spk.py 的 VERSION 与 config APP_VERSION 一致",
@@ -753,6 +797,9 @@ def check_dist():
         package_member = outer.getmember("package.tgz")
         package_bytes = outer.extractfile(package_member).read()
         info_bytes = outer.extractfile(outer.getmember("INFO")).read()
+        privilege_bytes = b""
+        if "conf/privilege" in names:
+            privilege_bytes = outer.extractfile(outer.getmember("conf/privilege")).read()
         script_modes = {name: outer.getmember(name).mode
                         for name in names if name.startswith("scripts/")}
     info = parse_info(info_bytes.decode("utf-8", "replace"))
@@ -763,6 +810,17 @@ def check_dist():
     actual_md5 = hashlib.md5(package_bytes).hexdigest()
     check("SPK-CHECKSUM", "INFO.checksum 与 package.tgz MD5 一致",
           checksum == actual_md5, "info=%s actual=%s" % (checksum, actual_md5))
+    try:
+        dist_priv = json.loads(privilege_bytes.decode("utf-8")) if privilege_bytes else {}
+    except ValueError:
+        dist_priv = {}
+    dist_defaults = dist_priv.get("defaults") if isinstance(
+        dist_priv.get("defaults"), dict) else {}
+    check("SPK-DIST-PRIVILEGE", "产物 conf/privilege 为 run-as=package + duplicatecleaner（无 root）",
+          dist_defaults.get("run-as") == "package"
+          and dist_priv.get("username") == "duplicatecleaner"
+          and dist_priv.get("groupname") == "duplicatecleaner",
+          "dist privilege=%s" % (privilege_bytes[:300],))
     bad_modes = {name: oct(mode) for name, mode in script_modes.items()
                  if mode & 0o111 != 0o111}
     check("SPK-SCRIPT-MODE", "SPK 内 scripts 全部为可执行（755）",
@@ -837,6 +895,10 @@ def check_dist():
                 "utf-8", "replace")
             check("SPK-PKG-RISK", "打包后 web/index.html 仍含精确风险提示",
                   RISK_TEXT in web_index, "risk text missing in packaged web")
+            check("SPK-PKG-ACL", "打包后 UI 含系统内部用户 duplicatecleaner 的读/写 ACL 提示",
+                  u"系统内部用户" in web_index and "duplicatecleaner" in web_index
+                  and (u"读取/写入" in web_index or u"读取" in web_index),
+                  "ACL hint missing in packaged web")
             web_files = [name for name in pkg_names if name.startswith("web/")]
             check("SPK-PKG-WEB", "package.tgz 含完整前端文件", len(web_files) >= 4,
                   "web files=%s" % web_files[:10])

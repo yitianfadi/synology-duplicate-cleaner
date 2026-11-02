@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-11-02T07:40:11+0800",
+  "generated_at": "2026-11-02T08:07:08+0800",
   "python": "3.12.9 | packaged by Anaconda, Inc. | (main, Feb  6 2025, 18:49:16) [MSC v.1929 64 bit (AMD64)]",
   "repo": "D:\\code\\zhouyi\\qunhui",
   "summary": {
@@ -8,9 +8,9 @@
     "UNVERIFIED": 0
   },
   "evidence": {
-    "app_version_expected": "1.1.0-0002",
-    "backend_port": 4169,
-    "main_scan_id": "20261102-074005-2492f8",
+    "app_version_expected": "1.1.0-0003",
+    "backend_port": 2936,
+    "main_scan_id": "20261102-080702-6a6fdc",
     "main_stats": {
       "files_seen": 18,
       "dirs_scanned": 5,
@@ -23,7 +23,7 @@
       "selectable_duplicate_files": 2,
       "selectable_reclaimable_bytes": 12316,
       "bytes_hashed": 24632,
-      "bytes_per_sec": 7685,
+      "bytes_per_sec": 7551,
       "errors": 0,
       "skipped": {
         "symlink": 0,
@@ -96,19 +96,19 @@
       "similarity_cache_misses": 0
     },
     "scope_plan": {
-      "plan_id": "plan-c215e8751a0a0d41",
+      "plan_id": "plan-5f37a67726ddc3bd",
       "count": 2,
       "exact_count": 2,
       "similar_count": 0
     },
     "similar_delete_job": {
-      "job_id": "del-20261102-074009-cfd54f",
+      "job_id": "del-20261102-080706-988c50",
       "status": "completed",
       "done": 1,
       "failed": 0
     },
     "stop_scan": {
-      "scan_id": "20261102-074010-3efb20",
+      "scan_id": "20261102-080706-cf90ab",
       "observed_stage": "similarity",
       "final_status": "stopped",
       "stopped": true

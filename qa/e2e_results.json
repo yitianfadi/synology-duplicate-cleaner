@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-11-02T07:35:44+0800",
+  "generated_at": "2026-11-02T08:06:56+0800",
   "python": "3.12.9 | packaged by Anaconda, Inc. | (main, Feb  6 2025, 18:49:16) [MSC v.1929 64 bit (AMD64)]",
   "repo": "D:\\code\\zhouyi\\qunhui",
   "summary": {
@@ -11,11 +11,11 @@
     "fixture_files": 46,
     "python": "3.12.9",
     "birthtime_supported": true,
-    "backend_port": 9445,
+    "backend_port": 6670,
     "csrf_token_len": 43,
     "meta": {
       "ok": true,
-      "app_version": "1.1.0-0002",
+      "app_version": "1.1.0-0003",
       "dsm_version": "dev",
       "python_version": "3.12.9",
       "creation_time_supported": true,
@@ -155,7 +155,7 @@
         "cache": "feature_cache.json"
       }
     },
-    "main_scan_id": "20261102-073537-5b0fdf",
+    "main_scan_id": "20261102-080649-58a1b7",
     "main_scan_final": "completed",
     "main_stats": {
       "files_seen": 38,
@@ -169,7 +169,7 @@
       "selectable_duplicate_files": 15,
       "selectable_reclaimable_bytes": 4403200,
       "bytes_hashed": 8753152,
-      "bytes_per_sec": 94625041,
+      "bytes_per_sec": 194202396,
       "errors": 0,
       "skipped": {
         "symlink": 0,
@@ -203,13 +203,13 @@
     },
     "main_groups_total": 12,
     "recycle_plan": {
-      "plan_id": "plan-82023612cc807297",
+      "plan_id": "plan-c803f897443fb664",
       "count": 2,
       "bytes": 40960,
       "groups_affected": 1
     },
     "recycle_job": {
-      "job_id": "del-20261102-073537-a18476",
+      "job_id": "del-20261102-080650-bfa430",
       "status": "completed",
       "done": 2,
       "failed": 0,
@@ -503,7 +503,7 @@
       "id": "SKIP-04",
       "name": "符号链接跳过（当前环境无法创建 symlink）",
       "status": "UNVERIFIED",
-      "detail": "os.symlink failed: [WinError 1314] 客户端没有所需的特权。: 'C:\\\\Users\\\\zhouyi\\\\AppData\\\\Local\\\\Temp\\\\dupqa-tmb9a5w8\\\\qa-share-a\\\\dup' -> 'C:\\\\Users\\\\zhouyi\\\\AppData\\\\Local\\\\Temp\\\\dupqa-tmb9a5w8\\\\qa-share-a\\\\link_to_dup'"
+      "detail": "os.symlink failed: [WinError 1314] 客户端没有所需的特权。: 'C:\\\\Users\\\\zhouyi\\\\AppData\\\\Local\\\\Temp\\\\dupqa-_9e07zyu\\\\qa-share-a\\\\dup' -> 'C:\\\\Users\\\\zhouyi\\\\AppData\\\\Local\\\\Temp\\\\dupqa-_9e07zyu\\\\qa-share-a\\\\link_to_dup'"
     },
     {
       "id": "HARDLINK-01",
