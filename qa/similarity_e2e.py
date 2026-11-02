@@ -19,6 +19,7 @@ import json
 import os
 import re
 import shutil
+import sqlite3
 import sys
 import tempfile
 import time
@@ -555,10 +556,18 @@ def run():
               "status=%s hits=%s misses=%s"
               % ((scan2 or {}).get("status"), stats2.get("similarity_cache_hits"),
                  stats2.get("similarity_cache_misses")))
-        check("SIM-CACHE-02", "feature_cache.json 持久化在数据目录",
-              os.path.isfile(os.path.join(data_dir, "feature_cache.json"))
-              and os.path.getsize(os.path.join(data_dir, "feature_cache.json")) > 100,
-              "cache file missing")
+        cache_count = 0
+        try:
+            cache_conn = sqlite3.connect(os.path.join(data_dir, "dupcleaner.sqlite3"))
+            try:
+                cache_count = int(cache_conn.execute(
+                    "SELECT COUNT(*) FROM feature_cache").fetchone()[0])
+            finally:
+                cache_conn.close()
+        except sqlite3.Error:
+            cache_count = 0
+        check("SIM-CACHE-02", "feature_cache 持久化在 SQLite 数据目录",
+              cache_count > 0, "cache rows missing")
         groups2, total2, _ = all_groups(client, scan2_id) if scan2_id else ([], 0, None)
         similar2 = [g for g in groups2 if g.get("match_type") == "similar"]
         check("SIM-CACHE-03", "第二次扫描相似组数量稳定",

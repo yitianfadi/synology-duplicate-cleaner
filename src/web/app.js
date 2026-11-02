@@ -25,18 +25,18 @@
   var CSRF_KEY = 'dc_csrf';
   var POLL_MS = 800;                 // 扫描 / 删除任务轮询间隔（毫秒）
   var GROUPS_LIMIT = 50;             // 结果分页大小
-  var TERMINAL_STATUS = ['completed', 'failed', 'stopped'];
+  var TERMINAL_STATUS = ['completed', 'failed', 'stopped', 'interrupted'];
   var ACTIVE_STATUS = ['queued', 'running', 'paused', 'stopping'];
   var VIEWS = ['scan', 'history', 'logs', 'settings'];
   var VIEW_HEADINGS = { scan: 'scanHeading', history: 'historyHeading', logs: 'logsHeading', settings: 'settingsHeading' };
 
   var STATUS_LABEL = {
     queued: '排队中', running: '扫描中', paused: '已暂停', stopping: '正在停止',
-    stopped: '已停止', completed: '已完成', failed: '失败'
+    stopped: '已停止', completed: '已完成', failed: '失败', interrupted: '已中断'
   };
   var STATUS_BADGE = {
     queued: 'badge-gray', running: 'badge-blue', paused: 'badge-amber',
-    stopping: 'badge-amber', stopped: 'badge-gray', completed: 'badge-green', failed: 'badge-red'
+    stopping: 'badge-amber', stopped: 'badge-gray', completed: 'badge-green', failed: 'badge-red', interrupted: 'badge-amber'
   };
   var STAGE_LABEL = {
     enumerate: '枚举文件', size: '按大小分组', sample: '快速指纹采样',
@@ -2806,6 +2806,7 @@
     else if (status === 'stopped') { stageText = '扫描已停止'; }
     else if (status === 'failed') { stageText = '扫描失败'; }
     else if (status === 'completed') { stageText = '扫描完成'; }
+    else if (status === 'interrupted') { stageText = '扫描已中断'; }
     setText(els.progressStage, stageText);
     var pct = clamp(Math.round((Number(scan.progress) || 0) * 100), 0, 100);
     if (status === 'completed') { pct = 100; }
@@ -2813,9 +2814,12 @@
     els.progressFill.style.width = pct + '%';
     els.progressBar.setAttribute('aria-valuenow', String(pct));
     els.progressBar.classList.toggle('is-error', status === 'failed');
-    els.progressBar.classList.toggle('is-warn', status === 'paused' || status === 'stopped' || status === 'stopping');
+    els.progressBar.classList.toggle('is-warn', status === 'paused' || status === 'stopped' || status === 'stopping' || status === 'interrupted');
     var message = scan.message || '';
     if (status === 'completed' && !message) { message = '扫描完成。'; }
+    if (status === 'interrupted' && !message) {
+      message = '扫描因服务重启或套件升级中断，请重新发起扫描。';
+    }
     if (status === 'failed' && !message) {
       message = (scan.error && (scan.error.message || scan.error)) || '扫描失败，请查看操作日志。';
     }
@@ -2909,6 +2913,11 @@
       }
       show(els.resultsSection);
       loadResults(true);
+    } else if (scan.status === 'interrupted') {
+      state.scan.handled = true;
+      setText(els.progressStage, '扫描已中断');
+      setText(els.progressMessage, scan.message || '扫描因服务重启或套件升级中断，请重新发起扫描。');
+      toast('扫描已中断，请重新发起扫描。已完成的缓存和历史仍然保留。', 'info', 6000);
     } else if (scan.status === 'failed') {
       state.scan.handled = true;
       var msg = '扫描失败，请查看操作日志。';
