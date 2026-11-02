@@ -57,6 +57,16 @@ text = raw.decode("utf-8", "replace")
 sleep_for = float(os.environ.get("FAKE_FFMPEG_SLEEP", "0") or 0)
 if sleep_for > 0:
     time.sleep(sleep_for)
+if "-f" in args and "wav" in args:
+    if os.environ.get("FAKE_AUDIO_FAIL") == "1":
+        fail("audio extract failed")
+    target = args[-1]
+    try:
+        with open(target, "wb") as handle:
+            handle.write(b"RIFF" + b"\x00" * 64)
+    except OSError:
+        fail("cannot write wav")
+    sys.exit(0)
 rawvideo = ("-f" in args and "rawvideo" in args)
 if not rawvideo:
     if "NODURATION" in text:
@@ -199,6 +209,12 @@ class VideoSettingsTest(unittest.TestCase):
                     self.assertIn(key, video)
                 self.assertFalse(video["enabled"])
                 self.assertEqual(video["defaults"]["video_sample_frames"], 20)
+                self.assertIn("asr", video)
+                for key in ("enabled", "configured", "available",
+                            "reason", "weight"):
+                    self.assertIn(key, video["asr"])
+                self.assertFalse(video["asr"]["enabled"])
+                self.assertAlmostEqual(video["asr"]["weight"], 0.15)
             finally:
                 web.stop()
         finally:

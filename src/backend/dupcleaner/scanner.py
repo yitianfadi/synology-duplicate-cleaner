@@ -125,6 +125,11 @@ def _empty_stats():
         "video_cache_hits": 0,
         "video_cache_misses": 0,
         "video_ffmpeg_used": 0,
+        "video_asr_used": 0,
+        "video_asr_skipped": {
+            "disabled": 0, "unavailable": 0, "no_speech": 0,
+            "failed": 0, "timeout": 0, "extract_failed": 0,
+        },
         "video_skipped": {
             "type": 0, "size": 0, "decode": 0,
             "no_duration": 0, "timeout": 0, "error": 0,
@@ -968,6 +973,10 @@ class ScanManager(object):
                     "video_cache_misses", 0),
                 u"video_ffmpeg_used: %s" % snapshot["stats"].get(
                     "video_ffmpeg_used", 0),
+                u"video_asr_used: %s" % snapshot["stats"].get(
+                    "video_asr_used", 0),
+                u"video_asr_skipped: %s" % snapshot["stats"].get(
+                    "video_asr_skipped", {}),
                 u"video_skipped: %s" % snapshot["stats"].get(
                     "video_skipped", {}),
                 u"duplicate_files: %s" % snapshot["stats"]["duplicate_files"],
@@ -1559,6 +1568,8 @@ class ScanManager(object):
         done = 0
         cache_hits = 0
         cache_misses = 0
+        asr_used_count = 0
+        asr_skip_counts = {}
         entries = []
         report_every = max(1, min(8, total // 20 or 1))
         executor = self._executor_factory(concurrency)
@@ -1586,6 +1597,20 @@ class ScanManager(object):
                             cache_misses += 1
                         entries.append({"record": record,
                                         "analysis": analysis})
+                        asr_status = analysis.get("asr_status") or "disabled"
+                        if asr_status == "ok":
+                            asr_used_count += 1
+                        else:
+                            bucket = asr_status
+                            if bucket in ("no_command", "invalid_command",
+                                          "command_not_found", "no_ffmpeg"):
+                                bucket = "unavailable"
+                            elif bucket not in ("disabled", "unavailable",
+                                                "no_speech", "failed",
+                                                "timeout", "extract_failed"):
+                                bucket = "failed"
+                            asr_skip_counts[bucket] = (
+                                asr_skip_counts.get(bucket, 0) + 1)
                     done += 1
                     if done % report_every == 0 or done == total:
                         fraction = 0.92 + 0.05 * (float(done) / max(1, total))
@@ -1604,6 +1629,14 @@ class ScanManager(object):
             stats["video_ffmpeg_used"] = (
                 stats.get("video_ffmpeg_used", 0)
                 + int(getattr(engine, "ffmpeg_used", 0)))
+            stats["video_asr_used"] = (
+                stats.get("video_asr_used", 0) + asr_used_count)
+            asr_counters = stats.setdefault("video_asr_skipped", {})
+            for reason, value in asr_skip_counts.items():
+                if reason in ("disabled", "unavailable", "no_speech",
+                              "failed", "timeout", "extract_failed"):
+                    asr_counters[reason] = (
+                        asr_counters.get(reason, 0) + value)
         if getattr(engine, "cache", None) is not None:
             try:
                 engine.cache.close()
@@ -1613,7 +1646,13 @@ class ScanManager(object):
             self._set_progress(state, "video", 0.973,
                                u"视频视觉分析完成：0 组")
             return []
-        clusters = video_similarity.build_video_groups(entries, threshold)
+        asr_weight = 0.0
+        if options.get("video_asr_enabled"):
+            asr_weight = float(options.get("video_asr_weight")
+                               if options.get("video_asr_weight") is not None
+                               else config.ASR_DEFAULT_WEIGHT)
+        clusters = video_similarity.build_video_groups(
+            entries, threshold, asr_weight=asr_weight)
         result = []
         for cluster in clusters:
             indices = list(cluster.get("indices") or [])
@@ -1624,9 +1663,15 @@ class ScanManager(object):
                 if first in position_of and second in position_of:
                     local_scores[(position_of[first],
                                   position_of[second])] = score
+            local_details = {}
+            for (first, second), detail in (cluster.get("details") or {}).items():
+                if first in position_of and second in position_of:
+                    local_details[(position_of[first],
+                                   position_of[second])] = detail
             result.append({
                 "entries": [entries[index] for index in indices],
                 "scores": local_scores,
+                "details": local_details,
             })
         self._set_progress(state, "video", 0.973,
                            u"视频视觉分析完成：%d 组" % len(result))
@@ -1784,6 +1829,7 @@ class ScanManager(object):
             self._check_control(state)
             members = cluster.get("entries") or []
             scores = cluster.get("scores") or {}
+            details = cluster.get("details") or {}
             files = []
             for entry in members:
                 record = entry["record"]
@@ -1807,12 +1853,22 @@ class ScanManager(object):
                              or any(file_info["created_unsafe"]
                                     for file_info in files))
             for position, file_info in enumerate(files):
+                pair_detail = details.get((min(keeper, position),
+                                           max(keeper, position))) or {}
                 if position == keeper:
                     file_info["similarity_score"] = 100
+                    file_info["video_asr_used"] = False
+                    file_info["video_text_score"] = 0
                 else:
                     score = scores.get((min(keeper, position),
                                         max(keeper, position)))
                     file_info["similarity_score"] = int(score or 0)
+                    asr_used = bool(pair_detail.get("asr_used"))
+                    file_info["video_asr_used"] = asr_used
+                    # 只存分值，绝不存转写文本/签名
+                    file_info["video_text_score"] = (
+                        int(pair_detail.get("text_score") or 0)
+                        if asr_used else 0)
                 file_info["is_keep"] = position == keeper
                 # 视频组默认不勾选，但允许一键全选批量删除
                 file_info["default_selected"] = False
@@ -1828,11 +1884,23 @@ class ScanManager(object):
                 item["path"],
             ))
             keeper_file = files[0]
+            asr_files = [item for item in files
+                         if not item["is_keep"] and item.get("video_asr_used")]
+            group_asr_used = bool(asr_files)
+            group_text_score = 0
+            if asr_files:
+                group_text_score = int(round(
+                    float(sum(int(item.get("video_text_score") or 0)
+                              for item in asr_files)) / len(asr_files)))
+                keeper_file["video_asr_used"] = True
+                keeper_file["video_text_score"] = 100
             groups.append({
                 "hash": "",
                 "algo": "",
                 "match_type": "video",
                 "similarity_score": group_score,
+                "video_asr_used": bool(group_asr_used),
+                "video_text_score": group_text_score,
                 "video_similarity_score": group_score,
                 "video_fingerprint": keeper_file.get("video_fingerprint") or "",
                 "video_sample_frames": max(

@@ -50,6 +50,12 @@ DEFAULT_SETTINGS = {
     "video_max_file_mb": config.VIDEO_DEFAULT_MAX_FILE_MB,
     "video_timeout_sec": config.VIDEO_DEFAULT_TIMEOUT_SEC,
     "video_cache": True,
+    # --- 可选 ASR 语音辅助（外部命令；默认关闭，不内置模型/不联网）---
+    "video_asr_enabled": False,
+    "video_asr_command": "",
+    "video_asr_weight": config.ASR_DEFAULT_WEIGHT,
+    "video_asr_timeout_sec": config.ASR_DEFAULT_TIMEOUT_SEC,
+    "video_asr_max_sec": config.ASR_DEFAULT_MAX_SEC,
 }
 
 SETTINGS_KEYS = tuple(DEFAULT_SETTINGS)
@@ -71,6 +77,14 @@ def _check_bool(key, value):
     if not isinstance(value, bool):
         _err(u"设置 %s 必须是布尔值" % key, {"key": key})
     return value
+
+
+def _check_float(key, value, low, high):
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        _err(u"设置 %s 必须是数字" % key, {"key": key})
+    if float(value) < low or float(value) > high:
+        _err(u"设置 %s 超出范围 %s..%s" % (key, low, high), {"key": key})
+    return float(value)
 
 
 def _check_int(key, value, low, high):
@@ -158,6 +172,18 @@ def _normalize_value(key, value):
         return _check_int(key, value, 1, 102400)
     if key == "video_timeout_sec":
         return _check_int(key, value, 30, 1800)
+    if key == "video_asr_enabled":
+        return _check_bool(key, value)
+    if key == "video_asr_command":
+        # 命令模板（{audio}/{outdir}/{stem} 占位符）；只做基础字符串校验，
+        # 实际执行使用 shlex.split + 参数数组，绝不经过 shell。
+        return _check_str(key, value, max_len=4096)
+    if key == "video_asr_weight":
+        return _check_float(key, value, 0.0, 0.5)
+    if key == "video_asr_timeout_sec":
+        return _check_int(key, value, 30, 1800)
+    if key == "video_asr_max_sec":
+        return _check_int(key, value, 30, 3600)
     if key == "skip_symlinks":
         # 无论前端传什么，符号链接一律跳过（安全强制）
         if not isinstance(value, bool):

@@ -6,8 +6,8 @@
 <meta name="color-scheme" content="light">
 <meta name="referrer" content="same-origin">
 <title>重复文件清理 · DuplicateCleaner</title>
-<link rel="icon" href="./assets/favicon.svg?v=1.1.0-0008" type="image/svg+xml">
-<link rel="stylesheet" href="./styles.css?v=1.1.0-0008">
+<link rel="icon" href="./assets/favicon.svg?v=1.1.0-0009" type="image/svg+xml">
+<link rel="stylesheet" href="./styles.css?v=1.1.0-0009">
 </head>
 <body>
 <a class="skip-link" href="#main">跳到主要内容</a>
@@ -273,7 +273,7 @@
             <details class="advanced video-advanced" id="videoOptionsDetails">
               <summary>视频视觉相似（实验功能，默认关闭）<span class="badge badge-gray video-status-badge" id="videoStatusBadge">检测中…</span></summary>
               <div class="video-options-panel">
-                <p class="hint" id="videoStatusHint">使用 FFmpeg 对视频均匀抽样帧并比对视觉指纹；仅对视频后缀生效，可能较慢。语音/ASR 辅助未实现（默认关闭）。</p>
+                <p class="hint" id="videoStatusHint">使用 FFmpeg 对视频均匀抽样帧并比对视觉指纹；仅对视频后缀生效，可能较慢。ASR 为可选外部命令（默认关闭，不内置模型、不联网）。</p>
                 <label class="check video-enable-row"><input id="videoEnabled" type="checkbox">启用视频视觉相似（总开关，默认关闭）</label>
                 <fieldset id="videoFields" class="video-fields" disabled>
                   <div class="form-grid">
@@ -329,9 +329,43 @@
                     </div>
                   </div>
                 </fieldset>
+                <div class="asr-section" id="videoAsrSection">
+                  <div class="section-subhead">
+                    <h3>ASR 语音辅助（可选，默认关闭）</h3>
+                    <span class="badge badge-gray asr-status-badge" id="videoAsrStatusBadge">检测中…</span>
+                  </div>
+                  <p class="hint" id="videoAsrStatusHint">ASR 仅调用 NAS 本地外部命令（不附带模型、不联网）；转录文本只参与相似度评分，不会在界面展示或写入结果。</p>
+                  <label class="check asr-enable-row"><input id="videoAsrEnabled" type="checkbox">启用 ASR 辅助（需先开启视频视觉相似，默认关闭）</label>
+                  <fieldset id="videoAsrFields" class="asr-fields" disabled>
+                    <div class="form-grid">
+                      <div class="field field-wide">
+                        <label for="videoAsrCommand">ASR 命令模板（支持 {audio} / {outdir} / {stem}）</label>
+                        <input id="videoAsrCommand" type="text" placeholder="whisper --model /path/model --output_format txt --output_dir {outdir} {audio}" autocomplete="off" spellcheck="false">
+                        <p class="hint">仅执行本地命令，不经 shell；由 NAS 服务账号运行。留空表示未配置，ASR 将不生效并回退纯视觉分数。</p>
+                        <p class="field-error" id="videoAsrCommandError" role="alert" hidden></p>
+                      </div>
+                      <div class="field">
+                        <label for="videoAsrWeight">文本分数权重（0–0.5，默认 0.15）</label>
+                        <input id="videoAsrWeight" type="number" inputmode="decimal" min="0" max="0.5" step="0.05" value="0.15">
+                        <p class="field-error" id="videoAsrWeightError" role="alert" hidden></p>
+                      </div>
+                      <div class="field">
+                        <label for="videoAsrTimeout">ASR 单次超时（秒，30–1800）</label>
+                        <input id="videoAsrTimeout" type="number" inputmode="numeric" min="30" max="1800" step="1" value="300">
+                        <p class="field-error" id="videoAsrTimeoutError" role="alert" hidden></p>
+                      </div>
+                      <div class="field">
+                        <label for="videoAsrMaxSec">ASR 最大处理时长（秒，30–3600）</label>
+                        <input id="videoAsrMaxSec" type="number" inputmode="numeric" min="30" max="3600" step="1" value="600">
+                        <p class="field-error" id="videoAsrMaxSecError" role="alert" hidden></p>
+                      </div>
+                    </div>
+                  </fieldset>
+                  <p class="hint asr-note">未附带语音模型、不联网；未配置或执行失败时自动回退纯视觉分数，不阻塞视频扫描。转录内容不回传前端。</p>
+                </div>
                 <p class="mode-warning">
                   <svg class="icon" aria-hidden="true"><use href="#i-warning"></use></svg>
-                  视频扫描可能很慢（CPU/GPU 限制）；建议先少量目录或关闭。语音/ASR 辅助未实现、默认关闭（无内置模型、不联网）。
+                  视频扫描可能很慢（CPU/GPU 限制）；建议先少量目录或关闭。<strong>短视频（≤180 秒）可匹配；片段 vs 完整长视频不承诺。</strong>ASR 辅助为可选本地命令，默认关闭（无内置模型、不联网）。
                 </p>
               </div>
             </details>
@@ -525,7 +559,7 @@
         <div id="videoPartition" class="result-partition video-partition" hidden>
           <div class="video-warning" role="note">
             <svg class="icon" aria-hidden="true"><use href="#i-warning"></use></svg>
-            <p>视频视觉相似基于抽样帧比对，存在误匹配可能；视频组默认不勾选，请核对保留项后使用组级或全局“全选视频副本”批量选择。语音/ASR 辅助未实现，不参与判定。</p>
+            <p>视频视觉相似基于抽样帧比对，存在误匹配可能；短视频可匹配；片段 vs 完整长视频不承诺。视频组默认不勾选，请核对保留项后使用组级或全局“全选视频副本”批量选择。ASR 辅助仅使用本地文本签名参与评分，不展示转录内容。</p>
           </div>
           <div class="partition-head">
             <h3>视频视觉相似</h3>
@@ -740,9 +774,9 @@
 
         <details class="advanced" id="settingsVideoDetails">
           <summary>视频视觉相似默认值（视频模式）<span class="badge badge-gray video-status-badge" id="setVideoStatusBadge">检测中…</span></summary>
-          <p class="hint" id="setVideoStatusHint">使用 FFmpeg 抽样帧比对；语音/ASR 辅助未实现（默认关闭）。</p>
+          <p class="hint" id="setVideoStatusHint">使用 FFmpeg 抽样帧比对；短视频（≤180 秒）可匹配，片段 vs 完整长视频不承诺。ASR 为可选本地命令，默认关闭。</p>
           <label class="check video-enable-row"><input id="setVideoEnabled" type="checkbox">默认启用视频视觉相似（默认关闭）</label>
-          <p class="hint">视频视觉相似为实验功能：使用 FFmpeg 抽样帧，可能较慢；语音/ASR 辅助未实现、默认关闭。</p>
+          <p class="hint">视频视觉相似为实验功能：使用 FFmpeg 抽样帧，可能较慢；ASR 辅助不附带模型、不联网。</p>
           <fieldset id="setVideoFields" class="video-fields" disabled>
           <div class="form-grid">
             <div class="field">
@@ -792,6 +826,40 @@
             </div>
           </div>
           </fieldset>
+          <div class="asr-section" id="setVideoAsrSection">
+            <div class="section-subhead">
+              <h3>ASR 语音辅助（可选，默认关闭）</h3>
+              <span class="badge badge-gray asr-status-badge" id="setVideoAsrStatusBadge">检测中…</span>
+            </div>
+            <p class="hint" id="setVideoAsrStatusHint">ASR 仅调用 NAS 本地外部命令（不附带模型、不联网）；转录文本只参与相似度评分，不会在界面展示或写入结果。</p>
+            <label class="check asr-enable-row"><input id="setVideoAsrEnabled" type="checkbox">默认启用 ASR 辅助（默认关闭）</label>
+            <fieldset id="setVideoAsrFields" class="asr-fields" disabled>
+              <div class="form-grid">
+                <div class="field field-wide">
+                  <label for="setVideoAsrCommand">ASR 命令模板（支持 {audio} / {outdir} / {stem}）</label>
+                  <input id="setVideoAsrCommand" type="text" placeholder="whisper --model /path/model --output_format txt --output_dir {outdir} {audio}" autocomplete="off" spellcheck="false">
+                  <p class="hint">仅执行本地命令，不经 shell；留空表示未配置。未配置或失败时自动回退纯视觉分数，不阻塞视频扫描。</p>
+                  <p class="field-error" id="setVideoAsrCommandError" role="alert" hidden></p>
+                </div>
+                <div class="field">
+                  <label for="setVideoAsrWeight">文本分数权重（0–0.5）</label>
+                  <input id="setVideoAsrWeight" type="number" inputmode="decimal" min="0" max="0.5" step="0.05" value="0.15">
+                  <p class="field-error" id="setVideoAsrWeightError" role="alert" hidden></p>
+                </div>
+                <div class="field">
+                  <label for="setVideoAsrTimeout">ASR 单次超时（秒，30–1800）</label>
+                  <input id="setVideoAsrTimeout" type="number" inputmode="numeric" min="30" max="1800" step="1" value="300">
+                  <p class="field-error" id="setVideoAsrTimeoutError" role="alert" hidden></p>
+                </div>
+                <div class="field">
+                  <label for="setVideoAsrMaxSec">ASR 最大处理时长（秒，30–3600）</label>
+                  <input id="setVideoAsrMaxSec" type="number" inputmode="numeric" min="30" max="3600" step="1" value="600">
+                  <p class="field-error" id="setVideoAsrMaxSecError" role="alert" hidden></p>
+                </div>
+              </div>
+            </fieldset>
+            <p class="hint asr-note">未附带语音模型、不联网；转录内容不回传前端，不在结果中展示。</p>
+          </div>
         </details>
         <p class="form-error-banner" id="settingsError" role="alert" hidden></p>
         <div class="form-actions">
@@ -841,6 +909,6 @@
   <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.6" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M12 10.8v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="12" cy="7.6" r="1.05" fill="currentColor"/></symbol>
 </svg>
 
-<script src="./app.js?v=1.1.0-0008" defer></script>
+<script src="./app.js?v=1.1.0-0009" defer></script>
 </body>
 </html>

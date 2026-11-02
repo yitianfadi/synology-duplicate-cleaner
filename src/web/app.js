@@ -73,7 +73,12 @@
     video_hwaccel: 'auto',
     video_max_file_mb: 8192,
     video_timeout_sec: 180,
-    video_cache: true
+    video_cache: true,
+    video_asr_enabled: false,
+    video_asr_command: '',
+    video_asr_weight: 0.15,
+    video_asr_timeout_sec: 300,
+    video_asr_max_sec: 600
   };
   var VIDEO_HWACCEL_LABEL = { none: '软件解码', vaapi: 'VA-API', qsv: 'Intel QSV', nvdec: 'NVDEC', auto: '自动' };
   var SOURCE_INFO = {
@@ -130,7 +135,9 @@
     video_similarity_enabled: false, video_extensions: DEFAULT_VIDEO_EXTENSIONS.slice(),
     video_sample_frames: 20, video_max_sample_interval_sec: 300, video_similarity_threshold: 90,
     video_concurrency: 1, video_hwaccel: 'auto', video_max_file_mb: 8192,
-    video_timeout_sec: 180, video_cache: true
+    video_timeout_sec: 180, video_cache: true,
+    video_asr_enabled: false, video_asr_command: '', video_asr_weight: 0.15,
+    video_asr_timeout_sec: 300, video_asr_max_sec: 600
   };
   var SIZE_UNITS = { kb: 1024, mb: 1048576, gb: 1073741824 };
 
@@ -208,7 +215,13 @@
     'videoLoadMoreBtn videoLoadMoreStatus settingsVideoDetails setVideoStatusBadge setVideoStatusHint setVideoEnabled ' +
     'setVideoFields setVideoThreshold setVideoThresholdError setVideoSampleFrames setVideoFramesError setVideoMaxInterval ' +
     'setVideoIntervalError setVideoConcurrency setVideoConcurrencyError setVideoHwaccel setVideoMaxMb setVideoMaxFileError ' +
-    'setVideoTimeout setVideoTimeoutError setVideoCache setVideoExtList setVideoExtError footerMeta toastRoot modalRoot').split(' ');
+    'setVideoTimeout setVideoTimeoutError setVideoCache setVideoExtList setVideoExtError ' +
+    'videoAsrSection videoAsrStatusBadge videoAsrStatusHint videoAsrEnabled videoAsrFields videoAsrCommand ' +
+    'videoAsrCommandError videoAsrWeight videoAsrWeightError videoAsrTimeout videoAsrTimeoutError ' +
+    'videoAsrMaxSec videoAsrMaxSecError setVideoAsrStatusBadge setVideoAsrStatusHint ' +
+    'setVideoAsrEnabled setVideoAsrFields setVideoAsrCommand setVideoAsrCommandError setVideoAsrWeight ' +
+    'setVideoAsrWeightError setVideoAsrTimeout setVideoAsrTimeoutError setVideoAsrMaxSec setVideoAsrMaxSecError ' +
+    'footerMeta toastRoot modalRoot').split(' ');
 
   var activeModal = null;
   var modalSeq = 0;
@@ -1501,7 +1514,11 @@
     videoConcurrency: { input: 'videoConcurrency', error: 'videoConcurrencyError' },
     videoMaxFile: { input: 'videoMaxFileMb', error: 'videoMaxFileError' },
     videoTimeout: { input: 'videoTimeout', error: 'videoTimeoutError' },
-    videoExt: { input: 'videoExtList', error: 'videoExtError' }
+    videoExt: { input: 'videoExtList', error: 'videoExtError' },
+    videoAsrCommand: { input: 'videoAsrCommand', error: 'videoAsrCommandError' },
+    videoAsrWeight: { input: 'videoAsrWeight', error: 'videoAsrWeightError' },
+    videoAsrTimeout: { input: 'videoAsrTimeout', error: 'videoAsrTimeoutError' },
+    videoAsrMaxSec: { input: 'videoAsrMaxSec', error: 'videoAsrMaxSecError' }
   };
 
   function renderRoots() {
@@ -1825,7 +1842,7 @@
       cls: 'is-available',
       hint: '使用 FFmpeg 抽样帧比对；' +
         (details.length ? details.join(' · ') : '未检测到硬件加速，将使用 CPU，可能较慢。') +
-        ' 语音/ASR 辅助未实现（默认关闭，无内置模型、不联网）。'
+        ' 短视频（≤180 秒）可匹配；片段 vs 完整长视频不承诺。ASR 辅助为可选本地命令，默认关闭（无内置模型、不联网）。'
     };
   }
 
@@ -1851,6 +1868,7 @@
     }
     updateVideoFieldsState();
     updateSettingsVideoFieldsState();
+    updateAsrStatusUi();
   }
 
   function updateVideoFieldsState() {
@@ -1888,6 +1906,7 @@
     var selected = (Array.isArray(settings.video_extensions) && settings.video_extensions.length)
       ? settings.video_extensions : cap.extensions;
     renderExtChips(els.videoExtList, cap.extensions, selected, null);
+    applyAsrSettingsToForm(settings);
     updateVideoAvailabilityUi();
   }
 
@@ -1908,6 +1927,7 @@
     var selected = (Array.isArray(settings.video_extensions) && settings.video_extensions.length)
       ? settings.video_extensions : cap.extensions;
     renderExtChips(els.setVideoExtList, cap.extensions, selected, null);
+    fillAsrSettingsForm(settings);
     updateVideoAvailabilityUi();
   }
 
@@ -1933,6 +1953,7 @@
     options.video_cache = !!(els.videoCache && els.videoCache.checked);
     var ext = readExtChips(els.videoExtList);
     if (!ext.length) { errors.videoExt = '请至少选择一种视频后缀。'; } else { options.video_extensions = ext; }
+    readAsrScanOptions(options, errors);
   }
 
   function readVideoSettings(settings, errors) {
@@ -1955,6 +1976,7 @@
     settings.video_cache = !!(els.setVideoCache && els.setVideoCache.checked);
     var ext = readExtChips(els.setVideoExtList);
     if (!ext.length) { errors.videoExt = '请至少选择一种视频后缀。'; } else { settings.video_extensions = ext; }
+    readAsrSettings(settings, errors);
   }
 
   function videoScanEnabledForResults() {
@@ -1992,6 +2014,194 @@
     var total = 0;
     Object.keys(skipped).forEach(function (key) { total += Number(skipped[key]) || 0; });
     return total;
+  }
+
+  // ---------- ASR 语音辅助（可选外部本地命令；默认关闭） ----------
+  function asrCapability() {
+    var video = state.meta && state.meta.video;
+    var asr = video && video.asr;
+    var supported = !!(asr && typeof asr === 'object');
+    var enabled = supported ? asr.enabled !== false : false;
+    var available = false;
+    var configured = false;
+    var reason = '';
+    if (supported) {
+      if (typeof asr.available === 'boolean') { available = asr.available; }
+      if (typeof asr.configured === 'boolean') { configured = asr.configured; }
+      if (typeof asr.available !== 'boolean' && typeof asr.configured === 'boolean') { available = configured; }
+      if (typeof asr.configured !== 'boolean' && typeof asr.available === 'boolean') { configured = available; }
+      if (asr.reason) { reason = String(asr.reason); }
+      else if (asr.message) { reason = String(asr.message); }
+    }
+    var status = 'unsupported';
+    var text = '后端未提供 ASR';
+    var cls = 'is-muted';
+    if (supported) {
+      if (!enabled) {
+        status = 'disabled';
+        text = 'ASR 未启用（默认关闭）';
+        cls = 'is-muted';
+      } else if (available) {
+        status = 'configured';
+        text = 'ASR 已配置（本地命令）';
+        cls = 'is-ok';
+      } else if (configured || asr.command) {
+        status = 'unavailable';
+        text = 'ASR 不可用';
+        cls = 'is-warn';
+      } else {
+        status = 'not-configured';
+        text = 'ASR 未配置';
+        cls = 'is-warn';
+      }
+    }
+    return {
+      supported: supported,
+      enabled: enabled,
+      available: available,
+      configured: configured,
+      status: status,
+      text: text,
+      cls: cls,
+      reason: reason,
+      weight: (supported && typeof asr.weight === 'number') ? clamp(asr.weight, 0, 0.5) : 0.15
+    };
+  }
+
+  function updateAsrStatusUi() {
+    var cap = asrCapability();
+    [els.videoAsrStatusBadge, els.setVideoAsrStatusBadge].forEach(function (badge) {
+      if (!badge) { return; }
+      setText(badge, cap.text);
+      badge.className = 'badge asr-status-badge ' + cap.cls;
+    });
+    var hintText = 'ASR 仅调用 NAS 本地外部命令（不附带模型、不联网）；转录文本只参与相似度评分，不会在界面展示或写入结果。';
+    if (!cap.supported) {
+      hintText = '当前后端未提供 ASR 辅助能力；ASR 选项不可用，视频视觉相似不受影响。';
+    } else if (cap.status === 'not-configured') {
+      hintText = 'ASR 未配置：请填写本地 ASR 命令模板。未配置时视频扫描仍可正常进行（纯视觉评分），不阻塞扫描。';
+    } else if (cap.status === 'unavailable') {
+      hintText = 'ASR 不可用' + (cap.reason ? '：' + cap.reason : '') +
+        '；视频扫描将自动回退纯视觉评分，不会失败。请检查本地命令/模型后再启用。';
+    } else if (cap.status === 'configured') {
+      hintText = 'ASR 已配置：使用本地命令生成文本签名参与评分；转录内容不展示、不回传前端。';
+    } else if (cap.status === 'disabled') {
+      hintText = 'ASR 未启用（默认关闭）。可填写本地命令模板并启用；不附带模型、不联网。';
+    }
+    [els.videoAsrStatusHint, els.setVideoAsrStatusHint].forEach(function (hint) {
+      if (hint) { setText(hint, hintText); }
+    });
+    updateAsrFieldsState();
+  }
+
+  function updateAsrFieldsState() {
+    var cap = asrCapability();
+    var scanVideoOn = !!(els.videoEnabled && els.videoEnabled.checked);
+    var scanAsrOn = !!(els.videoAsrEnabled && els.videoAsrEnabled.checked);
+    var scanCanEnable = cap.supported && scanVideoOn && cap.status !== 'unavailable';
+    if (els.videoAsrEnabled) { els.videoAsrEnabled.disabled = !scanCanEnable; }
+    if (els.videoAsrFields) {
+      els.videoAsrFields.disabled = !(scanCanEnable && scanAsrOn);
+    }
+    var settingsVideoOn = !!(els.setVideoEnabled && els.setVideoEnabled.checked);
+    var settingsAsrOn = !!(els.setVideoAsrEnabled && els.setVideoAsrEnabled.checked);
+    var settingsCanEnable = cap.supported && settingsVideoOn && cap.status !== 'unavailable';
+    if (els.setVideoAsrEnabled) { els.setVideoAsrEnabled.disabled = !settingsCanEnable; }
+    if (els.setVideoAsrFields) {
+      els.setVideoAsrFields.disabled = !(settingsCanEnable && settingsAsrOn);
+    }
+  }
+
+  function setDecimalField(input, value, fallback, min, max) {
+    if (!input) { return; }
+    var num = parseFloat(value);
+    if (!isFinite(num)) { num = fallback; }
+    num = clamp(num, min, max);
+    input.value = String(Math.round(num * 100) / 100);
+  }
+
+  function applyAsrSettingsToForm(settings) {
+    if (!settings) { settings = state.settings || DEFAULT_SETTINGS; }
+    var cap = asrCapability();
+    var enabled = cap.supported && settings.video_asr_enabled === true && cap.status !== 'unavailable';
+    if (els.videoAsrEnabled) { els.videoAsrEnabled.checked = enabled; }
+    if (els.videoAsrCommand) { els.videoAsrCommand.value = settings.video_asr_command || ''; }
+    setDecimalField(els.videoAsrWeight, settings.video_asr_weight, 0.15, 0, 0.5);
+    setVideoNumberValue(els.videoAsrTimeout, settings.video_asr_timeout_sec, 300, 30, 1800);
+    setVideoNumberValue(els.videoAsrMaxSec, settings.video_asr_max_sec, 600, 30, 3600);
+    updateAsrStatusUi();
+  }
+
+  function fillAsrSettingsForm(settings) {
+    if (!settings) { settings = state.settings || DEFAULT_SETTINGS; }
+    var cap = asrCapability();
+    var enabled = cap.supported && settings.video_asr_enabled === true && cap.status !== 'unavailable';
+    if (els.setVideoAsrEnabled) { els.setVideoAsrEnabled.checked = enabled; }
+    if (els.setVideoAsrCommand) { els.setVideoAsrCommand.value = settings.video_asr_command || ''; }
+    setDecimalField(els.setVideoAsrWeight, settings.video_asr_weight, 0.15, 0, 0.5);
+    setVideoNumberValue(els.setVideoAsrTimeout, settings.video_asr_timeout_sec, 300, 30, 1800);
+    setVideoNumberValue(els.setVideoAsrMaxSec, settings.video_asr_max_sec, 600, 30, 3600);
+    updateAsrStatusUi();
+  }
+
+  function readFloatOption(input, min, max, label) {
+    var raw = String(input && input.value !== null && input.value !== undefined ? input.value : '').trim();
+    if (!raw) { return { value: null, error: label + '不能为空。' }; }
+    if (!/^\d+(\.\d+)?$/.test(raw)) { return { value: null, error: label + '必须是数字（可带小数）。' }; }
+    var num = parseFloat(raw);
+    if (!isFinite(num) || num < min || num > max) {
+      return { value: null, error: label + '必须在 ' + min + ' 到 ' + max + ' 之间。' };
+    }
+    return { value: num, error: '' };
+  }
+
+  function readAsrScanOptions(options, errors) {
+    var cap = asrCapability();
+    if (!cap.supported) { return; }
+    if (!(els.videoEnabled && els.videoEnabled.checked)) { return; }
+    var enabled = !!(els.videoAsrEnabled && els.videoAsrEnabled.checked) && cap.status !== 'unavailable';
+    options.video_asr_enabled = enabled;
+    if (!enabled) { return; }
+    var command = els.videoAsrCommand ? els.videoAsrCommand.value.trim() : '';
+    if (command.length > 2000) {
+      errors.videoAsrCommand = 'ASR 命令模板最多 2000 个字符。';
+    } else {
+      options.video_asr_command = command;
+    }
+    var weight = readFloatOption(els.videoAsrWeight, 0, 0.5, 'ASR 文本分数权重');
+    if (weight.error) { errors.videoAsrWeight = weight.error; } else { options.video_asr_weight = weight.value; }
+    var timeout = readIntOption(els.videoAsrTimeout, 30, 1800, false, 0, 'ASR 单次超时（秒）');
+    if (timeout.error) { errors.videoAsrTimeout = timeout.error; } else { options.video_asr_timeout_sec = timeout.value; }
+    var maxSec = readIntOption(els.videoAsrMaxSec, 30, 3600, false, 0, 'ASR 最大处理时长（秒）');
+    if (maxSec.error) { errors.videoAsrMaxSec = maxSec.error; } else { options.video_asr_max_sec = maxSec.value; }
+  }
+
+  function readAsrSettings(settings, errors) {
+    var cap = asrCapability();
+    if (!cap.supported) { return; }
+    settings.video_asr_enabled = !!(els.setVideoAsrEnabled && els.setVideoAsrEnabled.checked) && cap.status !== 'unavailable';
+    var command = els.setVideoAsrCommand ? els.setVideoAsrCommand.value.trim() : '';
+    if (command.length > 2000) {
+      errors.videoAsrCommand = 'ASR 命令模板最多 2000 个字符。';
+    } else {
+      settings.video_asr_command = command;
+    }
+    var weight = readFloatOption(els.setVideoAsrWeight, 0, 0.5, 'ASR 文本分数权重');
+    if (weight.error) { errors.videoAsrWeight = weight.error; } else { settings.video_asr_weight = weight.value; }
+    var timeout = readIntOption(els.setVideoAsrTimeout, 30, 1800, false, 0, 'ASR 单次超时（秒）');
+    if (timeout.error) { errors.videoAsrTimeout = timeout.error; } else { settings.video_asr_timeout_sec = timeout.value; }
+    var maxSec = readIntOption(els.setVideoAsrMaxSec, 30, 3600, false, 0, 'ASR 最大处理时长（秒）');
+    if (maxSec.error) { errors.videoAsrMaxSec = maxSec.error; } else { settings.video_asr_max_sec = maxSec.value; }
+  }
+
+  function firstFiniteNumber(values) {
+    for (var i = 0; i < values.length; i += 1) {
+      var num = Number(values[i]);
+      if (values[i] !== null && values[i] !== undefined && values[i] !== '' && isFinite(num)) {
+        return num;
+      }
+    }
+    return null;
   }
 
   function sizeFieldValue(bytes) {
@@ -2239,12 +2449,22 @@
     if (els.videoEnabled) {
       els.videoEnabled.addEventListener('change', function () {
         updateVideoFieldsState();
+        updateAsrFieldsState();
         clearOptionsErrors();
         updateScanSummary();
       });
     }
     if (els.videoExtList) {
       els.videoExtList.addEventListener('change', function () { clearOptionsErrors(); updateScanSummary(); });
+    }
+    if (els.videoAsrEnabled) {
+      els.videoAsrEnabled.addEventListener('change', function () {
+        updateAsrFieldsState();
+        clearOptionsErrors();
+      });
+    }
+    if (els.videoAsrSection) {
+      els.videoAsrSection.addEventListener('change', function () { clearOptionsErrors(); });
     }
   }
 
@@ -3732,6 +3952,14 @@
     }
     if (lowConfidence) { badges.push(el('span', { className: 'badge low-confidence-badge', text: '低置信度' })); }
     if (!batchAllowed) { badges.push(el('span', { className: 'badge badge-gray', text: '禁止批量删除' })); }
+    var asrUsed = group.video_asr_used === true || group.asr_used === true;
+    if (asrUsed) {
+      badges.push(el('span', {
+        className: 'badge asr-result-badge',
+        attrs: { title: 'ASR 文本签名参与评分；转录内容不展示、不回传' },
+        text: 'ASR辅助'
+      }));
+    }
 
     var subItems = [
       el('span', { text: '时长 ' + fmtVideoDuration(group.video_duration) }),
@@ -3739,6 +3967,17 @@
       el('span', { text: '硬解 ' + videoHwaccelLabel(group.video_hwaccel) }),
       el('span', { text: '相似度 ' + (score === null ? '—' : score + '%') })
     ];
+    if (asrUsed) {
+      var asrTextScore = firstFiniteNumber([
+        group.video_asr_text_score, group.asr_text_score, group.video_text_score, group.text_score
+      ]);
+      var asrWeight = firstFiniteNumber([group.video_asr_weight, group.asr_weight]);
+      if (asrWeight === null) { asrWeight = asrCapability().weight; }
+      var asrText = 'ASR 辅助';
+      if (asrTextScore !== null) { asrText += ' · 文本分 ' + Math.round(asrTextScore) + '%'; }
+      if (asrWeight !== null) { asrText += ' · 权重 ' + Math.round(asrWeight * 100) + '%'; }
+      subItems.push(el('span', { className: 'asr-score-note', text: asrText }));
+    }
     if (fallback) {
       subItems.push(el('span', { className: 'keep-source-note', text: '保留依据：修改时间（mtime）' }));
     }
@@ -5362,7 +5601,11 @@
     videoConcurrency: { input: 'setVideoConcurrency', error: 'setVideoConcurrencyError' },
     videoMaxFile: { input: 'setVideoMaxMb', error: 'setVideoMaxFileError' },
     videoTimeout: { input: 'setVideoTimeout', error: 'setVideoTimeoutError' },
-    videoExt: { input: 'setVideoExtList', error: 'setVideoExtError' }
+    videoExt: { input: 'setVideoExtList', error: 'setVideoExtError' },
+    videoAsrCommand: { input: 'setVideoAsrCommand', error: 'setVideoAsrCommandError' },
+    videoAsrWeight: { input: 'setVideoAsrWeight', error: 'setVideoAsrWeightError' },
+    videoAsrTimeout: { input: 'setVideoAsrTimeout', error: 'setVideoAsrTimeoutError' },
+    videoAsrMaxSec: { input: 'setVideoAsrMaxSec', error: 'setVideoAsrMaxSecError' }
   };
 
   function bytesToMbValue(bytes) {
@@ -5597,10 +5840,20 @@
     if (els.setVideoEnabled) {
       els.setVideoEnabled.addEventListener('change', function () {
         updateSettingsVideoFieldsState();
+        updateAsrFieldsState();
         clearSettingsErrors();
       });
     }
     if (els.setVideoExtList) { els.setVideoExtList.addEventListener('change', clearSettingsErrors); }
+    if (els.setVideoAsrEnabled) {
+      els.setVideoAsrEnabled.addEventListener('change', function () {
+        updateAsrFieldsState();
+        clearSettingsErrors();
+      });
+    }
+    if (els.setVideoAsrSection) {
+      els.setVideoAsrSection.addEventListener('change', clearSettingsErrors);
+    }
   }
 
   // ==================== 18. 启动 ====================

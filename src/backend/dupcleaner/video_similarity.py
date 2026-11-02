@@ -16,17 +16,20 @@
 
 from __future__ import absolute_import
 
+import hashlib
 import json
 import math
 import os
 import re
+import shlex
 import shutil
 import sqlite3
 import subprocess
+import tempfile
 import threading
 import time
 
-from . import config
+from . import config, similarity
 
 DURATION_RE = re.compile(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)")
 VIDEO_FILTER = ("scale=32:32:force_original_aspect_ratio=decrease,"
@@ -171,30 +174,73 @@ def pair_score(frames_a, frames_b, threshold=0):
     return (score, avg, coverage)
 
 
-def build_video_groups(items, threshold):
-    """安全团分组：任意两两分数 >= 阈值。items 需含 analysis.frame_hashes。"""
+def combine_scores(base_score, text_score, weight):
+    """final = round(base*(1-w) + text*w)；w 限制在 0..0.5。"""
+    weight = max(0.0, min(0.5, float(weight or 0.0)))
+    return int(round(float(base_score) * (1.0 - weight)
+                     + float(text_score) * weight))
+
+
+def duration_ratio_allowed(duration_a, duration_b):
+    """短视频（双方 <=180s）放宽到 0.5..2.0，否则 0.7..1.4。"""
+    duration_a = float(duration_a or 0)
+    duration_b = float(duration_b or 0)
+    if duration_a <= 0 or duration_b <= 0:
+        return False
+    ratio = duration_a / duration_b
+    if (duration_a <= config.SHORT_VIDEO_MAX_SEC
+            and duration_b <= config.SHORT_VIDEO_MAX_SEC):
+        return (config.SHORT_VIDEO_RATIO_MIN <= ratio
+                <= config.SHORT_VIDEO_RATIO_MAX)
+    return (config.VIDEO_DURATION_RATIO_MIN <= ratio
+            <= config.VIDEO_DURATION_RATIO_MAX)
+
+
+def build_video_groups(items, threshold, asr_weight=0.0):
+    """安全团分组：任意两两分数 >= 阈值。items 需含 analysis.frame_hashes。
+
+    若双方都有 ASR 文本签名且 asr_weight>0，则 pair 分数 =
+    round(visual*(1-w) + text*w)，与视觉分数一起参与阈值判断与安全团校验。
+    """
     threshold = max(0, min(100, int(threshold)))
+    asr_weight = max(0.0, min(0.5, float(asr_weight or 0.0)))
     count = len(items)
     pairs = {}
+    pair_details = {}
     for left in range(count):
         for right in range(left + 1, count):
             first = items[left]["analysis"]
             second = items[right]["analysis"]
             duration_a = float(first.get("duration") or 0)
             duration_b = float(second.get("duration") or 0)
-            if duration_a <= 0 or duration_b <= 0:
-                continue
-            ratio = duration_a / duration_b
-            if ratio < config.VIDEO_DURATION_RATIO_MIN or ratio > config.VIDEO_DURATION_RATIO_MAX:
+            if not duration_ratio_allowed(duration_a, duration_b):
                 continue
             frames_a = first.get("frame_hashes") or []
             frames_b = second.get("frame_hashes") or []
             if prefilter_similarity(frames_a, frames_b) < 0.25:
                 continue
-            result = pair_score(frames_a, frames_b, threshold)
-            if result is None:
+            visual = pair_score(frames_a, frames_b, 0)
+            if visual is None:
                 continue
-            pairs[(left, right)] = result[0]
+            base_score = int(visual[0])
+            text_score = None
+            asr_used = False
+            final_score = base_score
+            signature_a = first.get("asr_signature")
+            signature_b = second.get("asr_signature")
+            if asr_weight > 0 and signature_a and signature_b:
+                text_score = similarity.minhash_similarity_percent(
+                    signature_a, signature_b)
+                asr_used = True
+                final_score = combine_scores(base_score, text_score, asr_weight)
+            if final_score < threshold:
+                continue
+            pairs[(left, right)] = final_score
+            pair_details[(left, right)] = {
+                "base": base_score,
+                "text_score": text_score,
+                "asr_used": asr_used,
+            }
     groups = []
     group_of = {}
     for (first, second), score in sorted(pairs.items(),
@@ -243,11 +289,17 @@ def build_video_groups(items, threshold):
         if len(members) < 2:
             continue
         scores = {}
+        details = {}
         for left in range(len(members)):
             for right in range(left + 1, len(members)):
                 key = (members[left], members[right])
-                scores[(members[left], members[right])] = pairs.get(key)
-        clusters.append({"indices": members, "scores": scores})
+                scores[key] = pairs.get(key)
+                details[key] = pair_details.get(key) or {
+                    "base": pairs.get(key), "text_score": None,
+                    "asr_used": False,
+                }
+        clusters.append({"indices": members, "scores": scores,
+                         "details": details})
     return clusters
 
 
@@ -439,6 +491,121 @@ class FFmpegTool(object):
             raise VideoSkip("decode", u"帧数据不足 %d 字节" % len(stdout))
         return stdout[:config.VIDEO_FRAME_BYTES]
 
+    def extract_audio(self, path, audio_path, max_sec, timeout,
+                      stop_check=None):
+        """抽取 16k mono WAV（临时文件，-t 限制最大秒数），供外部 ASR 使用。"""
+        args = ["-nostdin", "-hide_banner", "-loglevel", "error", "-i", path,
+                "-vn", "-ac", "1", "-ar", str(config.ASR_AUDIO_RATE),
+                "-t", "%d" % int(max_sec), "-f", "wav", "-y", audio_path]
+        code, _stdout, stderr = self._run(args, timeout, stop_check)
+        if (code != 0 or not os.path.isfile(audio_path)
+                or os.path.getsize(audio_path) <= 0):
+            detail = stderr.decode("utf-8", "replace").strip()[-300:]
+            raise VideoSkip("decode", detail or "audio extract failed")
+
+
+def split_asr_command(template):
+    """把命令模板拆成参数数组（无 shell；Windows 保留反斜杠路径）。"""
+    if not template:
+        return []
+    posix = os.name != "nt"
+    try:
+        tokens = shlex.split(template, posix=posix)
+    except ValueError:
+        return []
+    if not posix:
+        cleaned = []
+        for token in tokens:
+            if (len(token) >= 2 and token[0] == token[-1]
+                    and token[0] in ("'", '"')):
+                token = token[1:-1]
+            cleaned.append(token)
+        tokens = cleaned
+    return tokens
+
+
+def asr_availability(options, ffmpeg_available=None):
+    """返回 ASR 可用性（不启动外部命令，只做配置/可执行性判断）。"""
+    options = options or {}
+    enabled = bool(options.get("video_asr_enabled", False))
+    template = (options.get("video_asr_command") or "").strip()
+    weight = float(options.get("video_asr_weight")
+                   if options.get("video_asr_weight") is not None
+                   else config.ASR_DEFAULT_WEIGHT)
+    result = {"enabled": enabled, "configured": bool(template),
+              "available": False, "reason": "disabled", "weight": weight}
+    if not enabled:
+        return result
+    if not template:
+        result["reason"] = "no_command"
+        return result
+    tokens = split_asr_command(template)
+    if not tokens:
+        result["reason"] = "invalid_command"
+        return result
+    executable = tokens[0]
+    found = (os.path.isfile(executable)
+             and os.access(executable, os.X_OK)) or (
+        shutil.which(executable) is not None)
+    if not found:
+        result["reason"] = "command_not_found"
+        return result
+    if ffmpeg_available is False:
+        result["reason"] = "no_ffmpeg"
+        return result
+    result["available"] = True
+    result["reason"] = "ok"
+    return result
+
+
+def run_external_command(command, cwd, timeout, stop_check=None):
+    """执行外部命令（参数数组、无 shell），超时/停止时 kill。"""
+    try:
+        process = subprocess.Popen(command, cwd=cwd,
+                                   stdin=subprocess.DEVNULL,
+                                   stdout=subprocess.PIPE,
+                                   stderr=subprocess.PIPE)
+    except OSError as exc:
+        raise VideoSkip("error", u"无法启动 ASR 命令: %s" % exc)
+    deadline = time.monotonic() + max(1.0, float(timeout))
+    try:
+        while process.poll() is None:
+            if stop_check is not None and stop_check():
+                _kill_process(process)
+                raise VideoStopped()
+            if time.monotonic() >= deadline:
+                _kill_process(process)
+                raise VideoTimeout()
+            time.sleep(0.05)
+        stdout, stderr = process.communicate()
+    except BaseException:
+        _kill_process(process)
+        raise
+    return process.returncode, stdout or b"", stderr or b""
+
+
+def collect_asr_text(stdout, outdir):
+    """优先 stdout；否则取 outdir 下第一个 .txt（只供内部签名，绝不外泄）。"""
+    text = (stdout or b"").decode("utf-8", "replace").strip()
+    if text:
+        return text
+    try:
+        names = sorted(os.listdir(outdir))
+    except OSError:
+        return ""
+    for name in names:
+        if not name.lower().endswith(".txt"):
+            continue
+        path = os.path.join(outdir, name)
+        try:
+            if os.path.getsize(path) > 4 * 1024 * 1024:
+                continue
+            with open(path, "rb") as handle:
+                return handle.read().decode("utf-8", "replace").strip()
+        except OSError:
+            continue
+    return ""
+
 
 def probe_ffmpeg(runtime_config=None):
     """探测 ffmpeg 能力（进程内缓存，/api/meta 可用）。"""
@@ -464,12 +631,20 @@ def video_capabilities(runtime_config, settings=None):
     settings = settings or {}
     info = probe_ffmpeg(runtime_config)
     accels = info.get("hwaccels") or []
+    asr = asr_availability(settings, info.get("available"))
     return {
         "enabled": bool(settings.get("video_similarity_enabled", False)),
         "ffmpeg_path": info.get("ffmpeg_path") or "",
         "ffmpeg_version": info.get("ffmpeg_version") or "unavailable",
         "hwaccels": accels,
         "gpu_hint": bool(accels),
+        "asr": {
+            "enabled": asr["enabled"],
+            "configured": asr["configured"],
+            "available": asr["available"],
+            "reason": asr["reason"],
+            "weight": asr["weight"],
+        },
         "defaults": {
             "video_similarity_enabled": False,
             "video_extensions": list(config.DEFAULT_VIDEO_EXTENSIONS),
@@ -481,6 +656,11 @@ def video_capabilities(runtime_config, settings=None):
             "video_max_file_mb": config.VIDEO_DEFAULT_MAX_FILE_MB,
             "video_timeout_sec": config.VIDEO_DEFAULT_TIMEOUT_SEC,
             "video_cache": True,
+            "video_asr_enabled": False,
+            "video_asr_command": "",
+            "video_asr_weight": config.ASR_DEFAULT_WEIGHT,
+            "video_asr_timeout_sec": config.ASR_DEFAULT_TIMEOUT_SEC,
+            "video_asr_max_sec": config.ASR_DEFAULT_MAX_SEC,
         },
     }
 
@@ -590,15 +770,17 @@ def cache_key(identity, sample_frames, max_interval):
 
 class VideoEngine(object):
     def __init__(self, runtime_config, ffmpeg=None, ffmpeg_cmd=None,
-                 cache=None, timeout_cap=None):
+                 cache=None, timeout_cap=None, asr_timeout_cap=None):
         self.config = runtime_config
         if ffmpeg is None:
             ffmpeg = FFmpegTool(cmd=ffmpeg_cmd)
             ffmpeg.resolve(runtime_config)
         self.ffmpeg = ffmpeg
         self.timeout_cap = timeout_cap
+        self.asr_timeout_cap = asr_timeout_cap
         self.cache = cache
         self.ffmpeg_used = 0
+        self.asr_used = 0
         self._lock = threading.RLock()
 
     def ensure_cache(self, options):
@@ -612,8 +794,8 @@ class VideoEngine(object):
     def capabilities(self, settings=None):
         return video_capabilities(self.config, settings)
 
-    def analyze(self, path, options, stop_check=None):
-        """分析一个视频，返回 dict（ok/failed + 指纹字段）。"""
+    def _analyze_visual(self, path, options, stop_check=None):
+        """视觉分析（帧指纹 + 缓存），返回 dict。"""
         identity = fsutil_identity(path)
         if identity is None:
             raise VideoSkip("error", u"文件不存在")
@@ -714,6 +896,133 @@ class VideoEngine(object):
             self.ffmpeg_used += 1
         result["cache_hit"] = False
         return result
+
+    # ------------------------------------------------------------------
+    # 可选 ASR 辅助（失败 open：绝不因 ASR 失败而让视频分析失败）
+    # ------------------------------------------------------------------
+    def analyze(self, path, options, stop_check=None):
+        """视觉分析 + 可选 ASR 文本签名（只产出签名，绝不返回转写文本）。"""
+        visual = self._analyze_visual(path, options, stop_check)
+        identity = fsutil_identity(path)
+        asr_info = {"asr_status": "disabled", "asr_signature": None,
+                    "asr_cache_hit": False}
+        if identity is not None and options.get("video_asr_enabled"):
+            try:
+                asr_info = self._analyze_asr(path, identity, options,
+                                             self.ensure_cache(options),
+                                             stop_check)
+            except VideoStopped:
+                raise
+            except Exception:
+                asr_info = {"asr_status": "failed", "asr_signature": None,
+                            "asr_cache_hit": False}
+        visual.update(asr_info)
+        if visual.get("asr_signature"):
+            with self._lock:
+                self.asr_used += 1
+        return visual
+
+    def _asr_temp_root(self):
+        directory = os.path.join(self.config.data_dir, "tmp")
+        try:
+            os.makedirs(directory, exist_ok=True)
+        except OSError:
+            directory = None
+        return directory
+
+    def _asr_cache_key(self, identity, options):
+        template = (options.get("video_asr_command") or "").strip()
+        fingerprint = hashlib.sha256(template.encode("utf-8")).hexdigest()[:16]
+        max_sec = int(options.get("video_asr_max_sec")
+                      or config.ASR_DEFAULT_MAX_SEC)
+        return "%s|%s|%d|%d|%d|%d|%d" % (
+            config.ASR_ALGO_VERSION, fingerprint,
+            int(identity["size"]), int(identity["mtime_ns"]),
+            int(identity["inode"]), int(identity["dev"]), max_sec)
+
+    def _asr_fail(self, cache, key, status):
+        if cache is not None:
+            cache.put(key, {"asr_status": status, "signature": None,
+                            "created_at": time.time()})
+        return {"asr_status": status, "asr_signature": None,
+                "asr_cache_hit": False}
+
+    def _analyze_asr(self, path, identity, options, cache, stop_check=None):
+        availability = asr_availability(options, self.ffmpeg.available())
+        if not availability["available"]:
+            return {"asr_status": availability["reason"],
+                    "asr_signature": None, "asr_cache_hit": False}
+        key = self._asr_cache_key(identity, options)
+        if cache is not None:
+            cached = cache.get(key)
+            if isinstance(cached, dict):
+                status = cached.get("asr_status") or "failed"
+                if status == "ok" and cached.get("signature"):
+                    return {"asr_status": "ok",
+                            "asr_signature": cached.get("signature"),
+                            "asr_cache_hit": True}
+                if status != "ok":
+                    return {"asr_status": status, "asr_signature": None,
+                            "asr_cache_hit": True}
+        timeout = float(options.get("video_asr_timeout_sec")
+                        or config.ASR_DEFAULT_TIMEOUT_SEC)
+        if self.asr_timeout_cap:
+            timeout = min(timeout, float(self.asr_timeout_cap))
+        max_sec = int(options.get("video_asr_max_sec")
+                      or config.ASR_DEFAULT_MAX_SEC)
+        tempdir = tempfile.mkdtemp(prefix="dc-asr-", dir=self._asr_temp_root())
+        try:
+            audio_path = os.path.join(tempdir, "audio.wav")
+            outdir = os.path.join(tempdir, "out")
+            os.makedirs(outdir, exist_ok=True)
+            try:
+                self.ffmpeg.extract_audio(path, audio_path, max_sec,
+                                          timeout, stop_check)
+            except VideoTimeout:
+                return self._asr_fail(cache, key, "timeout")
+            except VideoStopped:
+                raise
+            except VideoSkip:
+                return self._asr_fail(cache, key, "extract_failed")
+            tokens = split_asr_command(options.get("video_asr_command") or "")
+            if not tokens:
+                return self._asr_fail(cache, key, "unavailable")
+            stem = os.path.splitext(os.path.basename(path))[0]
+            command = []
+            for token in tokens:
+                command.append(token.replace("{audio}", audio_path)
+                               .replace("{outdir}", outdir)
+                               .replace("{stem}", stem))
+            try:
+                code, stdout, _stderr = run_external_command(
+                    command, outdir, timeout, stop_check)
+            except VideoTimeout:
+                return self._asr_fail(cache, key, "timeout")
+            except VideoStopped:
+                raise
+            except VideoSkip:
+                return self._asr_fail(cache, key, "failed")
+            if code != 0:
+                return self._asr_fail(cache, key, "failed")
+            text = collect_asr_text(stdout, outdir)
+            if not text:
+                return self._asr_fail(cache, key, "no_speech")
+            normalized = similarity.normalize_text(text)
+            if len(normalized) < config.ASR_MIN_TEXT_CHARS:
+                return self._asr_fail(cache, key, "no_speech")
+            signature = similarity.minhash_signature(
+                similarity.text_shingles(normalized))
+            if not signature:
+                return self._asr_fail(cache, key, "no_speech")
+            if cache is not None:
+                cache.put(key, {"asr_status": "ok",
+                                "signature": signature,
+                                "created_at": time.time()})
+            # 隐私：只返回签名，绝不返回转写文本
+            return {"asr_status": "ok", "asr_signature": signature,
+                    "asr_cache_hit": False}
+        finally:
+            shutil.rmtree(tempdir, ignore_errors=True)
 
     @staticmethod
     def _cache_failure(cache, key, reason, detail):

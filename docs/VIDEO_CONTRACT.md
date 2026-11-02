@@ -18,8 +18,13 @@
 | video_max_file_mb | 8192 | 1..102400 |
 | video_timeout_sec | 180 | 30..1800 |
 | video_cache | true | 布尔 |
+| video_asr_enabled | false | 可选 ASR 辅助开关 |
+| video_asr_command | "" | 外部 ASR 命令模板；空=不可用 |
+| video_asr_weight | 0.15 | 0..0.5 |
+| video_asr_timeout_sec | 300 | 30..1800 |
+| video_asr_max_sec | 600 | 30..3600 |
 
-ASR 语音辅助不进入本版本实现（无内置模型/不联网）；文档和 UI 必须明确“未实现、默认关闭”，不得假装可用。
+ASR 语音辅助为可选外部命令（默认关闭，不内置模型/不联网）；未配置时视频扫描按视觉指纹完成，不失败。
 
 ## 2. FFmpeg
 
@@ -41,18 +46,19 @@ ASR 语音辅助不进入本版本实现（无内置模型/不联网）；文档
 - 每个时间点用一次 FFmpeg seek 取 1 帧，输出 **32×32 灰度 rawvideo（1024B）**，不落盘：
   `ffmpeg -nostdin -hide_banner -loglevel error -ss t -i file -frames:v 1 -vf "scale=32:32:force_original_aspect_ratio=decrease,pad=32:32:(ow-iw)/2:(oh-ih)/2:black,format=gray" -f rawvideo -pix_fmt gray -`
 - 每帧计算 64-bit **pHash**（DCT 8×8）；保存每帧 hex；视频指纹 = 16进制帧序列（或紧凑编码）。
-- 短视频、几十秒片段可以与长度相近的视频匹配；**片段 vs 完整长视频不承诺**（固定 N 均匀采样无法覆盖任意短片段；后续可用多尺度/片段检索，v1 明确说明边界）。
+- 两个视频时长均 <= 180 秒时，时长比例放宽到 0.5..2.0，支持短视频/裁剪后的短视频匹配；**片段 vs 完整长视频仍不承诺**（固定 N 均匀采样无法覆盖任意短片段）。
 - 容忍：转码、分辨率、黑边、轻微调色、小水印、帧率变化。
 - 不识别：剧情语义、剪辑乱序、大量替换画面、换脸/重绘。
 
 ## 4. 相似度与分组
 
-- 时长比例预筛：0.7..1.4。
+- 时长比例预筛：常规 0.7..1.4；双方均 <=180s 时放宽到 0.5..2.0。
 - 候选视频用视频指纹初筛，再做 DTW 序列对齐：
   - 帧相似 = 1 - hamming(pHashA, pHashB)/64；
   - DTW 路径平均帧相似度 avg；
   - 覆盖率 coverage = aligned_pairs / min(nA,nB)；
   - score = round(100 * (0.7*avg + 0.3*coverage))；
+  - 若启用 ASR 且双方均得到文本签名：final = round(base*(1-w) + text_score*w)，w=video_asr_weight。
   - score >= threshold 才成组；要求 coverage >= 0.6（v1 先按长度相近）。
 - 安全团分组：组内任意两份 >= threshold；组至少 2 个视频；不把精确重复组视频纳入视频相似组。
 - 视频组保留策略：latest/earliest 按创建时间；无可信创建时间整组按 mtime；与 v1.1 一致。
