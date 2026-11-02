@@ -81,6 +81,20 @@ scan_checkpoints(
   updated_epoch REAL NOT NULL
 );
 
+scan_checkpoint_records(
+  scan_id TEXT NOT NULL,
+  ordinal INTEGER NOT NULL,
+  path TEXT NOT NULL,
+  size INTEGER,
+  mtime_ns INTEGER,
+  inode INTEGER,
+  dev INTEGER,
+  nlink INTEGER,
+  quick_hash TEXT,
+  hash TEXT,
+  PRIMARY KEY (scan_id, ordinal)
+);
+
 subtitle_jobs(
   job_id TEXT PRIMARY KEY,
   payload_json TEXT NOT NULL,
@@ -101,6 +115,7 @@ subtitle_jobs(
 
 旧 JSON 兼容：
 - v2 起 scan_groups 增加 wasted_bytes/size/similarity_score/created_epoch，scan_files 保存路径/保留/勾选明细，供 SQL 分页/搜索/排序。
+- v3 起暂停断点 FileRecord 拆到 scan_checkpoint_records，scan_checkpoints 只存 stage/progress/stats；旧 payload records 仍可回退读取。
 - 启动时检测 `scans/*/meta.json`、`groups.jsonl`、`deletions/*.meta.json`、`*.jsonl`、`feature_cache.json`，导入 SQLite；v1→v2 从 payload 回填。
 - 导入使用 INSERT OR IGNORE，幂等；不删除源文件；写 `schema_meta('migrated_v1')=1`。
 - 读取时 DB 优先；空则回退旧 JSON。

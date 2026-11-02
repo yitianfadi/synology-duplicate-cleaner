@@ -45,6 +45,7 @@ _MIGRATED_KEY = "migrated_v1"
 _GROUP_BATCH = 200
 _RESULT_BATCH = 200
 _CACHE_BATCH = 500
+_CHECKPOINT_RECORD_BATCH = 500
 
 
 class Store(object):
@@ -586,6 +587,9 @@ class Store(object):
             self.db.execute("DELETE FROM scan_groups WHERE scan_id=?", (scan_id,))
             self.db.execute("DELETE FROM scan_files WHERE scan_id=?", (scan_id,))
             self.db.execute("DELETE FROM scan_checkpoints WHERE scan_id=?", (scan_id,))
+            self.db.execute(
+                "DELETE FROM scan_checkpoint_records WHERE scan_id=?",
+                (scan_id,))
             self.db.execute("DELETE FROM scans WHERE scan_id=?", (scan_id,))
         # 同时清理旧版 JSON 文件（如存在）。
         directory = self.scan_dir(scan_id)
@@ -1077,15 +1081,109 @@ class Store(object):
         return result
 
     # ------------------------------------------------------------------
-    # 扫描 checkpoint
+    # 扫描 checkpoint（plan B：FileRecord 明细拆到 scan_checkpoint_records）
     # ------------------------------------------------------------------
-    def save_checkpoint(self, scan_id, stage, payload):
-        scan_id = self._check_scan_id(scan_id)
+    _CHECKPOINT_RECORD_INSERT_SQL = (
+        "INSERT INTO scan_checkpoint_records"
+        "(scan_id, ordinal, path, size, mtime_ns, inode, dev, nlink,"
+        " quick_hash, hash) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+
+    def _replace_checkpoint_records(self, scan_id, records):
+        """在调用方事务内批量替换断点记录；records 可为迭代器（流式分批）。"""
         self.db.execute(
-            "INSERT OR REPLACE INTO scan_checkpoints"
-            "(scan_id, stage, payload_json, updated_epoch) VALUES(?, ?, ?, ?)",
-            (scan_id, str(stage or ""),
-             json.dumps(payload or {}, ensure_ascii=False), time.time()))
+            "DELETE FROM scan_checkpoint_records WHERE scan_id=?", (scan_id,))
+        batch = []
+        count = 0
+        for item in records:
+            if not isinstance(item, dict):
+                continue
+            quick_hash = item.get("quick_hash")
+            digest = item.get("hash")
+            batch.append((
+                scan_id, count, str(item.get("path") or ""),
+                db_module._as_int(item.get("size")),
+                db_module._as_int(item.get("mtime_ns")),
+                db_module._as_int(item.get("inode")),
+                db_module._as_int(item.get("dev")),
+                db_module._as_int(item.get("nlink"), 1),
+                quick_hash if isinstance(quick_hash, str) else None,
+                digest if isinstance(digest, str) else None,
+            ))
+            count += 1
+            if len(batch) >= _CHECKPOINT_RECORD_BATCH:
+                self.db.executemany(
+                    self._CHECKPOINT_RECORD_INSERT_SQL, batch)
+                batch = []
+        if batch:
+            self.db.executemany(self._CHECKPOINT_RECORD_INSERT_SQL, batch)
+        return count
+
+    def save_checkpoint(self, scan_id, stage, payload):
+        """保存 checkpoint；payload 内 records 列表拆到明细表（原子）。"""
+        scan_id = self._check_scan_id(scan_id)
+        data = dict(payload) if isinstance(payload, dict) else {}
+        records = data.pop("records", None)
+        if isinstance(records, (list, tuple)):
+            return self.save_pause_checkpoint(scan_id, stage, data, records)
+        with self.db.transaction():
+            # 轻量 checkpoint：不携带 records，清除可能残留的旧断点明细。
+            self.db.execute(
+                "DELETE FROM scan_checkpoint_records WHERE scan_id=?", (scan_id,))
+            data.pop("record_count", None)
+            self.db.execute(
+                "INSERT OR REPLACE INTO scan_checkpoints"
+                "(scan_id, stage, payload_json, updated_epoch)"
+                " VALUES(?, ?, ?, ?)",
+                (scan_id, str(stage or ""),
+                 json.dumps(data, ensure_ascii=False), time.time()))
+        return None
+
+    def save_pause_checkpoint(self, scan_id, stage, payload, records):
+        """暂停断点：records 流式分批写入明细表，payload 仅元数据 + record_count。
+
+        单事务保证 checkpoint 与 records 一致；records 可为生成器，避免在内存里
+        再复制一份完整 FileRecord dict 列表。
+        """
+        scan_id = self._check_scan_id(scan_id)
+        data = dict(payload) if isinstance(payload, dict) else {}
+        data.pop("records", None)
+        with self.db.transaction():
+            count = self._replace_checkpoint_records(scan_id, records)
+            data["record_count"] = count
+            self.db.execute(
+                "INSERT OR REPLACE INTO scan_checkpoints"
+                "(scan_id, stage, payload_json, updated_epoch)"
+                " VALUES(?, ?, ?, ?)",
+                (scan_id, str(stage or ""),
+                 json.dumps(data, ensure_ascii=False), time.time()))
+        return count
+
+    def checkpoint_record_count(self, scan_id):
+        scan_id = self._check_scan_id(scan_id)
+        return int(self.db.scalar(
+            "SELECT COUNT(*) FROM scan_checkpoint_records WHERE scan_id=?",
+            (scan_id,), 0) or 0)
+
+    def load_checkpoint_records(self, scan_id):
+        """按 ordinal 读取断点 FileRecord 明细（v3 表）。"""
+        scan_id = self._check_scan_id(scan_id)
+        rows = self.db.query(
+            "SELECT path, size, mtime_ns, inode, dev, nlink, quick_hash, hash"
+            " FROM scan_checkpoint_records WHERE scan_id=? ORDER BY ordinal ASC",
+            (scan_id,))
+        records = []
+        for row in rows:
+            records.append({
+                "path": row["path"],
+                "size": int(row["size"] or 0),
+                "mtime_ns": int(row["mtime_ns"] or 0),
+                "inode": int(row["inode"] or 0),
+                "dev": int(row["dev"] or 0),
+                "nlink": int(row["nlink"] or 0),
+                "quick_hash": row["quick_hash"],
+                "hash": row["hash"],
+            })
+        return records
 
     def load_checkpoint(self, scan_id):
         scan_id = self._check_scan_id(scan_id)
@@ -1094,40 +1192,67 @@ class Store(object):
             " WHERE scan_id=?", (scan_id,))
         if row is None:
             return None
+        payload = self._loads(row["payload_json"], None)
+        if not isinstance(payload, dict):
+            payload = {}
+        # plan B：v3 落库 payload 只有 stage/progress/stats/record_count；
+        # FileRecord 明细在 scan_checkpoint_records（由 load_resumable_checkpoint
+        # 按需 hydrate；旧 v2/v1 payload 内嵌 records 保持原样兼容）。
         return {
             "scan_id": scan_id,
             "stage": row["stage"],
-            "payload": self._loads(row["payload_json"], None),
+            "payload": payload,
             "updated_epoch": row["updated_epoch"],
         }
 
     @staticmethod
     def checkpoint_payload_resumable(payload):
-        """暂停断点是否可恢复：阶段合法且带 records 快照（可为空列表）。"""
+        """暂停断点是否可恢复：阶段合法、records 列表完整且数量匹配。"""
         if not isinstance(payload, dict):
             return False
         stage = payload.get("stage")
         if not isinstance(stage, str) or stage not in RESUME_STAGES:
             return False
-        return isinstance(payload.get("records"), list)
+        records = payload.get("records")
+        if not isinstance(records, list):
+            return False
+        if "record_count" in payload:
+            try:
+                expected = int(payload.get("record_count"))
+            except (TypeError, ValueError):
+                return False
+            if expected != len(records):
+                return False
+        return True
 
     def load_resumable_checkpoint(self, scan_id):
-        """返回可恢复的暂停断点 payload；不存在/不可恢复返回 None。"""
+        """返回可恢复断点 payload（records 从明细表 hydrate；旧 payload 回退）。"""
         checkpoint = self.load_checkpoint(scan_id)
         if checkpoint is None:
             return None
         payload = checkpoint.get("payload")
+        if not isinstance(payload, dict):
+            return None
+        payload = dict(payload)
+        if not isinstance(payload.get("records"), list) and "record_count" in payload:
+            # plan B：明细在 scan_checkpoint_records；数量不匹配则不可恢复。
+            payload["records"] = self.load_checkpoint_records(scan_id)
         if not self.checkpoint_payload_resumable(payload):
             return None
-        result = dict(payload)
-        result["updated_epoch"] = checkpoint.get("updated_epoch")
-        return result
+        payload["updated_epoch"] = checkpoint.get("updated_epoch")
+        return payload
 
     def delete_checkpoint(self, scan_id):
         scan_id = self._check_scan_id(scan_id)
-        self.db.execute("DELETE FROM scan_checkpoints WHERE scan_id=?", (scan_id,))
+        with self.db.transaction():
+            self.db.execute(
+                "DELETE FROM scan_checkpoint_records WHERE scan_id=?",
+                (scan_id,))
+            self.db.execute(
+                "DELETE FROM scan_checkpoints WHERE scan_id=?", (scan_id,))
 
     def list_checkpoints(self, limit=100):
+        """列出 checkpoint 元数据（不 hydrate records，避免加载大数组）。"""
         rows = self.db.query(
             "SELECT scan_id, stage, payload_json, updated_epoch"
             " FROM scan_checkpoints ORDER BY updated_epoch DESC LIMIT ?",
@@ -1257,12 +1382,9 @@ class Store(object):
 
     def _checkpoint_resumable(self, scan_id):
         try:
-            checkpoint = self.load_checkpoint(scan_id)
+            return self.load_resumable_checkpoint(scan_id) is not None
         except Exception:  # pragma: no cover
             return False
-        if checkpoint is None:
-            return False
-        return self.checkpoint_payload_resumable(checkpoint.get("payload"))
 
     # ------------------------------------------------------------------
     # 生命周期

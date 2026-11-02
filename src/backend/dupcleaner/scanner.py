@@ -1209,31 +1209,31 @@ class ScanManager(object):
             state.pause_ready.set()
             return
         snapshot_stage = stage if stage in RESUME_STAGES else "enumerate"
-        if snapshot_stage == "enumerate":
-            snapshot_records = []
-        else:
-            snapshot_records = [record.to_checkpoint() for record in records]
         with state.lock:
             snapshot_stats = copy.deepcopy(state.stats)
             snapshot_progress = round(float(state.progress), 4)
-            snapshot_reason = state.pause_reason or "user"
             state.status = "paused"
             state.stage = snapshot_stage
             state.message = u"扫描已暂停，升级后可继续"
             state.current_path = ""
         self._persist(state, force=True)
+        # plan B：checkpoint payload 只保留元数据（stage/progress/stats）；
+        # save_pause_checkpoint 会追加 record_count，FileRecord 明细进明细表。
         payload = {
             "stage": snapshot_stage,
             "progress": snapshot_progress,
             "stats": snapshot_stats,
-            "records": snapshot_records,
-            "pause_reason": snapshot_reason,
-            "paused_epoch": time.time(),
-            "message": u"扫描已暂停，升级后可继续",
         }
+        # plan B：FileRecord 明细流式批量写入 scan_checkpoint_records，
+        # checkpoint payload 只保留元数据（不再生成单个巨大 JSON）。
+        if snapshot_stage == "enumerate":
+            record_iter = ()
+        else:
+            record_iter = (record.to_checkpoint() for record in records)
         saved = False
         try:
-            self.store.save_checkpoint(state.scan_id, snapshot_stage, payload)
+            self.store.save_pause_checkpoint(state.scan_id, snapshot_stage,
+                                             payload, record_iter)
             saved = True
         except Exception:
             logger.warning(u"保存暂停断点失败: %s", state.scan_id, exc_info=True)

@@ -3,7 +3,7 @@
 """构建群晖 DSM 7 SPK 套件（跨平台，无需 DSM 工具链）。
 
 用法：
-    python build/build_spk.py                 # 默认 HTTP 后端，生成 dist/DuplicateCleaner-1.1.0-0016.spk
+    python build/build_spk.py                 # 默认 HTTP 后端，生成 dist/DuplicateCleaner-1.1.0-0017.spk
     python build/build_spk.py --scheme https  # 后端启用 TLS 时，让 DSM 入口跳转 https://nas:8787/
     python build/build_spk.py --no-icons      # 不重新生成图标（使用仓库内已生成 PNG）
 
@@ -34,7 +34,7 @@ from pathlib import Path
 from typing import Optional
 
 ROOT = Path(__file__).resolve().parent.parent
-VERSION = "1.1.0-0016"
+VERSION = "1.1.0-0017"
 PKG_NAME = "DuplicateCleaner"
 SPK_FILENAME = "%s-%s.spk" % (PKG_NAME, VERSION)
 

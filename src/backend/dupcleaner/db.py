@@ -28,7 +28,9 @@ logger = logging.getLogger("dupcleaner.db")
 DB_FILENAME = "dupcleaner.sqlite3"
 # v2（v0016 优化 plan A）：scan_groups 增加结果索引列 + scan_files 明细表，
 # 让结果分页/搜索/排序/统计走 SQL，不再整份 JSON 遍历。
-CURRENT_SCHEMA_VERSION = 2
+# v3（v0017 优化 plan B）：暂停断点的 FileRecord 列表拆到 scan_checkpoint_records，
+# checkpoint payload 只保留 stage/progress/stats/record_count，避免单个巨大 JSON。
+CURRENT_SCHEMA_VERSION = 3
 BUSY_TIMEOUT_MS = 5000
 BATCH_SIZE = 200
 
@@ -139,12 +141,54 @@ _SCHEMA_STATEMENTS = (
     )
     """,
     """
+    CREATE TABLE IF NOT EXISTS scan_checkpoint_records (
+        scan_id TEXT NOT NULL,
+        ordinal INTEGER NOT NULL,
+        path TEXT NOT NULL,
+        size INTEGER,
+        mtime_ns INTEGER,
+        inode INTEGER,
+        dev INTEGER,
+        nlink INTEGER,
+        quick_hash TEXT,
+        hash TEXT,
+        PRIMARY KEY (scan_id, ordinal)
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_scan_checkpoint_records_path
+        ON scan_checkpoint_records(scan_id, path)
+    """,
+    """
     CREATE TABLE IF NOT EXISTS subtitle_jobs (
         job_id TEXT PRIMARY KEY,
         payload_json TEXT NOT NULL,
         updated_epoch REAL NOT NULL,
         status TEXT
     )
+    """,
+)
+
+# v3：plan B 断点记录明细表（v2 升级时只建表，旧 payload 内 records 惰性回退读取）。
+_V3_MIGRATION_STATEMENTS = (
+    """
+    CREATE TABLE IF NOT EXISTS scan_checkpoint_records (
+        scan_id TEXT NOT NULL,
+        ordinal INTEGER NOT NULL,
+        path TEXT NOT NULL,
+        size INTEGER,
+        mtime_ns INTEGER,
+        inode INTEGER,
+        dev INTEGER,
+        nlink INTEGER,
+        quick_hash TEXT,
+        hash TEXT,
+        PRIMARY KEY (scan_id, ordinal)
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_scan_checkpoint_records_path
+        ON scan_checkpoint_records(scan_id, path)
     """,
 )
 
@@ -400,6 +444,8 @@ class Database(object):
             next_version = version + 1
             if next_version == 2:
                 self._migrate_v2()
+            elif next_version == 3:
+                self._migrate_v3()
             version = next_version
             self._conn.execute(
                 "INSERT OR REPLACE INTO schema_meta(key, value) "
@@ -424,6 +470,17 @@ class Database(object):
         groups, files = self._backfill_scan_group_columns()
         logger.info(u"SQLite schema 迁移到 v2 完成：回填 %d 组 / %d 文件",
                     groups, files)
+
+    def _migrate_v3(self):
+        """v2→v3：只新建 scan_checkpoint_records（幂等）。
+
+        旧库 scan_checkpoints.payload_json 里可能仍内嵌 records；不重写历史行，
+        读取时由 Store.load_checkpoint 惰性回退（docs/plan B）。
+        """
+        conn = self._conn
+        for statement in _V3_MIGRATION_STATEMENTS:
+            conn.execute(statement)
+        logger.info(u"SQLite schema 迁移到 v3 完成：已创建 checkpoint records 表")
 
     def _backfill_scan_group_columns(self):
         """按 rowid 分批回填 scan_groups 索引列与 scan_files（不整表载入）。"""

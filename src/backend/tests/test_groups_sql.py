@@ -227,7 +227,8 @@ class SchemaV2MigrationTest(unittest.TestCase):
         _make_v1_db(db_path, self.groups, self.scan_id)
         store = Store(self.tmpdir)
         try:
-            self.assertEqual(store.db.schema_version(), 2)
+            self.assertEqual(store.db.schema_version(),
+                             db_module.CURRENT_SCHEMA_VERSION)
             columns = {row[1] for row in store.db.query(
                 "PRAGMA table_info(scan_groups)")}
             for column in ("wasted_bytes", "size", "similarity_score",
@@ -276,7 +277,8 @@ class SchemaV2MigrationTest(unittest.TestCase):
         store.close()
         reopened = Store(self.tmpdir)
         try:
-            self.assertEqual(reopened.db.schema_version(), 2)
+            self.assertEqual(reopened.db.schema_version(),
+                             db_module.CURRENT_SCHEMA_VERSION)
             self.assertEqual(
                 reopened.count_scan_files(self.scan_id),
                 sum(len(group.get("files") or []) for group in self.groups))
@@ -407,7 +409,8 @@ class LegacyJsonImportV2Test(unittest.TestCase):
                     handle.write(json.dumps(group, ensure_ascii=False) + "\n")
             store = Store(tmpdir)
             try:
-                self.assertEqual(store.db.schema_version(), 2)
+                self.assertEqual(store.db.schema_version(),
+                                 db_module.CURRENT_SCHEMA_VERSION)
                 self.assertEqual(store.count_scan_groups(scan_id), 4)
                 self.assertEqual(
                     store.count_scan_files(scan_id),

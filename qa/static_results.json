@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-11-02T22:08:52+0800",
+  "generated_at": "2026-11-02T22:24:37+0800",
   "summary": {
     "PASS": 111,
     "FAIL": 0,
@@ -28,7 +28,7 @@
       "id": "BE-FILE-COUNT",
       "name": "后端 Python 文件数",
       "status": "INFO",
-      "detail": "42"
+      "detail": "43"
     },
     {
       "id": "BE-SRC-HYGIENE",
@@ -52,7 +52,7 @@
       "id": "BE-UNITTEST-LOG",
       "name": "unittest 结果",
       "status": "INFO",
-      "detail": "Ran 265 tests in 78.790s"
+      "detail": "Ran 277 tests in 76.655s"
     },
     {
       "id": "BE-NO-AUTODELETE",
@@ -578,7 +578,7 @@
     },
     {
       "id": "SPK-DIST",
-      "name": "构建产物存在（DuplicateCleaner-1.1.0-0016.spk）",
+      "name": "构建产物存在（DuplicateCleaner-1.1.0-0017.spk）",
       "status": "PASS",
       "detail": ""
     },
@@ -590,7 +590,7 @@
     },
     {
       "id": "SPK-VERSION",
-      "name": "SPK INFO.version 与当前源码 APP_VERSION（1.1.0-0016）一致",
+      "name": "SPK INFO.version 与当前源码 APP_VERSION（1.1.0-0017）一致",
       "status": "PASS",
       "detail": ""
     },
