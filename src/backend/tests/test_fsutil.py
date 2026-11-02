@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 import os
 import unittest
+from unittest import mock
 
 from tests.helpers import Harness, write_bytes, write_text
 
@@ -204,3 +205,15 @@ class ShareServiceTest(unittest.TestCase):
         self.assertTrue(self.shares.has_recycle_dir(share))
         self.assertEqual(self.shares.recycle_dir(share),
                          os.path.join(self.root, "#recycle"))
+
+    def test_api_volume_root_is_resolved_to_share_root(self):
+        # Some DSM SYNO.Core.Share payloads return path/vol_path="/volume2"
+        # while the actual share root is "/volume2/video". It must never be
+        # presented as a selectable storage-volume root.
+        item = {"name": "video", "path": "/volume2", "vol_path": "/volume2",
+                "volume": "/"}
+        with mock.patch("dupcleaner.shares.os.path.isdir", return_value=True):
+            with mock.patch.object(self.shares, "_guess_share_path",
+                                   return_value="/volume2/video"):
+                resolved = self.shares._resolve_share_path("video", item)
+        self.assertEqual(resolved, os.path.normpath("/volume2/video"))

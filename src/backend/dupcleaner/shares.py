@@ -155,14 +155,10 @@ class ShareService(object):
             name = item.get("name") or item.get("share_name")
             if not name:
                 continue
-            path = item.get("path") or item.get("vol_path") or item.get("real_path")
-            if not path or not os.path.isdir(path):
-                path = self._guess_share_path(name)
+            path = self._resolve_share_path(name, item)
             if not path:
                 continue
-            volume = item.get("volume") or item.get("vol_path")
-            if not volume or str(volume).startswith("/volume"):
-                volume = self._volume_of(path) or os.path.dirname(path)
+            volume = self._volume_of(path) or os.path.dirname(path)
             result.append({
                 "name": str(name),
                 "path": os.path.normpath(path),
@@ -173,6 +169,42 @@ class ShareService(object):
                 "is_writable": bool(item.get("is_writable", True)),
             })
         return result
+
+    def _resolve_share_path(self, name, item):
+        """从 SYNO.Core.Share 条目中解析真实的共享文件夹路径。
+
+        DSM 某些版本/接口组合返回的 path/vol_path 可能是存储空间根（如
+        /volume2），而不是 /volume2/<share>。若直接采用，UI 会显示一个
+        无法选择的“存储空间根”，并触发“不能选择存储空间根目录”错误。
+        这里优先用 name 在各卷下拼出真实共享根，再回退到非卷根候选路径。
+        """
+        candidates = []
+        for key in ("path", "real_path", "vol_path"):
+            value = item.get(key)
+            if isinstance(value, str) and value.strip():
+                candidates.append(value.strip())
+        volume_candidates = []
+        for key in ("volume", "vol_path"):
+            value = item.get(key)
+            if isinstance(value, str) and value.strip():
+                value = value.strip()
+                if config.VOLUME_ROOT_RE.match(value.replace("\\", "/")):
+                    volume_candidates.append(value)
+        for volume in volume_candidates:
+            candidate = os.path.join(volume, name)
+            if os.path.isdir(candidate):
+                candidates.insert(0, candidate)
+        # 卷根本身绝不能作为共享文件夹路径；只接受 basename 与共享名一致的路径。
+        for candidate in candidates:
+            posix = candidate.replace("\\", "/")
+            if config.VOLUME_ROOT_RE.match(posix):
+                continue
+            base = os.path.basename(os.path.normpath(candidate))
+            if base != name:
+                continue
+            if os.path.isdir(candidate):
+                return os.path.normpath(candidate)
+        return self._guess_share_path(name)
 
     def _cli_shares(self):
         """群晖 CLI 兜底：synoshare --enum ADM。"""
@@ -284,6 +316,12 @@ class ShareService(object):
                 posix = path.replace("\\", "/")
                 if not config.VOLUME_RE.match(posix):
                     continue
+                if config.VOLUME_ROOT_RE.match(posix):
+                    # 防止把存储空间根当成共享文件夹显示给用户
+                    corrected = self._guess_share_path(name)
+                    if not corrected:
+                        continue
+                    path = os.path.normpath(corrected)
             key = path_key(path)
             if key in seen:
                 continue

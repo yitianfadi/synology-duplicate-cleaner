@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-11-02T08:06:40+0800",
+  "generated_at": "2026-11-02T18:35:36+0800",
   "summary": {
     "PASS": 111,
     "FAIL": 0,
@@ -52,7 +52,7 @@
       "id": "BE-UNITTEST-LOG",
       "name": "unittest 结果",
       "status": "INFO",
-      "detail": "Ran 139 tests in 14.197s"
+      "detail": "Ran 140 tests in 16.716s"
     },
     {
       "id": "BE-NO-AUTODELETE",
@@ -578,7 +578,7 @@
     },
     {
       "id": "SPK-DIST",
-      "name": "构建产物存在（DuplicateCleaner-1.1.0-0003.spk）",
+      "name": "构建产物存在（DuplicateCleaner-1.1.0-0004.spk）",
       "status": "PASS",
       "detail": ""
     },
@@ -590,7 +590,7 @@
     },
     {
       "id": "SPK-VERSION",
-      "name": "SPK INFO.version 与当前源码 APP_VERSION（1.1.0-0003）一致",
+      "name": "SPK INFO.version 与当前源码 APP_VERSION（1.1.0-0004）一致",
       "status": "PASS",
       "detail": ""
     },
