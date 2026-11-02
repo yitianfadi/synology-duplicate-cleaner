@@ -6,8 +6,8 @@
 <meta name="color-scheme" content="light">
 <meta name="referrer" content="same-origin">
 <title>重复文件清理 · DuplicateCleaner</title>
-<link rel="icon" href="./assets/favicon.svg?v=1.1.0-0009" type="image/svg+xml">
-<link rel="stylesheet" href="./styles.css?v=1.1.0-0009">
+<link rel="icon" href="./assets/favicon.svg?v=1.1.0-0010" type="image/svg+xml">
+<link rel="stylesheet" href="./styles.css?v=1.1.0-0010">
 </head>
 <body>
 <a class="skip-link" href="#main">跳到主要内容</a>
@@ -861,6 +861,107 @@
             <p class="hint asr-note">未附带语音模型、不联网；转录内容不回传前端，不在结果中展示。</p>
           </div>
         </details>
+
+        <details class="advanced" id="settingsSubtitleDetails">
+          <summary>云端字幕（实验，默认关闭）<span class="badge badge-gray subtitle-status-badge" id="subtitleStatusBadge">检测中…</span></summary>
+          <p class="hint" id="subtitleStatusHint">使用 OpenAI 兼容的云端 ASR / LLM 服务生成字幕；API Key 只写不读，GET 不会回传明文。未配置或未启用时不影响视频查重。</p>
+          <div class="privacy-warning" role="alert">
+            <svg class="icon" aria-hidden="true"><use href="#i-warning"></use></svg>
+            <p>音频将上传到所配置的第三方服务。请确认视频内容适合上传，并遵守组织的数据合规要求；API Key 不会在界面回显或写入日志。</p>
+          </div>
+          <fieldset id="subtitleFields" class="subtitle-fields" disabled>
+            <div class="form-grid">
+              <div class="field field-wide">
+                <label class="check"><input id="subtitleEnabled" type="checkbox">启用云端字幕（默认关闭）</label>
+                <p class="hint">仅管理员可用；开启后视频结果行会出现“生成字幕”入口。未启用时按钮禁用，不影响查重。</p>
+              </div>
+              <div class="field">
+                <label for="subtitleAsrBaseUrl">ASR Base URL</label>
+                <input id="subtitleAsrBaseUrl" type="text" placeholder="https://api.openai.com/v1" autocomplete="off" spellcheck="false">
+                <p class="field-error" id="subtitleAsrBaseUrlError" role="alert" hidden></p>
+              </div>
+              <div class="field">
+                <label for="subtitleAsrModel">ASR 模型</label>
+                <input id="subtitleAsrModel" type="text" placeholder="whisper-1" autocomplete="off" spellcheck="false">
+                <p class="hint">需支持 verbose_json/segments（如 whisper-1）。</p>
+                <p class="field-error" id="subtitleAsrModelError" role="alert" hidden></p>
+              </div>
+              <div class="field">
+                <label for="subtitleAsrApiKey">ASR API Key</label>
+                <input id="subtitleAsrApiKey" type="password" autocomplete="new-password" spellcheck="false" placeholder="未配置（留空保持原值）">
+                <p class="hint"><span class="badge badge-gray" id="subtitleAsrKeySetBadge">未配置</span> 留空表示保持原值；勾选下方“清除”可删除。</p>
+                <label class="check"><input id="subtitleClearAsrKey" type="checkbox">清除已保存的 ASR API Key</label>
+                <p class="field-error" id="subtitleAsrApiKeyError" role="alert" hidden></p>
+              </div>
+              <div class="field">
+                <label for="subtitleAsrLanguage">识别语言</label>
+                <select id="subtitleAsrLanguage">
+                  <option value="auto">自动检测</option>
+                  <option value="zh">中文</option>
+                  <option value="en">英文</option>
+                  <option value="ja">日文</option>
+                  <option value="ko">韩文</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="subtitleAsrTimeout">ASR 超时（秒，30–1800）</label>
+                <input id="subtitleAsrTimeout" type="number" inputmode="numeric" min="30" max="1800" step="1" value="300">
+                <p class="field-error" id="subtitleAsrTimeoutError" role="alert" hidden></p>
+              </div>
+              <div class="field">
+                <label for="subtitleAsrChunk">音频分块（秒，60–1800）</label>
+                <input id="subtitleAsrChunk" type="number" inputmode="numeric" min="60" max="1800" step="1" value="600">
+                <p class="field-error" id="subtitleAsrChunkError" role="alert" hidden></p>
+              </div>
+              <div class="field">
+                <label for="subtitleAsrMaxAudioMb">单块音频上限（MB，1–100）</label>
+                <input id="subtitleAsrMaxAudioMb" type="number" inputmode="numeric" min="1" max="100" step="1" value="24">
+                <p class="hint">超过上限会自动继续切块。</p>
+                <p class="field-error" id="subtitleAsrMaxAudioMbError" role="alert" hidden></p>
+              </div>
+              <div class="field field-wide">
+                <label class="check"><input id="subtitleTranslateEnabled" type="checkbox">生成译文（需要配置 LLM API Key）</label>
+                <p class="hint">翻译只处理字幕文本，不改时间轴；部分批次失败会回退原文并标记。</p>
+              </div>
+              <div class="field">
+                <label for="subtitleLlmBaseUrl">LLM Base URL</label>
+                <input id="subtitleLlmBaseUrl" type="text" placeholder="https://api.openai.com/v1" autocomplete="off" spellcheck="false">
+                <p class="field-error" id="subtitleLlmBaseUrlError" role="alert" hidden></p>
+              </div>
+              <div class="field">
+                <label for="subtitleLlmModel">LLM 模型</label>
+                <input id="subtitleLlmModel" type="text" placeholder="gpt-4.1-mini" autocomplete="off" spellcheck="false">
+                <p class="field-error" id="subtitleLlmModelError" role="alert" hidden></p>
+              </div>
+              <div class="field">
+                <label for="subtitleLlmApiKey">LLM API Key</label>
+                <input id="subtitleLlmApiKey" type="password" autocomplete="new-password" spellcheck="false" placeholder="未配置（留空保持原值）">
+                <p class="hint"><span class="badge badge-gray" id="subtitleLlmKeySetBadge">未配置</span> 留空表示保持原值；勾选下方“清除”可删除。</p>
+                <label class="check"><input id="subtitleClearLlmKey" type="checkbox">清除已保存的 LLM API Key</label>
+                <p class="field-error" id="subtitleLlmApiKeyError" role="alert" hidden></p>
+              </div>
+              <div class="field">
+                <label for="subtitleTranslateTarget">翻译目标语言</label>
+                <select id="subtitleTranslateTarget">
+                  <option value="zh">中文</option>
+                  <option value="en">英文</option>
+                  <option value="ja">日文</option>
+                  <option value="ko">韩文</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="subtitleTranslateTimeout">翻译超时（秒，30–900）</label>
+                <input id="subtitleTranslateTimeout" type="number" inputmode="numeric" min="30" max="900" step="1" value="120">
+                <p class="field-error" id="subtitleTranslateTimeoutError" role="alert" hidden></p>
+              </div>
+              <div class="field">
+                <label for="subtitleTranslateBatchSize">翻译批大小（1–40）</label>
+                <input id="subtitleTranslateBatchSize" type="number" inputmode="numeric" min="1" max="40" step="1" value="20">
+                <p class="field-error" id="subtitleTranslateBatchSizeError" role="alert" hidden></p>
+              </div>
+            </div>
+          </fieldset>
+        </details>
         <p class="form-error-banner" id="settingsError" role="alert" hidden></p>
         <div class="form-actions">
           <button type="button" class="btn btn-primary" id="saveSettingsBtn">保存设置</button>
@@ -909,6 +1010,6 @@
   <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.6" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M12 10.8v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="12" cy="7.6" r="1.05" fill="currentColor"/></symbol>
 </svg>
 
-<script src="./app.js?v=1.1.0-0009" defer></script>
+<script src="./app.js?v=1.1.0-0010" defer></script>
 </body>
 </html>

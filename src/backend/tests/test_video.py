@@ -67,6 +67,24 @@ if "-f" in args and "wav" in args:
     except OSError:
         fail("cannot write wav")
     sys.exit(0)
+if "-f" in args and "mp3" in args:
+    if os.environ.get("FAKE_AUDIO_FAIL") == "1":
+        fail("audio extract failed")
+    chunk_seconds = 0.0
+    if "-t" in args:
+        try:
+            chunk_seconds = float(args[args.index("-t") + 1])
+        except (IndexError, ValueError):
+            chunk_seconds = 0.0
+    per_sec = float(os.environ.get("FAKE_MP3_BYTES_PER_SEC", "2000") or 2000)
+    size = max(16, int(chunk_seconds * per_sec))
+    target = args[-1]
+    try:
+        with open(target, "wb") as handle:
+            handle.write(b"ID3" + b"\x00" * (size - 3))
+    except OSError:
+        fail("cannot write mp3")
+    sys.exit(0)
 rawvideo = ("-f" in args and "rawvideo" in args)
 if not rawvideo:
     if "NODURATION" in text:
@@ -81,6 +99,8 @@ if not rawvideo:
     sys.stderr.write("  Duration: %02d:%02d:%05.2f, start: 0.000000, bitrate: 1000 kb/s\n"
                      % (hours, minutes, seconds))
     sys.stderr.write("    Stream #0:0: Video: h264, yuv420p, 640x480\n")
+    if "NOAUDIO" not in text:
+        sys.stderr.write("    Stream #0:1: Audio: aac (LC), 48000 Hz, stereo, fltp\n")
     sys.stderr.flush()
     sys.exit(1)
 if "CORRUPT" in text:

@@ -15,6 +15,7 @@
 - 🔍 **精准模式（默认）**：大小 → 头尾采样指纹 → 全量 SHA-256/MD5，完全一致才算重复（文件名不参与）
 - 🧠 **内容相似模式**：文本/PDF/DOCX/ODT/PNG 等特征向量 + MinHash/感知哈希检索，可调 0–100% 阈值；精准组与相似组分开展示
 - 🎬 **视频视觉相似（默认关闭）**：SPK 内置 FFmpeg（x86_64/aarch64），按总时长动态抽取 5–100 帧，生成时序 pHash 指纹并用 DTW 比较；独立分区，默认不勾选，支持组级/全局全选视频副本批量删除；指纹 SQLite 缓存、独立并发、硬解探测、低配提示
+- 🗣️ **云端字幕（实验，默认关闭）**：OpenAI 兼容 ASR（`/audio/transcriptions`）+ OpenAI 兼容 LLM（`/chat/completions`）翻译；FFmpeg 抽音频、自动分块、SRT/VTT/双语字幕下载；音频会发送到所配置的第三方服务，必须显式勾选确认
 - 🕒 保留策略：最晚创建（默认）/ 最早创建 / 指定路径；优先读取 `statx` btime；无创建时间时整组按修改时间自动选择并标记，拒绝用 `st_ctime` 冒充
 - 📊 分组报告：路径、大小、完整哈希、创建时间、修改时间、匹配类型、相似度；保留项高亮；可预览、导出 CSV
 - 🛡️ 强安全删除：报告 → 手动确认 → 二次弹窗 → 服务端逐文件重校验 → 默认进回收站 → 审计日志
@@ -32,7 +33,7 @@
 ```bash
 python build/fetch_ffmpeg.py   # 首次构建：下载两个架构的静态 FFmpeg 到 vendor/ffmpeg/
 python build/build_spk.py
-# 生成 dist/DuplicateCleaner-1.1.0-0009.spk
+# 生成 dist/DuplicateCleaner-1.1.0-0010.spk
 ```
 
 构建机需要 Python 3.8+；FFmpeg 二进制不提交到 Git，首次构建需运行 `build/fetch_ffmpeg.py`。重新生成图标需要 Pillow（仓库已带 PNG，可 `--no-icons`）。
@@ -40,7 +41,7 @@ python build/build_spk.py
 ### 2. 安装到 DSM
 
 1. DSM 套件中心先安装 **Python3**（3.8+）。
-2. 套件中心 → 手动安装 → 选择 `dist/DuplicateCleaner-1.1.0-0009.spk`。
+2. 套件中心 → 手动安装 → 选择 `dist/DuplicateCleaner-1.1.0-0010.spk`。
 3. 启动套件；从 DSM 主菜单打开“重复文件清理”，或访问 `http://<NAS>:8787/`。
 4. 使用 administrators 组账号登录。
 5. 按页面黄色“权限提示”给 `duplicatecleaner` 系统内部用户授权目标共享文件夹（读取；删除副本需读取/写入）。
@@ -80,6 +81,7 @@ node --check ../web/app.js
 - [前后端实现契约](docs/CONTRACT.md)：接口、字段、错误码、安全规则（精准模式）
 - [内容相似度扩展契约](docs/SIMILARITY_CONTRACT.md)：相似模式接口、特征算法、人工复核门禁
 - [视频视觉相似契约](docs/VIDEO_CONTRACT.md)：FFmpeg、动态采样、指纹、DTW、缓存、视频批量删除与 Excel
+- [云端字幕契约](docs/SUBTITLE_CONTRACT.md)：OpenAI 兼容 ASR/LLM、分块、SRT/VTT、双语字幕、密钥与隐私
 - [QA 验收报告](qa/REPORT.md)：需求逐项对照与测试证据
 
 ## 仓库结构
@@ -118,6 +120,8 @@ dist/               构建产物（.spk 与 SHA256）
 - 视频相似需要开启总开关，单视频解码较慢；SPK 内置 FFmpeg 为 4.1 静态构建，硬解能力取决于 DSM 机型/内核；无硬解会自动回退软件解码。
 - 视频相似不支持剧情语义、剪辑乱序、换脸/重绘伪原创；片段 vs 完整长视频不承诺。
 - ASR 为可选外部命令（默认关闭）：需用户自行配置 whisper 等本地命令与模型；未配置时视频扫描仍按视觉指纹完成，不失败。
+- 云端字幕默认关闭：启用后音频和字幕文本会发送到所配置的 ASR/LLM 服务；API Key 保存在 `var/settings.json`，GET 接口不回传明文；请只在可信网络/合规场景使用。
+- 云端字幕为 OpenAI 兼容接口，不绑定厂商；ASR 模型必须返回带时间戳的 `verbose_json` 片段或 SRT，纯文本模型无法生成字幕。
 
 ## License
 

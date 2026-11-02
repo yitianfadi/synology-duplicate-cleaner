@@ -4,6 +4,7 @@
 from __future__ import absolute_import
 
 import copy
+import re
 import threading
 
 from . import config
@@ -56,6 +57,34 @@ DEFAULT_SETTINGS = {
     "video_asr_weight": config.ASR_DEFAULT_WEIGHT,
     "video_asr_timeout_sec": config.ASR_DEFAULT_TIMEOUT_SEC,
     "video_asr_max_sec": config.ASR_DEFAULT_MAX_SEC,
+    # --- 云端字幕（OpenAI 兼容 ASR + LLM，docs/SUBTITLE_CONTRACT.md §1）---
+    "subtitle_enabled": False,
+    "subtitle_asr_base_url": "https://api.openai.com/v1",
+    "subtitle_asr_api_key": "",
+    "subtitle_asr_model": "whisper-1",
+    "subtitle_asr_language": "auto",
+    "subtitle_asr_timeout_sec": 300,
+    "subtitle_asr_chunk_sec": 600,
+    "subtitle_asr_max_audio_mb": 24,
+    "subtitle_translate_enabled": False,
+    "subtitle_llm_base_url": "https://api.openai.com/v1",
+    "subtitle_llm_api_key": "",
+    "subtitle_llm_model": "gpt-4.1-mini",
+    "subtitle_translate_target": "zh",
+    "subtitle_translate_timeout_sec": 120,
+    "subtitle_translate_batch_size": 20,
+}
+
+# 密钥键：GET/日志/审计/扫描结果中绝不允许出现明文
+SECRET_SETTING_KEYS = ("subtitle_asr_api_key", "subtitle_llm_api_key")
+# 清空密钥的控制标记（PUT 时允许从 settings 或顶层同时传入）
+CLEAR_SECRET_ALIASES = {
+    "subtitle_clear_asr_api_key": "subtitle_asr_api_key",
+    "subtitle_asr_api_key_clear": "subtitle_asr_api_key",
+    "clear_asr_api_key": "subtitle_asr_api_key",
+    "subtitle_clear_llm_api_key": "subtitle_llm_api_key",
+    "subtitle_llm_api_key_clear": "subtitle_llm_api_key",
+    "clear_llm_api_key": "subtitle_llm_api_key",
 }
 
 SETTINGS_KEYS = tuple(DEFAULT_SETTINGS)
@@ -123,6 +152,77 @@ def _check_ext_list(key, value):
     return out
 
 
+def _check_base_url(key, value):
+    from urllib.parse import urlsplit
+    text = _check_str(key, value, max_len=2048).strip()
+    if not text:
+        _err(u"设置 %s 不能为空" % key, {"key": key})
+    parsed = urlsplit(text)
+    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        _err(u"设置 %s 必须是 http/https URL" % key, {"key": key})
+    if parsed.query or parsed.fragment:
+        _err(u"设置 %s 不能包含查询串或片段" % key, {"key": key})
+    return text.rstrip("/")
+
+
+_LANGUAGE_RE = re.compile(r"^(?:[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})?)$")
+_MODEL_NAME_RE = re.compile(r"^[A-Za-z0-9._/:-]{1,100}$")
+
+
+def _check_language(key, value, allow_auto=False):
+    text = _check_str(key, value, max_len=32).strip()
+    if allow_auto and text.lower() == "auto":
+        return "auto"
+    if not _LANGUAGE_RE.match(text):
+        _err(u"设置 %s 语言代码非法" % key, {"key": key})
+    return text
+
+
+def _check_model_name(key, value):
+    text = _check_str(key, value, max_len=100).strip()
+    if not _MODEL_NAME_RE.match(text):
+        _err(u"设置 %s 模型名非法" % key, {"key": key})
+    return text
+
+
+def public_settings(settings):
+    """对外可见的设置：密钥置空并附 has_*_key 标记（绝不返回明文）。"""
+    result = copy.deepcopy(settings)
+    for key in SECRET_SETTING_KEYS:
+        result[key] = ""
+        result[key + "_set"] = bool((settings or {}).get(key))
+    return result
+
+
+def without_secrets(settings):
+    """用于写入扫描结果/响应等可能被回读的结构的设置副本（直接移除密钥）。"""
+    result = copy.deepcopy(settings)
+    for key in SECRET_SETTING_KEYS:
+        result.pop(key, None)
+    return result
+
+
+def prepare_settings_patch(patch):
+    """剥离只读标记与清空标记，返回 (可校验 patch, 需清空的密钥集合)。
+
+    - 空字符串表示“保持原值”（前端密码框不回填明文）；
+    - clear_*_api_key=true 才真正删除。
+    """
+    if not isinstance(patch, dict):
+        return patch, set()
+    clean = dict(patch)
+    clears = set()
+    for alias, target in CLEAR_SECRET_ALIASES.items():
+        flag = clean.pop(alias, None)
+        if flag is True:
+            clears.add(target)
+    for key in SECRET_SETTING_KEYS:
+        clean.pop(key + "_set", None)
+        if clean.get(key) == "":
+            clean.pop(key, None)
+    return clean, clears
+
+
 def _normalize_value(key, value):
     """按白名单规范单个设置值；未知键由 validate_patch 负责拒绝。"""
     if key in ("hash_algo",):
@@ -184,6 +284,30 @@ def _normalize_value(key, value):
         return _check_int(key, value, 30, 1800)
     if key == "video_asr_max_sec":
         return _check_int(key, value, 30, 3600)
+    if key in ("subtitle_enabled", "subtitle_translate_enabled"):
+        return _check_bool(key, value)
+    if key in ("subtitle_asr_base_url", "subtitle_llm_base_url"):
+        return _check_base_url(key, value)
+    if key in ("subtitle_asr_api_key", "subtitle_llm_api_key"):
+        return _check_str(key, value, max_len=4096).strip()
+    if key == "subtitle_asr_model":
+        return _check_model_name(key, value)
+    if key == "subtitle_asr_language":
+        return _check_language(key, value, allow_auto=True)
+    if key == "subtitle_asr_timeout_sec":
+        return _check_int(key, value, 30, 1800)
+    if key == "subtitle_asr_chunk_sec":
+        return _check_int(key, value, 60, 1800)
+    if key == "subtitle_asr_max_audio_mb":
+        return _check_int(key, value, 1, 100)
+    if key == "subtitle_llm_model":
+        return _check_model_name(key, value)
+    if key == "subtitle_translate_target":
+        return _check_language(key, value, allow_auto=False)
+    if key == "subtitle_translate_timeout_sec":
+        return _check_int(key, value, 30, 900)
+    if key == "subtitle_translate_batch_size":
+        return _check_int(key, value, 1, 40)
     if key == "skip_symlinks":
         # 无论前端传什么，符号链接一律跳过（安全强制）
         if not isinstance(value, bool):
@@ -284,8 +408,12 @@ class SettingsManager(object):
             return copy.deepcopy(self._settings)
 
     def update(self, patch):
+        """更新设置；空密钥保持原值，clear_*_api_key=true 才清空密钥。"""
         with self._lock:
-            merged = merge_settings(self._settings, patch or {})
+            clean, clears = prepare_settings_patch(patch or {})
+            merged = merge_settings(self._settings, clean or {})
+            for key in clears:
+                merged[key] = ""
             self._store.save_settings(merged)
             self._settings = merged
             return copy.deepcopy(self._settings)

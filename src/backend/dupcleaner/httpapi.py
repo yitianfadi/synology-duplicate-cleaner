@@ -12,7 +12,9 @@ import urllib.parse
 
 from . import config, similarity, timeutil, video_similarity
 from .errors import ApiError, forbidden, invalid, not_found, auth_required
-from .settings import default_settings
+from .settings import (CLEAR_SECRET_ALIASES, default_settings,
+                       public_settings)
+from .subtitles import SubtitleError
 
 logger = logging.getLogger("dupcleaner.api")
 
@@ -182,6 +184,16 @@ class Api(object):
             ("GET", re.compile(r"^/api/preview$"), self._preview, False),
             ("GET", re.compile(r"^/api/logs$"), self._logs, False),
             ("GET", re.compile(r"^/api/logs/download$"), self._logs_download, False),
+            # 云端字幕（管理员；POST /api/subtitles 等）
+            ("POST", re.compile(r"^/api/subtitles$"),
+             self._create_subtitle, False),
+            ("GET", re.compile(r"^/api/subtitles/(?P<job_id>[^/]+)$"),
+             self._get_subtitle, False),
+            ("POST", re.compile(r"^/api/subtitles/(?P<job_id>[^/]+)/cancel$"),
+             self._cancel_subtitle, False),
+            ("GET", re.compile(
+                r"^/api/subtitles/(?P<job_id>[^/]+)/file/(?P<name>[^/]+)$"),
+             self._subtitle_file, False),
         ]
 
     # ------------------------------------------------------------------
@@ -282,7 +294,7 @@ class Api(object):
             "statx_supported": bool(statx),
             "platform": platform.machine() or platform.system(),
             "dev_mode": bool(self.config.dev_mode),
-            "defaults": default_settings(),
+            "defaults": public_settings(default_settings()),
             "limits": {
                 "max_files": config.MAX_FILES_DEFAULT,
                 "max_roots": config.MAX_ROOTS,
@@ -351,10 +363,12 @@ class Api(object):
     # 设置
     # ------------------------------------------------------------------
     def _get_settings(self, request, session, params):
+        # 密钥永不回传明文，只给 has_*_key 标记
+        current = public_settings(self.services.settings.get())
         return json_response({
             "ok": True,
-            "settings": self.services.settings.get(),
-            "defaults": default_settings(),
+            "settings": current,
+            "defaults": public_settings(default_settings()),
         })
 
     def _put_settings(self, request, session, params):
@@ -362,10 +376,61 @@ class Api(object):
         patch = body.get("settings")
         if not isinstance(patch, dict):
             raise invalid(u"settings 必须是 JSON 对象")
+        patch = dict(patch)
+        # 允许清空密钥的标记放在顶层或 settings 内
+        for alias in CLEAR_SECRET_ALIASES:
+            if body.get(alias) is True:
+                patch[alias] = True
         updated = self.services.settings.update(patch)
+        # 只记录键名，绝不记录任何值（含密钥）
         self.services.store.audit("settings_update", session.user,
-                                  {"keys": sorted(patch.keys())})
-        return json_response({"ok": True, "settings": updated})
+                                  {"keys": sorted(str(key) for key in patch)})
+        return json_response({"ok": True,
+                              "settings": public_settings(updated)})
+
+    # ------------------------------------------------------------------
+    # 云端字幕（仅管理员）
+    # ------------------------------------------------------------------
+    def _require_subtitle_admin(self, session):
+        if session is None or not getattr(session, "is_admin", False):
+            raise forbidden(u"仅管理员可以生成云端字幕")
+        service = getattr(self.services, "subtitles", None)
+        if service is None:
+            raise ApiError("INTERNAL_ERROR", u"字幕服务不可用")
+        return service
+
+    def _create_subtitle(self, request, session, params):
+        service = self._require_subtitle_admin(session)
+        body = _json_body(request)
+        try:
+            job = service.submit(session.user, body)
+        except SubtitleError as exc:
+            raise ApiError(exc.code, exc.message, status=400)
+        return json_response({"ok": True, "job": job}, status=202)
+
+    def _get_subtitle(self, request, session, params):
+        service = self._require_subtitle_admin(session)
+        return json_response({"ok": True,
+                              "job": service.get(params["job_id"])})
+
+    def _cancel_subtitle(self, request, session, params):
+        service = self._require_subtitle_admin(session)
+        return json_response({"ok": True,
+                              "job": service.cancel(params["job_id"])})
+
+    def _subtitle_file(self, request, session, params):
+        service = self._require_subtitle_admin(session)
+        path = service.get_file(params["job_id"], params["name"])
+        return Response(
+            status=200,
+            content_type="text/plain; charset=utf-8",
+            file_path=path,
+            file_size=os.path.getsize(path),
+            headers={
+                "Content-Disposition": 'attachment; filename="%s"' % params["name"],
+                "Cache-Control": "no-store",
+            },
+        )
 
     # ------------------------------------------------------------------
     # 扫描

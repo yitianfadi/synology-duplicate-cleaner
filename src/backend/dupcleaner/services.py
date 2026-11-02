@@ -12,12 +12,13 @@ from .scanner import ScanManager
 from .settings import SettingsManager
 from .shares import ShareService
 from .store import Store
+from .subtitles import SubtitleService
 
 
 class Services(object):
     def __init__(self, runtime_config, store, settings_manager, auth_manager,
                  share_service, browse_service, preview_service, scan_manager,
-                 deletion_manager):
+                 deletion_manager, subtitle_service=None):
         self.config = runtime_config
         self.store = store
         self.settings = settings_manager
@@ -27,6 +28,7 @@ class Services(object):
         self.preview = preview_service
         self.scanner = scan_manager
         self.deletion = deletion_manager
+        self.subtitles = subtitle_service
 
     def shutdown(self, timeout=5.0):
         try:
@@ -35,6 +37,11 @@ class Services(object):
             pass
         try:
             self.deletion.stop_all(timeout=timeout)
+        except Exception:
+            pass
+        try:
+            if self.subtitles is not None:
+                self.subtitles.shutdown(timeout=timeout)
         except Exception:
             pass
 
@@ -52,6 +59,8 @@ def build_services(runtime_config):
                                settings_manager)
     deletion_manager = DeletionManager(runtime_config, store, share_service,
                                        scan_manager, settings_manager)
+    subtitle_service = SubtitleService(runtime_config, store, share_service,
+                                       settings_manager.get)
     return Services(runtime_config, store, settings_manager, auth_manager,
                     share_service, browse_service, preview_service,
-                    scan_manager, deletion_manager)
+                    scan_manager, deletion_manager, subtitle_service)

@@ -105,7 +105,13 @@ class ScanGroupingTest(ScannerBase):
         self.assertTrue(self.file_in_group(ygroup, "b1.txt")["is_keep"])
 
     def test_keep_pinned(self):
-        self.make_basic()
+        files = self.make_basic()
+        # Y 组无 pinned 命中时按 mtime 兜底；显式设置 mtime 避免文件系统
+        # 时间戳精度导致 tie（mtime_tie 会按路径选定 b1）
+        base = 1700000000
+        for name, offset in (("b1", 10), ("b2", 20), ("b3", 30)):
+            stamp = (base + offset) * 1000000000
+            os.utime(files[name], ns=(stamp, stamp))
         scan_id, meta = self.harness.run_scan(options={
             "keep_mode": "pinned",
             "pinned_path": os.path.join(self.root, "sub"),

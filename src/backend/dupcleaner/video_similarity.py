@@ -475,6 +475,40 @@ class FFmpegTool(object):
         except (TypeError, ValueError):
             return None
 
+    def probe_media(self, path, timeout, stop_check=None):
+        """探测时长与是否含音轨（-loglevel info；不读取/记录隐私内容）。"""
+        args = ["-nostdin", "-hide_banner", "-loglevel", "info", "-i", path]
+        try:
+            _code, _stdout, stderr = self._run(args, timeout, stop_check)
+        except VideoSkip:
+            raise
+        text = stderr.decode("utf-8", "replace")
+        match = DURATION_RE.search(text)
+        duration = None
+        if match:
+            hours, minutes, seconds = match.groups()
+            try:
+                duration = (int(hours) * 3600.0 + int(minutes) * 60.0
+                            + float(seconds))
+            except (TypeError, ValueError):
+                duration = None
+        has_audio = re.search(r"Stream #\d+:\d+.*Audio:", text) is not None
+        return {"duration": duration, "has_audio": has_audio}
+
+    def extract_audio_mp3(self, path, out_path, start, duration, timeout,
+                          stop_check=None):
+        """按时间范围抽取 16kHz 单声道 32kbps MP3（临时文件）。"""
+        args = ["-nostdin", "-hide_banner", "-loglevel", "error",
+                "-ss", "%.3f" % float(start), "-i", path,
+                "-t", "%.3f" % float(duration),
+                "-vn", "-ac", "1", "-ar", str(config.ASR_AUDIO_RATE),
+                "-b:a", "32k", "-f", "mp3", "-y", out_path]
+        code, _stdout, stderr = self._run(args, timeout, stop_check)
+        if (code != 0 or not os.path.isfile(out_path)
+                or os.path.getsize(out_path) <= 0):
+            detail = stderr.decode("utf-8", "replace").strip()[-300:]
+            raise VideoSkip("decode", detail or "audio chunk extract failed")
+
     def extract_frame(self, path, timestamp, timeout, hwaccel_label="none",
                       stop_check=None):
         args = ["-nostdin", "-hide_banner", "-loglevel", "error", "-threads", "1"]

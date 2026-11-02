@@ -355,6 +355,8 @@ class ScanManager(object):
             options_override = {}
         current = self.settings.get()
         merged = settings_module.merge_settings(current, options_override)
+        # 云端字幕密钥绝不进入扫描结果/历史（避免 API 回读泄露）
+        merged = settings_module.without_secrets(merged)
 
         share_list = self.shares.list_shares()
         normalized_roots = []

@@ -137,7 +137,22 @@
     video_concurrency: 1, video_hwaccel: 'auto', video_max_file_mb: 8192,
     video_timeout_sec: 180, video_cache: true,
     video_asr_enabled: false, video_asr_command: '', video_asr_weight: 0.15,
-    video_asr_timeout_sec: 300, video_asr_max_sec: 600
+    video_asr_timeout_sec: 300, video_asr_max_sec: 600,
+    subtitle_enabled: false,
+    subtitle_asr_base_url: 'https://api.openai.com/v1',
+    subtitle_asr_api_key: '',
+    subtitle_asr_model: 'whisper-1',
+    subtitle_asr_language: 'auto',
+    subtitle_asr_timeout_sec: 300,
+    subtitle_asr_chunk_sec: 600,
+    subtitle_asr_max_audio_mb: 24,
+    subtitle_translate_enabled: false,
+    subtitle_llm_base_url: 'https://api.openai.com/v1',
+    subtitle_llm_api_key: '',
+    subtitle_llm_model: 'gpt-4.1-mini',
+    subtitle_translate_target: 'zh',
+    subtitle_translate_timeout_sec: 120,
+    subtitle_translate_batch_size: 20
   };
   var SIZE_UNITS = { kb: 1024, mb: 1048576, gb: 1073741824 };
 
@@ -159,6 +174,7 @@
     scanMode: 'exact',
     similarity: { supported: true, extensions: DEFAULT_SIMILARITY_EXTENSIONS.slice(), defaultThreshold: 85, maxConcurrency: 4, binaryExtensions: [] },
     video: { supported: true, available: true, extensions: DEFAULT_VIDEO_EXTENSIONS.slice(), ffmpegPath: '', ffmpegVersion: '', hwaccels: [], gpuHint: '', cache: '' },
+    subtitle: { supported: false, enabled: false, asrKeySet: false, llmKeySet: false, asrLanguage: 'auto', translateEnabled: false, targetLang: 'zh' },
     // 当前扫描
     scan: { id: null, data: null, stats: null, timer: null, abort: null, polling: false, errors: 0, handled: false },
     // 结果
@@ -221,6 +237,13 @@
     'videoAsrMaxSec videoAsrMaxSecError setVideoAsrStatusBadge setVideoAsrStatusHint ' +
     'setVideoAsrEnabled setVideoAsrFields setVideoAsrCommand setVideoAsrCommandError setVideoAsrWeight ' +
     'setVideoAsrWeightError setVideoAsrTimeout setVideoAsrTimeoutError setVideoAsrMaxSec setVideoAsrMaxSecError ' +
+    'settingsSubtitleDetails subtitleStatusBadge subtitleStatusHint subtitleFields subtitleEnabled subtitleAsrBaseUrl ' +
+    'subtitleAsrBaseUrlError subtitleAsrModel subtitleAsrModelError subtitleAsrApiKey subtitleAsrApiKeyError ' +
+    'subtitleAsrKeySetBadge subtitleClearAsrKey subtitleAsrLanguage subtitleAsrTimeout subtitleAsrTimeoutError ' +
+    'subtitleAsrChunk subtitleAsrChunkError subtitleAsrMaxAudioMb subtitleAsrMaxAudioMbError subtitleTranslateEnabled ' +
+    'subtitleLlmBaseUrl subtitleLlmBaseUrlError subtitleLlmModel subtitleLlmModelError subtitleLlmApiKey ' +
+    'subtitleLlmApiKeyError subtitleLlmKeySetBadge subtitleClearLlmKey subtitleTranslateTarget subtitleTranslateTimeout ' +
+    'subtitleTranslateTimeoutError subtitleTranslateBatchSize subtitleTranslateBatchSizeError ' +
     'footerMeta toastRoot modalRoot').split(' ');
 
   var activeModal = null;
@@ -837,6 +860,7 @@
     state.scanMode = 'exact';
     state.similarity = { supported: true, extensions: DEFAULT_SIMILARITY_EXTENSIONS.slice(), defaultThreshold: 85, maxConcurrency: 4, binaryExtensions: [] };
     state.video = { supported: true, available: true, extensions: DEFAULT_VIDEO_EXTENSIONS.slice(), ffmpegPath: '', ffmpegVersion: '', hwaccels: [], gpuHint: '', cache: '' };
+    state.subtitle = { supported: false, enabled: false, asrKeySet: false, llmKeySet: false, asrLanguage: 'auto', translateEnabled: false, targetLang: 'zh' };
     state.historyCache = null;
     state.logsLoaded = false;
     state.settingsLoaded = false;
@@ -872,8 +896,9 @@
     try { meta = await api('/api/meta', { timeout: 10000 }); } catch (e) { meta = null; }
     if (meta) { state.meta = meta; applyMeta(meta); }
     try { settingsData = await api('/api/settings', { timeout: 10000 }); } catch (e2) { settingsData = null; }
-    if (settingsData && settingsData.settings) {
-      state.settings = Object.assign({}, DEFAULT_SETTINGS, settingsData.settings);
+    var rawSettings = settingsData && settingsData.settings ? settingsData.settings : null;
+    if (rawSettings) {
+      state.settings = Object.assign({}, DEFAULT_SETTINGS, rawSettings);
       state.defaults = settingsData.defaults ? Object.assign({}, DEFAULT_SETTINGS, settingsData.defaults) : clonePlain(DEFAULT_SETTINGS);
     } else {
       state.settings = clonePlain(DEFAULT_SETTINGS);
@@ -883,6 +908,7 @@
     state.recycleDefault = state.settings.recycle_default !== false;
     state.similarity = similarityCapability();
     state.video = videoCapability();
+    updateSubtitleFromRaw(rawSettings);
     state.scanMode = state.settings.scan_mode === 'similar' ? 'similar' : 'exact';
     applySettingsToScanForm(state.settings);
     renderRoots();
@@ -2202,6 +2228,199 @@
       }
     }
     return null;
+  }
+
+  // ---------- 云端字幕（OpenAI 兼容 ASR/LLM；默认关闭，API Key 不回显） ----------
+  function subtitleCapability() {
+    return state.subtitle || {
+      supported: false, enabled: false, asrKeySet: false, llmKeySet: false,
+      asrLanguage: 'auto', translateEnabled: false, targetLang: 'zh'
+    };
+  }
+
+  function subtitleHasKey(obj, key) {
+    return !!obj && Object.prototype.hasOwnProperty.call(obj, key);
+  }
+
+  function updateSubtitleFromRaw(rawSettings) {
+    var raw = rawSettings || null;
+    var supported = !!raw && (
+      subtitleHasKey(raw, 'subtitle_enabled') ||
+      subtitleHasKey(raw, 'subtitle_asr_base_url') ||
+      subtitleHasKey(raw, 'subtitle_asr_api_key_set')
+    );
+    state.subtitle = {
+      supported: supported,
+      enabled: supported && raw.subtitle_enabled === true,
+      asrKeySet: supported && raw.subtitle_asr_api_key_set === true,
+      llmKeySet: supported && raw.subtitle_llm_api_key_set === true,
+      asrLanguage: (raw && raw.subtitle_asr_language) || 'auto',
+      translateEnabled: supported && raw.subtitle_translate_enabled === true,
+      targetLang: (raw && raw.subtitle_translate_target) || 'zh'
+    };
+    updateSubtitleAvailabilityUi();
+    refreshSubtitleGenerateButtons();
+  }
+
+  function subtitleReady() {
+    var sub = subtitleCapability();
+    return sub.supported === true && sub.enabled === true && sub.asrKeySet === true;
+  }
+
+  function subtitleUnavailableReason() {
+    var sub = subtitleCapability();
+    if (sub.supported !== true) { return '当前后端未提供云端字幕能力'; }
+    if (sub.enabled !== true) { return '云端字幕未启用（请在设置中开启）'; }
+    if (sub.asrKeySet !== true) { return '未配置 ASR API Key（请在设置中配置）'; }
+    return '';
+  }
+
+  function updateSubtitleAvailabilityUi() {
+    var sub = subtitleCapability();
+    var badge = els.subtitleStatusBadge;
+    if (badge) {
+      var text = '后端未提供云端字幕';
+      var cls = 'is-muted';
+      if (sub.supported) {
+        if (!sub.enabled) { text = '未启用（默认关闭）'; cls = 'is-muted'; }
+        else if (!sub.asrKeySet) { text = '已启用 · 未配置 ASR Key'; cls = 'is-warn'; }
+        else { text = '已启用 · ASR 已配置'; cls = 'is-ok'; }
+      }
+      setText(badge, text);
+      badge.className = 'badge subtitle-status-badge ' + cls;
+    }
+    if (els.subtitleStatusHint) {
+      var hint = '使用 OpenAI 兼容的云端 ASR / LLM 服务生成字幕；音频会上传到第三方。API Key 只写不读，GET 不会回传明文。';
+      if (!sub.supported) {
+        hint = '当前后端未提供云端字幕能力；该设置不可用，视频查重与视频相似功能不受影响。';
+      } else if (!sub.enabled) {
+        hint = '云端字幕默认关闭；启用并配置 ASR API Key 后，视频结果行会出现“生成字幕”按钮。未启用不影响视频查重。';
+      } else if (!sub.asrKeySet) {
+        hint = '已启用但未配置 ASR API Key：生成按钮保持禁用。API Key 只写不读，保存后仅显示“已配置”状态。';
+      } else if (!sub.llmKeySet) {
+        hint = 'ASR 已配置；LLM API Key 未配置，弹窗中“生成译文”将不可用。音频会上传到所配置的第三方服务。';
+      }
+      setText(els.subtitleStatusHint, hint);
+    }
+    if (els.subtitleFields) { els.subtitleFields.disabled = !sub.supported; }
+    if (els.subtitleAsrKeySetBadge) {
+      setText(els.subtitleAsrKeySetBadge, sub.asrKeySet ? '已配置' : '未配置');
+      els.subtitleAsrKeySetBadge.className = 'badge ' + (sub.asrKeySet ? 'badge-green' : 'badge-gray');
+    }
+    if (els.subtitleLlmKeySetBadge) {
+      setText(els.subtitleLlmKeySetBadge, sub.llmKeySet ? '已配置' : '未配置');
+      els.subtitleLlmKeySetBadge.className = 'badge ' + (sub.llmKeySet ? 'badge-green' : 'badge-gray');
+    }
+    if (els.subtitleAsrApiKey) {
+      els.subtitleAsrApiKey.placeholder = sub.asrKeySet ? '已配置（留空保持原值，勾选清除可删除）' : '未配置（留空保持原值）';
+    }
+    if (els.subtitleLlmApiKey) {
+      els.subtitleLlmApiKey.placeholder = sub.llmKeySet ? '已配置（留空保持原值，勾选清除可删除）' : '未配置（留空保持原值）';
+    }
+  }
+
+  function refreshSubtitleGenerateButtons() {
+    $$('.subtitle-generate-btn').forEach(function (btn) {
+      var ready = subtitleReady();
+      btn.disabled = !ready;
+      btn.title = ready ? '生成云端字幕（音频将上传到第三方服务）' : subtitleUnavailableReason();
+    });
+  }
+
+  function fillSubtitleSettingsForm(settings) {
+    var s = settings || {};
+    if (els.subtitleEnabled) { els.subtitleEnabled.checked = s.subtitle_enabled === true; }
+    if (els.subtitleAsrBaseUrl) { els.subtitleAsrBaseUrl.value = s.subtitle_asr_base_url || ''; }
+    if (els.subtitleAsrModel) { els.subtitleAsrModel.value = s.subtitle_asr_model || ''; }
+    if (els.subtitleAsrLanguage) { els.subtitleAsrLanguage.value = s.subtitle_asr_language || 'auto'; }
+    setVideoNumberValue(els.subtitleAsrTimeout, s.subtitle_asr_timeout_sec, 300, 30, 1800);
+    setVideoNumberValue(els.subtitleAsrChunk, s.subtitle_asr_chunk_sec, 600, 60, 1800);
+    setVideoNumberValue(els.subtitleAsrMaxAudioMb, s.subtitle_asr_max_audio_mb, 24, 1, 100);
+    if (els.subtitleTranslateEnabled) { els.subtitleTranslateEnabled.checked = s.subtitle_translate_enabled === true; }
+    if (els.subtitleLlmBaseUrl) { els.subtitleLlmBaseUrl.value = s.subtitle_llm_base_url || ''; }
+    if (els.subtitleLlmModel) { els.subtitleLlmModel.value = s.subtitle_llm_model || ''; }
+    if (els.subtitleTranslateTarget) { els.subtitleTranslateTarget.value = s.subtitle_translate_target || 'zh'; }
+    setVideoNumberValue(els.subtitleTranslateTimeout, s.subtitle_translate_timeout_sec, 120, 30, 900);
+    setVideoNumberValue(els.subtitleTranslateBatchSize, s.subtitle_translate_batch_size, 20, 1, 40);
+    if (els.subtitleAsrApiKey) { els.subtitleAsrApiKey.value = ''; }
+    if (els.subtitleLlmApiKey) { els.subtitleLlmApiKey.value = ''; }
+    if (els.subtitleClearAsrKey) { els.subtitleClearAsrKey.checked = false; }
+    if (els.subtitleClearLlmKey) { els.subtitleClearLlmKey.checked = false; }
+    if (els.subtitleAsrApiKey) { els.subtitleAsrApiKey.disabled = false; }
+    if (els.subtitleLlmApiKey) { els.subtitleLlmApiKey.disabled = false; }
+    updateSubtitleAvailabilityUi();
+  }
+
+  function normalizeSubtitleUrl(raw, label, errors, key) {
+    var text = String(raw || '').trim().replace(/\/+$/, '');
+    if (!text) { errors[key] = label + '不能为空。'; return ''; }
+    if (!/^https?:\/\/[^\s]+$/i.test(text)) {
+      errors[key] = label + ' 必须是 http:// 或 https:// 开头的地址。';
+      return '';
+    }
+    return text;
+  }
+
+  function readSubtitleInt(input, min, max, label, errors, key) {
+    var raw = String(input && input.value !== null && input.value !== undefined ? input.value : '').trim();
+    if (!raw || !/^\d+$/.test(raw)) { errors[key] = label + '必须是整数。'; return null; }
+    var num = parseInt(raw, 10);
+    if (!isFinite(num) || num < min || num > max) {
+      errors[key] = label + '必须在 ' + min + ' 到 ' + max + ' 之间。';
+      return null;
+    }
+    return num;
+  }
+
+  function readSubtitleSettings(settings, errors) {
+    var sub = subtitleCapability();
+    if (!sub.supported) { return; }
+    settings.subtitle_enabled = !!(els.subtitleEnabled && els.subtitleEnabled.checked);
+    settings.subtitle_asr_base_url = normalizeSubtitleUrl(
+      els.subtitleAsrBaseUrl ? els.subtitleAsrBaseUrl.value : '',
+      'ASR Base URL', errors, 'subtitleAsrBaseUrl');
+    var asrModel = String(els.subtitleAsrModel ? els.subtitleAsrModel.value : '').trim();
+    if (!asrModel) { errors.subtitleAsrModel = 'ASR 模型不能为空。'; }
+    else if (asrModel.length > 200) { errors.subtitleAsrModel = 'ASR 模型名称过长。'; }
+    else { settings.subtitle_asr_model = asrModel; }
+    if (els.subtitleAsrLanguage) {
+      settings.subtitle_asr_language = ['auto', 'zh', 'en', 'ja', 'ko'].indexOf(els.subtitleAsrLanguage.value) !== -1
+        ? els.subtitleAsrLanguage.value : 'auto';
+    }
+    var asrTimeout = readSubtitleInt(els.subtitleAsrTimeout, 30, 1800, 'ASR 超时', errors, 'subtitleAsrTimeout');
+    if (asrTimeout !== null) { settings.subtitle_asr_timeout_sec = asrTimeout; }
+    var asrChunk = readSubtitleInt(els.subtitleAsrChunk, 60, 1800, '音频分块', errors, 'subtitleAsrChunk');
+    if (asrChunk !== null) { settings.subtitle_asr_chunk_sec = asrChunk; }
+    var asrMaxAudio = readSubtitleInt(els.subtitleAsrMaxAudioMb, 1, 100, '单块音频上限', errors, 'subtitleAsrMaxAudioMb');
+    if (asrMaxAudio !== null) { settings.subtitle_asr_max_audio_mb = asrMaxAudio; }
+    settings.subtitle_translate_enabled = !!(els.subtitleTranslateEnabled && els.subtitleTranslateEnabled.checked);
+    settings.subtitle_llm_base_url = normalizeSubtitleUrl(
+      els.subtitleLlmBaseUrl ? els.subtitleLlmBaseUrl.value : '',
+      'LLM Base URL', errors, 'subtitleLlmBaseUrl');
+    var llmModel = String(els.subtitleLlmModel ? els.subtitleLlmModel.value : '').trim();
+    if (!llmModel) { errors.subtitleLlmModel = 'LLM 模型不能为空。'; }
+    else if (llmModel.length > 200) { errors.subtitleLlmModel = 'LLM 模型名称过长。'; }
+    else { settings.subtitle_llm_model = llmModel; }
+    if (els.subtitleTranslateTarget) {
+      settings.subtitle_translate_target = ['zh', 'en', 'ja', 'ko'].indexOf(els.subtitleTranslateTarget.value) !== -1
+        ? els.subtitleTranslateTarget.value : 'zh';
+    }
+    var translateTimeout = readSubtitleInt(els.subtitleTranslateTimeout, 30, 900, '翻译超时', errors, 'subtitleTranslateTimeout');
+    if (translateTimeout !== null) { settings.subtitle_translate_timeout_sec = translateTimeout; }
+    var batchSize = readSubtitleInt(els.subtitleTranslateBatchSize, 1, 40, '翻译批大小', errors, 'subtitleTranslateBatchSize');
+    if (batchSize !== null) { settings.subtitle_translate_batch_size = batchSize; }
+    var asrKey = els.subtitleAsrApiKey ? els.subtitleAsrApiKey.value.trim() : '';
+    if (els.subtitleClearAsrKey && els.subtitleClearAsrKey.checked) {
+      settings.subtitle_clear_asr_api_key = true;
+    } else if (asrKey) {
+      settings.subtitle_asr_api_key = asrKey;
+    }
+    var llmKey = els.subtitleLlmApiKey ? els.subtitleLlmApiKey.value.trim() : '';
+    if (els.subtitleClearLlmKey && els.subtitleClearLlmKey.checked) {
+      settings.subtitle_clear_llm_api_key = true;
+    } else if (llmKey) {
+      settings.subtitle_llm_api_key = llmKey;
+    }
   }
 
   function sizeFieldValue(bytes) {
@@ -4106,8 +4325,416 @@
 
     var times = buildFileTimes(file, group);
     var actions = buildFileActions(group, file, isKeeper, manual);
+    actions.appendChild(buildSubtitleGenerateButton(file));
     appendChildren(row, [selectWrap, main, times, actions]);
     return row;
+  }
+
+  // ---------- 云端字幕：生成入口、任务轮询、取消与下载 ----------
+  function buildSubtitleGenerateButton(file) {
+    var btn = el('button', {
+      className: 'btn btn-ghost btn-sm subtitle-generate-btn',
+      attrs: { type: 'button' },
+      text: '生成字幕'
+    });
+    var ready = subtitleReady();
+    btn.disabled = !ready;
+    btn.title = ready ? '生成云端字幕（音频将上传到第三方服务）' : subtitleUnavailableReason();
+    btn.addEventListener('click', function () {
+      if (!subtitleReady()) { toast(subtitleUnavailableReason(), 'error'); return; }
+      openSubtitleCloudModal(file);
+    });
+    return btn;
+  }
+
+  function subtitleStageLabel(stage) {
+    var labels = { audio: '提取音频', asr: '云端语音识别', translate: '翻译字幕', write: '写入字幕文件' };
+    return labels[stage] || stage || '处理中';
+  }
+
+  function subtitleJobStatusLabel(status) {
+    var labels = {
+      queued: '排队中', running: '识别中', translating: '翻译中',
+      done: '已完成', failed: '失败', cancelled: '已取消'
+    };
+    return labels[status] || status || '未知';
+  }
+
+  function subtitleJobStatusClass(status) {
+    if (status === 'done') { return 'badge-green'; }
+    if (status === 'failed') { return 'badge-red'; }
+    if (status === 'cancelled') { return 'badge-gray'; }
+    if (status === 'queued') { return 'badge-gray'; }
+    return 'badge-blue';
+  }
+
+  function isTerminalSubtitleStatus(status) {
+    return status === 'done' || status === 'failed' || status === 'cancelled';
+  }
+
+  function isSafeSubtitleFileName(name) {
+    if (typeof name !== 'string' || !name || name.length > 160) { return false; }
+    if (name.indexOf('/') !== -1 || name.indexOf('\\') !== -1) { return false; }
+    return /\.(srt|vtt)$/i.test(name);
+  }
+
+  function openSubtitleCloudModal(file) {
+    var sub = subtitleCapability();
+    var cloud = {
+      job: null, timer: null, abort: null, polling: false, pollErrors: 0,
+      running: false, cancelling: false, format: 'srt', modal: null, progressUi: null
+    };
+    var languageSelect = el('select', { attrs: { id: 'subtitleLanguage', 'aria-label': '识别语言' } }, [
+      el('option', { attrs: { value: 'auto' }, text: '自动检测' }),
+      el('option', { attrs: { value: 'zh' }, text: '中文' }),
+      el('option', { attrs: { value: 'en' }, text: '英文' }),
+      el('option', { attrs: { value: 'ja' }, text: '日文' }),
+      el('option', { attrs: { value: 'ko' }, text: '韩文' })
+    ]);
+    languageSelect.value = sub.asrLanguage || 'auto';
+    var translateCheck = el('input', { attrs: { type: 'checkbox' } });
+    if (!sub.llmKeySet) { translateCheck.disabled = true; }
+    if (sub.translateEnabled && sub.llmKeySet) { translateCheck.checked = true; }
+    var targetSelect = el('select', { attrs: { 'aria-label': '翻译目标语言' } }, [
+      el('option', { attrs: { value: 'zh' }, text: '中文' }),
+      el('option', { attrs: { value: 'en' }, text: '英文' }),
+      el('option', { attrs: { value: 'ja' }, text: '日文' }),
+      el('option', { attrs: { value: 'ko' }, text: '韩文' })
+    ]);
+    targetSelect.value = sub.targetLang || 'zh';
+    targetSelect.disabled = !translateCheck.checked;
+    translateCheck.addEventListener('change', function () {
+      targetSelect.disabled = !translateCheck.checked;
+    });
+    var formatSelect = el('select', { attrs: { 'aria-label': '首选下载格式' } }, [
+      el('option', { attrs: { value: 'srt' }, text: 'SRT' }),
+      el('option', { attrs: { value: 'vtt' }, text: 'VTT' })
+    ]);
+    formatSelect.value = 'srt';
+    var confirmCheck = el('input', { attrs: { type: 'checkbox' } });
+    var errorBox = el('div', { className: 'modal-error', attrs: { role: 'alert' }, hidden: true });
+    var privacy = el('div', { className: 'privacy-warning', attrs: { role: 'alert' } }, [
+      icon('warning'),
+      el('p', { text: '音频将上传到所配置的第三方服务（ASR / 翻译）。请确认视频内容适合上传，并已获得授权；API Key 不会在界面回显。' })
+    ]);
+    var formBody = el('div', { className: 'subtitle-progress-card' }, [
+      privacy,
+      el('div', { className: 'form-grid' }, [
+        el('div', { className: 'field' }, [
+          el('label', { attrs: { for: 'subtitleLanguage' }, text: '识别语言' }),
+          languageSelect,
+          el('p', { className: 'hint', text: '默认自动检测；ASR 模型需支持 verbose_json/segments。' })
+        ]),
+        el('div', { className: 'field' }, [
+          el('label', { className: 'check' }, [translateCheck, document.createTextNode('生成译文')]),
+          targetSelect,
+          el('p', {
+            className: 'hint',
+            text: sub.llmKeySet ? '仅翻译字幕文本，不改时间轴；部分失败会回退原文。' : '未配置 LLM API Key，暂不能生成译文。'
+          })
+        ]),
+        el('div', { className: 'field' }, [
+          el('label', { text: '首选下载格式' }),
+          formatSelect,
+          el('p', { className: 'hint', text: '任务会生成 SRT/VTT；这里决定完成后优先展示的格式。' })
+        ])
+      ]),
+      el('label', { className: 'modal-check-row' }, [
+        confirmCheck,
+        el('span', { text: '我了解音频将上传到所配置的第三方服务，并确认有权处理该视频内容。' })
+      ]),
+      el('p', {
+        className: 'subtitle-form-note',
+        text: '生成后可查看进度、取消任务并下载字幕；任务执行期间弹窗不可关闭，请使用“取消任务”终止。'
+      }),
+      errorBox
+    ]);
+    var generateBtn = el('button', { className: 'btn btn-primary', attrs: { type: 'button' }, text: '生成字幕' });
+    generateBtn.disabled = true;
+    var cancelBtn = el('button', {
+      className: 'btn btn-ghost', attrs: { type: 'button' }, text: '取消',
+      on: { click: function () { closeModal(true); } }
+    });
+    confirmCheck.addEventListener('change', function () {
+      generateBtn.disabled = !confirmCheck.checked;
+    });
+    generateBtn.addEventListener('click', submitSubtitleJob);
+
+    var modal = openModal({
+      title: '生成云端字幕',
+      subtitle: file.path,
+      size: 'lg',
+      body: formBody,
+      footer: [cancelBtn, generateBtn],
+      initialFocus: confirmCheck,
+      onClose: function () {
+        cloud.running = false;
+        stopSubtitlePolling(cloud);
+      }
+    });
+    cloud.modal = modal;
+
+    function submitSubtitleJob() {
+      if (cloud.running || !confirmCheck.checked) { return; }
+      cloud.running = true;
+      cloud.format = formatSelect.value === 'vtt' ? 'vtt' : 'srt';
+      hide(errorBox);
+      setBusy(generateBtn, true, '正在提交…');
+      var payload = {
+        path: file.path,
+        language: languageSelect.value,
+        translate: !!(translateCheck.checked && sub.llmKeySet),
+        target_lang: targetSelect.value,
+        confirm_cloud: true
+      };
+      api('/api/subtitles', { method: 'POST', body: payload, timeout: 30000 }).then(function (res) {
+        var job = res && res.job ? res.job : res;
+        if (!job || !job.job_id) { throw new ApiError(200, 'INVALID_RESPONSE', '服务未返回字幕任务编号，请稍后重试。'); }
+        modal.setTitle('字幕任务');
+        showSubtitleProgress(job);
+        startSubtitlePolling(job.job_id);
+      }).catch(function (err) {
+        cloud.running = false;
+        setBusy(generateBtn, false);
+        setText(errorBox, errorMessage(err, '创建字幕任务失败，请稍后重试。'));
+        show(errorBox);
+      });
+    }
+
+    function makeProgressUi() {
+      var statusBadge = el('span', { className: 'badge badge-gray', text: '排队中' });
+      var stageEl = el('span', { className: 'subtitle-stage', text: '等待中' });
+      var pctEl = el('span', { className: 'subtitle-pct', text: '0%' });
+      var fill = el('div', { className: 'progress-fill' });
+      var bar = el('div', { className: 'progress-bar', attrs: { role: 'progressbar', 'aria-valuemin': '0', 'aria-valuemax': '100', 'aria-valuenow': '0' } }, [fill]);
+      var messageEl = el('p', { className: 'modal-note', text: '正在排队…' });
+      var errorEl = el('div', { className: 'modal-error', attrs: { role: 'alert' }, hidden: true });
+      var metaEl = el('p', { className: 'subtitle-job-meta mono', text: file.path });
+      var filesWrap = el('div', { className: 'subtitle-downloads', hidden: true });
+      var cancelTaskBtn = el('button', { className: 'btn btn-danger-ghost', attrs: { type: 'button' }, text: '取消任务' });
+      cancelTaskBtn.addEventListener('click', cancelSubtitleJob);
+      var body = el('div', { className: 'subtitle-progress-card' }, [
+        privacy,
+        el('div', { className: 'subtitle-stage-row' }, [stageEl, pctEl]),
+        bar,
+        messageEl,
+        el('div', { className: 'subtitle-stage-row' }, [
+          el('span', { className: 'subtitle-job-meta', text: '任务状态' }),
+          statusBadge
+        ]),
+        metaEl,
+        errorEl,
+        filesWrap,
+        el('p', {
+          className: 'hint',
+          text: '音频只临时存在于服务端；任务完成/失败/取消后自动清理。字幕文件仅保存在 NAS 任务目录，下载需要当前登录会话。'
+        })
+      ]);
+      cloud.progressUi = {
+        body: body, statusBadge: statusBadge, stageEl: stageEl, pctEl: pctEl,
+        fill: fill, bar: bar, messageEl: messageEl, errorEl: errorEl,
+        metaEl: metaEl, filesWrap: filesWrap, cancelTaskBtn: cancelTaskBtn
+      };
+    }
+
+    function showSubtitleProgress(job) {
+      makeProgressUi();
+      var ui = cloud.progressUi;
+      ui.statusBadge.className = 'badge ' + subtitleJobStatusClass(job.status);
+      modal.setBody(ui.body);
+      modal.setFooter([
+        el('span', { className: 'footer-left', text: '任务进行中，关闭按钮已禁用；可随时取消。' }),
+        ui.cancelTaskBtn
+      ]);
+      if (activeModal) { activeModal.dismissible = false; }
+      modal.setBusy(true);
+      updateSubtitleProgress(job);
+    }
+
+    function renderSubtitleFiles(job) {
+      var ui = cloud.progressUi;
+      var files = Array.isArray(job.files) ? job.files.filter(function (item) {
+        return item && isSafeSubtitleFileName(item.name);
+      }) : [];
+      clear(ui.filesWrap);
+      ui.filesWrap.hidden = false;
+      if (!files.length) {
+        ui.filesWrap.appendChild(el('p', { className: 'subtitle-empty', text: '任务已完成，但没有可下载的字幕文件。' }));
+        return;
+      }
+      var preferredExt = cloud.format === 'vtt' ? '.vtt' : '.srt';
+      files.sort(function (a, b) {
+        var aPref = a.name.toLowerCase().slice(-4) === preferredExt ? 0 : 1;
+        var bPref = b.name.toLowerCase().slice(-4) === preferredExt ? 0 : 1;
+        if (aPref !== bPref) { return aPref - bPref; }
+        return String(a.name).localeCompare(String(b.name));
+      });
+      var basePath = '/api/subtitles/' + encodePath(job.job_id) + '/file/';
+      var preferred = files.filter(function (item) {
+        return String(item.name).toLowerCase().slice(-4) === preferredExt;
+      })[0];
+      if (preferred) {
+        ui.filesWrap.appendChild(el('a', {
+          className: 'btn btn-primary btn-sm',
+          attrs: {
+            href: basePath + encodeURIComponent(preferred.name),
+            download: preferred.name
+          }
+        }, [icon('download'), '下载 ' + preferredExt.slice(1).toUpperCase() + '（' + preferred.name + '）']));
+      }
+      ui.filesWrap.appendChild(el('h3', { text: '全部字幕文件' }));
+      var list = el('div', { className: 'subtitle-file-list' });
+      files.forEach(function (item) {
+        list.appendChild(el('div', { className: 'subtitle-file-item' }, [
+          el('span', { className: 'subtitle-file-name', text: item.name }),
+          el('span', { className: 'subtitle-file-size', text: fmtBytes(item.size) }),
+          el('a', {
+            className: 'btn btn-ghost btn-sm',
+            attrs: { href: basePath + encodeURIComponent(item.name), download: item.name, title: '下载 ' + item.name }
+          }, [icon('download'), '下载'])
+        ]));
+      });
+      ui.filesWrap.appendChild(list);
+      ui.filesWrap.appendChild(el('p', { className: 'hint', text: '文件列表以服务端实际生成为准；任务完成后自动清理临时音频。' }));
+    }
+
+    function updateSubtitleProgress(job) {
+      var ui = cloud.progressUi;
+      if (!ui || !job) { return; }
+      var status = job.status || 'queued';
+      var terminal = isTerminalSubtitleStatus(status);
+      var progress = clamp(Number(job.progress) || 0, 0, 100);
+      var pct = Math.round(progress);
+      setText(ui.statusBadge, subtitleJobStatusLabel(status));
+      ui.statusBadge.className = 'badge ' + subtitleJobStatusClass(status);
+      setText(ui.stageEl, subtitleStageLabel(job.stage) + (status === 'queued' ? '（排队中）' : ''));
+      setText(ui.pctEl, pct + '%');
+      ui.fill.style.width = pct + '%';
+      ui.bar.setAttribute('aria-valuenow', String(pct));
+      setText(ui.messageEl, job.message || (terminal ? '任务已结束。' : '正在处理…'));
+      if (job.path) { setText(ui.metaEl, job.path); }
+      ui.metaEl.title = job.path || '';
+      if (status === 'failed') {
+        var errorText = '字幕任务失败。';
+        if (job.error && typeof job.error === 'string') { errorText = job.error; }
+        else if (job.error && job.error.message) { errorText = job.error.message; }
+        else if (job.message) { errorText = job.message; }
+        setText(ui.errorEl, errorText);
+        show(ui.errorEl);
+      } else if (status === 'cancelled') {
+        setText(ui.errorEl, '任务已取消，未生成字幕文件。');
+        show(ui.errorEl);
+      } else {
+        hide(ui.errorEl);
+      }
+      if (status === 'done') {
+        renderSubtitleFiles(job);
+      } else {
+        ui.filesWrap.hidden = true;
+      }
+      if (terminal) {
+        cloud.running = false;
+        stopSubtitlePolling(cloud);
+        if (cloud.modal) {
+          cloud.modal.setTitle('字幕任务');
+          cloud.modal.setBusy(false);
+          cloud.modal.setFooter([
+            el('span', { className: 'footer-left', text: status === 'done' ? '字幕生成完成。' : '任务已结束。' }),
+            el('button', {
+              className: 'btn btn-primary', attrs: { type: 'button' }, text: '关闭',
+              on: { click: function () { closeModal(true); } }
+            })
+          ]);
+        }
+        if (activeModal) { activeModal.dismissible = true; }
+        if (status === 'done') {
+          toast('字幕生成完成，可下载 SRT/VTT 文件。', 'success', 5000);
+        } else if (status === 'failed') {
+          toast('字幕任务失败，请查看弹窗中的错误信息。', 'error', 6000);
+        } else {
+          toast('字幕任务已取消。', 'info');
+        }
+      } else {
+        ui.cancelTaskBtn.disabled = false;
+        setText(ui.cancelTaskBtn, '取消任务');
+        if (activeModal) { activeModal.dismissible = false; }
+      }
+    }
+
+    function startSubtitlePolling(jobId) {
+      stopSubtitlePolling(cloud);
+      cloud.polling = true;
+      cloud.pollErrors = 0;
+      pollSubtitleOnce(jobId);
+      cloud.timer = setInterval(function () { pollSubtitleOnce(jobId); }, POLL_MS);
+    }
+
+    function stopSubtitlePolling(cloudState) {
+      if (!cloudState) { return; }
+      if (cloudState.timer) { clearInterval(cloudState.timer); cloudState.timer = null; }
+      if (cloudState.abort) {
+        try { cloudState.abort.abort(); } catch (e) { /* 忽略 */ }
+        cloudState.abort = null;
+      }
+      cloudState.polling = false;
+    }
+
+    async function pollSubtitleOnce(jobId) {
+      if (!cloud.polling || !cloud.modal) { return; }
+      if (cloud.abort) { try { cloud.abort.abort(); } catch (e) { /* 忽略 */ } }
+      var controller = new AbortController();
+      cloud.abort = controller;
+      try {
+        var res = await api('/api/subtitles/' + encodePath(jobId), { signal: controller.signal, timeout: 15000 });
+        if (!cloud.polling) { return; }
+        var job = res && res.job ? res.job : res;
+        if (!job || !job.job_id) { return; }
+        cloud.pollErrors = 0;
+        cloud.job = job;
+        updateSubtitleProgress(job);
+      } catch (err) {
+        if (err && err.name === 'AbortError') { return; }
+        cloud.pollErrors += 1;
+        if (cloud.pollErrors >= 5) {
+          stopSubtitlePolling(cloud);
+          if (cloud.progressUi) {
+            setText(cloud.progressUi.errorEl, '无法获取字幕任务进度：' + errorMessage(err, '请稍后重试。'));
+            show(cloud.progressUi.errorEl);
+            setText(cloud.progressUi.messageEl, '进度轮询已中断。');
+          }
+          if (cloud.modal) { cloud.modal.setBusy(false); }
+          if (activeModal) { activeModal.dismissible = true; }
+          if (cloud.modal) {
+            cloud.modal.setFooter([el('button', {
+              className: 'btn btn-ghost', attrs: { type: 'button' }, text: '关闭',
+              on: { click: function () { closeModal(true); } }
+            })]);
+          }
+        }
+      }
+    }
+
+    async function cancelSubtitleJob() {
+      if (!cloud.job || !cloud.job.job_id || cloud.cancelling) { return; }
+      cloud.cancelling = true;
+      var btn = cloud.progressUi ? cloud.progressUi.cancelTaskBtn : null;
+      if (btn) { setBusy(btn, true, '正在取消…'); }
+      try {
+        var res = await api('/api/subtitles/' + encodePath(cloud.job.job_id) + '/cancel', {
+          method: 'POST', body: {}, timeout: 15000
+        });
+        var job = res && res.job ? res.job : res;
+        if (job && job.status) { cloud.job = job; updateSubtitleProgress(job); }
+        toast('已请求取消字幕任务。', 'info');
+      } catch (err) {
+        toast(errorMessage(err, '取消字幕任务失败，请稍后重试。'), 'error');
+      } finally {
+        cloud.cancelling = false;
+        if (btn && cloud.progressUi && cloud.progressUi.cancelTaskBtn === btn) {
+          setBusy(btn, false);
+        }
+      }
+    }
   }
 
   function videoGroupSelectableFiles(group) {
@@ -5605,7 +6232,16 @@
     videoAsrCommand: { input: 'setVideoAsrCommand', error: 'setVideoAsrCommandError' },
     videoAsrWeight: { input: 'setVideoAsrWeight', error: 'setVideoAsrWeightError' },
     videoAsrTimeout: { input: 'setVideoAsrTimeout', error: 'setVideoAsrTimeoutError' },
-    videoAsrMaxSec: { input: 'setVideoAsrMaxSec', error: 'setVideoAsrMaxSecError' }
+    videoAsrMaxSec: { input: 'setVideoAsrMaxSec', error: 'setVideoAsrMaxSecError' },
+    subtitleAsrBaseUrl: { input: 'subtitleAsrBaseUrl', error: 'subtitleAsrBaseUrlError' },
+    subtitleAsrModel: { input: 'subtitleAsrModel', error: 'subtitleAsrModelError' },
+    subtitleAsrTimeout: { input: 'subtitleAsrTimeout', error: 'subtitleAsrTimeoutError' },
+    subtitleAsrChunk: { input: 'subtitleAsrChunk', error: 'subtitleAsrChunkError' },
+    subtitleAsrMaxAudioMb: { input: 'subtitleAsrMaxAudioMb', error: 'subtitleAsrMaxAudioMbError' },
+    subtitleLlmBaseUrl: { input: 'subtitleLlmBaseUrl', error: 'subtitleLlmBaseUrlError' },
+    subtitleLlmModel: { input: 'subtitleLlmModel', error: 'subtitleLlmModelError' },
+    subtitleTranslateTimeout: { input: 'subtitleTranslateTimeout', error: 'subtitleTranslateTimeoutError' },
+    subtitleTranslateBatchSize: { input: 'subtitleTranslateBatchSize', error: 'subtitleTranslateBatchSizeError' }
   };
 
   function bytesToMbValue(bytes) {
@@ -5658,6 +6294,7 @@
     }
     if (els.setSimilarityExcludeExt) { els.setSimilarityExcludeExt.value = extListToText(settings.similarity_exclude_extensions); }
     fillVideoSettingsForm(settings);
+    fillSubtitleSettingsForm(settings);
     clearSettingsErrors();
   }
 
@@ -5681,8 +6318,9 @@
     setHidden(els.settingsLoadError, true);
     try {
       var res = await api('/api/settings', { timeout: 15000 });
-      if (res && res.settings) {
-        state.settings = Object.assign({}, DEFAULT_SETTINGS, res.settings);
+      var rawSettings = res && res.settings ? res.settings : null;
+      if (rawSettings) {
+        state.settings = Object.assign({}, DEFAULT_SETTINGS, rawSettings);
         if (res.defaults) { state.defaults = Object.assign({}, DEFAULT_SETTINGS, res.defaults); }
       }
       state.settingsLoaded = true;
@@ -5690,6 +6328,7 @@
       state.video = videoCapability();
       updateModeAvailability();
       updateVideoAvailabilityUi();
+      updateSubtitleFromRaw(rawSettings);
       var simSupported = !(state.meta && state.similarity && state.similarity.supported === false);
       if (els.settingsSimilarityDetails) { setHidden(els.settingsSimilarityDetails, !simSupported); }
       fillSettingsForm(state.settings || DEFAULT_SETTINGS);
@@ -5769,6 +6408,7 @@
       settings.similarity_allow_binary = !!(els.setSimilarityAllowBinary && els.setSimilarityAllowBinary.checked);
     }
     readVideoSettings(settings, errors);
+    readSubtitleSettings(settings, errors);
     return { settings: settings, errors: errors, valid: Object.keys(errors).length === 0 };
   }
 
@@ -5810,6 +6450,7 @@
         state.video = videoCapability();
         updateModeAvailability();
         updateVideoAvailabilityUi();
+        updateSubtitleFromRaw(res.settings || null);
         fillSettingsForm(state.settings);
       }
       state.settingsLoaded = true;
@@ -5853,6 +6494,35 @@
     }
     if (els.setVideoAsrSection) {
       els.setVideoAsrSection.addEventListener('change', clearSettingsErrors);
+    }
+    if (els.subtitleEnabled) {
+      els.subtitleEnabled.addEventListener('change', function () { clearSettingsErrors(); updateSubtitleAvailabilityUi(); });
+    }
+    if (els.subtitleTranslateEnabled) {
+      els.subtitleTranslateEnabled.addEventListener('change', function () {
+        if (els.subtitleTranslateEnabled.checked && !subtitleCapability().llmKeySet) {
+          toast('尚未配置 LLM API Key：可保存设置后再启用译文生成。', 'info', 4200);
+        }
+        clearSettingsErrors();
+      });
+    }
+    if (els.subtitleClearAsrKey) {
+      els.subtitleClearAsrKey.addEventListener('change', function () {
+        if (els.subtitleAsrApiKey) {
+          els.subtitleAsrApiKey.value = '';
+          els.subtitleAsrApiKey.disabled = els.subtitleClearAsrKey.checked;
+        }
+        clearSettingsErrors();
+      });
+    }
+    if (els.subtitleClearLlmKey) {
+      els.subtitleClearLlmKey.addEventListener('change', function () {
+        if (els.subtitleLlmApiKey) {
+          els.subtitleLlmApiKey.value = '';
+          els.subtitleLlmApiKey.disabled = els.subtitleClearLlmKey.checked;
+        }
+        clearSettingsErrors();
+      });
     }
   }
 
