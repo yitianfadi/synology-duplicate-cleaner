@@ -36,6 +36,7 @@ class BrowseService(object):
                 "filesystem": share.get("filesystem") or "unknown",
                 "is_usb": bool(share.get("is_usb")),
                 "is_encrypted": bool(share.get("is_encrypted")),
+                "is_readable": bool(share.get("is_readable", True)),
                 "is_writable": bool(share.get("is_writable")),
             })
         return result

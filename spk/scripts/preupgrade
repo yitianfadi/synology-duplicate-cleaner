@@ -1,0 +1,11 @@
+#!/bin/sh
+# 本脚本由 DSM 套件框架在升级前以套件用户身份调用。
+# 只做安全清理，避免旧 PID/字节码缓存影响升级后的服务启动。
+PKG_NAME="DuplicateCleaner"
+PKG_DIR="${SYNOPKG_PKGDEST:-/var/packages/${PKG_NAME}/target}"
+VAR_DIR="${SYNOPKG_PKGVAR:-/var/packages/${PKG_NAME}/var}"
+
+rm -f "$VAR_DIR/backend.pid" 2>/dev/null
+find "$PKG_DIR" -type d -name __pycache__ -prune -exec rm -rf {} + 2>/dev/null
+echo "DuplicateCleaner preupgrade: prepared for upgrade (data preserved at $VAR_DIR)"
+exit 0

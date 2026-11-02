@@ -20,7 +20,7 @@ from . import config
 from .errors import ApiError, invalid, path_not_allowed
 from .fsutil import (check_path_safety, has_symlink_component, is_dir_nofollow,
                      is_regular_file, is_system_name, is_under, norm_path,
-                     path_key, writable_dir)
+                     path_key, readable_dir, writable_dir)
 
 
 def _decode(data):
@@ -122,6 +122,7 @@ class ShareService(object):
                 "filesystem": "dev",
                 "is_usb": False,
                 "is_encrypted": False,
+                "is_readable": readable_dir(root),
                 "is_writable": writable_dir(root),
             })
         return shares
@@ -166,7 +167,8 @@ class ShareService(object):
                 "filesystem": _compute_filesystem(path),
                 "is_usb": bool(item.get("is_usb") or str(name).startswith("usbshare")),
                 "is_encrypted": bool(item.get("is_encrypted")),
-                "is_writable": bool(item.get("is_writable", True)),
+                "is_readable": readable_dir(path),
+                "is_writable": writable_dir(path),
             })
         return result
 
@@ -225,6 +227,7 @@ class ShareService(object):
                 "filesystem": _compute_filesystem(path),
                 "is_usb": name.startswith("usbshare"),
                 "is_encrypted": False,
+                "is_readable": readable_dir(path),
                 "is_writable": writable_dir(path),
             })
         return shares
@@ -276,6 +279,7 @@ class ShareService(object):
                     "filesystem": _compute_filesystem(entry.path),
                     "is_usb": entry.name.startswith("usbshare"),
                     "is_encrypted": False,
+                    "is_readable": readable_dir(entry.path),
                     "is_writable": writable_dir(entry.path),
                 })
         return shares
@@ -333,7 +337,8 @@ class ShareService(object):
             item.setdefault("filesystem", "unknown")
             item.setdefault("is_usb", False)
             item.setdefault("is_encrypted", False)
-            item.setdefault("is_writable", writable_dir(path))
+            item.setdefault("is_readable", readable_dir(path))
+            item["is_writable"] = writable_dir(path)
             result.append(item)
         result.sort(key=lambda entry: entry["name"].lower())
         return result

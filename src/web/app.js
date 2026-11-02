@@ -1024,11 +1024,16 @@
       var entries;
       if (!path) {
         var shares = Array.isArray(data.shares) ? data.shares : [];
+        picker.unreadableShares = shares.filter(function (share) {
+          return share.is_readable === false;
+        }).map(function (share) { return share.path; });
         entries = shares.map(function (share) {
+          var readable = share.is_readable !== false;
           return {
             name: share.name, path: share.path, type: 'dir', size: 0,
             created_at: null, modified_at: null, hidden: false, is_symlink: false,
-            excluded: false, exclude_reason: null, share: share
+            excluded: !readable, exclude_reason: readable ? null : 'permission',
+            share: share
           };
         });
       } else {
@@ -1074,7 +1079,11 @@
     }
     if (entry && entry.excluded) {
       result.disabled = true;
-      result.note = entry.exclude_reason ? ('不可选择：' + entry.exclude_reason) : '系统或不可访问目录';
+      if (entry.exclude_reason === 'permission') {
+        result.note = '无读取权限，请给 duplicatecleaner 授权';
+      } else {
+        result.note = entry.exclude_reason ? ('不可选择：' + entry.exclude_reason) : '系统或不可访问目录';
+      }
       result.warn = true;
       return result;
     }
@@ -1187,7 +1196,12 @@
       picker.currentBtn.disabled = disabled;
       picker.currentBtn.hidden = !picker.currentPath;
     }
-    if (picker.mode === 'excludes' && !picker.roots.length) {
+    if (picker.unreadableShares && picker.unreadableShares.length) {
+      setText(picker.hintEl,
+        '以下共享文件夹没有读取权限，已置灰不可选：' + picker.unreadableShares.join('、') +
+        '。请在“控制面板 → 共享文件夹 → 权限 → 系统内部用户”中给 duplicatecleaner 授权后刷新。');
+      picker.hintEl.classList.add('is-warn');
+    } else if (picker.mode === 'excludes' && !picker.roots.length) {
       setText(picker.hintEl, '提示：尚未选择扫描范围，请先关闭此选择器，在“扫描范围”中选择目录后再添加排除目录。');
       picker.hintEl.classList.add('is-warn');
     } else {
