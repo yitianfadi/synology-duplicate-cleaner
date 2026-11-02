@@ -883,6 +883,7 @@
     state.defaults = null;
     state.roots = [];
     state.excludes = [];
+    state.selectionHydrated = false;
     state.pinnedPath = '';
     state.recycleDefault = true;
     state.scanMode = 'exact';
@@ -941,6 +942,7 @@
     state.scanMode = state.settings.scan_mode === 'similar' ? 'similar' : 'exact';
     applySettingsToScanForm(state.settings);
     restoreLastSelection();
+    state.selectionHydrated = true;
     renderRoots();
     renderExcludeChips();
     updatePinnedDisplay();
@@ -1657,6 +1659,7 @@
   }
 
   function saveLastSelection() {
+    if (!state.selectionHydrated) { return; }
     try {
       if (!window.localStorage) { return; }
       var payload = {
