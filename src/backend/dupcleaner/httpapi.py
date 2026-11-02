@@ -187,8 +187,13 @@ class Api(object):
             # 云端字幕（管理员；POST /api/subtitles 等）
             ("POST", re.compile(r"^/api/subtitles$"),
              self._create_subtitle, False),
+            ("GET", re.compile(r"^/api/subtitles$"),
+             self._list_subtitles, False),
             ("GET", re.compile(r"^/api/subtitles/(?P<job_id>[^/]+)$"),
              self._get_subtitle, False),
+            ("POST", re.compile(
+                r"^/api/subtitles/(?P<job_id>[^/]+)/(?P<action>pause|resume)$"),
+             self._subtitle_control, False),
             ("POST", re.compile(r"^/api/subtitles/(?P<job_id>[^/]+)/cancel$"),
              self._cancel_subtitle, False),
             ("GET", re.compile(
@@ -412,6 +417,21 @@ class Api(object):
         service = self._require_subtitle_admin(session)
         return json_response({"ok": True,
                               "job": service.get(params["job_id"])})
+
+    def _list_subtitles(self, request, session, params):
+        service = self._require_subtitle_admin(session)
+        limit = _query_int(request, "limit", 50)
+        return json_response({"ok": True,
+                              "jobs": service.list(limit=limit)})
+
+    def _subtitle_control(self, request, session, params):
+        service = self._require_subtitle_admin(session)
+        action = params["action"]
+        if action == "pause":
+            job = service.pause(params["job_id"])
+        else:
+            job = service.resume(params["job_id"])
+        return json_response({"ok": True, "job": job})
 
     def _cancel_subtitle(self, request, session, params):
         service = self._require_subtitle_admin(session)

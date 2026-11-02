@@ -34,9 +34,13 @@
   - 校验：文件存在、常规文件、非 symlink、位于共享文件夹、视频后缀、`confirm_cloud=true`、总开关开启。
   - 返回 202 `{"ok":true,"job":{...}}`。
 - `GET /api/subtitles/{job_id}`：status/stage/progress/message/error/files。
+- `GET /api/subtitles?limit=`：字幕任务历史列表。
+- `POST /api/subtitles/{job_id}/pause`：在 chunk 边界暂停；
+- `POST /api/subtitles/{job_id}/resume`：从已完成 chunk 后继续，不重复调用 ASR。
 - `POST /api/subtitles/{job_id}/cancel`：取消；运行中的 HTTP/ffmpeg 子进程应尽快终止。
 - `GET /api/subtitles/{job_id}/file/{name}`：下载 `original.srt`、`original.vtt`、`<lang>.srt`、`<lang>.vtt`、`bilingual.<lang>.srt`。
 - job 持久化到 `<var>/subtitles/jobs/<job_id>.json`；文件在 `<var>/subtitles/<job_id>/`；最多保留 20 个任务，LRU 清理。
+- v0019 起 ASR chunk 结果持久化到 `subtitle_chunks`（schema v4）；重启后 queued/running 任务转为 paused，可手动继续，不自动续跑，不重复上传已完成 chunk。
 - 同一时间只跑 1 个云端字幕任务；不同任务排队。
 
 job schema：

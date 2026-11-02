@@ -30,7 +30,8 @@ DB_FILENAME = "dupcleaner.sqlite3"
 # 让结果分页/搜索/排序/统计走 SQL，不再整份 JSON 遍历。
 # v3（v0017 优化 plan B）：暂停断点的 FileRecord 列表拆到 scan_checkpoint_records，
 # checkpoint payload 只保留 stage/progress/stats/record_count，避免单个巨大 JSON。
-CURRENT_SCHEMA_VERSION = 3
+# v4（v0019 优化 plan C）：字幕任务 ASR 分片结果落 subtitle_chunks，支持暂停/续跑。
+CURRENT_SCHEMA_VERSION = 4
 BUSY_TIMEOUT_MS = 5000
 BATCH_SIZE = 200
 
@@ -165,6 +166,34 @@ _SCHEMA_STATEMENTS = (
         payload_json TEXT NOT NULL,
         updated_epoch REAL NOT NULL,
         status TEXT
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS subtitle_chunks (
+        job_id TEXT NOT NULL,
+        chunk_index INTEGER NOT NULL,
+        start_sec REAL NOT NULL,
+        end_sec REAL NOT NULL,
+        status TEXT NOT NULL,
+        cues_json TEXT NOT NULL,
+        updated_epoch REAL NOT NULL,
+        PRIMARY KEY (job_id, chunk_index)
+    )
+    """,
+)
+
+# v4：plan C 字幕 ASR 分片缓存表（v3 升级时只建表；chunk 行由任务运行时写入）。
+_V4_MIGRATION_STATEMENTS = (
+    """
+    CREATE TABLE IF NOT EXISTS subtitle_chunks (
+        job_id TEXT NOT NULL,
+        chunk_index INTEGER NOT NULL,
+        start_sec REAL NOT NULL,
+        end_sec REAL NOT NULL,
+        status TEXT NOT NULL,
+        cues_json TEXT NOT NULL,
+        updated_epoch REAL NOT NULL,
+        PRIMARY KEY (job_id, chunk_index)
     )
     """,
 )
@@ -446,6 +475,8 @@ class Database(object):
                 self._migrate_v2()
             elif next_version == 3:
                 self._migrate_v3()
+            elif next_version == 4:
+                self._migrate_v4()
             version = next_version
             self._conn.execute(
                 "INSERT OR REPLACE INTO schema_meta(key, value) "
@@ -481,6 +512,13 @@ class Database(object):
         for statement in _V3_MIGRATION_STATEMENTS:
             conn.execute(statement)
         logger.info(u"SQLite schema 迁移到 v3 完成：已创建 checkpoint records 表")
+
+    def _migrate_v4(self):
+        """v3→v4：只新建 subtitle_chunks（幂等；字幕分片行运行时写入）。"""
+        conn = self._conn
+        for statement in _V4_MIGRATION_STATEMENTS:
+            conn.execute(statement)
+        logger.info(u"SQLite schema 迁移到 v4 完成：已创建 subtitle_chunks 表")
 
     def _backfill_scan_group_columns(self):
         """按 rowid 分批回填 scan_groups 索引列与 scan_files（不整表载入）。"""

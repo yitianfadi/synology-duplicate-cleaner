@@ -1319,7 +1319,96 @@ class Store(object):
 
     def delete_subtitle_job(self, job_id):
         job_id = self._check_generic_job_id(job_id)
-        self.db.execute("DELETE FROM subtitle_jobs WHERE job_id=?", (job_id,))
+        with self.db.transaction():
+            self.db.execute(
+                "DELETE FROM subtitle_chunks WHERE job_id=?", (job_id,))
+            self.db.execute(
+                "DELETE FROM subtitle_jobs WHERE job_id=?", (job_id,))
+
+    # ------------------------------------------------------------------
+    # 字幕 ASR 分片缓存（schema v4 / plan C）
+    # ------------------------------------------------------------------
+    def save_subtitle_chunk(self, job_id, chunk_index, start_sec, end_sec,
+                            status, cues, updated_epoch=None):
+        """写入/更新一个 ASR 分片结果（cues 为绝对时间轴 cue 列表）。"""
+        job_id = self._check_generic_job_id(job_id)
+        try:
+            chunk_index = int(chunk_index)
+            start = float(start_sec)
+            end = float(end_sec)
+        except (TypeError, ValueError):
+            raise invalid(u"字幕分片参数非法")
+        if not isinstance(cues, list):
+            cues = []
+        try:
+            updated = float(updated_epoch or time.time())
+        except (TypeError, ValueError):
+            updated = time.time()
+        self.db.execute(
+            "INSERT OR REPLACE INTO subtitle_chunks"
+            "(job_id, chunk_index, start_sec, end_sec, status, cues_json,"
+            " updated_epoch) VALUES(?, ?, ?, ?, ?, ?, ?)",
+            (job_id, chunk_index, start, end, str(status or ""),
+             json.dumps(cues, ensure_ascii=False), updated))
+        return True
+
+    def load_subtitle_chunks(self, job_id):
+        """按 chunk_index 升序返回任务的分片缓存。"""
+        job_id = self._check_generic_job_id(job_id)
+        rows = self.db.query(
+            "SELECT chunk_index, start_sec, end_sec, status, cues_json,"
+            " updated_epoch FROM subtitle_chunks WHERE job_id=?"
+            " ORDER BY chunk_index ASC", (job_id,))
+        result = []
+        for row in rows:
+            cues = self._loads(row["cues_json"], None)
+            result.append({
+                "job_id": job_id,
+                "chunk_index": int(row["chunk_index"]),
+                "start_sec": float(row["start_sec"] or 0.0),
+                "end_sec": float(row["end_sec"] or 0.0),
+                "status": row["status"],
+                "cues": cues if isinstance(cues, list) else [],
+                "updated_epoch": row["updated_epoch"],
+            })
+        return result
+
+    def list_subtitle_chunks(self, job_id=None, limit=500):
+        """列出分片：给定 job_id 时按分片顺序；否则按最近更新时间倒序。"""
+        if job_id is not None:
+            return self.load_subtitle_chunks(job_id)
+        rows = self.db.query(
+            "SELECT job_id, chunk_index, start_sec, end_sec, status,"
+            " cues_json, updated_epoch FROM subtitle_chunks"
+            " ORDER BY updated_epoch DESC, job_id DESC, chunk_index ASC"
+            " LIMIT ?", (max(1, int(limit or 500)),))
+        result = []
+        for row in rows:
+            cues = self._loads(row["cues_json"], None)
+            result.append({
+                "job_id": row["job_id"],
+                "chunk_index": int(row["chunk_index"]),
+                "start_sec": float(row["start_sec"] or 0.0),
+                "end_sec": float(row["end_sec"] or 0.0),
+                "status": row["status"],
+                "cues": cues if isinstance(cues, list) else [],
+                "updated_epoch": row["updated_epoch"],
+            })
+        return result
+
+    def delete_subtitle_chunks(self, job_id, chunk_index=None):
+        job_id = self._check_generic_job_id(job_id)
+        if chunk_index is None:
+            self.db.execute(
+                "DELETE FROM subtitle_chunks WHERE job_id=?", (job_id,))
+        else:
+            try:
+                chunk_index = int(chunk_index)
+            except (TypeError, ValueError):
+                raise invalid(u"字幕分片序号非法")
+            self.db.execute(
+                "DELETE FROM subtitle_chunks WHERE job_id=? AND chunk_index=?",
+                (job_id, chunk_index))
 
     # ------------------------------------------------------------------
     # 启动状态：活动扫描标记 interrupted（不自动续跑）

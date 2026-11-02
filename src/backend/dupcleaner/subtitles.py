@@ -40,7 +40,14 @@ STATUS_TRANSLATING = "translating"
 STATUS_DONE = "done"
 STATUS_FAILED = "failed"
 STATUS_CANCELLED = "cancelled"
+STATUS_PAUSED = "paused"
 FINISHED_STATUSES = (STATUS_DONE, STATUS_FAILED, STATUS_CANCELLED)
+ACTIVE_STATUSES = (STATUS_QUEUED, STATUS_RUNNING, STATUS_TRANSLATING)
+
+# ASR 分片缓存状态（subtitle_chunks.status）
+CHUNK_PENDING = "pending"
+CHUNK_DONE = "done"
+CHUNK_FAILED = "failed"
 
 _FENCE = chr(96) * 3
 
@@ -56,6 +63,10 @@ class SubtitleError(Exception):
 
 class SubtitleCancelled(Exception):
     pass
+
+
+class SubtitlePaused(Exception):
+    """在 ASR 分片边界/翻译批次边界请求暂停（可继续）。"""
 
 
 # ---------------------------------------------------------------------------
@@ -474,6 +485,11 @@ class SubtitleJob(object):
         self.created_epoch = time.time()
         self.updated_epoch = self.created_epoch
         self.cancel_event = threading.Event()
+        self.pause_event = threading.Event()
+        # plan C：ASR 分片进度 / 是否可继续
+        self.chunk_index = 0
+        self.chunk_total = 0
+        self.resumable = False
         self.lock = threading.RLock()
 
     def snapshot(self):
@@ -493,6 +509,10 @@ class SubtitleJob(object):
                 "error": dict(self.error) if isinstance(self.error, dict) else None,
                 "files": list(self.files),
                 "translation_partial": bool(self.translation_partial),
+                "paused": self.status == STATUS_PAUSED,
+                "resumable": bool(self.resumable),
+                "chunk_index": int(self.chunk_index),
+                "chunk_total": int(self.chunk_total),
             }
 
     def to_record(self):
@@ -512,6 +532,9 @@ class SubtitleJob(object):
             "error": self.error,
             "files": list(self.files),
             "translation_partial": bool(self.translation_partial),
+            "chunk_index": int(self.chunk_index),
+            "chunk_total": int(self.chunk_total),
+            "resumable": bool(self.resumable),
         }
 
     @classmethod
@@ -530,6 +553,9 @@ class SubtitleJob(object):
         job.translation_partial = bool(record.get("translation_partial"))
         job.created_epoch = float(record.get("created_epoch") or time.time())
         job.updated_epoch = float(record.get("updated_epoch") or job.created_epoch)
+        job.chunk_index = int(record.get("chunk_index") or 0)
+        job.chunk_total = int(record.get("chunk_total") or 0)
+        job.resumable = bool(record.get("resumable"))
         return job
 
 
@@ -614,12 +640,34 @@ class SubtitleService(object):
                 pass
         for job_id, record in records.items():
             job = SubtitleJob.from_record(record)
-            if job.status in (STATUS_QUEUED, STATUS_RUNNING):
-                job.status = STATUS_FAILED
-                job.error = {"code": "SERVICE_RESTART",
-                             "message": u"服务重启导致任务中断，请重新提交"}
-                job.message = job.error["message"]
+            try:
+                chunks = self.store.load_subtitle_chunks(job.job_id)
+            except Exception:
+                chunks = []
+            done_chunks = sum(1 for item in chunks
+                              if item.get("status") == CHUNK_DONE)
+            if chunks:
+                job.chunk_total = max(int(job.chunk_total or 0), len(chunks))
+                job.chunk_index = max(int(job.chunk_index or 0), done_chunks)
+            if job.status in ACTIVE_STATUSES:
+                if chunks:
+                    # plan C：有分片缓存/计划 → 暂停可继续，而不是失败
+                    job.status = STATUS_PAUSED
+                    job.resumable = True
+                    job.error = None
+                    job.message = u"服务重启导致任务暂停，可继续"
+                else:
+                    job.status = STATUS_FAILED
+                    job.resumable = False
+                    job.error = {"code": "SERVICE_RESTART",
+                                 "message": u"服务重启导致任务中断，请重新提交"}
+                    job.message = job.error["message"]
                 self._persist(job)
+            elif job.status == STATUS_PAUSED:
+                # 用户暂停/升级暂停的任务：保留可继续状态
+                job.resumable = True
+            else:
+                job.resumable = False
             self._jobs[job.job_id] = job
 
     def _persist(self, job):
@@ -757,29 +805,92 @@ class SubtitleService(object):
             if job.status in FINISHED_STATUSES:
                 return job.snapshot()
             job.cancel_event.set()
-            if job.status == STATUS_QUEUED:
+            job.pause_event.clear()
+            if job.status in (STATUS_QUEUED, STATUS_PAUSED):
                 job.status = STATUS_CANCELLED
                 job.message = u"任务已取消"
+                job.resumable = False
                 job.updated_epoch = time.time()
                 try:
                     self._queue.remove(job_id)
                 except ValueError:
                     pass
                 self._cond.notify_all()
+                self._persist(job)
             else:
                 job.message = u"正在取消任务"
-            self._persist(job)
+                self._persist(job)
         self.store.audit("subtitle_cancel", job.user, {"job_id": job_id})
         return job.snapshot()
 
+    def pause(self, job_id):
+        """暂停任务：当前 ASR 分片/翻译批次完成后停在 paused，可继续。"""
+        job = self._get_job(job_id)
+        with self._lock:
+            if job.status in FINISHED_STATUSES:
+                raise invalid(u"已完成任务不能暂停")
+            if job.status == STATUS_PAUSED:
+                return job.snapshot()
+            previous = job.status
+            job.pause_event.set()
+            job.status = STATUS_PAUSED
+            job.resumable = True
+            job.message = u"任务已暂停，可继续" if previous != STATUS_QUEUED else u"任务已暂停"
+            job.updated_epoch = time.time()
+            if previous == STATUS_QUEUED:
+                try:
+                    self._queue.remove(job_id)
+                except ValueError:
+                    pass
+                self._cond.notify_all()
+            self._persist(job)
+        self.store.audit("subtitle_pause", job.user, {
+            "job_id": job_id,
+            "chunk_index": int(job.chunk_index),
+            "chunk_total": int(job.chunk_total),
+        })
+        return job.snapshot()
+
+    def resume(self, job_id):
+        """继续 paused 任务：跳过已完成 ASR 分片（DB 缓存），从下一个未完成分片继续。"""
+        job = self._get_job(job_id)
+        with self._lock:
+            if job.status != STATUS_PAUSED:
+                raise invalid(u"只有已暂停的任务可以继续")
+            job.pause_event.clear()
+            job.error = None
+            job.resumable = True
+            job.updated_epoch = time.time()
+            if self._active_id == job.job_id:
+                job.status = STATUS_RUNNING
+                job.message = u"任务继续"
+            else:
+                job.status = STATUS_QUEUED
+                job.message = u"排队等待继续"
+                if job.job_id not in self._queue:
+                    self._queue.append(job.job_id)
+                self._cond.notify_all()
+            self._persist(job)
+        self.store.audit("subtitle_resume", job.user, {
+            "job_id": job_id,
+            "chunk_index": int(job.chunk_index),
+            "chunk_total": int(job.chunk_total),
+        })
+        self._ensure_worker()
+        return job.snapshot()
+
     def shutdown(self, timeout=5.0):
+        """优雅退出：在分片边界暂停可继续任务（计划 C），而不是取消。"""
         with self._lock:
             self._stopping = True
             jobs = list(self._jobs.values())
+            for job in jobs:
+                if job.status in (STATUS_RUNNING, STATUS_TRANSLATING):
+                    # 运行中任务在分片边界暂停；重启后有分片缓存 → 可继续
+                    job.pause_event.set()
+                # queued 任务没有分片/计划：保持 queued，重启后按
+                # SERVICE_RESTART 失败（只有有计划的 queued 才可继续）
             self._cond.notify_all()
-        for job in jobs:
-            if job.status in (STATUS_QUEUED, STATUS_RUNNING, STATUS_TRANSLATING):
-                job.cancel_event.set()
         worker = self._worker
         if worker is not None and worker.is_alive():
             worker.join(timeout=max(0.1, float(timeout)))
@@ -834,11 +945,49 @@ class SubtitleService(object):
     def _stop_check(self, job):
         return job.cancel_event.is_set()
 
+    def _check_control(self, job):
+        """取消优先；暂停只在 ASR 分片/翻译批次边界生效（计划 C）。"""
+        with job.lock:
+            if job.cancel_event.is_set():
+                raise SubtitleCancelled()
+            if job.pause_event.is_set():
+                if job.status == STATUS_PAUSED:
+                    raise SubtitlePaused()
+                # resume 与暂停请求竞争：resume 已抢先恢复运行，继续即可
+                job.pause_event.clear()
+
+    def _handle_paused(self, job):
+        with self._lock:
+            if job.status != STATUS_PAUSED:
+                # resume 恰好发生在暂停边界之前：重新入队继续，任务不丢
+                if (job.status in ACTIVE_STATUSES
+                        and job.job_id not in self._queue):
+                    job.status = STATUS_QUEUED
+                    self._queue.append(job.job_id)
+                    self._cond.notify_all()
+                return
+            job.resumable = True
+            job.message = u"任务已暂停，当前分片已完成"
+            job.updated_epoch = time.time()
+            self._persist(job)
+        self.store.audit("subtitle_pause", job.user, {
+            "job_id": job.job_id,
+            "chunk_index": int(job.chunk_index),
+            "chunk_total": int(job.chunk_total),
+        })
+
     def _process(self, job):
         settings = self._settings() or {}
         try:
-            self._update(job, status=STATUS_RUNNING, stage="audio", progress=2,
-                         message=u"正在提取音频", error=None)
+            with job.lock:
+                if job.status in FINISHED_STATUSES or job.status == STATUS_PAUSED:
+                    # 队列 pop 与 pause 竞争：暂停请求优先，不启动执行
+                    return
+                job.status = STATUS_RUNNING
+                job.error = None
+                job.updated_epoch = time.time()
+            self._persist(job)
+            self._check_control(job)
             if not self.ffmpeg.available():
                 raise SubtitleError("FFMPEG_UNAVAILABLE", u"未找到 FFmpeg，无法提取音频")
             timeout = float(settings.get("subtitle_asr_timeout_sec") or 300)
@@ -860,13 +1009,17 @@ class SubtitleService(object):
                 temp_root = None
             tempdir = tempfile.mkdtemp(prefix="dc-subtitle-", dir=temp_root)
             try:
-                chunks = self._extract_chunks(
-                    job, settings, duration, chunk_sec, max_bytes, tempdir)
-                if not chunks:
+                plan = self._chunk_plan(job, duration, chunk_sec)
+                if not plan:
                     raise SubtitleError("NO_AUDIO", u"视频没有可用音轨")
-                self._update(job, stage="asr", progress=20,
-                             message=u"正在识别语音")
-                cues = self._run_asr(job, settings, chunks)
+                resuming = int(job.chunk_index or 0) > 0
+                self._update(
+                    job, status=STATUS_RUNNING,
+                    stage="asr" if resuming else "audio",
+                    progress=20 if resuming else 2,
+                    message=u"正在识别语音" if resuming else u"正在提取音频")
+                cues = self._run_chunked_asr(job, settings, plan, max_bytes,
+                                             tempdir)
                 cues = dedupe_cues(cues)
                 if not cues:
                     raise SubtitleError("NO_SPEECH", u"未识别到可用字幕内容")
@@ -878,12 +1031,18 @@ class SubtitleService(object):
                                  message=u"正在翻译字幕")
                     translations, partial = self._translate_cues(
                         job, settings, cues)
+                # 最后一个翻译批次结束时也要响应暂停（resume 会重跑翻译批次，
+                # 但 ASR 分片缓存保证不重复上传音频）
+                self._check_control(job)
                 self._update(job, stage="write", progress=91,
                              message=u"正在写入字幕文件")
                 files = self._write_outputs(job, cues, translations, partial)
+                with job.lock:
+                    total = int(job.chunk_total or 0)
                 self._update(job, status=STATUS_DONE, stage="write",
                              progress=100, message=u"字幕生成完成",
-                             files=files, error=None)
+                             files=files, error=None, resumable=False,
+                             chunk_index=total)
                 self.store.audit("subtitle_done", job.user, {
                     "job_id": job.job_id,
                     "files": [item["name"] for item in files],
@@ -891,12 +1050,15 @@ class SubtitleService(object):
                 })
             finally:
                 shutil.rmtree(tempdir, ignore_errors=True)
+        except SubtitlePaused:
+            self._handle_paused(job)
         except SubtitleCancelled:
             with job.lock:
                 if job.status != STATUS_CANCELLED:
                     job.status = STATUS_CANCELLED
                     job.message = u"任务已取消"
                     job.error = None
+                    job.resumable = False
                     job.updated_epoch = time.time()
                 self._persist(job)
             self.store.audit("subtitle_cancel", job.user, {"job_id": job.job_id})
@@ -913,71 +1075,138 @@ class SubtitleService(object):
             self._fail(job, "INTERNAL_ERROR", u"字幕生成失败，请稍后重试")
 
     def _fail(self, job, code, message):
+        with job.lock:
+            job.resumable = False
         self._update(job, status=STATUS_FAILED, message=message,
                      error={"code": code, "message": message})
         self.store.audit("subtitle_failed", job.user, {
             "job_id": job.job_id, "code": code})
 
-    def _extract_chunks(self, job, settings, duration, chunk_sec, max_bytes,
-                        tempdir):
+    def _chunk_plan(self, job, duration, chunk_sec):
+        """读取已有分片计划；没有则为整个任务创建 pending 分片行（可重启恢复）。"""
+        stored = self.store.load_subtitle_chunks(job.job_id)
+        if stored:
+            plan = []
+            done = 0
+            for item in stored:
+                start = float(item.get("start_sec") or 0.0)
+                end = float(item.get("end_sec") or 0.0)
+                plan.append((start, max(0.0, end - start)))
+                if item.get("status") == CHUNK_DONE:
+                    done += 1
+            with job.lock:
+                job.chunk_total = len(plan)
+                job.chunk_index = max(int(job.chunk_index or 0), done)
+            return plan
+        plan = plan_chunks(duration, chunk_sec)
+        for index, (start, length) in enumerate(plan):
+            try:
+                self.store.save_subtitle_chunk(
+                    job.job_id, index, start, start + length,
+                    CHUNK_PENDING, [])
+            except Exception:
+                pass
+        with job.lock:
+            job.chunk_total = len(plan)
+            job.chunk_index = 0
+        return plan
+
+    def _extract_chunk_audio(self, job, settings, start, length, max_bytes,
+                             tempdir, counter):
+        """抽取单个逻辑分片的音频；超过 max_audio_mb 时继续对半切。"""
         timeout = float(settings.get("subtitle_asr_timeout_sec") or 300)
-        queue = list(plan_chunks(duration, chunk_sec))
+        queue = [(float(start), float(length))]
         results = []
-        index = 0
         while queue:
             self._check_cancel(job)
-            start, length = queue.pop(0)
-            path = os.path.join(tempdir, "chunk-%04d.mp3" % index)
-            index += 1
+            chunk_start, chunk_length = queue.pop(0)
+            path = os.path.join(tempdir, "chunk-%05d.mp3" % counter[0])
+            counter[0] += 1
             try:
                 self.ffmpeg.extract_audio_mp3(
-                    job.path, path, start, length, timeout,
+                    job.path, path, chunk_start, chunk_length, timeout,
                     lambda: self._stop_check(job))
             except video_similarity.VideoStopped:
                 raise SubtitleCancelled()
-            size = os.path.getsize(path)
-            if size <= max_bytes or length <= 0.5:
-                results.append((start, length, path))
+            try:
+                size = os.path.getsize(path)
+            except OSError:
+                raise SubtitleError("NO_AUDIO", u"无法生成音频分片")
+            if size <= max_bytes or chunk_length <= 0.5:
+                results.append((chunk_start, chunk_length, path))
                 continue
             try:
                 os.unlink(path)
             except OSError:
                 pass
-            half = length / 2.0
+            half = chunk_length / 2.0
             if half <= 0.001:
                 raise SubtitleError("AUDIO_TOO_LARGE",
                                     u"音频分块后仍超过大小上限")
-            queue.insert(0, (start + half, length - half))
-            queue.insert(0, (start, half))
+            queue.insert(0, (chunk_start + half, chunk_length - half))
+            queue.insert(0, (chunk_start, half))
             if len(queue) + len(results) > 500:
-                raise SubtitleError("AUDIO_TOO_LARGE",
-                                    u"音频分块数量过多")
+                raise SubtitleError("AUDIO_TOO_LARGE", u"音频分块数量过多")
         results.sort(key=lambda item: item[0])
         return results
 
-    def _run_asr(self, job, settings, chunks):
+    def _run_chunked_asr(self, job, settings, plan, max_bytes, tempdir):
+        """按分片顺序 ASR；已完成分片直接读 DB 缓存，不重复上传音频。"""
         base_url = settings.get("subtitle_asr_base_url") or ""
         api_key = settings.get("subtitle_asr_api_key") or ""
         model = settings.get("subtitle_asr_model") or "whisper-1"
         language = job.language or "auto"
         timeout = float(settings.get("subtitle_asr_timeout_sec") or 300)
-        cues = []
-        total = max(1, len(chunks))
-        for index, (start, _length, path) in enumerate(chunks):
-            self._check_cancel(job)
-            parsed = self.client.transcribe(base_url, api_key, model,
-                                            language, path, timeout,
-                                            job.cancel_event)
-            for cue in parsed:
-                cues.append({
-                    "start": max(0.0, float(cue["start"]) + start),
-                    "end": max(0.0, float(cue["end"]) + start),
-                    "text": cue["text"],
-                })
+        cached = {item["chunk_index"]: item
+                  for item in self.store.load_subtitle_chunks(job.job_id)}
+        total = max(1, len(plan))
+        all_cues = []
+        counter = [0]
+        for index, (start, length) in enumerate(plan):
+            self._check_control(job)
+            done_row = cached.get(index)
+            if done_row is not None and done_row.get("status") == CHUNK_DONE:
+                all_cues.extend(done_row.get("cues") or [])
+                with job.lock:
+                    job.chunk_index = max(int(job.chunk_index or 0), index + 1)
+                continue
+            audio = self._extract_chunk_audio(
+                job, settings, start, length, max_bytes, tempdir, counter)
+            chunk_cues = []
+            try:
+                for sub_start, _sub_length, path in audio:
+                    self._check_cancel(job)
+                    parsed = self.client.transcribe(
+                        base_url, api_key, model, language, path, timeout,
+                        job.cancel_event)
+                    for cue in parsed:
+                        chunk_cues.append({
+                            "start": max(0.0, float(cue["start"]) + sub_start),
+                            "end": max(0.0, float(cue["end"]) + sub_start),
+                            "text": cue["text"],
+                        })
+            finally:
+                for _sub_start, _sub_length, path in audio:
+                    try:
+                        os.unlink(path)
+                    except OSError:
+                        pass
+            chunk_cues = dedupe_cues(chunk_cues)
+            try:
+                self.store.save_subtitle_chunk(
+                    job.job_id, index, start, start + length,
+                    CHUNK_DONE, chunk_cues)
+            except Exception:
+                pass
+            all_cues.extend(chunk_cues)
             progress = 20 + int(50.0 * (index + 1) / total)
-            self._update(job, stage="asr", progress=progress,
-                         message=u"正在识别语音 %d/%d" % (index + 1, total))
-        return cues
+            self._update(
+                job, stage="asr", progress=progress,
+                message=u"正在识别语音 %d/%d" % (index + 1, total),
+                chunk_index=index + 1, chunk_total=total)
+            # 暂停只在完整分片保存后生效
+            self._check_control(job)
+        return all_cues
 
     def _translate_cues(self, job, settings, cues):
         base_url = settings.get("subtitle_llm_base_url") or ""
@@ -989,7 +1218,8 @@ class SubtitleService(object):
         partial = False
         total = max(1, len(cues))
         for start in range(0, len(cues), batch_size):
-            self._check_cancel(job)
+            # 翻译批次是暂停安全点：当前批完成后暂停；resume 重新翻译当前批次即可
+            self._check_control(job)
             batch = cues[start:start + batch_size]
             texts = [sanitize_cue_text(item["text"]) for item in batch]
             result = None

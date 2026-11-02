@@ -175,6 +175,7 @@
     similarity: { supported: true, extensions: DEFAULT_SIMILARITY_EXTENSIONS.slice(), defaultThreshold: 85, maxConcurrency: 4, binaryExtensions: [] },
     video: { supported: true, available: true, extensions: DEFAULT_VIDEO_EXTENSIONS.slice(), ffmpegPath: '', ffmpegVersion: '', hwaccels: [], gpuHint: '', cache: '' },
     subtitle: { supported: false, enabled: false, asrKeySet: false, llmKeySet: false, asrLanguage: 'auto', translateEnabled: false, targetLang: 'zh' },
+    subtitleJobs: { list: [], timer: null, loading: false, lastError: '', modal: null },
     // 当前扫描
     scan: { id: null, data: null, stats: null, timer: null, abort: null, polling: false, errors: 0, handled: false },
     // 结果
@@ -240,6 +241,8 @@
     'settingsSubtitleDetails subtitleStatusBadge subtitleStatusHint subtitleFields subtitleEnabled subtitleAsrBaseUrl ' +
     'settingsOverview settingsScanGroup settingsScanSummary settingsSimilaritySummary settingsVideoSummary ' +
     'settingsSubtitleSummary settingsStorageGroup settingsStorageSummary settingsStatusSummary ' +
+    'batchSubtitleBtn subtitleJobsPanel subtitleJobsHeading subtitleJobsStatus subtitleJobsRefreshBtn ' +
+    'subtitleJobsLoading subtitleJobsError subtitleJobsEmpty subtitleJobsList ' +
     'subtitleAsrBaseUrlError subtitleAsrModel subtitleAsrModelError subtitleAsrApiKey subtitleAsrApiKeyError ' +
     'subtitleAsrKeySetBadge subtitleClearAsrKey subtitleAsrLanguage subtitleAsrTimeout subtitleAsrTimeoutError ' +
     'subtitleAsrChunk subtitleAsrChunkError subtitleAsrMaxAudioMb subtitleAsrMaxAudioMbError subtitleTranslateEnabled ' +
@@ -976,7 +979,8 @@
       var heading = byId(VIEW_HEADINGS[view]);
       if (heading) { heading.setAttribute('tabindex', '-1'); focusSoon(heading); }
     }
-    if (view === 'history') { loadHistory(); }
+    if (view !== 'history') { stopSubtitleJobsPolling(); }
+    if (view === 'history') { loadHistory(); loadSubtitleJobs(); }
     else if (view === 'logs') { loadLogs(); }
     else if (view === 'settings') { loadSettingsPage(); }
   }
@@ -2339,6 +2343,7 @@
       btn.disabled = !ready;
       btn.title = ready ? '生成云端字幕（音频将上传到第三方服务）' : subtitleUnavailableReason();
     });
+    updateBatchSubtitleButton();
   }
 
   function fillSubtitleSettingsForm(settings) {
@@ -4378,9 +4383,12 @@
     return labels[stage] || stage || '处理中';
   }
 
+  var SUBTITLE_ACTIVE_STATUS = ['queued', 'running', 'translating'];
+  var SUBTITLE_JOBS_POLL_MS = 1500;
+
   function subtitleJobStatusLabel(status) {
     var labels = {
-      queued: '排队中', running: '识别中', translating: '翻译中',
+      queued: '排队中', running: '识别中', translating: '翻译中', paused: '已暂停',
       done: '已完成', failed: '失败', cancelled: '已取消'
     };
     return labels[status] || status || '未知';
@@ -4391,6 +4399,7 @@
     if (status === 'failed') { return 'badge-red'; }
     if (status === 'cancelled') { return 'badge-gray'; }
     if (status === 'queued') { return 'badge-gray'; }
+    if (status === 'paused') { return 'badge-amber'; }
     return 'badge-blue';
   }
 
@@ -4408,7 +4417,8 @@
     var sub = subtitleCapability();
     var cloud = {
       job: null, timer: null, abort: null, polling: false, pollErrors: 0,
-      running: false, cancelling: false, format: 'srt', modal: null, progressUi: null
+      running: false, cancelling: false, format: 'srt', modal: null, progressUi: null,
+      openedJobs: false
     };
     var languageSelect = el('select', { attrs: { id: 'subtitleLanguage', 'aria-label': '识别语言' } }, [
       el('option', { attrs: { value: 'auto' }, text: '自动检测' }),
@@ -4471,7 +4481,7 @@
       ]),
       el('p', {
         className: 'subtitle-form-note',
-        text: '生成后可查看进度、取消任务并下载字幕；任务执行期间弹窗不可关闭，请使用“取消任务”终止。'
+        text: '生成后可查看进度、暂停/取消任务并下载字幕；任务进行中可关闭弹窗，任务会在“历史记录 → 字幕任务”中继续，不会丢失。'
       }),
       errorBox
     ]);
@@ -4494,8 +4504,13 @@
       footer: [cancelBtn, generateBtn],
       initialFocus: confirmCheck,
       onClose: function () {
+        var wasActive = !!(cloud.job && SUBTITLE_ACTIVE_STATUS.indexOf(cloud.job.status) !== -1);
         cloud.running = false;
         stopSubtitlePolling(cloud);
+        if (wasActive && !cloud.openedJobs) {
+          toast('字幕任务仍在后台运行，可在“历史记录 → 字幕任务”中查看。', 'info', 6000);
+        }
+        if (state.view === 'history') { loadSubtitleJobs({ silent: true }); }
       }
     });
     cloud.modal = modal;
@@ -4567,13 +4582,21 @@
       makeProgressUi();
       var ui = cloud.progressUi;
       ui.statusBadge.className = 'badge ' + subtitleJobStatusClass(job.status);
+      var viewJobsBtn = el('button', {
+        className: 'btn btn-ghost', attrs: { type: 'button' }, text: '在字幕任务中查看'
+      });
+      viewJobsBtn.addEventListener('click', function () {
+        cloud.openedJobs = true;
+        closeModal(true);
+        goToSubtitleJobs();
+      });
+      cloud.viewJobsBtn = viewJobsBtn;
       modal.setBody(ui.body);
       modal.setFooter([
-        el('span', { className: 'footer-left', text: '任务进行中，关闭按钮已禁用；可随时取消。' }),
-        ui.cancelTaskBtn
+        el('span', { className: 'footer-left', text: '任务进行中；关闭弹窗不会取消任务，可在字幕任务面板继续操作。' }),
+        ui.cancelTaskBtn,
+        viewJobsBtn
       ]);
-      if (activeModal) { activeModal.dismissible = false; }
-      modal.setBusy(true);
       updateSubtitleProgress(job);
     }
 
@@ -4664,8 +4687,17 @@
         if (cloud.modal) {
           cloud.modal.setTitle('字幕任务');
           cloud.modal.setBusy(false);
+          var doneViewBtn = el('button', {
+            className: 'btn btn-ghost', attrs: { type: 'button' }, text: '在字幕任务中查看'
+          });
+          doneViewBtn.addEventListener('click', function () {
+            cloud.openedJobs = true;
+            closeModal(true);
+            goToSubtitleJobs();
+          });
           cloud.modal.setFooter([
             el('span', { className: 'footer-left', text: status === 'done' ? '字幕生成完成。' : '任务已结束。' }),
+            doneViewBtn,
             el('button', {
               className: 'btn btn-primary', attrs: { type: 'button' }, text: '关闭',
               on: { click: function () { closeModal(true); } }
@@ -4683,7 +4715,7 @@
       } else {
         ui.cancelTaskBtn.disabled = false;
         setText(ui.cancelTaskBtn, '取消任务');
-        if (activeModal) { activeModal.dismissible = false; }
+        if (activeModal) { activeModal.dismissible = true; }
       }
     }
 
@@ -4917,6 +4949,14 @@
     if (els.selectAllVideoBtn) { els.selectAllVideoBtn.addEventListener('click', selectAllVideoDuplicates); }
     els.selectAllBtn.addEventListener('click', selectAllDuplicates);
     els.clearSelectionBtn.addEventListener('click', clearSelection);
+    if (els.batchSubtitleBtn) {
+      els.batchSubtitleBtn.addEventListener('click', function () {
+        if (!subtitleReady()) { toast(subtitleUnavailableReason(), 'error'); return; }
+        var paths = selectedVideoPaths();
+        if (!paths.length) { toast('请先在视频结果中勾选要生成字幕的视频副本。', 'info'); return; }
+        openSubtitleBatchModal(paths);
+      });
+    }
     els.deleteSelectedBtn.addEventListener('click', function () { beginDelete(); });
     els.csvLink.addEventListener('click', function (event) {
       if (els.csvLink.getAttribute('aria-disabled') === 'true' || !state.scan.id) {
@@ -5080,6 +5120,7 @@
       });
       els.selectAllVideoBtn.disabled = !anyVideoSelectable;
     }
+    updateBatchSubtitleButton();
   }
 
   function clearSelectionState() {
@@ -6198,8 +6239,556 @@
     scrollToNode(els.progressPanel);
   }
 
+  // ---------- 字幕任务历史面板（GET /api/subtitles / pause / resume / cancel） ----------
+  function normalizeSubtitleJobsResponse(res) {
+    if (!res) { return []; }
+    var list = [];
+    if (Array.isArray(res)) { list = res; }
+    else if (Array.isArray(res.jobs)) { list = res.jobs; }
+    else if (Array.isArray(res.subtitles)) { list = res.subtitles; }
+    else if (Array.isArray(res.items)) { list = res.items; }
+    else if (Array.isArray(res.data)) { list = res.data; }
+    return list.filter(function (job) { return job && job.job_id; });
+  }
+
+  function anyActiveSubtitleJob(list) {
+    var jobs = Array.isArray(list) ? list : (state.subtitleJobs ? state.subtitleJobs.list : []);
+    return jobs.some(function (job) {
+      return job && SUBTITLE_ACTIVE_STATUS.indexOf(job.status) !== -1;
+    });
+  }
+
+  function stopSubtitleJobsPolling() {
+    var jobsState = state.subtitleJobs;
+    if (!jobsState) { return; }
+    if (jobsState.timer) {
+      clearTimeout(jobsState.timer);
+      jobsState.timer = null;
+    }
+  }
+
+  function scheduleSubtitleJobsPoll() {
+    stopSubtitleJobsPolling();
+    if (state.view !== 'history' || !state.subtitleJobs) { return; }
+    if (!anyActiveSubtitleJob(state.subtitleJobs.list)) { return; }
+    state.subtitleJobs.timer = setTimeout(function () {
+      state.subtitleJobs.timer = null;
+      loadSubtitleJobs({ silent: true });
+    }, SUBTITLE_JOBS_POLL_MS);
+  }
+
+  async function loadSubtitleJobs(options) {
+    options = options || {};
+    if (!els.subtitleJobsList || state.subtitleJobs.loading) { return; }
+    state.subtitleJobs.loading = true;
+    if (!options.silent) {
+      setHidden(els.subtitleJobsLoading, false);
+      setHidden(els.subtitleJobsError, true);
+      setHidden(els.subtitleJobsEmpty, true);
+    }
+    try {
+      var res = await api('/api/subtitles?limit=20', { timeout: 15000 });
+      var jobs = normalizeSubtitleJobsResponse(res);
+      state.subtitleJobs.list = jobs;
+      state.subtitleJobs.lastError = '';
+      renderSubtitleJobs(jobs);
+      setHidden(els.subtitleJobsEmpty, jobs.length > 0);
+    } catch (err) {
+      var message = errorMessage(err, '加载字幕任务失败，请稍后重试。');
+      if (err && err.status === 404) {
+        message = '当前后端未提供字幕任务历史接口；生成中的任务仍可在弹窗中查看和下载，升级后可用。';
+      }
+      state.subtitleJobs.lastError = message;
+      if (!options.silent) {
+        clear(els.subtitleJobsList);
+        setText(els.subtitleJobsError, message);
+        setHidden(els.subtitleJobsError, false);
+        setHidden(els.subtitleJobsEmpty, true);
+        setText(els.subtitleJobsStatus, '');
+      } else if (state.subtitleJobs.list.length) {
+        setText(els.subtitleJobsStatus, '刷新失败，稍后重试');
+      }
+    } finally {
+      state.subtitleJobs.loading = false;
+      setHidden(els.subtitleJobsLoading, true);
+      scheduleSubtitleJobsPoll();
+    }
+  }
+
+  function subtitleJobTimeText(job) {
+    var value = job.created_at || job.created_epoch || job.updated_at || job.updated_epoch;
+    if (value === null || value === undefined || value === '') { return '—'; }
+    if (typeof value === 'number' || /^\d+(\.\d+)?$/.test(String(value))) {
+      var num = Number(value);
+      if (!isFinite(num)) { return String(value); }
+      if (num > 100000000000) { num = num / 1000; }
+      try { return fmtDateTime(new Date(num * 1000).toISOString()); } catch (e) { return String(value); }
+    }
+    return fmtDateTime(value);
+  }
+
+  function subtitleJobChunkText(job) {
+    var total = firstFiniteNumber([
+      job.chunk_total, job.chunks_total, job.total_chunks, job.chunk_count
+    ]);
+    if (total === null || total <= 0) { return ''; }
+    var index = firstFiniteNumber([
+      job.chunk_index, job.current_chunk, job.chunks_done, job.chunk
+    ]);
+    if (index === null) { return '分块 0/' + total; }
+    var display = job.chunk_index !== undefined && job.chunk_index !== null ? index + 1 : index;
+    return '分块 ' + clamp(display, 0, total) + '/' + total;
+  }
+
+  function subtitleJobSafeFiles(job) {
+    return (Array.isArray(job.files) ? job.files : []).filter(function (item) {
+      return item && isSafeSubtitleFileName(item.name);
+    });
+  }
+
+  function subtitleJobDownloadUrl(job, name) {
+    return '/api/subtitles/' + encodePath(job.job_id) + '/file/' + encodeURIComponent(name);
+  }
+
+  function subtitleJobDownloadLinks(job, compact) {
+    var files = subtitleJobSafeFiles(job);
+    if (!files.length) { return null; }
+    var wrap = el('div', { className: compact ? 'subtitle-job-downloads' : 'subtitle-file-list' });
+    files.forEach(function (item) {
+      wrap.appendChild(el('a', {
+        className: 'btn btn-ghost btn-sm',
+        attrs: {
+          href: subtitleJobDownloadUrl(job, item.name),
+          download: item.name,
+          title: '下载 ' + item.name
+        }
+      }, [icon('download'), compact ? item.name : ('下载 ' + item.name)]));
+    });
+    return wrap;
+  }
+
+  function subtitleJobProgressText(job) {
+    var pct = Math.round(clamp(Number(job.progress) || 0, 0, 100));
+    return pct + '%';
+  }
+
+  function renderSubtitleJobItem(job) {
+    var status = job.status || 'queued';
+    var item = el('div', { className: 'subtitle-job-item', dataset: { jobId: job.job_id } });
+    var head = el('div', { className: 'subtitle-job-head' }, [
+      el('span', { className: 'badge ' + subtitleJobStatusClass(status), text: subtitleJobStatusLabel(status) }),
+      el('span', { className: 'subtitle-job-path', attrs: { title: job.path || '' }, text: job.path || '（无路径）' })
+    ]);
+    var metaBits = [subtitleStageLabel(job.stage)];
+    var chunkText = subtitleJobChunkText(job);
+    if (chunkText) { metaBits.push(chunkText); }
+    if (job.translate) { metaBits.push('译文 ' + (job.target_lang || '—')); }
+    metaBits.push('创建 ' + subtitleJobTimeText(job));
+    var meta = el('div', { className: 'subtitle-job-meta' }, metaBits.map(function (text) {
+      return el('span', { text: text });
+    }));
+    var main = el('div', { className: 'subtitle-job-main' }, [head, meta]);
+    var pct = Math.round(clamp(Number(job.progress) || 0, 0, 100));
+    main.appendChild(el('div', { className: 'subtitle-job-progress' }, [
+      el('div', { className: 'progress-bar', attrs: { role: 'progressbar', 'aria-valuemin': '0', 'aria-valuemax': '100', 'aria-valuenow': String(pct) } }, [
+        el('div', { className: 'progress-fill', style: 'width:' + pct + '%' })
+      ]),
+      el('span', { className: 'subtitle-pct', text: subtitleJobProgressText(job) })
+    ]));
+    if (status === 'failed') {
+      var errorText = '字幕任务失败。';
+      if (job.error && typeof job.error === 'string') { errorText = job.error; }
+      else if (job.error && job.error.message) { errorText = job.error.message; }
+      else if (job.message) { errorText = job.message; }
+      main.appendChild(el('div', { className: 'subtitle-job-error', text: errorText }));
+    }
+    if (status === 'done') {
+      var links = subtitleJobDownloadLinks(job, true);
+      if (links) { main.appendChild(links); }
+    }
+    item.appendChild(main);
+
+    var actions = el('div', { className: 'subtitle-job-actions' });
+    actions.appendChild(el('button', {
+      className: 'btn btn-ghost btn-sm', attrs: { type: 'button' }, text: '查看',
+      on: { click: function () { openSubtitleJobModal(job); } }
+    }));
+    if (status === 'paused') {
+      var resumeBtn = el('button', {
+        className: 'btn btn-primary btn-sm', attrs: { type: 'button' }, text: '继续'
+      });
+      if (job.resumable === false) {
+        resumeBtn.disabled = true;
+        resumeBtn.title = '该任务没有可用断点，请重新生成字幕。';
+      } else {
+        resumeBtn.addEventListener('click', function () { subtitleJobAction(job, 'resume', resumeBtn); });
+      }
+      actions.appendChild(resumeBtn);
+      var cancelPausedBtn = el('button', {
+        className: 'btn btn-danger-ghost btn-sm', attrs: { type: 'button' }, text: '取消'
+      });
+      cancelPausedBtn.addEventListener('click', function () { subtitleJobAction(job, 'cancel', cancelPausedBtn); });
+      actions.appendChild(cancelPausedBtn);
+    } else if (SUBTITLE_ACTIVE_STATUS.indexOf(status) !== -1) {
+      var pauseBtn = el('button', {
+        className: 'btn btn-ghost btn-sm', attrs: { type: 'button' }, text: '暂停'
+      });
+      pauseBtn.addEventListener('click', function () { subtitleJobAction(job, 'pause', pauseBtn); });
+      actions.appendChild(pauseBtn);
+      var cancelBtn = el('button', {
+        className: 'btn btn-danger-ghost btn-sm', attrs: { type: 'button' }, text: '取消'
+      });
+      cancelBtn.addEventListener('click', function () { subtitleJobAction(job, 'cancel', cancelBtn); });
+      actions.appendChild(cancelBtn);
+    }
+    item.appendChild(actions);
+    return item;
+  }
+
+  function renderSubtitleJobs(jobs) {
+    clear(els.subtitleJobsList);
+    var active = jobs.filter(function (job) { return SUBTITLE_ACTIVE_STATUS.indexOf(job.status) !== -1; }).length;
+    setText(els.subtitleJobsStatus, jobs.length
+      ? '共 ' + fmtInt(jobs.length) + ' 个任务' + (active ? ' · 进行中 ' + fmtInt(active) + ' 个' : '')
+      : '');
+    if (!jobs.length) {
+      setHidden(els.subtitleJobsEmpty, false);
+      return;
+    }
+    setHidden(els.subtitleJobsEmpty, true);
+    jobs.forEach(function (job) {
+      els.subtitleJobsList.appendChild(renderSubtitleJobItem(job));
+    });
+  }
+
+  async function subtitleJobAction(job, action, button) {
+    if (!job || !job.job_id || !action) { return; }
+    var labels = { pause: '暂停', resume: '继续', cancel: '取消' };
+    if (button) { setBusy(button, true, '处理中…'); }
+    try {
+      var res = await api('/api/subtitles/' + encodePath(job.job_id) + '/' + action, {
+        method: 'POST', body: {}, timeout: 15000
+      });
+      var updated = res && res.job ? res.job : res;
+      toast('已请求' + (labels[action] || action) + '字幕任务。', 'info');
+      if (state.subtitleJobs.detail && state.subtitleJobs.detail.job && state.subtitleJobs.detail.job.job_id === job.job_id) {
+        if (updated && updated.job_id) { updateSubtitleJobDetail(updated); }
+      }
+      await loadSubtitleJobs({ silent: true });
+    } catch (err) {
+      toast(errorMessage(err, (labels[action] || '操作') + '字幕任务失败，请稍后重试。'), 'error', 6000);
+    } finally {
+      if (button) { setBusy(button, false); }
+    }
+  }
+
+  function updateSubtitleJobDetail(job) {
+    var detail = state.subtitleJobs.detail;
+    if (!detail || !detail.modal || !job) { return; }
+    detail.job = job;
+    detail.modal.setBody(buildSubtitleJobDetailBody(job));
+    detail.modal.setFooter(buildSubtitleJobDetailFooter(job));
+    if (isTerminalSubtitleStatus(job.status)) { stopSubtitleJobDetailPolling(); }
+    loadSubtitleJobs({ silent: true });
+  }
+
+  function stopSubtitleJobDetailPolling() {
+    var detail = state.subtitleJobs.detail;
+    if (!detail) { return; }
+    if (detail.timer) { clearInterval(detail.timer); detail.timer = null; }
+    if (detail.abort) { try { detail.abort.abort(); } catch (e) { /* 忽略 */ } detail.abort = null; }
+  }
+
+  function openSubtitleJobModal(job) {
+    if (!job || !job.job_id) { return; }
+    if (state.subtitleJobs.detail) { closeModal(true); }
+    var detail = { job: job, modal: null, timer: null, abort: null };
+    state.subtitleJobs.detail = detail;
+    var modal = openModal({
+      title: '字幕任务',
+      subtitle: job.path || '',
+      size: 'lg',
+      body: buildSubtitleJobDetailBody(job),
+      footer: buildSubtitleJobDetailFooter(job),
+      onClose: function () {
+        stopSubtitleJobDetailPolling();
+        if (state.subtitleJobs.detail === detail) { state.subtitleJobs.detail = null; }
+        loadSubtitleJobs({ silent: true });
+      }
+    });
+    detail.modal = modal;
+    if (SUBTITLE_ACTIVE_STATUS.indexOf(job.status) !== -1) {
+      detail.timer = setInterval(function () {
+        if (!state.subtitleJobs.detail || state.subtitleJobs.detail !== detail) { return; }
+        if (detail.abort) { try { detail.abort.abort(); } catch (e) { /* 忽略 */ } }
+        var controller = new AbortController();
+        detail.abort = controller;
+        api('/api/subtitles/' + encodePath(job.job_id), { signal: controller.signal, timeout: 15000 }).then(function (res) {
+          var updated = res && res.job ? res.job : res;
+          if (!updated || !updated.job_id) { return; }
+          if (!state.subtitleJobs.detail || state.subtitleJobs.detail !== detail) { return; }
+          updateSubtitleJobDetail(updated);
+        }).catch(function () { /* 详情轮询失败静默，保留列表刷新 */ });
+      }, POLL_MS);
+    }
+  }
+
+  function buildSubtitleJobDetailBody(job) {
+    var status = job.status || 'queued';
+    var pct = Math.round(clamp(Number(job.progress) || 0, 0, 100));
+    var chunkText = subtitleJobChunkText(job);
+    var body = el('div', { className: 'subtitle-progress-card' }, [
+      el('div', { className: 'subtitle-stage-row' }, [
+        el('span', { className: 'badge ' + subtitleJobStatusClass(status), text: subtitleJobStatusLabel(status) }),
+        el('span', { className: 'subtitle-pct', text: pct + '%' })
+      ]),
+      el('div', { className: 'progress-bar', attrs: { role: 'progressbar', 'aria-valuemin': '0', 'aria-valuemax': '100', 'aria-valuenow': String(pct) } }, [
+        el('div', { className: 'progress-fill', style: 'width:' + pct + '%' })
+      ]),
+      el('p', { className: 'modal-note', text: job.message || (isTerminalSubtitleStatus(status) ? '任务已结束。' : '正在处理…') }),
+      el('dl', { className: 'subtitle-detail-grid' }, [
+        el('div', {}, [el('dt', { text: '路径' }), el('dd', { className: 'mono', text: job.path || '—' })]),
+        el('div', {}, [el('dt', { text: '阶段' }), el('dd', { text: subtitleStageLabel(job.stage) })]),
+        el('div', {}, [el('dt', { text: '分块进度' }), el('dd', { text: chunkText || '—' })]),
+        el('div', {}, [el('dt', { text: '翻译' }), el('dd', { text: job.translate ? ('开启 · 目标 ' + (job.target_lang || '—')) : '未开启' })]),
+        el('div', {}, [el('dt', { text: '任务编号' }), el('dd', { className: 'mono', text: job.job_id })]),
+        el('div', {}, [el('dt', { text: '更新时间' }), el('dd', { text: subtitleJobTimeText(job) })])
+      ])
+    ]);
+    if (status === 'failed') {
+      var errorText = '字幕任务失败。';
+      if (job.error && typeof job.error === 'string') { errorText = job.error; }
+      else if (job.error && job.error.message) { errorText = job.error.message; }
+      else if (job.message) { errorText = job.message; }
+      body.appendChild(el('div', { className: 'modal-error', attrs: { role: 'alert' }, text: errorText }));
+    }
+    if (status === 'done' || (job.files && job.files.length)) {
+      var files = subtitleJobSafeFiles(job);
+      if (files.length) {
+        body.appendChild(el('h3', { text: '字幕文件' }));
+        var wrap = el('div', { className: 'subtitle-file-list' });
+        files.forEach(function (item) {
+          wrap.appendChild(el('div', { className: 'subtitle-file-item' }, [
+            el('span', { className: 'subtitle-file-name', text: item.name }),
+            el('span', { className: 'subtitle-file-size', text: fmtBytes(item.size) }),
+            el('a', {
+              className: 'btn btn-ghost btn-sm',
+              attrs: { href: subtitleJobDownloadUrl(job, item.name), download: item.name }
+            }, [icon('download'), '下载'])
+          ]));
+        });
+        body.appendChild(wrap);
+      } else if (status === 'done') {
+        body.appendChild(el('p', { className: 'subtitle-empty', text: '任务已完成，但没有可下载的字幕文件。' }));
+      }
+    }
+    body.appendChild(el('p', {
+      className: 'hint',
+      text: '任务进度与字幕文件保存在 NAS 本地；下载需要当前登录会话。音频临时文件已在任务结束/取消后清理。'
+    }));
+    return body;
+  }
+
+  function buildSubtitleJobDetailFooter(job) {
+    var status = job.status || 'queued';
+    var buttons = [];
+    if (status === 'paused') {
+      var resumeBtn = el('button', { className: 'btn btn-primary', attrs: { type: 'button' }, text: '继续' });
+      if (job.resumable === false) {
+        resumeBtn.disabled = true;
+        resumeBtn.title = '该任务没有可用断点，请重新生成字幕。';
+      } else {
+        resumeBtn.addEventListener('click', function () { subtitleJobDetailAction(job, 'resume', resumeBtn); });
+      }
+      buttons.push(resumeBtn);
+    } else if (SUBTITLE_ACTIVE_STATUS.indexOf(status) !== -1) {
+      var pauseBtn = el('button', { className: 'btn btn-ghost', attrs: { type: 'button' }, text: '暂停' });
+      pauseBtn.addEventListener('click', function () { subtitleJobDetailAction(job, 'pause', pauseBtn); });
+      buttons.push(pauseBtn);
+    }
+    if (status === 'paused' || SUBTITLE_ACTIVE_STATUS.indexOf(status) !== -1) {
+      var cancelBtn = el('button', { className: 'btn btn-danger-ghost', attrs: { type: 'button' }, text: '取消任务' });
+      cancelBtn.addEventListener('click', function () { subtitleJobDetailAction(job, 'cancel', cancelBtn); });
+      buttons.push(cancelBtn);
+    }
+    buttons.push(el('button', {
+      className: 'btn btn-ghost', attrs: { type: 'button' }, text: '关闭',
+      on: { click: function () { closeModal(true); } }
+    }));
+    return buttons;
+  }
+
+  async function subtitleJobDetailAction(job, action, button) {
+    if (!job || !job.job_id) { return; }
+    var labels = { pause: '暂停', resume: '继续', cancel: '取消' };
+    if (button) { setBusy(button, true, '处理中…'); }
+    try {
+      var res = await api('/api/subtitles/' + encodePath(job.job_id) + '/' + action, {
+        method: 'POST', body: {}, timeout: 15000
+      });
+      var updated = res && res.job ? res.job : res;
+      toast('已请求' + (labels[action] || action) + '字幕任务。', 'info');
+      if (updated && updated.job_id) { updateSubtitleJobDetail(updated); }
+      await loadSubtitleJobs({ silent: true });
+    } catch (err) {
+      toast(errorMessage(err, (labels[action] || '操作') + '字幕任务失败，请稍后重试。'), 'error', 6000);
+    } finally {
+      if (button) { setBusy(button, false); }
+    }
+  }
+
+  function goToSubtitleJobs() {
+    setView('history');
+    loadSubtitleJobs();
+    setTimeout(function () {
+      if (els.subtitleJobsPanel) { scrollToNode(els.subtitleJobsPanel); }
+    }, 350);
+  }
+
+  function selectedVideoPaths() {
+    var selected = state.results.videoSelected;
+    var paths = [];
+    if (!selected || !selected.size) { return paths; }
+    state.results.videoGroups.forEach(function (group) {
+      (group.files || []).forEach(function (file) {
+        if (file && file.path && selected.has(file.file_id) && paths.indexOf(file.path) === -1) {
+          paths.push(file.path);
+        }
+      });
+    });
+    return paths;
+  }
+
+  function updateBatchSubtitleButton() {
+    if (!els.batchSubtitleBtn) { return; }
+    var paths = selectedVideoPaths();
+    var ready = subtitleReady();
+    var show = paths.length > 0;
+    els.batchSubtitleBtn.hidden = !show;
+    if (!show) { els.batchSubtitleBtn.disabled = false; return; }
+    els.batchSubtitleBtn.disabled = !ready;
+    els.batchSubtitleBtn.title = ready
+      ? '为选中的 ' + paths.length + ' 个视频批量生成字幕（音频将上传第三方）'
+      : subtitleUnavailableReason();
+  }
+
+  function openSubtitleBatchModal(paths) {
+    if (!subtitleReady()) { toast(subtitleUnavailableReason(), 'error'); return; }
+    if (!paths || !paths.length) { toast('请先在视频结果中勾选要生成字幕的视频副本。', 'info'); return; }
+    var sub = subtitleCapability();
+    var languageSelect = el('select', { attrs: { 'aria-label': '批量识别语言' } }, [
+      el('option', { attrs: { value: 'auto' }, text: '自动检测' }),
+      el('option', { attrs: { value: 'zh' }, text: '中文' }),
+      el('option', { attrs: { value: 'en' }, text: '英文' }),
+      el('option', { attrs: { value: 'ja' }, text: '日文' }),
+      el('option', { attrs: { value: 'ko' }, text: '韩文' })
+    ]);
+    languageSelect.value = sub.asrLanguage || 'auto';
+    var translateCheck = el('input', { attrs: { type: 'checkbox' } });
+    if (!sub.llmKeySet) { translateCheck.disabled = true; }
+    var targetSelect = el('select', { attrs: { 'aria-label': '批量翻译目标语言' } }, [
+      el('option', { attrs: { value: 'zh' }, text: '中文' }),
+      el('option', { attrs: { value: 'en' }, text: '英文' }),
+      el('option', { attrs: { value: 'ja' }, text: '日文' }),
+      el('option', { attrs: { value: 'ko' }, text: '韩文' })
+    ]);
+    targetSelect.value = sub.targetLang || 'zh';
+    targetSelect.disabled = true;
+    translateCheck.addEventListener('change', function () { targetSelect.disabled = !translateCheck.checked; });
+    var confirmCheck = el('input', { attrs: { type: 'checkbox' } });
+    var errorBox = el('div', { className: 'modal-error', attrs: { role: 'alert' }, hidden: true });
+    var statusEl = el('p', { className: 'subtitle-job-meta', text: '将按顺序提交 ' + paths.length + ' 个字幕任务。' });
+    var pathList = el('div', { className: 'batch-subtitle-paths' });
+    paths.slice(0, 8).forEach(function (path) {
+      pathList.appendChild(el('div', { className: 'mono', text: path }));
+    });
+    if (paths.length > 8) { pathList.appendChild(el('div', { className: 'hint', text: '…等共 ' + paths.length + ' 个视频' })); }
+    var body = el('div', { className: 'subtitle-progress-card' }, [
+      el('div', { className: 'privacy-warning', attrs: { role: 'alert' } }, [
+        icon('warning'),
+        el('p', { text: '音频将上传到所配置的第三方服务（ASR / 翻译）。请确认这些视频内容适合上传，并已获得授权；API Key 不会在界面回显。' })
+      ]),
+      el('p', { className: 'modal-note', text: '已选择 ' + paths.length + ' 个视频。批量提交后可在“历史记录 → 字幕任务”中统一查看进度、暂停/继续、取消和下载。' }),
+      el('div', { className: 'form-grid' }, [
+        el('div', { className: 'field' }, [
+          el('label', { text: '识别语言' }), languageSelect
+        ]),
+        el('div', { className: 'field' }, [
+          el('label', { className: 'check' }, [translateCheck, document.createTextNode('生成译文')]),
+          targetSelect,
+          el('p', { className: 'hint', text: sub.llmKeySet ? '译文只处理字幕文本，不改时间轴。' : '未配置 LLM API Key，暂不能生成译文。' })
+        ])
+      ]),
+      pathList,
+      el('label', { className: 'modal-check-row' }, [
+        confirmCheck,
+        el('span', { text: '我了解音频将上传到所配置的第三方服务，并确认有权处理这些视频内容。' })
+      ]),
+      statusEl,
+      errorBox
+    ]);
+    var cancelBtn = el('button', { className: 'btn btn-ghost', attrs: { type: 'button' }, text: '取消', on: { click: function () { closeModal(true); } } });
+    var submitBtn = el('button', { className: 'btn btn-primary', attrs: { type: 'button' }, text: '批量生成字幕' });
+    submitBtn.disabled = true;
+    confirmCheck.addEventListener('change', function () { submitBtn.disabled = !confirmCheck.checked; });
+    var modal = openModal({
+      title: '批量生成云端字幕',
+      subtitle: '共 ' + paths.length + ' 个视频',
+      size: 'lg',
+      body: body,
+      footer: [cancelBtn, submitBtn],
+      initialFocus: confirmCheck
+    });
+    var submitting = false;
+    submitBtn.addEventListener('click', async function () {
+      if (submitting || !confirmCheck.checked) { return; }
+      submitting = true;
+      hide(errorBox);
+      setBusy(submitBtn, true, '正在提交…');
+      var ok = 0;
+      var fail = 0;
+      var firstError = '';
+      var translate = !!(translateCheck.checked && sub.llmKeySet);
+      for (var i = 0; i < paths.length; i += 1) {
+        setText(statusEl, '正在提交 ' + (i + 1) + ' / ' + paths.length + '…');
+        try {
+          await api('/api/subtitles', {
+            method: 'POST',
+            body: {
+              path: paths[i],
+              language: languageSelect.value,
+              translate: translate,
+              target_lang: targetSelect.value,
+              confirm_cloud: true
+            },
+            timeout: 30000
+          });
+          ok += 1;
+        } catch (err) {
+          fail += 1;
+          if (!firstError) { firstError = errorMessage(err, '提交字幕任务失败。'); }
+        }
+      }
+      if (ok > 0) {
+        closeModal(true);
+        toast('已提交 ' + ok + ' 个字幕任务' + (fail ? '，失败 ' + fail + ' 个' : '') + '。可在字幕任务面板查看进度。',
+          fail ? 'error' : 'success', 7000);
+        goToSubtitleJobs();
+      } else {
+        submitting = false;
+        setBusy(submitBtn, false);
+        setText(statusEl, '批量提交失败。');
+        setText(errorBox, firstError || '批量提交失败，请稍后重试。');
+        show(errorBox);
+      }
+    });
+  }
+
   function bindHistoryEvents() {
-    els.historyRefreshBtn.addEventListener('click', loadHistory);
+    els.historyRefreshBtn.addEventListener('click', function () { loadHistory(); loadSubtitleJobs(); });
+    if (els.subtitleJobsRefreshBtn) {
+      els.subtitleJobsRefreshBtn.addEventListener('click', function () { loadSubtitleJobs(); });
+    }
   }
 
   // ==================== 16. 操作日志 ====================

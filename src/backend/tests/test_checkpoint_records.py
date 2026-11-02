@@ -268,7 +268,8 @@ class LegacyFallbackAndMigrationTest(unittest.TestCase):
                     self.scan_id, legacy_payload)
         store = Store(self.tmpdir)
         try:
-            self.assertEqual(store.db.schema_version(), 3)
+            self.assertEqual(store.db.schema_version(),
+                             db_module.CURRENT_SCHEMA_VERSION)
             names = {row[0] for row in store.db.query(
                 "SELECT name FROM sqlite_master WHERE type='table'")}
             self.assertIn("scan_checkpoint_records", names)

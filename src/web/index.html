@@ -6,8 +6,8 @@
 <meta name="color-scheme" content="light">
 <meta name="referrer" content="same-origin">
 <title>重复文件清理与字幕 · Duplicate Cleaner &amp; Subtitles</title>
-<link rel="icon" href="./assets/favicon.svg?v=1.1.0-0018" type="image/svg+xml">
-<link rel="stylesheet" href="./styles.css?v=1.1.0-0018">
+<link rel="icon" href="./assets/favicon.svg?v=1.1.0-0019" type="image/svg+xml">
+<link rel="stylesheet" href="./styles.css?v=1.1.0-0019">
 </head>
 <body>
 <a class="skip-link" href="#main">跳到主要内容</a>
@@ -512,6 +512,7 @@
               <button type="button" class="btn btn-link btn-sm" id="clearSelectionBtn">清空选择</button>
               <a class="btn btn-ghost btn-sm is-disabled" id="csvLink" href="#" download role="button" aria-disabled="true">导出 CSV</a>
               <a class="btn btn-ghost btn-sm is-disabled" id="xlsxLink" href="#" download role="button" aria-disabled="true">导出 Excel</a>
+              <button type="button" class="btn btn-ghost btn-sm" id="batchSubtitleBtn" hidden>批量生成字幕</button>
               <button type="button" class="btn btn-danger btn-sm" id="deleteSelectedBtn" disabled>
                 <svg class="icon" aria-hidden="true"><use href="#i-trash"></use></svg>删除所选副本
               </button>
@@ -584,12 +585,25 @@
       <div class="page-head">
         <div>
           <h1 id="historyHeading">扫描历史</h1>
-          <p class="page-desc">查看历史扫描任务的结果摘要，可重新打开结果或导出 CSV。</p>
+          <p class="page-desc">查看历史扫描任务的结果摘要，可重新打开结果或导出 CSV；云端字幕任务可在下方查看、暂停、继续、取消与下载。</p>
         </div>
         <button type="button" class="btn btn-ghost btn-sm" id="historyRefreshBtn">
           <svg class="icon" aria-hidden="true"><use href="#i-refresh"></use></svg>刷新
         </button>
       </div>
+      <section class="card subtitle-jobs-panel" id="subtitleJobsPanel" aria-labelledby="subtitleJobsHeading">
+        <div class="card-head">
+          <h2 id="subtitleJobsHeading">字幕任务</h2>
+          <span class="muted" id="subtitleJobsStatus"></span>
+          <button type="button" class="btn btn-ghost btn-sm" id="subtitleJobsRefreshBtn">
+            <svg class="icon" aria-hidden="true"><use href="#i-refresh"></use></svg>刷新任务
+          </button>
+        </div>
+        <div class="state-box" id="subtitleJobsLoading" hidden><span class="spinner" aria-hidden="true"></span>正在加载字幕任务…</div>
+        <div class="state-box state-error" id="subtitleJobsError" role="alert" hidden></div>
+        <div class="state-box state-empty" id="subtitleJobsEmpty" hidden>暂无字幕任务。可在视频结果行点击“生成字幕”创建任务。</div>
+        <div id="subtitleJobsList" class="subtitle-jobs-list"></div>
+      </section>
       <div class="state-box" id="historyLoading" hidden><span class="spinner" aria-hidden="true"></span>正在加载历史记录…</div>
       <div class="state-box state-error" id="historyError" role="alert" hidden></div>
       <div class="state-box state-empty" id="historyEmpty" hidden>暂无扫描历史。完成一次扫描后会显示在这里。</div>
@@ -1024,6 +1038,6 @@
   <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.6" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M12 10.8v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="12" cy="7.6" r="1.05" fill="currentColor"/></symbol>
 </svg>
 
-<script src="./app.js?v=1.1.0-0018" defer></script>
+<script src="./app.js?v=1.1.0-0019" defer></script>
 </body>
 </html>
