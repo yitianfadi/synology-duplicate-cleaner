@@ -1584,3 +1584,35 @@ input[type="checkbox"]:disabled { cursor: not-allowed; }
   .range-row input[type="number"] { flex: 0 0 72px; width: 72px; }
   .similar-warning { font-size: 12.5px; padding: 10px 12px; }
 }
+
+/* ==========================================================================
+   无创建时间 / 按修改时间（mtime）保留——降级提示
+   ========================================================================== */
+.mtime-fallback-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 10px 14px;
+  margin-bottom: 14px;
+  border-radius: var(--radius);
+  background: var(--warning-soft);
+  border: 1px solid #efdba4;
+  border-left: 4px solid #c98a12;
+  color: #7c5304;
+  font-size: 12.5px;
+  line-height: 1.65;
+}
+.mtime-fallback-notice .icon { width: 18px; height: 18px; margin-top: 2px; flex: 0 0 auto; color: #b7791f; }
+.mtime-fallback-notice p { margin: 0; }
+.mtime-fallback-badge { white-space: normal; text-align: left; }
+.group-hint.is-fallback { color: #8a6108; }
+.group-hint.is-fallback .icon { color: #b7791f; }
+.keep-source-note { font-size: 11px; color: #8a6108; }
+.similar-partition .mtime-fallback-notice { margin-top: -4px; }
+.summary-grid.is-many { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+@media (max-width: 1180px) {
+  .summary-grid.is-many { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 560px) {
+  .summary-grid.is-many { grid-template-columns: minmax(0, 1fr); }
+}

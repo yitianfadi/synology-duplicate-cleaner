@@ -44,8 +44,13 @@
   };
   var KEEP_LABEL = {
     latest_created: '最晚创建', earliest_created: '最早创建',
-    pinned_path: '指定路径', manual: '需手动选择', tie: '创建时间相同'
+    pinned_path: '指定路径', manual: '需手动选择', tie: '创建时间相同',
+    latest_modified_fallback: '按修改时间保留（无创建时间，最晚修改）',
+    earliest_modified_fallback: '按修改时间保留（无创建时间，最早修改）',
+    mtime_tie: '修改时间相同（按修改时间保留）'
   };
+  var MTIME_FALLBACK_LABEL = '无创建时间 · 按修改时间保留';
+  var MTIME_FALLBACK_REASONS = ['latest_modified_fallback', 'earliest_modified_fallback', 'mtime_tie'];
   var KEEP_MODE_LABEL = { latest: '最晚创建', earliest: '最早创建', pinned: '指定路径' };
   var SCAN_MODE_LABEL = { exact: '精准哈希', similar: '内容相似' };
   var SCAN_MODE_BADGE = { exact: 'badge-gray', similar: 'badge-purple' };
@@ -59,8 +64,8 @@
   var SOURCE_INFO = {
     statx: { short: 'statx', title: 'statx：文件系统创建时间（可靠）', cls: 'is-ok' },
     birthtime: { short: 'birthtime', title: 'birthtime：系统提供的创建时间', cls: 'is-ok' },
-    ctime: { short: 'ctime', title: 'ctime：文件状态变更时间，为降级值，存在风险', cls: 'is-fallback' },
-    unknown: { short: '未知', title: '无法读取创建时间', cls: 'is-unknown' }
+    ctime: { short: 'ctime', title: 'ctime：文件状态变更时间（降级值，不能当作创建时间，存在风险）', cls: 'is-fallback' },
+    unknown: { short: '未知', title: '未知：无法读取文件系统创建时间（不会用 ctime 冒充创建时间）', cls: 'is-unknown' }
   };
   var DELETE_STATUS_LABEL = { recycled: '已移入回收站', deleted: '已删除', skipped: '已跳过', failed: '失败' };
   var DELETE_REASON_LABEL = {
@@ -168,7 +173,7 @@
     'setMaxFilesError setRecycleDefault setCreateRecycleDir setAllowCtime settingsError saveSettingsBtn resetSettingsBtn ' +
     'modeExactBtn modeSimilarBtn modeDesc modeCapabilityBadge similarityOptions simThreshold simThresholdRange simThresholdError ' +
     'simConcurrency simConcurrencyError simMaxFileMb simMaxFileError simCache simAllowBinary simExtList simExtError ' +
-    'similarityCounters simFeatures simCacheHits simCandidates simSkipped resultsModeBadge exactPartition exactPartitionTitle ' +
+    'similarityCounters simFeatures simCacheHits simCandidates simSkipped resultsModeBadge mtimeFallbackNotice mtimeFallbackNoticeText exactPartition exactPartitionTitle ' +
     'exactPartitionBadge exactPartitionCount similarPartition similarPartitionCount similarLoading similarError similarEmpty ' +
     'similarGroupsList similarLoadMoreBtn similarLoadMoreStatus settingsSimilarityDetails setScanMode setSimilarityThreshold ' +
     'setSimilarityThresholdError setSimilarityConcurrency setSimilarityConcurrencyError setSimilarityMaxMb setSimilarityMaxFileError ' +
@@ -2088,6 +2093,10 @@
     }
     setText(els.progressMessage, message || '正在处理…');
     var stats = scan.stats || {};
+    if (status === 'completed' && Number(stats.mtime_fallback_groups) > 0) {
+      setText(els.progressMessage, (message || '扫描完成。') + ' 其中 ' +
+        fmtInt(stats.mtime_fallback_groups) + ' 组无创建时间，按修改时间保留。');
+    }
     setText(els.counterFilesSeen, fmtInt(stats.files_seen));
     setText(els.counterFilesScanned, fmtInt(stats.files_scanned));
     setText(els.counterCandidates, fmtInt(stats.candidate_files));
@@ -2136,9 +2145,11 @@
         var doneStats = scan.stats || {};
         var exactGroups = doneStats.exact_groups !== undefined ? doneStats.exact_groups : doneStats.duplicate_groups;
         var similarGroups = doneStats.similar_groups || 0;
+        var fallbackGroups = Number(doneStats.mtime_fallback_groups) || 0;
         toast('扫描完成：精准组 ' + fmtInt(exactGroups) + ' 组' +
-          (similarGroups > 0 ? '，内容相似组 ' + fmtInt(similarGroups) + ' 组（需人工复核）' : '') + '。',
-          'success', 5600);
+          (similarGroups > 0 ? '，内容相似组 ' + fmtInt(similarGroups) + ' 组（需人工复核）' : '') +
+          (fallbackGroups > 0 ? '；其中 ' + fmtInt(fallbackGroups) + ' 组无创建时间，按修改时间保留' : '') + '。',
+          'success', 6000);
       }
       show(els.resultsSection);
       loadResults(true);
@@ -2246,6 +2257,7 @@
     if (els.loadMoreBtn) { hide(els.loadMoreBtn); }
     if (els.similarLoadMoreBtn) { hide(els.similarLoadMoreBtn); }
     if (els.similarPartition) { hide(els.similarPartition); }
+    if (els.mtimeFallbackNotice) { hide(els.mtimeFallbackNotice); }
     if (els.csvLink) {
       els.csvLink.setAttribute('href', '#');
       els.csvLink.setAttribute('aria-disabled', 'true');
@@ -2302,6 +2314,9 @@
       if (state.scan.data.creation_time_unsafe !== undefined) {
         stats.creation_time_unsafe = state.scan.data.creation_time_unsafe;
       }
+      if (typeof state.scan.data.mtime_fallback_groups === 'number') {
+        stats.mtime_fallback_groups = state.scan.data.mtime_fallback_groups;
+      }
     }
     return stats;
   }
@@ -2319,7 +2334,7 @@
           'duplicate_files', 'reclaimable_bytes', 'selectable_duplicate_files', 'selectable_reclaimable_bytes',
           'exact_groups', 'exact_files', 'similar_groups', 'similar_files', 'similar_reclaimable_bytes',
           'similarity_candidates', 'similarity_features', 'similarity_cache_hits', 'similarity_cache_misses',
-          'similarity_pairs_checked', 'bytes_hashed', 'bytes_per_sec', 'errors'].forEach(function (key) {
+          'similarity_pairs_checked', 'mtime_fallback_groups', 'bytes_hashed', 'bytes_per_sec', 'errors'].forEach(function (key) {
           if (typeof detail[key] === 'number') { merged[key] = detail[key]; }
         });
         if (Object.keys(merged).length) {
@@ -2429,6 +2444,7 @@
     var similarMode = results.scanMode === 'similar';
     var stats = currentScanStats();
     renderResultsSummary(stats);
+    renderMtimeFallbackNotice(stats);
     renderResultsHeader(similarMode, results);
     if (els.csvLink && state.scan.id) {
       els.csvLink.setAttribute('href', '/api/scans/' + encodePath(state.scan.id) + '/csv');
@@ -2548,8 +2564,14 @@
           (manualGroups > 0 || unsafe) ? '本组不参与自动删除' : '无需人工确认')
       ];
     }
+    var fallbackGroups = mtimeFallbackGroupCount(stats);
+    if (fallbackGroups > 0) {
+      summaryCards.push(summaryCard('warning', 'is-amber', fmtInt(fallbackGroups) + ' 组', '修改时间降级',
+        '无创建时间 · 按修改时间保留'));
+    }
     clear(els.resultsSummary);
     els.resultsSummary.classList.toggle('is-similar', similarMode);
+    els.resultsSummary.classList.toggle('is-many', summaryCards.length > 5);
     summaryCards.forEach(function (card) { els.resultsSummary.appendChild(card); });
   }
 
@@ -2570,6 +2592,83 @@
     return text.slice(0, 14) + '…' + text.slice(-8);
   }
 
+  // ---------- 无创建时间 / mtime 降级 ----------
+  function isMtimeFallbackGroup(group) {
+    if (!group) { return false; }
+    if (group.time_fallback === true) { return true; }
+    var reason = String(group.keep_reason || '');
+    if (MTIME_FALLBACK_REASONS.indexOf(reason) !== -1) { return true; }
+    var source = String(group.keep_time_source || '').toLowerCase();
+    return source === 'mtime' || source === 'modified' || source.indexOf('mtime') !== -1;
+  }
+
+  function keepTimeSourceLabel(source) {
+    var value = String(source || '').toLowerCase();
+    if (!value) { return ''; }
+    if (value.indexOf('mtime') !== -1 || value === 'modified') { return '修改时间（mtime）'; }
+    if (value.indexOf('ctime') !== -1) { return '状态变更时间（ctime，降级）'; }
+    if (value.indexOf('statx') !== -1 || value.indexOf('birth') !== -1 ||
+        value.indexOf('btime') !== -1 || value === 'created') {
+      return '文件系统创建时间';
+    }
+    return '';
+  }
+
+  function mtimeFallbackGroupCount(stats) {
+    stats = stats || currentScanStats();
+    var count = Number(stats.mtime_fallback_groups);
+    if (isFinite(count) && count >= 0) { return count; }
+    if (state.scan.data && typeof state.scan.data.mtime_fallback_groups === 'number') {
+      return state.scan.data.mtime_fallback_groups;
+    }
+    return state.results.groups.filter(isMtimeFallbackGroup).length
+      + state.results.similarGroups.filter(isMtimeFallbackGroup).length;
+  }
+
+  function fallbackSelectionInfo() {
+    var results = state.results;
+    var override = state.deleteFlow.override;
+    if (override && override.similarGroupId) {
+      var scoped = null;
+      results.similarGroups.forEach(function (group) {
+        if (group.group_id === override.similarGroupId) { scoped = group; }
+      });
+      return { count: (scoped && isMtimeFallbackGroup(scoped)) ? 1 : 0, allMode: false, scoped: true };
+    }
+    if (results.mode === 'all') {
+      return { count: mtimeFallbackGroupCount(), allMode: true, scoped: false };
+    }
+    var count = 0;
+    results.groups.forEach(function (group) {
+      if (!isMtimeFallbackGroup(group)) { return; }
+      var hasSelected = (group.files || []).some(function (file) {
+        return results.selected.has(file.file_id);
+      });
+      if (hasSelected) { count += 1; }
+    });
+    results.similarGroups.forEach(function (group) {
+      if (!isMtimeFallbackGroup(group)) { return; }
+      var hasSelected = (group.files || []).some(function (file) {
+        return results.similarSelected.has(file.file_id);
+      });
+      if (hasSelected) { count += 1; }
+    });
+    return { count: count, allMode: false, scoped: false };
+  }
+
+  function renderMtimeFallbackNotice(stats) {
+    if (!els.mtimeFallbackNotice) { return; }
+    var count = mtimeFallbackGroupCount(stats);
+    if (count > 0) {
+      setText(els.mtimeFallbackNoticeText,
+        '本次扫描有 ' + fmtInt(count) + ' 组无法读取可靠创建时间（btime），已改用修改时间（mtime）选择保留项。' +
+        '请人工核对这些组的保留文件后再删除；创建时间在结果中显示为“未知/降级”时不代表文件创建时间。');
+      show(els.mtimeFallbackNotice);
+    } else {
+      hide(els.mtimeFallbackNotice);
+    }
+  }
+
   function renderGroupCard(group, index) {
     var manual = !!group.needs_manual_keep;
     var keeperId = manual ? null : (group.keep_file_id || null);
@@ -2578,25 +2677,43 @@
       dataset: { groupKey: encodePath(group.group_id), groupId: group.group_id }
     });
 
+    var fallback = isMtimeFallbackGroup(group);
     var badges = [];
     if (manual) {
       badges.push(el('span', { className: 'badge badge-amber', text: '需手动选择 · 禁止删除' }));
-    } else {
+    }
+    if (fallback) {
+      var fallbackTitle = '保留依据：修改时间（mtime）' +
+        (group.keep_reason ? '；' + (KEEP_LABEL[group.keep_reason] || group.keep_reason) : '') +
+        '。创建时间不可用，请人工核对保留文件。';
+      badges.push(el('span', {
+        className: 'badge badge-amber mtime-fallback-badge',
+        attrs: { title: fallbackTitle },
+        text: MTIME_FALLBACK_LABEL
+      }));
+    } else if (!manual) {
       var reasonLabel = KEEP_LABEL[group.keep_reason] || '保留项';
       badges.push(el('span', { className: 'badge badge-green', text: '保留：' + reasonLabel }));
     }
-    if (group.creation_time_suspect) {
+    if (group.creation_time_suspect && !fallback) {
       badges.push(el('span', { className: 'badge badge-amber', text: '创建时间存疑' }));
     }
 
+    var groupSubItems = [
+      el('span', { className: 'mono', attrs: { title: group.hash || '' }, text: truncHash(group.hash) }),
+      el('span', { text: '单文件 ' + fmtBytes(group.size) }),
+      el('span', { text: '可释放 ' + fmtBytes(group.wasted_bytes) }),
+      el('span', { text: String(group.algo || 'sha256').toUpperCase() })
+    ];
+    if (fallback) {
+      var keepSource = keepTimeSourceLabel(group.keep_time_source || 'mtime');
+      if (keepSource) {
+        groupSubItems.push(el('span', { className: 'keep-source-note', text: '保留依据：' + keepSource }));
+      }
+    }
     var headMain = el('div', { className: 'group-head-main' }, [
       el('div', { className: 'group-title', text: '组 #' + (index + 1) + ' · ' + fmtInt(group.count) + ' 个文件' }),
-      el('div', { className: 'group-sub' }, [
-        el('span', { className: 'mono', attrs: { title: group.hash || '' }, text: truncHash(group.hash) }),
-        el('span', { text: '单文件 ' + fmtBytes(group.size) }),
-        el('span', { text: '可释放 ' + fmtBytes(group.wasted_bytes) }),
-        el('span', { text: String(group.algo || 'sha256').toUpperCase() })
-      ])
+      el('div', { className: 'group-sub' }, groupSubItems)
     ]);
 
     var groupCheck = el('input', {
@@ -2628,6 +2745,11 @@
       head.appendChild(el('p', { className: 'group-hint' }, [
         icon('warning'),
         '该组创建时间无法可靠区分，已禁止自动删除；请先在 DSM 中人工确认保留项，本组不参与本次清理。'
+      ]));
+    } else if (fallback) {
+      head.appendChild(el('p', { className: 'group-hint is-fallback' }, [
+        icon('warning'),
+        '该组无可靠创建时间（btime），保留项按修改时间（mtime）选择；请人工核对保留文件后再删除。'
       ]));
     }
     card.appendChild(head);
@@ -2678,7 +2800,7 @@
       buildFileSub(group, file)
     ]);
 
-    var times = buildFileTimes(file);
+    var times = buildFileTimes(file, group);
     var actions = buildFileActions(group, file, isKeeper, manual);
 
     appendChildren(row, [selectWrap, main, times, actions]);
@@ -2709,13 +2831,30 @@
     ]);
   }
 
-  function buildFileTimes(file) {
+  function buildFileTimes(file, group) {
+    var fallback = isMtimeFallbackGroup(group);
     var source = SOURCE_INFO[file.created_source] || SOURCE_INFO.unknown;
+    var title = source.title;
+    var shortLabel = source.short;
+    var cls = source.cls;
+    var createdText = fmtDateTime(file.created_at);
+    var labelText = '创建';
+    if (fallback) {
+      title += '；本组无可靠创建时间，保留项依据修改时间（mtime），此处“创建”时间不作为保留依据';
+      if (!file.created_at) {
+        labelText = '创建（未知）';
+        createdText = '—';
+        if (file.created_source !== 'statx' && file.created_source !== 'birthtime') {
+          shortLabel = 'mtime 降级';
+          cls = 'is-fallback';
+        }
+      }
+    }
     return el('div', { className: 'file-times' }, [
       el('div', { className: 'time-item' }, [
-        el('span', { className: 'time-label', text: '创建' }),
-        el('span', { text: fmtDateTime(file.created_at) }),
-        el('span', { className: 'time-src ' + source.cls, attrs: { title: source.title }, text: source.short })
+        el('span', { className: 'time-label', text: labelText }),
+        el('span', { text: createdText }),
+        el('span', { className: 'time-src ' + cls, attrs: { title: title }, text: shortLabel })
       ]),
       el('div', { className: 'time-item' }, [
         el('span', { className: 'time-label', text: '修改' }),
@@ -2729,7 +2868,12 @@
     if (manual) {
       actions.appendChild(el('span', { className: 'badge badge-amber', text: '禁止删除' }));
     } else if (isKeeper) {
-      actions.appendChild(el('span', { className: 'badge badge-green', text: '保留' }));
+      var fallbackKeeper = isMtimeFallbackGroup(group);
+      actions.appendChild(el('span', {
+        className: 'badge ' + (fallbackKeeper ? 'badge-amber' : 'badge-green'),
+        attrs: fallbackKeeper ? { title: '保留项按修改时间（mtime）选择，创建时间不可用' } : {},
+        text: fallbackKeeper ? '保留 · 按修改时间' : '保留'
+      }));
     }
     var previewBtn = el('button', {
       className: 'icon-btn',
@@ -2912,31 +3056,54 @@
       className: 'group-card similar-group-card' + (manual ? ' needs-keep' : '') + (reviewed ? ' is-reviewed' : ''),
       dataset: { groupKey: encodePath(group.group_id), groupId: group.group_id, matchType: 'similar' }
     });
+    var fallback = isMtimeFallbackGroup(group);
     var badges = [
       el('span', { className: 'similar-score-badge', text: '内容相似' + (score !== null ? ' · ' + score + '%' : '') })
     ];
     if (manual) {
       badges.push(el('span', { className: 'badge badge-amber', text: '需手动选择 · 禁止删除' }));
-    } else {
+    } else if (!fallback) {
       badges.push(el('span', { className: 'badge badge-green', text: '保留：' + (KEEP_LABEL[group.keep_reason] || '保留项') }));
     }
+    if (fallback) {
+      var fallbackTitle = '保留依据：修改时间（mtime）' +
+        (group.keep_reason ? '；' + (KEEP_LABEL[group.keep_reason] || group.keep_reason) : '') +
+        '。创建时间不可用，请人工核对保留文件。';
+      badges.push(el('span', {
+        className: 'badge badge-amber mtime-fallback-badge',
+        attrs: { title: fallbackTitle },
+        text: MTIME_FALLBACK_LABEL
+      }));
+    }
     if (group.low_confidence) { badges.push(el('span', { className: 'badge low-confidence-badge', text: '低置信度' })); }
-    if (group.creation_time_suspect) { badges.push(el('span', { className: 'badge badge-amber', text: '创建时间存疑' })); }
+    if (group.creation_time_suspect && !fallback) { badges.push(el('span', { className: 'badge badge-amber', text: '创建时间存疑' })); }
 
+    var similarSubItems = [
+      el('span', { text: similarityMethodLabel(group.similarity_method) }),
+      el('span', { text: '单文件 ' + fmtBytes(group.size) }),
+      el('span', { text: '潜在可释放 ' + fmtBytes(group.wasted_bytes) }),
+      el('span', { className: 'muted', text: '哈希：—' })
+    ];
+    if (fallback) {
+      var similarKeepSource = keepTimeSourceLabel(group.keep_time_source || 'mtime');
+      if (similarKeepSource) {
+        similarSubItems.push(el('span', { className: 'keep-source-note', text: '保留依据：' + similarKeepSource }));
+      }
+    }
     var headMain = el('div', { className: 'group-head-main' }, [
       el('div', { className: 'group-title', text: '组 #' + (index + 1) + ' · ' + fmtInt(group.count) + ' 个文件' }),
-      el('div', { className: 'group-sub' }, [
-        el('span', { text: similarityMethodLabel(group.similarity_method) }),
-        el('span', { text: '单文件 ' + fmtBytes(group.size) }),
-        el('span', { text: '潜在可释放 ' + fmtBytes(group.wasted_bytes) }),
-        el('span', { className: 'muted', text: '哈希：—' })
-      ])
+      el('div', { className: 'group-sub' }, similarSubItems)
     ]);
     var head = el('div', { className: 'group-head' }, [headMain, el('div', { className: 'group-badges' }, badges)]);
     if (manual) {
       head.appendChild(el('p', { className: 'group-hint' }, [
         icon('warning'),
         '该组创建时间无法可靠区分，已禁止自动删除；请先在 DSM 中人工确认保留项，本组不参与本次清理。'
+      ]));
+    } else if (fallback) {
+      head.appendChild(el('p', { className: 'group-hint is-fallback' }, [
+        icon('warning'),
+        '该组无可靠创建时间（btime），保留项按修改时间（mtime）选择；请人工核对保留项后再复核删除。'
       ]));
     }
     card.appendChild(head);
@@ -3048,7 +3215,7 @@
       el('div', { className: 'file-sub' }, subItems)
     ]);
 
-    var times = buildFileTimes(file);
+    var times = buildFileTimes(file, group);
     var actions = buildFileActions(group, file, isKeeper, manual);
     appendChildren(row, [selectWrap, main, times, actions]);
     return row;
@@ -3586,6 +3753,7 @@
     var skipped = Array.isArray(plan.skipped) ? plan.skipped : [];
     var skippedTotal = typeof plan.skipped_total === 'number' ? plan.skipped_total : skipped.length;
     var unavailable = Array.isArray(plan.recycle_unavailable) ? plan.recycle_unavailable : [];
+    var fallbackInfo = fallbackSelectionInfo();
 
     flow.modal.setTitle('删除计划确认（第 1 步 / 共 2 步）');
     var body = el('div', {});
@@ -3613,6 +3781,9 @@
       }
       if (plan.manual_review) { addKv('人工复核', '已确认（相似组为逐条选择）'); }
     }
+    if (fallbackInfo.count > 0) {
+      addKv('修改时间降级', fmtInt(fallbackInfo.count) + ' 组');
+    }
     addKv('删除方式', permanent ? '永久删除（不可恢复）' : '移动到回收站', permanent ? 'is-permanent' : '');
     addKv('涉及分组', fmtInt(plan.groups_affected) + ' 组');
     addKv('校验跳过', fmtInt(skippedTotal) + ' 个');
@@ -3622,6 +3793,14 @@
       body.appendChild(el('div', { className: 'modal-section modal-warning' }, [
         icon('warning'),
         '本次计划包含内容相似文件：相似度是特征比对结果，存在误匹配概率。请确认已对相似组逐一人工复核，并核对保留项与文件清单。'
+      ]));
+    }
+    if (fallbackInfo.count > 0) {
+      body.appendChild(el('div', { className: 'modal-section modal-warning' }, [
+        icon('warning'),
+        fallbackInfo.allMode
+          ? '本次扫描共有 ' + fmtInt(fallbackInfo.count) + ' 组无可靠创建时间（按修改时间 mtime 保留）。全选删除可能包含这些组，请核对保留文件后再继续。'
+          : '本次计划包含 ' + fmtInt(fallbackInfo.count) + ' 个“无创建时间 · 按修改时间保留”的组。请核对这些组的保留文件（保留依据为修改时间，创建时间不可用）。'
       ]));
     }
 
@@ -3709,6 +3888,7 @@
     flow.step = 'confirm';
     var permanent = plan.recycle === false;
     var skippedTotal = typeof plan.skipped_total === 'number' ? plan.skipped_total : (Array.isArray(plan.skipped) ? plan.skipped.length : 0);
+    var fallbackInfo = fallbackSelectionInfo();
     flow.modal.setTitle('最终确认（第 2 步 / 共 2 步）');
     var body = el('div', {});
     body.appendChild(el('div', { className: 'modal-danger-box' }, [
@@ -3730,11 +3910,20 @@
       var reviewedIds = Array.isArray(plan.reviewed_similar_group_ids) ? plan.reviewed_similar_group_ids : [];
       addKv('相似组已复核', fmtInt(reviewedIds.length) + ' 组');
     }
+    if (fallbackInfo.count > 0) {
+      addKv('修改时间降级', fmtInt(fallbackInfo.count) + ' 组');
+    }
     addKv('删除方式', permanent ? '永久删除（不可恢复）' : '移动到回收站', permanent ? 'is-permanent' : '');
     addKv('涉及分组', fmtInt(plan.groups_affected) + ' 组');
     addKv('校验跳过', fmtInt(skippedTotal) + ' 个');
     body.appendChild(el('div', { className: 'modal-section' }, [kv]));
     body.appendChild(el('p', { className: 'modal-note', text: '需人工确认的重复组不在删除范围内；保留项不会被删除。相似组仅包含已人工复核并逐条选择的文件。' }));
+    if (fallbackInfo.count > 0) {
+      body.appendChild(el('div', { className: 'modal-section modal-warning' }, [
+        icon('warning'),
+        '本计划包含 ' + fmtInt(fallbackInfo.count) + ' 个无可靠创建时间的组：保留项按修改时间（mtime）选择，请再次核对保留文件，避免误删仍需要保留的副本。'
+      ]));
+    }
 
     var confirmCheckbox = el('input', { attrs: { type: 'checkbox' } });
     var confirmRow = el('label', { className: 'modal-check-row' }, [
@@ -4113,6 +4302,9 @@
         el('span', {}, ['已扫描 ', el('strong', { text: fmtInt(stats.files_scanned) })]),
         Number(stats.needs_manual_keep_groups) > 0
           ? el('span', {}, ['需人工确认 ', el('strong', { text: fmtInt(stats.needs_manual_keep_groups) }), ' 组'])
+          : null,
+        Number(stats.mtime_fallback_groups) > 0
+          ? el('span', {}, ['修改时间降级 ', el('strong', { text: fmtInt(stats.mtime_fallback_groups) }), ' 组'])
           : null
       ];
     } else {
@@ -4123,6 +4315,9 @@
         el('span', {}, ['已扫描 ', el('strong', { text: fmtInt(stats.files_scanned) })]),
         Number(stats.needs_manual_keep_groups) > 0
           ? el('span', {}, ['需人工确认 ', el('strong', { text: fmtInt(stats.needs_manual_keep_groups) }), ' 组'])
+          : null,
+        Number(stats.mtime_fallback_groups) > 0
+          ? el('span', {}, ['修改时间降级 ', el('strong', { text: fmtInt(stats.mtime_fallback_groups) }), ' 组'])
           : null
       ];
     }

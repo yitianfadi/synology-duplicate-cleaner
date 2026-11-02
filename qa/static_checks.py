@@ -640,8 +640,9 @@ def check_spk_source():
           ui_ok, "ui/config invalid")
     ui_index = os.path.join(spk, "ui", "index.html")
     ui_text = read(ui_index) if os.path.isfile(ui_index) else ""
-    check("SPK-UI-PLACEHOLDERS", "SPK ui/index.html 含构建占位符 __DUP_BACKEND_SCHEME__/__DUP_HOST__",
-          "__DUP_BACKEND_SCHEME__" in ui_text and "__DUP_HOST__" in ui_text,
+    check("SPK-UI-PLACEHOLDERS", "SPK ui/index.html 含构建占位符 __DUP_BACKEND_SCHEME__ 和动态真实 URL 渲染",
+          "__DUP_BACKEND_SCHEME__" in ui_text and "target-url" in ui_text
+          and "location.hostname" in ui_text,
           "placeholders missing")
     check("SPK-UI-CONFIG", "SPK ui/config 桌面入口指向 3rdparty/DuplicateCleaner/index.html",
           "3rdparty/DuplicateCleaner/index.html" in

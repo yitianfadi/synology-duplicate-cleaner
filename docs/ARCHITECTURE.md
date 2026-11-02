@@ -1,7 +1,7 @@
 # 整体方案架构
 
 > 项目：**重复文件清理（DuplicateCleaner）** · 群晖 DSM 7.x SPK 套件
-> 版本：1.1.0-0005
+> 版本：1.1.0-0006
 > 原则：**先扫描、出报告、人工确认、二次确认、可回收、全程审计**。任何情况下都不自动静默删除。
 
 ## 1. 目标与边界
@@ -189,7 +189,7 @@ Linux 的 `st_ctime` 是 **inode 状态变更时间**，不是创建时间，复
 
 ### 5.6 选择保留项与生成报告（finalize）
 
-- 按 `keep_mode` 计算 keep 文件；时间不可信/相同/pinned 未命中 → `needs_manual_keep=true`；
+- 按 `keep_mode` 计算 keep 文件：全部文件有可信 btime 时按创建时间；任一组员缺少可信 btime 时，整组改用 **mtime_ns** 选择保留项（不混用 btime/mtime，不用 ctime 比较），并标记 `time_fallback=true`；可信 btime 相同仍转人工；pinned 命中优先保留，未命中按 mtime 兜底；
 - 计算每组 `wasted_bytes = size * (count - 1)`；
 - 生成 `scan_id`、组/文件 ID、摘要统计；写入 `scans/<scan_id>.json`（临时文件 + `os.replace` 原子替换）；
 - 写 `logs/scan-<id>.log` 与 `audit.jsonl`；UI 轮询拿到 `completed` 后展示报告；
@@ -278,7 +278,7 @@ Linux 的 `st_ctime` 是 **inode 状态变更时间**，不是创建时间，复
 | 文件夹多选/排除 | `/api/shares` + `/api/browse` + 文件夹选择器；后端白名单校验 |
 | 哈希判重、非文件名 | 大小 → 快速采样 → 全量 SHA-256/MD5；三级漏斗 |
 | 大文件分片/限速 | 1 MiB 分片 + 全局令牌桶 + 并发 1–8 + nice/ionice |
-| 只保留创建最晚 | `keep_mode=latest`；statx btime；时间不可信转人工 |
+| 只保留创建最晚 | `keep_mode=latest`；优先 statx btime；无 btime 时整组按 mtime 兜底并标记时间回退 |
 | 分组、保留高亮 | 结果页组卡片；keep 行高亮、保留原因徽标 |
 | 路径/大小/哈希/创建/修改 | 文件行完整展示；哈希可复制 |
 | 预览/勾选/全选 | 预览 API（Range）；组/全局选择；全选待删除副本 |

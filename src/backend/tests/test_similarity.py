@@ -346,6 +346,8 @@ class SimilarScanTest(unittest.TestCase):
         self.assertFalse(similar_group["low_confidence"])
         self.assertTrue(similar_group["manual_review_required"])
         self.assertEqual(similar_group["keep_reason"], "latest_created")
+        self.assertFalse(similar_group["time_fallback"])
+        self.assertEqual(similar_group["keep_time_source"], "btime")
         self.assertEqual(similar_group["count"], 2)
         keeper = [item for item in similar_group["files"] if item["is_keep"]]
         self.assertEqual(len(keeper), 1)
@@ -418,7 +420,8 @@ class SimilarScanTest(unittest.TestCase):
             self.assertEqual(rows[0], [u"组号", u"匹配类型", u"状态", u"文件路径",
                                        u"大小(字节)", u"SHA256/MD5", u"创建时间",
                                        u"修改时间", u"保留", u"默认勾选",
-                                       u"时间来源", u"相似度分值"])
+                                       u"时间来源", u"相似度分值",
+                                       u"时间回退", u"保留时间来源"])
             match_labels = {row[1] for row in rows[1:]}
             self.assertEqual(match_labels, {u"哈希一致", u"内容相似"})
             similar_rows = [row for row in rows[1:] if row[1] == u"内容相似"]
@@ -473,6 +476,35 @@ class SimilarScanTest(unittest.TestCase):
         self.assertEqual(group["match_type"], "exact")
         paths = [item["path"] for item in group["files"]]
         self.assertEqual(sorted(paths), sorted([first, second]))
+
+    def test_similar_group_mtime_fallback(self):
+        root = self.root
+        first = write_text(os.path.join(root, "fb_a.txt"), BASE_TEXT)
+        second = write_text(os.path.join(root, "fb_b.txt"), VARIANT_TEXT)
+        self.harness.set_creation(first, None, source="unknown")
+        self.harness.set_creation(second, None, source="unknown")
+        os.utime(first, ns=(1700000100 * 1000000000,
+                            1700000100 * 1000000000))
+        os.utime(second, ns=(1700000200 * 1000000000,
+                             1700000200 * 1000000000))
+        scan_id, meta = self.harness.run_scan(options={
+            "scan_mode": "similar", "similarity_threshold": 85})
+        similar = [group for group in self.harness.groups(scan_id)
+                   if group["match_type"] == "similar"]
+        self.assertEqual(len(similar), 1)
+        group = similar[0]
+        # 创建时间不可信 → 相似组同样自动按 mtime 选保留项（仍需人工复核）
+        self.assertTrue(group["time_fallback"])
+        self.assertEqual(group["keep_time_source"], "mtime")
+        self.assertEqual(group["keep_reason"], "latest_modified_fallback")
+        self.assertFalse(group["needs_manual_keep"])
+        self.assertTrue(group["manual_review_required"])
+        for file_info in group["files"]:
+            self.assertFalse(file_info["default_selected"])
+        keeper = [item for item in group["files"] if item["is_keep"]][0]
+        self.assertEqual(keeper["name"], "fb_b.txt")
+        self.assertEqual(meta["stats"]["mtime_fallback_groups"], 1)
+        self.assertEqual(meta["stats"]["mtime_fallback_files"], 2)
 
     def test_feature_cache_hits_on_second_scan(self):
         self._mixed_fixture()

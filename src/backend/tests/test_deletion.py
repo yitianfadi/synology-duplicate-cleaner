@@ -241,6 +241,34 @@ class PlanAndDeleteTest(DeletionBase):
         self.assertIn("MANUAL_KEEP_REQUIRED",
                       [item["reason"] for item in ctx3.exception.details["skipped"]])
 
+    def test_mtime_fallback_group_deletable(self):
+        root = self.root
+        first = write_bytes(os.path.join(root, "fb1.txt"), CONTENT_X)
+        second = write_bytes(os.path.join(root, "fb2.txt"), CONTENT_X)
+        self.harness.set_creation(first, None, source="unknown")
+        self.harness.set_creation(second, None, source="unknown")
+        os.utime(first, ns=(1700000100 * 1000000000, 1700000100 * 1000000000))
+        os.utime(second, ns=(1700000200 * 1000000000, 1700000200 * 1000000000))
+        scan_id, meta = self.harness.run_scan()
+        self.assertEqual(meta["stats"]["mtime_fallback_groups"], 1)
+        group = self.harness.groups(scan_id)[0]
+        self.assertTrue(group["time_fallback"])
+        self.assertFalse(group["needs_manual_keep"])
+        # mtime 最新的 fb2.txt 为保留项，fb1.txt 默认勾选
+        keeper = [item for item in group["files"] if item["is_keep"]][0]
+        self.assertEqual(keeper["name"], "fb2.txt")
+        non_keeper = [item for item in group["files"] if not item["is_keep"]][0]
+        self.assertTrue(non_keeper["default_selected"])
+        plan = self.plan(scan_id, {"scope": "all_duplicates", "recycle": True})
+        self.assertEqual(plan["count"], 1)
+        self.assertEqual(plan["skipped"], [])
+        job_id = self.deletion.start_delete(self.session, scan_id, {
+            "plan_id": plan["plan_id"], "confirm": "DELETE"})
+        job = self.wait_job(scan_id, job_id)
+        self.assertEqual(job["status"], "completed")
+        self.assertFalse(os.path.exists(non_keeper["path"]))
+        self.assertTrue(os.path.exists(keeper["path"]))
+
 
 class RecyclePathTest(unittest.TestCase):
     def test_recycle_destination(self):

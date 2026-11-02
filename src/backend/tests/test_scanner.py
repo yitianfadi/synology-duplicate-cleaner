@@ -68,6 +68,9 @@ class ScanGroupingTest(ScannerBase):
         self.assertEqual(xgroup["wasted_bytes"], 100)
         self.assertEqual(xgroup["keep_reason"], "latest_created")
         self.assertFalse(xgroup["needs_manual_keep"])
+        self.assertFalse(xgroup["time_fallback"])
+        self.assertEqual(xgroup["keep_time_source"], "btime")
+        self.assertEqual(meta["stats"]["mtime_fallback_groups"], 0)
         keeper = self.file_in_group(xgroup, "a2.txt")
         self.assertTrue(keeper["is_keep"])
         self.assertFalse(keeper["default_selected"])
@@ -111,15 +114,22 @@ class ScanGroupingTest(ScannerBase):
         self.assertEqual(xgroup["keep_reason"], "pinned_path")
         self.assertTrue(self.file_in_group(xgroup, "a2.txt")["is_keep"])
         self.assertFalse(xgroup["needs_manual_keep"])
-        # Y 组没有文件命中 pinned 路径 → 需要人工确认
+        self.assertFalse(xgroup["time_fallback"])
+        self.assertEqual(xgroup["keep_time_source"], "btime")
+        # Y 组没有文件命中 pinned 路径 → 自动回退为 mtime 最新，不再人工阻塞
         ygroup = self.group_named(scan_id, "b1.txt")
-        self.assertTrue(ygroup["needs_manual_keep"])
-        self.assertEqual(ygroup["keep_reason"], "tie")
-        self.assertTrue(all(not item["default_selected"]
-                            for item in ygroup["files"]))
-        self.assertEqual(meta["needs_manual_keep_groups"], 1)
+        self.assertFalse(ygroup["needs_manual_keep"])
+        self.assertEqual(ygroup["keep_reason"], "latest_modified_fallback")
+        self.assertTrue(ygroup["time_fallback"])
+        self.assertEqual(ygroup["keep_time_source"], "mtime")
+        self.assertTrue(self.file_in_group(ygroup, "b3.txt")["is_keep"])
+        self.assertTrue(self.file_in_group(ygroup, "b1.txt")["default_selected"])
+        self.assertTrue(self.file_in_group(ygroup, "b2.txt")["default_selected"])
+        self.assertEqual(meta["needs_manual_keep_groups"], 0)
+        self.assertEqual(meta["stats"]["mtime_fallback_groups"], 1)
+        self.assertEqual(meta["stats"]["mtime_fallback_files"], 3)
 
-    def test_pinned_unknown_time_requires_manual(self):
+    def test_pinned_unknown_time_keeps_pinned(self):
         files = self.make_basic()
         self.harness.set_creation(files["a2"], None, source="unknown")
         self.harness.creation_times[
@@ -129,9 +139,13 @@ class ScanGroupingTest(ScannerBase):
             "pinned_path": os.path.join(self.root, "sub"),
         })
         xgroup = self.group_named(scan_id, "a1.txt")
-        self.assertTrue(xgroup["needs_manual_keep"])
-        self.assertTrue(all(not item["default_selected"]
-                            for item in xgroup["files"]))
+        # btime 不可信时仍保留 pinned，不要求人工确认
+        self.assertFalse(xgroup["needs_manual_keep"])
+        self.assertEqual(xgroup["keep_reason"], "pinned_path")
+        self.assertTrue(xgroup["time_fallback"])
+        self.assertEqual(xgroup["keep_time_source"], "mtime")
+        self.assertTrue(self.file_in_group(xgroup, "a2.txt")["is_keep"])
+        self.assertTrue(self.file_in_group(xgroup, "a1.txt")["default_selected"])
 
     def test_tie_requires_manual(self):
         files = self.make_basic()
@@ -153,11 +167,23 @@ class ScanGroupingTest(ScannerBase):
                 "created_ts": None, "created_ns": 0,
                 "created_source": "unknown", "created_unsafe": True,
             }
+        os.utime(files["a1"], ns=(1700000000 * 1000000000,
+                                    1700000000 * 1000000000))
+        os.utime(files["a2"], ns=(1700000100 * 1000000000,
+                                    1700000100 * 1000000000))
         scan_id, meta = self.harness.run_scan()
         self.assertTrue(meta["creation_time_unsafe"])
         xgroup = self.group_named(scan_id, "a1.txt")
-        self.assertTrue(xgroup["needs_manual_keep"])
+        # 创建时间不可信 → 整组按 mtime 自动选保留项，不再是 needs_manual
+        self.assertFalse(xgroup["needs_manual_keep"])
+        self.assertTrue(xgroup["time_fallback"])
         self.assertTrue(xgroup["creation_time_suspect"])
+        self.assertEqual(xgroup["keep_time_source"], "mtime")
+        self.assertEqual(xgroup["keep_reason"], "latest_modified_fallback")
+        self.assertTrue(self.file_in_group(xgroup, "a2.txt")["is_keep"])
+        self.assertTrue(self.file_in_group(xgroup, "a1.txt")["default_selected"])
+        self.assertEqual(meta["stats"]["mtime_fallback_groups"], 1)
+        self.assertEqual(meta["stats"]["mtime_fallback_files"], 2)
 
     def test_ctime_fallback_marks_unsafe(self):
         files = self.make_basic()
@@ -167,9 +193,127 @@ class ScanGroupingTest(ScannerBase):
                 "created_ts": 777, "created_ns": 0,
                 "created_source": "ctime", "created_unsafe": True,
             }
-        _scan_id, meta = self.harness.run_scan(
+        os.utime(files["a1"], ns=(1700000100 * 1000000000,
+                                    1700000100 * 1000000000))
+        os.utime(files["a2"], ns=(1700000200 * 1000000000,
+                                    1700000200 * 1000000000))
+        scan_id, meta = self.harness.run_scan(
             options={"allow_ctime_fallback": True})
         self.assertTrue(meta["creation_time_unsafe"])
+        # ctime 绝不用作保留项比较：整组仍然按 mtime 回退
+        xgroup = self.group_named(scan_id, "a1.txt")
+        self.assertEqual(xgroup["keep_reason"], "latest_modified_fallback")
+        self.assertFalse(xgroup["needs_manual_keep"])
+        self.assertEqual(xgroup["keep_time_source"], "mtime")
+
+    def test_mtime_fallback_earliest(self):
+        files = self.make_basic()
+        for key in ("a1", "a2"):
+            path = files[key]
+            self.harness.creation_times[os.path.normcase(os.path.abspath(path))] = {
+                "created_ts": None, "created_ns": 0,
+                "created_source": "unknown", "created_unsafe": True,
+            }
+        # 明确 mtime：a1 更旧、a2 更新（避免文件系统时间戳粒度导致 tie）
+        os.utime(files["a1"], ns=(1700000100 * 1000000000,
+                                  1700000100 * 1000000000))
+        os.utime(files["a2"], ns=(1700000200 * 1000000000,
+                                  1700000200 * 1000000000))
+        scan_id, _meta = self.harness.run_scan(options={"keep_mode": "earliest"})
+        group = self.group_named(scan_id, "a1.txt")
+        self.assertFalse(group["needs_manual_keep"])
+        self.assertEqual(group["keep_reason"], "earliest_modified_fallback")
+        self.assertTrue(group["time_fallback"])
+        self.assertEqual(group["keep_time_source"], "mtime")
+        self.assertTrue(self.file_in_group(group, "a1.txt")["is_keep"])
+        self.assertTrue(self.file_in_group(group, "a2.txt")["default_selected"])
+
+    def test_mtime_fallback_partial_btime_uses_mtime_for_all(self):
+        files = self.make_basic()
+        # a1 有很新的 btime，但 mtime 比 a2 旧；a2 的 btime 不可信。
+        # 不允许混用 btime/mtime：整组按 mtime 选 a2。
+        self.harness.set_creation(files["a1"], 9999)
+        path = files["a2"]
+        self.harness.creation_times[os.path.normcase(os.path.abspath(path))] = {
+            "created_ts": None, "created_ns": 0,
+            "created_source": "unknown", "created_unsafe": True,
+        }
+        os.utime(files["a1"], ns=(1700000100 * 1000000000,
+                                    1700000100 * 1000000000))
+        os.utime(files["a2"], ns=(1700000200 * 1000000000,
+                                    1700000200 * 1000000000))
+        scan_id, _meta = self.harness.run_scan()
+        group = self.group_named(scan_id, "a1.txt")
+        self.assertEqual(group["keep_reason"], "latest_modified_fallback")
+        self.assertTrue(group["time_fallback"])
+        self.assertTrue(self.file_in_group(group, "a2.txt")["is_keep"])
+        self.assertFalse(self.file_in_group(group, "a1.txt")["is_keep"])
+
+    def test_mtime_fallback_tie_deterministic(self):
+        files = self.make_basic()
+        for key in ("a1", "a2"):
+            path = files[key]
+            self.harness.creation_times[os.path.normcase(os.path.abspath(path))] = {
+                "created_ts": None, "created_ns": 0,
+                "created_source": "unknown", "created_unsafe": True,
+            }
+        same_ns = 1700000000 * 1000000000
+        for path in (files["a1"], files["a2"]):
+            os.utime(path, ns=(same_ns, same_ns))
+        scan_id, _meta = self.harness.run_scan()
+        group = self.group_named(scan_id, "a1.txt")
+        self.assertFalse(group["needs_manual_keep"])
+        self.assertEqual(group["keep_reason"], "mtime_tie")
+        self.assertTrue(group["time_fallback"])
+        self.assertEqual(group["keep_time_source"], "mtime")
+        # 时间相同 → 路径字典序确定性选择
+        keeper = [item for item in group["files"] if item["is_keep"]][0]
+        self.assertEqual(keeper["name"], "a2.txt")
+        self.assertTrue(self.file_in_group(group, "a1.txt")["default_selected"])
+
+    def test_pinned_no_match_falls_back_to_mtime(self):
+        files = self.make_basic()
+        # btime 全部可信：a1 创建时间最新；但 pinned 未命中 → mtime 兜底（a2）
+        self.harness.set_creation(files["a1"], 9999)
+        self.harness.set_creation(files["a2"], 2000)
+        os.utime(files["a1"], ns=(1700000100 * 1000000000,
+                                    1700000100 * 1000000000))
+        os.utime(files["a2"], ns=(1700000200 * 1000000000,
+                                    1700000200 * 1000000000))
+        scan_id, _meta = self.harness.run_scan(options={
+            "keep_mode": "pinned",
+            "pinned_path": os.path.join(self.root, "does-not-exist"),
+        })
+        group = self.group_named(scan_id, "a1.txt")
+        self.assertFalse(group["needs_manual_keep"])
+        self.assertEqual(group["keep_reason"], "latest_modified_fallback")
+        self.assertTrue(group["time_fallback"])
+        self.assertEqual(group["keep_time_source"], "mtime")
+        self.assertTrue(self.file_in_group(group, "a2.txt")["is_keep"])
+
+    def test_mtime_fallback_csv_columns(self):
+        files = self.make_basic()
+        for key in ("a1", "a2"):
+            path = files[key]
+            self.harness.creation_times[os.path.normcase(os.path.abspath(path))] = {
+                "created_ts": None, "created_ns": 0,
+                "created_source": "unknown", "created_unsafe": True,
+            }
+        scan_id, _meta = self.harness.run_scan()
+        path = self.harness.services.scanner.write_csv(scan_id)
+        try:
+            with open(path, "rb") as handle:
+                raw = handle.read()
+            rows = list(csv.reader(io.StringIO(raw.decode("utf-8-sig"))))
+            self.assertEqual(rows[0][12], u"时间回退")
+            self.assertEqual(rows[0][13], u"保留时间来源")
+            fallback_rows = [row for row in rows[1:] if row[0] == "g-000002"]
+            self.assertTrue(fallback_rows)
+            for row in fallback_rows:
+                self.assertEqual(row[12], u"是")
+                self.assertEqual(row[13], "mtime")
+        finally:
+            os.unlink(path)
 
     def test_groups_pagination_sort_and_search(self):
         self.make_basic()

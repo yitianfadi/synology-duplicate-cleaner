@@ -101,6 +101,8 @@ def _empty_stats():
         "similarity_cache_hits": 0,
         "similarity_cache_misses": 0,
         "similarity_pairs_checked": 0,
+        "mtime_fallback_groups": 0,
+        "mtime_fallback_files": 0,
         "similarity_skipped": {
             "type": 0, "size": 0, "binary": 0,
             "decode": 0, "no_text": 0, "error": 0,
@@ -126,18 +128,49 @@ def _fallback_key(file_info, latest):
     return (-mtime_ns, file_info.get("path") or "")
 
 
+def _mtime_key(file_info):
+    return int(file_info.get("mtime_ns") or 0)
+
+
+def _choose_by_mtime(files, latest):
+    """创建时间不可信时整组改用 mtime_ns 选保留项（绝不用 ctime 比较）。
+
+    返回 (keeper_index, keep_reason, tie_flag, mtime_impossible)。
+    """
+    if latest:
+        keeper = max(range(len(files)),
+                     key=lambda i: (_mtime_key(files[i]),
+                                    files[i].get("path") or ""))
+    else:
+        keeper = min(range(len(files)),
+                     key=lambda i: (_mtime_key(files[i]),
+                                    files[i].get("path") or ""))
+    mtimes = set(_mtime_key(file_info) for file_info in files)
+    if len(mtimes) == 1:
+        return keeper, "mtime_tie", True, False
+    reason = "latest_modified_fallback" if latest else "earliest_modified_fallback"
+    return keeper, reason, False, False
+
+
 def choose_keeper(files, options):
     """选择保留文件。
 
-    返回 (keeper_index, keep_reason, needs_manual_keep, creation_suspect)。
-    - 时间可信且可区分：latest_created / earliest_created。
-    - 时间相同（tie）或不可信：需要人工确认（needs_manual_keep=True），
-      仍给出一个兜底保留项，绝不让整组变成“全部可删”。
+    返回 (keeper_index, keep_reason, needs_manual_keep, creation_suspect,
+    time_fallback, keep_time_source)。
+
+    - 组内所有文件都有可信 btime：latest_created / earliest_created；
+      可信 btime 相同（tie）仍要求人工确认（原有行为）。
+    - 只要有一个文件 btime 不可信：整组改用 mtime_ns（绝不混用 btime/ctime），
+      latest_modified_fallback / earliest_modified_fallback / mtime_tie，
+      不再需要人工确认。
+    - pinned：命中路径优先保留；btime 不可信时仍保留 pinned（无需人工）；
+      未命中任何文件时按 mtime 兜底（新的确定性行为，不再 needs_manual）。
     """
     keep_mode = options.get("keep_mode") or "latest"
     pinned = (options.get("pinned_path") or "").strip()
-    sources = [file_info.get("created_source") for file_info in files]
-    suspect = any(source in ("ctime", "unknown") for source in sources)
+    all_trusted = all(_time_key(file_info) is not None for file_info in files)
+    suspect = any(file_info.get("created_source") in ("ctime", "unknown")
+                  for file_info in files)
 
     if pinned:
         matched = []
@@ -146,41 +179,46 @@ def choose_keeper(files, options):
             if path == pinned or fsutil.is_under(path, pinned):
                 matched.append(index)
         if matched:
-            # pinned 模式只按“创建时间”挑选保留项，绝不用 mtime 冒充创建时间
-            matched_keys = {index: _time_key(files[index]) for index in matched}
-            if any(key is None for key in matched_keys.values()):
-                keeper = min(matched, key=lambda i: files[i]["path"])
-                return keeper, "tie", True, True
-            if len(matched) == 1:
-                # 只有一个文件命中指定保留路径：明确无歧义
-                return matched[0], "pinned_path", False, suspect
-            if len(set(matched_keys.values())) == 1:
-                keeper = min(matched, key=lambda i: files[i]["path"])
-                return keeper, "tie", True, suspect
+            if all_trusted:
+                matched_keys = {index: _time_key(files[index])
+                                for index in matched}
+                if len(matched) == 1:
+                    return matched[0], "pinned_path", False, suspect, False, "btime"
+                if len(set(matched_keys.values())) == 1:
+                    keeper = min(matched, key=lambda i: files[i].get("path") or "")
+                    return keeper, "tie", True, suspect, False, "btime"
+                keeper = max(matched,
+                             key=lambda i: (matched_keys[i],
+                                            files[i].get("path") or ""))
+                return keeper, "pinned_path", False, suspect, False, "btime"
+            # btime 不可信：仍保留 pinned（用 mtime 最新做确定性兜底），无需人工
             keeper = max(matched,
-                         key=lambda i: (matched_keys[i], files[i]["path"]))
-            return keeper, "pinned_path", False, suspect
-        # 指定保留路径没有匹配任何文件：需要人工确认，给出确定性兜底保留项
-        keeper = max(range(len(files)),
-                     key=lambda i: _fallback_key(files[i], latest=True))
-        return keeper, "tie", True, True
+                         key=lambda i: (_mtime_key(files[i]),
+                                        files[i].get("path") or ""))
+            return keeper, "pinned_path", False, True, True, "mtime"
+        # pinned 未命中任何文件：整组按 mtime 兜底（不再 needs_manual）
+        keeper, reason, _tie, _impossible = _choose_by_mtime(
+            files, latest=(keep_mode != "earliest"))
+        return keeper, reason, False, True, True, "mtime"
 
-    keys = [_time_key(file_info) for file_info in files]
-    time_usable = all(key is not None for key in keys)
-    if time_usable:
+    if all_trusted:
+        keys = [_time_key(file_info) for file_info in files]
         latest = keep_mode != "earliest"
         if latest:
-            keeper = max(range(len(files)), key=lambda i: (keys[i], files[i]["path"]))
+            keeper = max(range(len(files)),
+                         key=lambda i: (keys[i], files[i].get("path") or ""))
         else:
-            keeper = min(range(len(files)), key=lambda i: (keys[i], files[i]["path"]))
+            keeper = min(range(len(files)),
+                         key=lambda i: (keys[i], files[i].get("path") or ""))
         if len(set(keys)) == 1:
-            return keeper, "tie", True, suspect
+            return keeper, "tie", True, suspect, False, "btime"
         reason = "latest_created" if latest else "earliest_created"
-        return keeper, reason, False, suspect
+        return keeper, reason, False, suspect, False, "btime"
 
-    latest = keep_mode != "earliest"
-    keeper = max(range(len(files)), key=lambda i: _fallback_key(files[i], latest=latest))
-    return keeper, "tie", True, True
+    # btime 不可信（unknown/ctime/部分缺失）：整组用 mtime，绝不混用
+    keeper, reason, _tie, _impossible = _choose_by_mtime(
+        files, latest=(keep_mode != "earliest"))
+    return keeper, reason, False, True, True, "mtime"
 
 
 class ScanState(object):
@@ -629,7 +667,8 @@ class ScanManager(object):
             writer = csv.writer(handle)
             writer.writerow([u"组号", u"匹配类型", u"状态", u"文件路径", u"大小(字节)",
                              u"SHA256/MD5", u"创建时间", u"修改时间", u"保留",
-                             u"默认勾选", u"时间来源", u"相似度分值"])
+                             u"默认勾选", u"时间来源", u"相似度分值",
+                             u"时间回退", u"保留时间来源"])
             for group in self.store.iter_scan_groups(scan_id):
                 match_type = group.get("match_type") or "exact"
                 match_label = u"内容相似" if match_type == "similar" else u"哈希一致"
@@ -655,6 +694,8 @@ class ScanManager(object):
                         int(file_info.get("similarity_score")
                             if file_info.get("similarity_score") is not None
                             else 100),
+                        u"是" if group.get("time_fallback") else u"否",
+                        group.get("keep_time_source") or "btime",
                     ])
         return path
 
@@ -828,6 +869,10 @@ class ScanManager(object):
                 u"skipped: %s" % snapshot["stats"]["skipped"],
                 u"creation_time_unsafe: %s" % snapshot["creation_time_unsafe"],
                 u"needs_manual_keep_groups: %s" % snapshot["needs_manual_keep_groups"],
+                u"mtime_fallback_groups: %s" % snapshot["stats"].get(
+                    "mtime_fallback_groups", 0),
+                u"mtime_fallback_files: %s" % snapshot["stats"].get(
+                    "mtime_fallback_files", 0),
                 u"",
             ]
             if snapshot.get("error"):
@@ -1390,9 +1435,11 @@ class ScanManager(object):
             self._check_control(state)
             files = [self._file_info(state, record, "exact")
                      for record in bucket]
-            keeper, reason, needs_manual, suspect = choose_keeper(files, options)
-            group_suspect = suspect or any(file_info["created_unsafe"]
-                                           for file_info in files)
+            (keeper, reason, needs_manual, suspect, time_fallback,
+             keep_time_source) = choose_keeper(files, options)
+            group_suspect = (suspect or time_fallback
+                             or any(file_info["created_unsafe"]
+                                    for file_info in files))
             for file_index, file_info in enumerate(files):
                 file_info["is_keep"] = file_index == keeper
                 file_info["default_selected"] = (
@@ -1413,6 +1460,8 @@ class ScanManager(object):
                 "keep_reason": reason,
                 "needs_manual_keep": bool(needs_manual),
                 "creation_time_suspect": bool(group_suspect),
+                "time_fallback": bool(time_fallback),
+                "keep_time_source": keep_time_source,
                 "files": files,
             })
             if index % 50 == 0:
@@ -1439,9 +1488,11 @@ class ScanManager(object):
                 file_info["similarity_method"] = feature.get("method")
                 file_info["low_confidence"] = bool(feature.get("low_confidence"))
                 files.append(file_info)
-            keeper, reason, needs_manual, suspect = choose_keeper(files, options)
-            group_suspect = suspect or any(file_info["created_unsafe"]
-                                           for file_info in files)
+            (keeper, reason, needs_manual, suspect, time_fallback,
+             keep_time_source) = choose_keeper(files, options)
+            group_suspect = (suspect or time_fallback
+                             or any(file_info["created_unsafe"]
+                                    for file_info in files))
             for position, file_info in enumerate(files):
                 if position == keeper:
                     file_info["similarity_score"] = 100
@@ -1480,6 +1531,8 @@ class ScanManager(object):
                 "keep_reason": reason,
                 "needs_manual_keep": bool(needs_manual),
                 "creation_time_suspect": bool(group_suspect),
+                "time_fallback": bool(time_fallback),
+                "keep_time_source": keep_time_source,
                 "files": files,
             })
         groups.sort(key=lambda group: (-int(group["similarity_score"] or 0),
@@ -1522,6 +1575,10 @@ class ScanManager(object):
                                   for group in similar_groups)
         needs_manual_groups = sum(1 for group in groups
                                   if group["needs_manual_keep"])
+        fallback_groups = [group for group in groups
+                           if group.get("time_fallback")]
+        mtime_fallback_groups = len(fallback_groups)
+        mtime_fallback_files = sum(group["count"] for group in fallback_groups)
         duplicate_files = exact_files + similar_files
         creation_unsafe = any(group["creation_time_suspect"] for group in groups)
         with state.lock:
@@ -1537,6 +1594,8 @@ class ScanManager(object):
             stats["reclaimable_bytes"] = reclaimable
             stats["selectable_duplicate_files"] = selectable_files
             stats["selectable_reclaimable_bytes"] = reclaimable
+            stats["mtime_fallback_groups"] = mtime_fallback_groups
+            stats["mtime_fallback_files"] = mtime_fallback_files
             state.needs_manual_keep_groups = needs_manual_groups
             state.creation_time_unsafe = creation_unsafe
         self._set_progress(state, "finalize", 0.995, u"正在保存扫描结果")

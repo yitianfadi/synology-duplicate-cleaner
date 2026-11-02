@@ -135,6 +135,8 @@
  "keep_reason":"latest_created",
  "needs_manual_keep":false,
  "creation_time_suspect":false,
+ "time_fallback":false,
+ "keep_time_source":"btime",
  "manual_review_required":true,
  "files":[
    {
@@ -157,7 +159,8 @@
 - 相似组 `similarity_score` = 非保留文件相对保留文件的平均分（四舍五入）。
 - 每个非保留文件的 `similarity_score` 是“该文件 vs 保留文件”的分数；保留文件为 100。
 - 相似组所有文件 `default_selected=false`；`manual_review_required=true`。
-- 相似组若 `needs_manual_keep=true`，仍整组禁止删除（原有规则）。
+- 相似组若 `needs_manual_keep=true`（仅全部 btime 可信但完全相同等无法判断的情况），仍整组禁止删除；
+  缺少 btime 时整组按 mtime 自动选保留项并标记 `time_fallback=true`，相似组仍必须人工复核。
 - 精准组文件新增 `match_type="exact"`、`similarity_score=100`，其余字段不变。
 
 ### 4.1 groups 接口

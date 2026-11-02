@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-11-02T19:01:17+0800",
+  "generated_at": "2026-11-02T19:14:53+0800",
   "summary": {
     "PASS": 111,
     "FAIL": 0,
@@ -52,7 +52,7 @@
       "id": "BE-UNITTEST-LOG",
       "name": "unittest 结果",
       "status": "INFO",
-      "detail": "Ran 140 tests in 13.180s"
+      "detail": "Ran 147 tests in 19.199s"
     },
     {
       "id": "BE-NO-AUTODELETE",
@@ -476,7 +476,7 @@
     },
     {
       "id": "SPK-UI-PLACEHOLDERS",
-      "name": "SPK ui/index.html 含构建占位符 __DUP_BACKEND_SCHEME__/__DUP_HOST__",
+      "name": "SPK ui/index.html 含构建占位符 __DUP_BACKEND_SCHEME__ 和动态真实 URL 渲染",
       "status": "PASS",
       "detail": ""
     },
@@ -578,7 +578,7 @@
     },
     {
       "id": "SPK-DIST",
-      "name": "构建产物存在（DuplicateCleaner-1.1.0-0005.spk）",
+      "name": "构建产物存在（DuplicateCleaner-1.1.0-0006.spk）",
       "status": "PASS",
       "detail": ""
     },
@@ -590,7 +590,7 @@
     },
     {
       "id": "SPK-VERSION",
-      "name": "SPK INFO.version 与当前源码 APP_VERSION（1.1.0-0005）一致",
+      "name": "SPK INFO.version 与当前源码 APP_VERSION（1.1.0-0006）一致",
       "status": "PASS",
       "detail": ""
     },

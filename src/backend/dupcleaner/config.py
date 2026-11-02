@@ -7,9 +7,9 @@ import os
 import re
 
 APP_NAME = "DuplicateCleaner"
-APP_VERSION = "1.1.0-0005"
+APP_VERSION = "1.1.0-0006"
 DISPLAY_NAME = "重复文件清理"
-SPK_VERSION = "1.1.0-0005"
+SPK_VERSION = "1.1.0-0006"
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8787
