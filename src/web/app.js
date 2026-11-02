@@ -940,6 +940,7 @@
     updateSubtitleFromRaw(rawSettings);
     state.scanMode = state.settings.scan_mode === 'similar' ? 'similar' : 'exact';
     applySettingsToScanForm(state.settings);
+    restoreLastSelection();
     renderRoots();
     renderExcludeChips();
     updatePinnedDisplay();
@@ -1629,6 +1630,44 @@
     if (caret) { focusSoon(caret); }
   }
 
+  // 记住上一次扫描范围（浏览器本地；按 origin 持久化，默认下次打开自动回填）
+  var LAST_SELECTION_KEY = 'dupcleaner.lastSelection.v1';
+
+  function restoreLastSelection() {
+    try {
+      var raw = window.localStorage ? window.localStorage.getItem(LAST_SELECTION_KEY) : null;
+      if (!raw) { return; }
+      var data = JSON.parse(raw);
+      if (!data || !Array.isArray(data.roots)) { return; }
+      var roots = [];
+      var seen = {};
+      data.roots.slice(0, 20).forEach(function (item) {
+        var path = item && typeof item.path === 'string' ? item.path : '';
+        if (!path || seen[path]) { return; }
+        seen[path] = true;
+        roots.push({ path: path, name: item.name || path.split('/').filter(Boolean).pop() || path });
+      });
+      if (!roots.length) { return; }
+      state.roots = roots;
+      var rootPaths = roots.map(function (r) { return r.path; });
+      state.excludes = (Array.isArray(data.excludes) ? data.excludes : []).filter(function (p) {
+        return typeof p === 'string' && p && isUnderRoots(p, rootPaths);
+      }).slice(0, 200);
+    } catch (e) { /* localStorage 不可用或数据损坏时忽略 */ }
+  }
+
+  function saveLastSelection() {
+    try {
+      if (!window.localStorage) { return; }
+      var payload = {
+        roots: (state.roots || []).map(function (r) { return { path: r.path, name: r.name }; }),
+        excludes: (state.excludes || []).slice(0, 200),
+        saved_at: Date.now()
+      };
+      window.localStorage.setItem(LAST_SELECTION_KEY, JSON.stringify(payload));
+    } catch (e) { /* 忽略隐私模式/配额错误 */ }
+  }
+
   function applyPickerSelection(picker) {
     if (picker.mode === 'roots') {
       state.roots = picker.roots.map(function (r) { return { path: r.path, name: r.name }; });
@@ -1650,6 +1689,7 @@
       state.pinnedPath = picker.pinned || '';
       updatePinnedDisplay();
     }
+    saveLastSelection();
     updateScanSummary();
   }
 
@@ -1709,6 +1749,7 @@
       });
     }
     setText(els.rootsCount, state.roots.length ? '已选择 ' + state.roots.length + ' 个目录' : '未选择');
+    saveLastSelection();
   }
 
   function syncExcludesWithRoots() {
@@ -1728,6 +1769,7 @@
     setText(els.excludeCount, state.excludes.length + ' 个');
     if (!state.excludes.length) {
       els.excludeChips.appendChild(el('span', { className: 'chip-empty', text: '未添加排除目录' }));
+      saveLastSelection();
       return;
     }
     state.excludes.forEach(function (path) {
@@ -1745,6 +1787,7 @@
         el('span', { className: 'chip-text', text: path }), removeBtn
       ]));
     });
+    saveLastSelection();
   }
 
   function updatePinnedDisplay() {
