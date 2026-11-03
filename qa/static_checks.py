@@ -337,12 +337,58 @@ def check_frontend():
           os.path.isfile(index_path) and os.path.isfile(app_path)
           and os.path.isfile(os.path.join(web, "styles.css")),
           "missing files")
+
+    # v0025：app.js 拆分为 ES modules。内容断言聚合 app.js + js/*.js，
+    # 并逐个文件执行 node --check（Node 24 可直接检查 ESM 语法）。
+    js_dir = os.path.join(web, "js")
+    module_names = ["constants.js", "state.js", "dom.js", "format.js",
+                    "util.js", "api.js", "toast.js", "modal.js"]
+    module_paths = [os.path.join(js_dir, name) for name in module_names]
+    missing_modules = [name for name in module_names
+                       if not os.path.isfile(os.path.join(js_dir, name))]
+    check("FE-MODULE-FILES", "前端 ES modules 八个模块文件齐全（js/*.js）",
+          not missing_modules, "missing=%s" % missing_modules)
+    check("FE-MODULE-ENTRY", "index.html 以 type=module 加载 app.js 并保留 ?v= 版本参数",
+          bool(re.search(r'<script\s+type="module"\s+src="\./app\.js\?v=[^"]+"', html)),
+          "module entry script not found")
+    js_texts = [app]
+    for module_path in module_paths:
+        if os.path.isfile(module_path):
+            js_texts.append(read(module_path))
+    app = "\n".join(js_texts)  # 内容断言以聚合后的前端 JS 文本为准
+
     if os.path.isfile(app_path):
-        rc, out = run(["node", "--check", app_path], timeout=120)
-        check("FE-NODECHECK", "node --check src/web/app.js 语法通过",
-              rc == 0, "rc=%s out=%s" % (rc, out[-800:]))
+        check_targets = [app_path] + [p for p in module_paths if os.path.isfile(p)]
+        module_failures = []
+        for target in check_targets:
+            rc, out = run(["node", "--check", target], timeout=120)
+            if rc != 0:
+                module_failures.append("%s rc=%s out=%s" % (
+                    os.path.relpath(target, REPO), rc, out[-400:]))
+        check("FE-NODECHECK", "node --check app.js 与 js/*.js 模块语法通过",
+              not module_failures, " | ".join(module_failures)[:1200])
     else:
         record("FE-NODECHECK", "node --check app.js", "FAIL", "app.js missing")
+
+    module_check_script = os.path.join(REPO, "qa", "check_web_modules.mjs")
+    if os.path.isfile(module_check_script):
+        rc, out = run(["node", module_check_script], timeout=120)
+        check("FE-MODULE-GRAPH", "ES module 图可解析且顶层代码无异常（stub DOM 动态 import）",
+              rc == 0, "rc=%s out=%s" % (rc, out[-1200:]))
+    else:
+        record("FE-MODULE-GRAPH", "ES module 图可解析且顶层代码无异常（stub DOM 动态 import）",
+               "FAIL", "missing qa/check_web_modules.mjs")
+
+    # 无头浏览器冒烟：真实 Chromium 加载 ES modules 页面，验证登录页渲染、
+    # 资源 MIME 与控制台无异常；本机无浏览器时脚本自身 SKIP（退出码 0）。
+    smoke_script = os.path.join(REPO, "qa", "web_smoke.py")
+    if os.path.isfile(smoke_script):
+        rc, out = run([sys.executable, smoke_script], timeout=300)
+        check("FE-BROWSER-SMOKE", "无头浏览器冒烟（ES modules 可运行、资源 MIME、控制台无异常）",
+              rc == 0, "rc=%s out=%s" % (rc, out[-1500:]))
+    else:
+        record("FE-BROWSER-SMOKE", "无头浏览器冒烟", "FAIL",
+               "missing qa/web_smoke.py")
 
     check("FE-RISK-TEXT", "风险提示文案与契约逐字一致（index.html）",
           RISK_TEXT in html, "risk text not found verbatim")
@@ -428,10 +474,29 @@ def check_frontend():
                     "scan_mode", "similarity_threshold", "similarity_extensions",
                     "similarity_exclude_extensions", "similarity_concurrency",
                     "similarity_cache", "similarity_max_file_mb",
-                    "similarity_allow_binary"]
+                    "similarity_allow_binary",
+                    "ffmpeg_path", "video_hwaccel"]
     missing_settings = [key for key in setting_keys if key not in app]
     check("FE-SETTINGS-KEYS", "设置页覆盖契约全部设置键",
           not missing_settings, "missing=%s" % missing_settings)
+    check("FE-FFMPEG-SETTING", "视频设置提供外部 FFmpeg 路径输入/解析来源提示/错误提示",
+          all(marker in html for marker in
+              ("videoFfmpegPath", "videoFfmpegPathError", "videoFfmpegHint",
+               "setVideoFfmpegPath", "setVideoFfmpegPathError", "setVideoFfmpegHint"))
+          and all(marker in app for marker in
+                  ("ffmpeg_path", "configured_path", "videoFfmpegSourceLabel",
+                   "refreshMetaCapabilities")),
+          "ffmpeg path setting markers missing")
+    check("FE-HWACCEL-SETTING", "硬解下拉用 hwaccel_modes 渲染、hwaccel_supported 决定可用，并展示 effective/fallback",
+          all(marker in html for marker in
+              ("videoHwaccel", "videoHwaccelHint", "setVideoHwaccel", "setVideoHwaccelHint"))
+          and all(marker in app for marker in
+                  ("hwaccel_supported", "hwaccel_modes", "hwaccel_effective",
+                   "hwaccel_fallback", "videotoolbox", "renderVideoHwaccelOptions")),
+          "hwaccel setting markers missing")
+    check("FE-VIDEO-ERROR-KEY", "INVALID_ARGUMENT details.key 映射到 ffmpeg_path/video_hwaccel 字段错误",
+          "videoFieldErrorsFromApi" in app and "ffmpeg_path: 'videoFfmpegPath'" in app,
+          "api field error mapping missing")
     es2020 = []
     for pattern, label in ((r"\?\.", "可选链 ?."), (r"\?\?", "空值合并 ??"),
                            (r"\bBigInt\b", "BigInt"),
@@ -449,7 +514,7 @@ def check_frontend():
           not external, "external=%s" % external[:10])
 
     inner_html = len(re.findall(r"\.innerHTML\b", app))
-    info("FE-INNERHTML", "app.js innerHTML 使用次数（需人工确认不含不可信数据）",
+    info("FE-INNERHTML", "前端 JS（app.js + js/*.js）innerHTML 使用次数（需人工确认不含不可信数据）",
          str(inner_html))
     safe_dom = app.count("textContent") + app.count("createTextNode")
     check("FE-TEXTCONTENT", "使用 textContent/createTextNode 输出不可信文本（避免 innerHTML 注入）",

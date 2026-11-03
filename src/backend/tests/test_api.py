@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 import json
 import os
+import shutil
+import sys
 import time
 import unittest
 import urllib.parse
@@ -240,6 +242,56 @@ class ApiTest(unittest.TestCase):
             "PUT", "/api/settings", {"settings": {"skip_symlinks": False}})
         self.assertEqual(status, 200)
         self.assertTrue(payload["settings"]["skip_symlinks"])
+
+    def test_external_ffmpeg_settings_meta_diagnostics(self):
+        """v0021 P1：外部 FFmpeg 路径校验 + meta/diagnostics 能力字段。"""
+        self.login()
+        status, _headers, payload = self.json_call(
+            "PUT", "/api/settings", {"settings": {"ffmpeg_path": "ffmpeg"}})
+        self.assertEqual(status, 400)
+        self.assertEqual(payload["error"]["code"], "INVALID_ARGUMENT")
+        self.assertEqual(payload["error"]["details"].get("key"),
+                         "ffmpeg_path")
+
+        fake_ffmpeg = os.path.join(self.harness.tmpdir, "ffmpeg_bin")
+        shutil.copyfile(sys.executable, fake_ffmpeg)
+        try:
+            os.chmod(fake_ffmpeg, 0o755)
+        except OSError:
+            pass
+        status, _headers, payload = self.json_call(
+            "PUT", "/api/settings",
+            {"settings": {"ffmpeg_path": fake_ffmpeg,
+                          "video_hwaccel": "vaapi"}})
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["settings"]["ffmpeg_path"], fake_ffmpeg)
+        self.assertEqual(payload["settings"]["video_hwaccel"], "vaapi")
+
+        status, _headers, payload = self.json_call(
+            "PUT", "/api/settings", {"settings": {"video_hwaccel": "cuda"}})
+        self.assertEqual(status, 400)
+        self.assertEqual(payload["error"]["code"], "INVALID_ARGUMENT")
+
+        status, _headers, payload = self.json_call("GET", "/api/meta")
+        self.assertEqual(status, 200)
+        video = payload["video"]
+        self.assertEqual(video["hwaccel_mode"], "vaapi")
+        self.assertIn("videotoolbox", video["hwaccel_modes"])
+        self.assertEqual(video["defaults"]["ffmpeg_path"], "")
+        ffmpeg = video["ffmpeg"]
+        self.assertEqual(ffmpeg["configured_path"], fake_ffmpeg)
+        self.assertEqual(ffmpeg["source"], "settings")
+        self.assertEqual(ffmpeg["path"], fake_ffmpeg)
+        self.assertIsInstance(ffmpeg["hwaccels"], list)
+
+        status, _headers, payload = self.json_call("GET", "/api/diagnostics")
+        self.assertEqual(status, 200)
+        diag = payload["ffmpeg"]
+        self.assertEqual(diag["configured_path"], fake_ffmpeg)
+        self.assertEqual(diag["source"], "settings")
+        self.assertIn(diag["hwaccel"],
+                      ("none",) + tuple(config.VIDEO_HWACCEL_MODES))
+        self.assertEqual(diag["hwaccel_mode"], "vaapi")
 
     # -- 扫描 → 结果 → CSV → 预览 → 删除 ---------------------------------
     def test_scan_groups_csv_preview_delete_flow(self):

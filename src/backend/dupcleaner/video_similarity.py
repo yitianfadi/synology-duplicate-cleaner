@@ -38,6 +38,8 @@ VIDEO_FILTER = ("scale=32:32:force_original_aspect_ratio=decrease,"
 _MASK64 = 0xFFFFFFFFFFFFFFFF
 _PROBE_LOCK = threading.RLock()
 _PROBE_CACHE = {}
+# 用于区分“settings provider 尚未读取过”和“settings 路径就是空字符串”。
+_SETTINGS_PATH_UNSET = object()
 _COS_TABLE = None
 
 CONTENT_QUICK_HASH_ALGO = config.VIDEO_CONTENT_QUICK_HASH_ALGO
@@ -363,33 +365,149 @@ def _kill_process(process):
             pass
 
 
+def _normalize_hwaccels(values):
+    result = []
+    for item in values or []:
+        text = str(item).strip().lower()
+        if text:
+            result.append(text)
+    return result
+
+
+def hwaccel_label_from(hwaccels):
+    """按 ffmpeg -hwaccels 能力推导 auto 模式的实际硬解标签（旧逻辑保持不变）。"""
+    accels = _normalize_hwaccels(hwaccels)
+    if "vaapi" in accels:
+        return "vaapi"
+    if "qsv" in accels:
+        return "qsv"
+    if "nvdec" in accels or "cuda" in accels:
+        return "nvdec"
+    if "d3d11va" in accels or "dxva2" in accels or "videotoolbox" in accels:
+        return "auto"
+    return "none"
+
+
+# 显式硬解模式 -> ffmpeg -hwaccels 实际名称（同义名）。
+# 用户/UI 使用 "nvdec" 语义，但 ffmpeg 的 -hwaccels 在 NVIDIA 上通常列出
+# "cuda"（旧版本为 "cuvid"），传给 -hwaccel 的必须是能力列表里的名字。
+_HWACCEL_MODE_ALIASES = {
+    "nvdec": ("nvdec", "cuda", "cuvid"),
+}
+
+
+def hwaccel_supported(hwaccels):
+    """当前 ffmpeg 实际支持的显式硬解模式（供 UI 启用/禁用下拉项）。"""
+    accels = _normalize_hwaccels(hwaccels)
+    return [mode for mode in config.VIDEO_HWACCEL_EXPLICIT
+            if any(alias in accels
+                   for alias in _HWACCEL_MODE_ALIASES.get(mode, (mode,)))]
+
+
+def hwaccel_for_mode(mode, hwaccels):
+    """解析硬解模式，返回 (上报标签, 传给 ffmpeg 的 -hwaccel 值, 是否降级)。
+
+    - off/空：不做硬解，返回 ("none", "none", False)；
+    - auto：沿用旧 hwaccel_label() 语义上报实际能力，ffmpeg 仍用 -hwaccel auto；
+    - 显式 vaapi/qsv/nvdec/videotoolbox：仅在 ffmpeg -hwaccels 支持（含同义名，
+      如 nvdec -> cuda/cuvid）时使用，否则回退 none 并标记 fallback
+      （能力接口会暴露该标记）。
+    """
+    mode = str(mode or "auto").strip().lower()
+    accels = _normalize_hwaccels(hwaccels)
+    if mode in ("", "auto"):
+        report = hwaccel_label_from(accels)
+        flag = "auto" if report != "none" else "none"
+        return (report, flag, False)
+    if mode == "off":
+        return ("none", "none", False)
+    for alias in _HWACCEL_MODE_ALIASES.get(mode, (mode,)):
+        if alias in accels:
+            return (mode, alias, False)
+    return ("none", "none", True)
+
+
+def _hwaccel_flag_args(label):
+    """把硬解标签转成 ffmpeg 参数；none/off/空表示纯软件解码。"""
+    text = str(label or "").strip().lower()
+    if not text or text in ("none", "off"):
+        return []
+    return ["-hwaccel", text]
+
+
 class FFmpegTool(object):
-    def __init__(self, cmd=None, timeout=180.0):
+    def __init__(self, cmd=None, timeout=180.0, settings_provider=None,
+                 runtime_config=None):
+        self._explicit_cmd = list(cmd) if cmd else None
         self._cmd = list(cmd) if cmd else None
         self.timeout = float(timeout)
+        self._settings_provider = settings_provider
+        self._runtime_config = runtime_config
+        self._source = "explicit" if cmd else None
         self._lock = threading.RLock()
-        self._resolved = False
+        self._resolved = bool(cmd)
         self._version = None
         self._hwaccels = None
+        self._settings_path_seen = _SETTINGS_PATH_UNSET
+
+    # -- settings 路径变化检测 -----------------------------------------
+    def _settings_path(self):
+        if self._settings_provider is None:
+            return ""
+        try:
+            settings = self._settings_provider() or {}
+        except Exception:
+            return ""
+        if not isinstance(settings, dict):
+            return ""
+        value = settings.get("ffmpeg_path") or ""
+        return str(value).strip()
+
+    def _refresh_settings_path(self):
+        """settings.ffmpeg_path 变化时重新解析，并清空 version/hwaccels 缓存。"""
+        current = self._settings_path()
+        if self._settings_path_seen is _SETTINGS_PATH_UNSET:
+            self._settings_path_seen = current
+        elif current != self._settings_path_seen:
+            self._settings_path_seen = current
+            if not self._explicit_cmd:
+                self._cmd = None
+                self._resolved = False
+                self._source = None
+                self._version = None
+                self._hwaccels = None
+        return current
 
     def resolve(self, runtime_config=None):
+        """解析 ffmpeg 路径。优先级（v0021 P1）：
+
+        显式 cmd > settings.ffmpeg_path > DUP_FFMPEG_PATH /
+        runtime_config.ffmpeg_path > shutil.which('ffmpeg')。
+        """
         with self._lock:
-            if self._cmd:
+            if runtime_config is not None:
+                self._runtime_config = runtime_config
+            if self._explicit_cmd:
+                self._source = "explicit"
+                self._cmd = list(self._explicit_cmd)
                 return self._cmd
+            settings_path = self._refresh_settings_path()
             if self._resolved:
                 return self._cmd
             self._resolved = True
             candidates = []
+            if settings_path:
+                candidates.append((settings_path, "settings"))
             env_path = os.environ.get("DUP_FFMPEG_PATH")
             if env_path:
-                candidates.append(env_path)
-            cfg_path = getattr(runtime_config, "ffmpeg_path", None)
+                candidates.append((env_path, "env"))
+            cfg_path = getattr(self._runtime_config, "ffmpeg_path", None)
             if cfg_path:
-                candidates.append(cfg_path)
+                candidates.append((cfg_path, "env"))
             which = shutil.which("ffmpeg")
             if which:
-                candidates.append(which)
-            for candidate in candidates:
+                candidates.append((which, "which"))
+            for candidate, source in candidates:
                 if not candidate:
                     continue
                 if not os.path.isfile(candidate):
@@ -397,13 +515,30 @@ class FFmpegTool(object):
                 if not os.access(candidate, os.X_OK):
                     continue
                 self._cmd = [candidate]
+                self._source = source
                 return self._cmd
+            self._cmd = None
+            self._source = "unavailable"
             return None
 
     @property
     def path(self):
         with self._lock:
             return self._cmd[0] if self._cmd else ""
+
+    @property
+    def source(self):
+        """解析来源：explicit / settings / env / which / unavailable。"""
+        with self._lock:
+            return self._source or "unavailable"
+
+    @property
+    def configured_path(self):
+        """用户在 settings 中显式配置的路径（空=自动探测）。"""
+        with self._lock:
+            if self._explicit_cmd:
+                return ""
+            return self._settings_path()
 
     def available(self):
         return bool(self.resolve())
@@ -435,6 +570,8 @@ class FFmpegTool(object):
         return process.returncode, stdout or b"", stderr or b""
 
     def version(self):
+        # 先 resolve：settings 路径变化时会清空缓存并重新探测。
+        self.resolve()
         with self._lock:
             if self._version is not None:
                 return self._version
@@ -453,6 +590,8 @@ class FFmpegTool(object):
         return version
 
     def hwaccels(self):
+        # 先 resolve：settings 路径变化时会清空缓存并重新探测。
+        self.resolve()
         with self._lock:
             if self._hwaccels is not None:
                 return list(self._hwaccels)
@@ -474,16 +613,7 @@ class FFmpegTool(object):
         return list(accels)
 
     def hwaccel_label(self):
-        accels = self.hwaccels()
-        if "vaapi" in accels:
-            return "vaapi"
-        if "qsv" in accels:
-            return "qsv"
-        if "nvdec" in accels or "cuda" in accels:
-            return "nvdec"
-        if "d3d11va" in accels or "dxva2" in accels or "videotoolbox" in accels:
-            return "auto"
-        return "none"
+        return hwaccel_label_from(self.hwaccels())
 
     def probe_duration(self, path, timeout, stop_check=None):
         """解析 ffmpeg -i stderr 的 Duration（不依赖 ffprobe）。
@@ -542,8 +672,7 @@ class FFmpegTool(object):
     def extract_frame(self, path, timestamp, timeout, hwaccel_label="none",
                       stop_check=None):
         args = ["-nostdin", "-hide_banner", "-loglevel", "error", "-threads", "1"]
-        if hwaccel_label and hwaccel_label != "none":
-            args += ["-hwaccel", "auto"]
+        args += _hwaccel_flag_args(hwaccel_label)
         args += ["-ss", "%.6f" % float(timestamp), "-i", path,
                  "-frames:v", "1", "-vf", VIDEO_FILTER,
                  "-f", "rawvideo", "-pix_fmt", "gray", "-"]
@@ -573,8 +702,7 @@ class FFmpegTool(object):
             base_ts = timestamps[0]
             args = ["-nostdin", "-hide_banner", "-loglevel", "error",
                     "-threads", "1"]
-            if hwaccel_label and hwaccel_label != "none":
-                args += ["-hwaccel", "auto"]
+            args += _hwaccel_flag_args(hwaccel_label)
             args += ["-ss", "%.6f" % base_ts, "-i", path]
             for index, (timestamp, out_path) in enumerate(
                     zip(timestamps, outputs)):
@@ -729,20 +857,39 @@ def collect_asr_text(stdout, outdir):
     return ""
 
 
-def probe_ffmpeg(runtime_config=None):
-    """探测 ffmpeg 能力（进程内缓存，/api/meta 可用）。"""
-    tool = FFmpegTool()
+def probe_ffmpeg(runtime_config=None, settings=None):
+    """探测 ffmpeg 能力（进程内缓存，/api/meta 与 /api/diagnostics 共用）。
+
+    解析优先级见 FFmpegTool.resolve；缓存键包含解析出的路径/来源/
+    settings 配置路径，settings.ffmpeg_path 改变会得到新的探测结果。
+    返回字段兼容旧键（ffmpeg_path/ffmpeg_version），并新增
+    path/version/source/configured_path。
+    """
+    provider = (lambda: settings) if isinstance(settings, dict) else None
+    tool = FFmpegTool(settings_provider=provider,
+                      runtime_config=runtime_config)
     resolved = tool.resolve(runtime_config)
-    path = resolved[0] if resolved else None
-    key = path or ""
+    path = (resolved[0] if resolved else "") or ""
+    source = tool.source
+    configured = tool.configured_path
+    key = "%s|%s|%s" % (path, source, configured)
     with _PROBE_LOCK:
         cached = _PROBE_CACHE.get(key)
         if cached is not None:
             return dict(cached)
-    info = {"available": bool(path), "ffmpeg_path": path or "",
-            "ffmpeg_version": "unavailable", "hwaccels": []}
+    info = {
+        "available": bool(path),
+        "path": path,
+        "ffmpeg_path": path,
+        "version": "unavailable",
+        "ffmpeg_version": "unavailable",
+        "hwaccels": [],
+        "source": source,
+        "configured_path": configured,
+    }
     if path:
-        info["ffmpeg_version"] = tool.version()
+        info["version"] = tool.version()
+        info["ffmpeg_version"] = info["version"]
         info["hwaccels"] = tool.hwaccels()
     with _PROBE_LOCK:
         _PROBE_CACHE[key] = dict(info)
@@ -774,16 +921,38 @@ def video_cache_stats(runtime_config):
 
 
 def video_capabilities(runtime_config, settings=None):
+    """视频能力（/api/meta）：保留旧键，新增外部 FFmpeg 与硬解模式信息。"""
     settings = settings or {}
-    info = probe_ffmpeg(runtime_config)
+    info = probe_ffmpeg(runtime_config, settings)
     accels = info.get("hwaccels") or []
+    mode = str(settings.get("video_hwaccel") or "auto").strip().lower()
+    if mode not in config.VIDEO_HWACCEL_MODES:
+        mode = "auto"
+    report_label, _flag, fallback = hwaccel_for_mode(mode, accels)
     asr = asr_availability(settings, info.get("available"))
     return {
         "enabled": bool(settings.get("video_similarity_enabled", False)),
-        "ffmpeg_path": info.get("ffmpeg_path") or "",
-        "ffmpeg_version": info.get("ffmpeg_version") or "unavailable",
+        "ffmpeg_path": info.get("path") or "",
+        "ffmpeg_version": info.get("version") or "unavailable",
         "hwaccels": accels,
         "gpu_hint": bool(accels),
+        # 外部 FFmpeg 路径与来源（settings/env/which/unavailable）
+        "ffmpeg": {
+            "available": bool(info.get("available")),
+            "path": info.get("path") or "",
+            "version": info.get("version") or "unavailable",
+            "source": info.get("source") or "unavailable",
+            "configured_path": info.get("configured_path") or "",
+            "hwaccels": list(accels),
+        },
+        # 硬解模式：配置值、实际生效标签、显式模式不支持时的降级标记
+        "hwaccel_modes": list(config.VIDEO_HWACCEL_MODES),
+        "hwaccel_mode": mode,
+        "hwaccel_effective": report_label,
+        "hwaccel_fallback": bool(fallback),
+        # 当前 ffmpeg 实际支持的显式模式（UI 据此启用下拉项）：
+        # nvdec 在 NVIDIA 上通常以 cuda/cuvid 出现在 -hwaccels。
+        "hwaccel_supported": hwaccel_supported(accels),
         "asr": {
             "enabled": asr["enabled"],
             "configured": asr["configured"],
@@ -792,6 +961,7 @@ def video_capabilities(runtime_config, settings=None):
             "weight": asr["weight"],
         },
         "defaults": {
+            "ffmpeg_path": "",
             "video_similarity_enabled": False,
             "video_extensions": list(config.DEFAULT_VIDEO_EXTENSIONS),
             "video_sample_frames": config.VIDEO_DEFAULT_SAMPLE_FRAMES,
@@ -916,10 +1086,15 @@ def cache_key(identity, sample_frames, max_interval):
 
 class VideoEngine(object):
     def __init__(self, runtime_config, ffmpeg=None, ffmpeg_cmd=None,
-                 cache=None, timeout_cap=None, asr_timeout_cap=None):
+                 cache=None, timeout_cap=None, asr_timeout_cap=None,
+                 settings_provider=None):
         self.config = runtime_config
+        # settings provider 用于解析外部 ffmpeg 路径（settings.ffmpeg_path），
+        # 也供 capabilities() 返回当前配置；显式 ffmpeg/cmd 时优先级最高。
+        self.settings_provider = settings_provider
         if ffmpeg is None:
-            ffmpeg = FFmpegTool(cmd=ffmpeg_cmd)
+            ffmpeg = FFmpegTool(cmd=ffmpeg_cmd,
+                                settings_provider=settings_provider)
             ffmpeg.resolve(runtime_config)
         self.ffmpeg = ffmpeg
         self.timeout_cap = timeout_cap
@@ -938,6 +1113,11 @@ class VideoEngine(object):
         return self.cache
 
     def capabilities(self, settings=None):
+        if settings is None and self.settings_provider is not None:
+            try:
+                settings = self.settings_provider()
+            except Exception:
+                settings = None
         return video_capabilities(self.config, settings)
 
     @staticmethod
@@ -997,9 +1177,13 @@ class VideoEngine(object):
 
         n_eff = compute_n_eff(duration, sample_frames, max_interval)
         warning = (duration / n_eff) > max_interval
-        hw_label = "none"
-        if hwaccel_mode == "auto":
-            hw_label = self.ffmpeg.hwaccel_label()
+        # 硬解解析：auto=沿用 hwaccel_label()（ffmpeg 仍用 -hwaccel auto）；
+        # 显式模式=直接 -hwaccel <name>；不支持则回退 none 并标记 fallback。
+        hwaccel_mode = str(hwaccel_mode or "auto").strip().lower()
+        if hwaccel_mode not in config.VIDEO_HWACCEL_MODES:
+            hwaccel_mode = "auto"
+        hw_label, hw_flag, hw_fallback = hwaccel_for_mode(
+            hwaccel_mode, self.ffmpeg.hwaccels())
         frames = []
         software_fallback = False
         batch_size = self._frame_batch_size(options)
@@ -1013,7 +1197,7 @@ class VideoEngine(object):
             raws = None
             if len(batch_ts) > 1:
                 while True:
-                    label = "none" if software_fallback else hw_label
+                    label = "none" if software_fallback else hw_flag
                     try:
                         raws = self.ffmpeg.extract_frames_batch(
                             path, batch_ts, timeout, label, stop_check)
@@ -1024,10 +1208,11 @@ class VideoEngine(object):
                     except VideoStopped:
                         raise
                     except VideoSkip as exc:
-                        if not software_fallback and hw_label != "none":
+                        if not software_fallback and hw_flag != "none":
                             # 硬件解码失败 → 软件解码重试同一批
                             software_fallback = True
                             hw_label = "none"
+                            hw_flag = "none"
                             continue
                         raws = None
                         break
@@ -1038,7 +1223,7 @@ class VideoEngine(object):
                     if stop_check is not None and stop_check():
                         raise VideoStopped()
                     while True:
-                        label = "none" if software_fallback else hw_label
+                        label = "none" if software_fallback else hw_flag
                         try:
                             raw = self.ffmpeg.extract_frame(
                                 path, timestamp, timeout, label, stop_check)
@@ -1050,9 +1235,10 @@ class VideoEngine(object):
                         except VideoStopped:
                             raise
                         except VideoSkip as exc:
-                            if not software_fallback and hw_label != "none":
+                            if not software_fallback and hw_flag != "none":
                                 software_fallback = True
                                 hw_label = "none"
+                                hw_flag = "none"
                                 continue
                             self._cache_failure(cache, key, "decode",
                                                 exc.detail)
@@ -1075,6 +1261,8 @@ class VideoEngine(object):
             "frame_hex": hex_frames,
             "fingerprint": fingerprint,
             "hwaccel": hw_label,
+            "hwaccel_mode": hwaccel_mode,
+            "hwaccel_fallback": bool(hw_fallback or software_fallback),
             "low_confidence": False,
             "interval": duration / n_eff,
             "interval_warning": bool(warning),

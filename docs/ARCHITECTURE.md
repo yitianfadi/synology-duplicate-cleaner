@@ -1,7 +1,7 @@
 # 整体方案架构
 
 > 项目：**重复文件清理与字幕（Duplicate Cleaner & Subtitles）** · 群晖 DSM 7.x SPK 套件
-> 版本：1.1.0-0024
+> 版本：1.1.0-0025
 > 原则：**先扫描、出报告、人工确认、二次确认、可回收、全程审计**。任何情况下都不自动静默删除。
 
 ## 1. 目标与边界
@@ -58,7 +58,8 @@
           │
 ┌─────────▼───────────────────────────────────────────────────────────┐
 │ 数据目录 /var/packages/DuplicateCleaner/var（duplicatecleaner 700）│
-│  config.json  scans/*.json  deletions/*.jsonl  logs/*.log  audit.jsonl│
+│  settings.json  dupcleaner.sqlite3(+WAL)  plans/*.json  logs/*.log  │
+│  audit.jsonl（旧 scans/*.json、deletions/*.jsonl 仅作迁移来源）    │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -136,6 +137,8 @@ Linux 的 `st_ctime` 是 **inode 状态变更时间**，不是创建时间，复
 
 （详细线框图与交互见 `docs/UI_PROTOTYPE.md`）
 
+静态 SPA 采用 ES modules：`web/app.js` 为入口，常量/状态/DOM 工具/格式化/API/Toast/弹窗拆到 `web/js/` 下 8 个模块；无构建步骤、无第三方依赖。后端对 `.js/.css` 响应 `Cache-Control: no-cache`，升级后浏览器会重新校验模块文件。
+
 1. **登录页**：DSM 账号、密码、可选 2FA；说明仅管理员可用。
 2. **主框架**：顶部常驻风险提示条 + 顶部导航 + 内容区。
 3. **扫描页**：
@@ -210,7 +213,7 @@ Linux 的 `st_ctime` 是 **inode 状态变更时间**，不是创建时间，复
 - 后台线程逐文件执行，每完成一个写审计事件与进度；
 - 回收站模式：计算目标路径 → 创建父目录 → 同文件系统 `os.rename`；永久模式：`os.unlink`；
 - 失败/跳过不中断整体任务，最终状态 `completed/partial/failed`；
-- 结果写 `deletions/<job_id>.jsonl` 与 `audit.jsonl`，UI 轮询展示逐文件结果。
+- 逐文件结果写 SQLite `deletion_results`（`log_file` 仅作兼容标识）与 `audit.jsonl`，UI 轮询展示逐文件结果。
 
 ## 6. 群晖 API 调用点
 
@@ -260,6 +263,8 @@ Linux 的 `st_ctime` 是 **inode 状态变更时间**，不是创建时间，复
 - 进程以 `nice 10` + `ionice class 2 best-effort 7` 启动（若系统有 `ionice`）。
 - 单任务扫描；`max_files` 上限；结果分页；删除任务逐文件校验，避免一次性重哈希全部文件。
 - UI 轮询 800 ms，服务端返回轻量摘要；组列表分页 100 条。
+- 结果分页/搜索/排序走 SQLite 索引列（schema v2+）；schema v5 起 `scan_files` 路径搜索在 SQLite 支持 FTS5 + trigram 时用 `scan_files_fts`（触发器同步），否则自动回退 LIKE 子串。100k 明细基准（`qa/bench_search.py`）：FTS P95 ≈ 80 ms，强制 LIKE P95 ≈ 164 ms。
+- 「内容相似/视频」缓存仍落 SQLite；字幕 ASR 分片按任务/分片缓存，支持暂停续跑。
 
 ## 9. 兼容性与限制
 

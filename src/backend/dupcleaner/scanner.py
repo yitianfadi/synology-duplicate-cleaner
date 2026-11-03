@@ -382,8 +382,11 @@ class ScanManager(object):
         self._time_reader = time_reader or timeutil.read_creation_time
         self._executor_factory = executor_factory or (
             lambda workers: concurrent.futures.ThreadPoolExecutor(max_workers=workers))
+        # 默认注入 settings provider：VideoEngine 据此解析外部 ffmpeg 路径
+        # （settings.ffmpeg_path）并把硬解模式传给抽帧。
         self._video_engine_factory = video_engine_factory or (
-            lambda cfg: video_similarity.VideoEngine(cfg))
+            lambda cfg: video_similarity.VideoEngine(
+                cfg, settings_provider=self.settings.get))
         self._lock = threading.RLock()
         self._active_id = None
         self._states = {}

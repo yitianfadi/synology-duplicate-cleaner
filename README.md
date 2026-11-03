@@ -14,14 +14,16 @@
 - 📁 文件夹选择器：共享文件夹/子目录多选，排除指定目录
 - 🔍 **精准模式（默认）**：大小 → 头尾采样指纹 → 全量 SHA-256/MD5，完全一致才算重复（文件名不参与）
 - 🧠 **内容相似模式**：文本/PDF/DOCX/ODT/PNG 等特征向量 + MinHash/感知哈希检索，可调 0–100% 阈值；精准组与相似组分开展示
-- 🎬 **视频视觉相似（默认关闭）**：SPK 内置 FFmpeg（x86_64/aarch64），按总时长动态抽取 5–100 帧，生成时序 pHash 指纹并用 DTW 比较；独立分区，默认不勾选，支持组级/全局全选视频副本批量删除；指纹 SQLite 缓存、独立并发、硬解探测、低配提示
+- 🎬 **视频视觉相似（默认关闭）**：SPK 内置 FFmpeg（x86_64/aarch64），按总时长动态抽取 5–100 帧，生成时序 pHash 指纹并用 DTW 比较；独立分区，默认不勾选，支持组级/全局全选视频副本批量删除；指纹 SQLite 缓存、独立并发、硬解探测与显式硬解模式（auto/off/vaapi/qsv/nvdec/videotoolbox），可配置外部 FFmpeg 绝对路径（留空=内置/自动探测）
 - 🗣️ **云端字幕（实验，默认关闭）**：OpenAI 兼容 ASR（`/audio/transcriptions`）+ OpenAI 兼容 LLM（`/chat/completions`）翻译；FFmpeg 抽音频、自动分块、SRT/VTT/双语字幕下载；音频会发送到所配置的第三方服务，必须显式勾选确认
 - 🕒 保留策略：最晚创建（默认）/ 最早创建 / 指定路径；优先读取 `statx` btime；无创建时间时整组按修改时间自动选择并标记，拒绝用 `st_ctime` 冒充
 - 📊 分组报告：路径、大小、完整哈希、创建时间、修改时间、匹配类型、相似度；保留项高亮；可预览、导出 CSV
+- ⚡ 大库性能：结果分页/搜索/排序走 SQLite；`scan_files` 路径搜索在 SQLite 支持时使用 FTS5 trigram（100k 明细 P95 ≈ 80ms），不支持或搜索词 <3 字符自动回退 LIKE 子串（100k P95 ≈ 164ms）
 - 🛡️ 强安全删除：报告 → 手动确认 → 二次弹窗 → 服务端逐文件重校验 → 默认进回收站 → 审计日志
 - 🚧 图片/文档相似组默认不勾选、禁止组级全选/一键批量删除；必须勾选“人工复核”后逐条选择
 - 🎬 视频组默认不勾选；允许“全选本组/全选视频相似组副本”批量进入删除计划，仍需两次确认；ASR 为可选外部命令（默认关闭，不内置模型、不联网）
 - ⏯️ 扫描可暂停/继续/停止；精准/相似并发、哈希限速、特征缓存、低优先级（nice/ionice）
+- 🧩 前端为 ES modules（`app.js` 入口 + `js/` 下 8 个模块），无构建步骤、无第三方依赖；静态检查含模块图与无头浏览器冒烟
 - 🚫 跳过符号链接、空文件、隐藏/系统文件、自定义后缀；相似模式默认跳过压缩包/媒体/二进制大文件（它们仍参与哈希精准匹配）
 - 📜 扫描历史与操作日志持久化，可下载
 - ⚙️ 可选：大小区间、大小写后缀、保留指定路径、回收站/永久删除
@@ -33,7 +35,7 @@
 ```bash
 python build/fetch_ffmpeg.py   # 首次构建：下载两个架构的静态 FFmpeg 到 vendor/ffmpeg/
 python build/build_spk.py
-# 生成 dist/DuplicateCleaner-1.1.0-0024.spk
+# 生成 dist/DuplicateCleaner-1.1.0-0025.spk
 ```
 
 构建机需要 Python 3.8+；FFmpeg 二进制不提交到 Git，首次构建需运行 `build/fetch_ffmpeg.py`。重新生成图标需要 Pillow（仓库已带 PNG，可 `--no-icons`）。
@@ -41,7 +43,7 @@ python build/build_spk.py
 ### 2. 安装到 DSM
 
 1. DSM 套件中心先安装 **Python3**（3.8+）。
-2. 套件中心 → 手动安装 → 选择 `dist/DuplicateCleaner-1.1.0-0024.spk`。
+2. 套件中心 → 手动安装 → 选择 `dist/DuplicateCleaner-1.1.0-0025.spk`。
 3. 启动套件；从 DSM 主菜单打开“重复文件清理与字幕”，或访问 `http://<NAS>:8787/`。
 4. 使用 administrators 组账号登录。
 5. 按页面黄色“权限提示”给 `duplicatecleaner` 系统内部用户授权目标共享文件夹（读取；删除副本需读取/写入）。
@@ -68,7 +70,16 @@ python src/backend/app.py --host 127.0.0.1 --port 8787 --data-dir ./data --web-d
 ```bash
 cd src/backend
 python -m unittest discover -s tests -v
-node --check ../web/app.js
+
+# 前端模块语法/图与静态验收
+node qa/check_web_modules.mjs
+python qa/static_checks.py --skip-tests
+
+# 浏览器冒烟（无头 Chromium；本机无浏览器时自动 SKIP）
+python qa/web_smoke.py
+
+# 100k 明细路径搜索基准（FTS5 vs 强制 LIKE）
+python qa/bench_search.py
 ```
 
 验收脚本与报告见 `qa/`（集成测试、需求逐项对照、SPK 结构检查）。
@@ -119,13 +130,15 @@ dist/               构建产物（.spk 与 SHA256）
 - 本工具不判断业务语义；精准组只保证内容哈希一致，相似组只保证特征相似，均需人工确认可删。
 - 相似模式不依赖云端 AI/网络，不上传文件；JPEG 感知哈希在未安装 Pillow 时降级为字节特征（低置信标记）。
 - 图片/文档相似计算默认跳过压缩包、媒体、可执行文件、超大文件；这些文件仍参与哈希精准匹配。
-- 视频相似需要开启总开关，单视频解码较慢；SPK 内置 FFmpeg 为 4.1 静态构建，硬解能力取决于 DSM 机型/内核；无硬解会自动回退软件解码。
+- 视频相似需要开启总开关，单视频解码较慢；SPK 内置 FFmpeg 为 4.1 静态构建，硬解能力取决于 DSM 机型/内核；无硬解会自动回退软件解码。外部 FFmpeg 路径必须是存在且可执行的绝对路径；显式硬解模式若不被该 FFmpeg 支持会回退软件并标记 `hwaccel_fallback`。
 - 视频相似不支持剧情语义、剪辑乱序、换脸/重绘伪原创；片段 vs 完整长视频不承诺。
 - ASR 为可选外部命令（默认关闭）：需用户自行配置 whisper 等本地命令与模型；未配置时视频扫描仍按视觉指纹完成，不失败。
 - 云端字幕默认关闭：启用后音频和字幕文本会发送到所配置的 ASR/LLM 服务；API Key 保存在 `var/settings.json`，GET 接口不回传明文；请只在可信网络/合规场景使用。
 - 云端字幕为 OpenAI 兼容接口，不绑定厂商；ASR 模型必须返回带时间戳的 `verbose_json` 片段或 SRT，纯文本模型无法生成字幕。
 - v0012 起扫描/组/文件/删除任务/特征缓存/字幕任务元数据存入 `<var>/dupcleaner.sqlite3`；设置、审计、运行日志、字幕文件仍保留文件形式。升级/备份时请连同 `dupcleaner.sqlite3` 与 `var/` 一起备份。
 - v0014 起支持升级前暂停扫描并写断点；升级后需在扫描历史中手动点“继续扫描”，不会自动续跑。字幕任务仍会因重启失败，需要重新提交；删除任务不会续跑。
+- v0025 起 SQLite schema v5：`scan_files` 不再冗余保存 payload（组 payload 为真源）；FTS5 trigram 路径搜索仅在 FTS5 + trigram 都可用时启用，否则自动 LIKE 回退；搜索词 <3 字符始终走 LIKE。
+- ES modules 需要通过后端 HTTP 访问页面（`http://<NAS>:8787/`），不能直接双击 `web/index.html`（浏览器 `file://` 模块 CORS 限制）。
 
 ## License
 

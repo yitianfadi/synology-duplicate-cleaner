@@ -257,6 +257,9 @@ class DcRequestHandler(BaseHTTPRequestHandler):
         if os.path.basename(candidate) == "index.html":
             headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
             headers["Content-Security-Policy"] = CSP
+        elif os.path.splitext(candidate)[1].lower() in (".js", ".css"):
+            # ES modules 拆分后，升级时必须让浏览器重新校验 js/css，避免缓存旧模块。
+            headers["Cache-Control"] = "no-cache, must-revalidate"
         else:
             headers["Cache-Control"] = "public, max-age=3600"
         return Response(

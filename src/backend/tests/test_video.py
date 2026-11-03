@@ -244,6 +244,21 @@ class VideoSettingsTest(unittest.TestCase):
                     self.assertIn(key, video)
                 self.assertFalse(video["enabled"])
                 self.assertEqual(video["defaults"]["video_sample_frames"], 20)
+                # v0021 P1：外部 FFmpeg 路径与硬解模式能力（旧键保留）
+                ffmpeg = video["ffmpeg"]
+                for key in ("available", "path", "version", "source",
+                            "configured_path", "hwaccels"):
+                    self.assertIn(key, ffmpeg)
+                self.assertIn(ffmpeg["source"],
+                              ("settings", "env", "which", "unavailable"))
+                for key in ("hwaccel_modes", "hwaccel_mode",
+                            "hwaccel_effective", "hwaccel_fallback"):
+                    self.assertIn(key, video)
+                self.assertEqual(video["hwaccel_modes"],
+                                 list(config.VIDEO_HWACCEL_MODES))
+                self.assertIn("vaapi", video["hwaccel_modes"])
+                self.assertIn("videotoolbox", video["hwaccel_modes"])
+                self.assertEqual(video["defaults"]["ffmpeg_path"], "")
                 self.assertIn("asr", video)
                 for key in ("enabled", "configured", "available",
                             "reason", "weight"):
@@ -303,6 +318,175 @@ class PhashAndDtwTest(unittest.TestCase):
         clusters = video_similarity.build_video_groups(items, 90)
         self.assertEqual(len(clusters), 1)
         self.assertEqual(sorted(clusters[0]["indices"]), [0, 1])
+
+
+class FFmpegSettingsPriorityTest(unittest.TestCase):
+    """v0021 P1：外部 FFmpeg 路径解析优先级 / 来源 / 设置缓存失效。"""
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp(prefix="dc-ffmpeg-priority-")
+        self.settings_exe = self._copy_executable("settings-ffmpeg")
+        self.env_exe = self._copy_executable("env-ffmpeg")
+        self.which_exe = self._copy_executable("which-ffmpeg")
+        self.runtime_config = config.RuntimeConfig(
+            data_dir=os.path.join(self.tmpdir, "data"),
+            dev_mode=True, dev_roots=[], environ={})
+        video_similarity._PROBE_CACHE.clear()
+
+    def tearDown(self):
+        video_similarity._PROBE_CACHE.clear()
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def _copy_executable(self, name):
+        path = os.path.join(self.tmpdir, name)
+        shutil.copyfile(sys.executable, path)
+        try:
+            os.chmod(path, 0o755)
+        except OSError:
+            pass
+        return path
+
+    def test_settings_over_env(self):
+        with mock.patch.dict(os.environ, {"DUP_FFMPEG_PATH": self.env_exe}):
+            tool = video_similarity.FFmpegTool(
+                settings_provider=lambda: {"ffmpeg_path": self.settings_exe})
+            self.assertEqual(tool.resolve(self.runtime_config),
+                             [self.settings_exe])
+            self.assertEqual(tool.source, "settings")
+            self.assertEqual(tool.configured_path, self.settings_exe)
+
+    def test_env_when_settings_empty(self):
+        with mock.patch.dict(os.environ, {"DUP_FFMPEG_PATH": self.env_exe}):
+            tool = video_similarity.FFmpegTool(
+                settings_provider=lambda: {"ffmpeg_path": ""})
+            self.assertEqual(tool.resolve(self.runtime_config), [self.env_exe])
+            self.assertEqual(tool.source, "env")
+            self.assertEqual(tool.configured_path, "")
+
+    def test_runtime_config_path_used_as_env_level(self):
+        cfg_exe = self._copy_executable("cfg-ffmpeg")
+        runtime_config = config.RuntimeConfig(
+            data_dir=os.path.join(self.tmpdir, "data2"),
+            dev_mode=True, dev_roots=[],
+            environ={"DUP_FFMPEG_PATH": cfg_exe})
+        with mock.patch.dict(os.environ, {"DUP_FFMPEG_PATH": ""}):
+            tool = video_similarity.FFmpegTool()
+            self.assertEqual(tool.resolve(runtime_config), [cfg_exe])
+            self.assertEqual(tool.source, "env")
+
+    def test_which_fallback(self):
+        with mock.patch.dict(os.environ, {"DUP_FFMPEG_PATH": ""}):
+            with mock.patch.object(video_similarity.shutil, "which",
+                                   return_value=self.which_exe):
+                tool = video_similarity.FFmpegTool()
+                self.assertEqual(tool.resolve(self.runtime_config),
+                                 [self.which_exe])
+                self.assertEqual(tool.source, "which")
+
+    def test_explicit_cmd_wins(self):
+        tool = video_similarity.FFmpegTool(cmd=[self.which_exe, "-fake"])
+        with mock.patch.dict(os.environ, {"DUP_FFMPEG_PATH": self.env_exe}):
+            self.assertEqual(tool.resolve(self.runtime_config),
+                             [self.which_exe, "-fake"])
+            self.assertEqual(tool.source, "explicit")
+            self.assertEqual(tool.configured_path, "")
+
+    def test_settings_change_clears_probe_cache(self):
+        settings = {"ffmpeg_path": self.settings_exe}
+        tool = video_similarity.FFmpegTool(
+            settings_provider=lambda: settings)
+        tool.resolve(self.runtime_config)
+        self.assertEqual(tool.path, self.settings_exe)
+        # 模拟已探测到 version/hwaccels，settings 路径变化后必须清空。
+        tool._version = "6.1.1-fake"
+        tool._hwaccels = ["vaapi"]
+        settings["ffmpeg_path"] = self.env_exe
+        self.assertEqual(tool.resolve(self.runtime_config), [self.env_exe])
+        self.assertIsNone(tool._version)
+        self.assertIsNone(tool._hwaccels)
+        self.assertEqual(tool.configured_path, self.env_exe)
+        self.assertEqual(tool.source, "settings")
+
+    def test_unavailable_source(self):
+        with mock.patch.dict(os.environ, {"DUP_FFMPEG_PATH": ""}):
+            with mock.patch.object(video_similarity.shutil, "which",
+                                   return_value=None):
+                tool = video_similarity.FFmpegTool()
+                self.assertIsNone(tool.resolve(self.runtime_config))
+                self.assertFalse(tool.available())
+                self.assertEqual(tool.source, "unavailable")
+                self.assertEqual(tool.configured_path, "")
+
+    def test_hwaccel_mode_resolution(self):
+        resolve = video_similarity.hwaccel_for_mode
+        self.assertEqual(resolve("off", ["vaapi"]), ("none", "none", False))
+        self.assertEqual(resolve("auto", ["vaapi", "qsv"]),
+                         ("vaapi", "auto", False))
+        self.assertEqual(resolve("auto", []), ("none", "none", False))
+        self.assertEqual(resolve("vaapi", ["vaapi"]),
+                         ("vaapi", "vaapi", False))
+        self.assertEqual(resolve("qsv", ["vaapi"]), ("none", "none", True))
+        # NVIDIA 的 -hwaccels 通常列出 cuda/cuvid，而非 nvdec：需映射为实际名称。
+        self.assertEqual(resolve("nvdec", ["cuda"]), ("nvdec", "cuda", False))
+        self.assertEqual(resolve("nvdec", ["cuvid"]), ("nvdec", "cuvid", False))
+        self.assertEqual(resolve("nvdec", ["nvdec"]), ("nvdec", "nvdec", False))
+        self.assertEqual(resolve("nvdec", ["vaapi"]), ("none", "none", True))
+        self.assertEqual(resolve("videotoolbox", ["videotoolbox"]),
+                         ("videotoolbox", "videotoolbox", False))
+        self.assertEqual(video_similarity.hwaccel_supported([]), [])
+        self.assertEqual(video_similarity.hwaccel_supported(["cuda"]), ["nvdec"])
+        self.assertEqual(
+            video_similarity.hwaccel_supported(["vaapi", "qsv", "cuda"]),
+            ["vaapi", "qsv", "nvdec"])
+
+    def test_probe_ffmpeg_reports_settings_source(self):
+        with mock.patch.object(video_similarity.FFmpegTool, "version",
+                               return_value="6.1.1-fake"):
+            with mock.patch.object(video_similarity.FFmpegTool, "hwaccels",
+                                   return_value=["vaapi"]):
+                info = video_similarity.probe_ffmpeg(
+                    self.runtime_config, {"ffmpeg_path": self.settings_exe})
+        self.assertTrue(info["available"])
+        self.assertEqual(info["path"], self.settings_exe)
+        self.assertEqual(info["source"], "settings")
+        self.assertEqual(info["configured_path"], self.settings_exe)
+        self.assertEqual(info["version"], "6.1.1-fake")
+        self.assertEqual(info["hwaccels"], ["vaapi"])
+
+    def test_capabilities_hwaccel_fallback(self):
+        fake_info = {
+            "available": True, "path": "/fake/ffmpeg", "version": "6.0",
+            "hwaccels": ["vaapi"], "source": "settings",
+            "configured_path": "/fake/ffmpeg",
+        }
+        with mock.patch.object(video_similarity, "probe_ffmpeg",
+                               return_value=fake_info):
+            caps = video_similarity.video_capabilities(
+                self.runtime_config, {"video_hwaccel": "qsv"})
+            self.assertEqual(caps["ffmpeg"]["source"], "settings")
+            self.assertEqual(caps["ffmpeg"]["configured_path"], "/fake/ffmpeg")
+            self.assertIn("qsv", caps["hwaccel_modes"])
+            self.assertEqual(caps["hwaccel_mode"], "qsv")
+            self.assertEqual(caps["hwaccel_effective"], "none")
+            self.assertTrue(caps["hwaccel_fallback"])
+            caps2 = video_similarity.video_capabilities(
+                self.runtime_config, {"video_hwaccel": "vaapi"})
+            self.assertEqual(caps2["hwaccel_effective"], "vaapi")
+            self.assertFalse(caps2["hwaccel_fallback"])
+
+    def test_engine_and_subtitle_settings_provider(self):
+        harness = Harness()
+        try:
+            engine = harness.services.scanner._video_engine_factory(
+                harness.config)
+            provider = engine.ffmpeg._settings_provider
+            self.assertTrue(callable(provider))
+            self.assertIn("ffmpeg_path", provider())
+            subtitle_provider = harness.services.subtitles.ffmpeg._settings_provider
+            self.assertTrue(callable(subtitle_provider))
+            self.assertIn("ffmpeg_path", subtitle_provider())
+        finally:
+            harness.cleanup()
 
 
 class FFmpegLocateTest(unittest.TestCase):
@@ -459,6 +643,51 @@ class FFmpegProbeTest(FakeFFmpegBase):
         with self.assertRaises(video_similarity.VideoSkip) as ctx:
             engine.analyze(video, self._video_options())
         self.assertEqual(ctx.exception.reason, "error")
+
+
+class HwaccelExtractionTest(FakeFFmpegBase):
+    """v0021 P1：显式硬解模式传参/降级（fake ffmpeg，不依赖真实视频）。"""
+
+    def _run_with_log(self, video, hwaccel):
+        log_path = os.path.join(self.harness.tmpdir, "hw-%s.log" % hwaccel)
+        with mock.patch.dict(os.environ, {"FAKE_FFMPEG_LOG": log_path}):
+            analysis = self._engine().analyze(
+                video, self._video_options(video_hwaccel=hwaccel))
+        with open(log_path, "r", encoding="utf-8") as handle:
+            lines = [line for line in handle.read().splitlines() if line]
+        return analysis, lines
+
+    def test_explicit_mode_passes_named_hwaccel(self):
+        video = make_video(os.path.join(self.root, "explicit.mp4"), seed=9)
+        analysis, lines = self._run_with_log(video, "vaapi")
+        self.assertEqual(analysis["hwaccel"], "vaapi")
+        self.assertEqual(analysis["hwaccel_mode"], "vaapi")
+        self.assertFalse(analysis["hwaccel_fallback"])
+        self.assertTrue(any("-hwaccel vaapi" in line for line in lines))
+        self.assertFalse(any("-hwaccel auto" in line for line in lines))
+
+    def test_unsupported_explicit_mode_falls_back_none(self):
+        # fake ffmpeg 的 -hwaccels 只有 vaapi/qsv，videotoolbox 不存在 → 回退 none
+        video = make_video(os.path.join(self.root, "unsupported.mp4"), seed=10)
+        analysis, lines = self._run_with_log(video, "videotoolbox")
+        self.assertEqual(analysis["hwaccel"], "none")
+        self.assertTrue(analysis["hwaccel_fallback"])
+        # -hwaccels 是能力探测参数，这里只检查真正的 -hwaccel 抽帧参数。
+        self.assertFalse(any("-hwaccel" in line.split() for line in lines))
+
+    def test_auto_mode_reports_detected_label(self):
+        video = make_video(os.path.join(self.root, "auto.mp4"), seed=11)
+        analysis, lines = self._run_with_log(video, "auto")
+        self.assertEqual(analysis["hwaccel"], "vaapi")
+        self.assertFalse(analysis["hwaccel_fallback"])
+        self.assertTrue(any("-hwaccel auto" in line for line in lines))
+
+    def test_off_mode_never_passes_hwaccel(self):
+        video = make_video(os.path.join(self.root, "off.mp4"), seed=12)
+        analysis, lines = self._run_with_log(video, "off")
+        self.assertEqual(analysis["hwaccel"], "none")
+        self.assertFalse(analysis["hwaccel_fallback"])
+        self.assertFalse(any("-hwaccel" in line.split() for line in lines))
 
 
 class VideoScanTest(FakeFFmpegBase):

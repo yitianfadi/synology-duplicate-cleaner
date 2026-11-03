@@ -369,6 +369,103 @@ class SqlGroupsPageParityTest(unittest.TestCase):
         finally:
             self.store.iter_scan_groups = original
 
+    # -- v5: FTS5(trigram) 路径搜索与 LIKE 回退 --------------------------
+    def _require_fts(self):
+        if not self.store.db.fts_enabled:
+            self.skipTest("SQLite 不支持 FTS5 trigram")
+
+    def test_fts_like_parity_and_escaping(self):
+        self._require_fts()
+        needles = ("alpha", "ALPHA", "ecb01", "video-", "percent%", "under_",
+                   ".txt", "eta", "doc", "no-such-file", 'a"b', "文档-a")
+        for needle in needles:
+            for sort in SORT_KEYS:
+                for match_type in (None, "exact", "similar", "video"):
+                    fts_page = self.store.query_scan_groups_page(
+                        self.scan_id, offset=0, limit=100, needle=needle,
+                        sort=sort, match_type=match_type, use_fts=True)
+                    like_page = self.store.query_scan_groups_page(
+                        self.scan_id, offset=0, limit=100, needle=needle,
+                        sort=sort, match_type=match_type, use_fts=False)
+                    expected = _reference_page(
+                        self.groups, 0, 100, needle.strip().lower(), sort,
+                        match_type)
+                    self.assertEqual(fts_page["total"], expected["total"],
+                                     "needle=%r sort=%s match=%r"
+                                     % (needle, sort, match_type))
+                    self.assertEqual(fts_page["total"], like_page["total"])
+                    self.assertEqual(
+                        [item["group_id"] for item in fts_page["groups"]],
+                        [item["group_id"] for item in expected["groups"]])
+        # 短 needle（<3）即使请求 FTS 也必须回退 LIKE 子串语义
+        for needle in ("ab", "%", "_", "文"):
+            forced = self.store.query_scan_groups_page(
+                self.scan_id, needle=needle, use_fts=True)
+            like_page = self.store.query_scan_groups_page(
+                self.scan_id, needle=needle, use_fts=False)
+            self.assertEqual(forced["total"], like_page["total"])
+        # 自动路径（scanner.groups_page）在 FTS 可用时与参考实现一致
+        got = self.scanner.groups_page(self.scan_id, q="alpha", limit=100)
+        expected = _reference_page(self.groups, 0, 100, "alpha",
+                                   "wasted_desc", None)
+        self.assertEqual(got["total"], expected["total"])
+
+    def test_fts_triggers_cleanup_on_rewrite_and_delete(self):
+        self._require_fts()
+        phrase = db_module.fts_path_phrase(
+            "/share/docs/exact-00/alpha-00.txt")
+
+        def match_count(text):
+            return int(self.store.db.scalar(
+                "SELECT COUNT(*) FROM scan_files_fts"
+                " WHERE scan_files_fts MATCH ?", (text,), 0) or 0)
+
+        self.assertGreater(match_count(phrase), 0)
+        renamed = []
+        for group in self.groups:
+            group = dict(group)
+            files = []
+            for file_info in group.get("files") or []:
+                file_info = dict(file_info)
+                file_info["path"] = file_info["path"].replace(
+                    "/share/docs/", "/share/docs/renamed-")
+                file_info["name"] = os.path.basename(file_info["path"])
+                files.append(file_info)
+            group["files"] = files
+            renamed.append(group)
+        self.store.write_scan_groups(self.scan_id, renamed)
+        self.assertEqual(match_count(phrase), 0)
+        self.assertGreater(
+            match_count(db_module.fts_path_phrase("renamed-")), 0)
+        self.store.delete_scan(self.scan_id)
+        self.assertEqual(match_count(db_module.fts_path_phrase("renamed-")), 0)
+        self.assertEqual(int(self.store.db.scalar(
+            "SELECT COUNT(*) FROM scan_files", (), 0) or 0), 0)
+
+    def test_runtime_fts_error_degrades_to_like(self):
+        self._require_fts()
+        original = self.store.db.execute
+        calls = {"fts": 0}
+
+        def flaky_execute(sql, params=()):
+            if "scan_files_fts MATCH" in sql:
+                calls["fts"] += 1
+                raise sqlite3.OperationalError("forced fts failure")
+            return original(sql, params)
+
+        self.store.db.execute = flaky_execute
+        try:
+            got = self.store.query_scan_groups_page(
+                self.scan_id, needle="alpha", use_fts=True)
+        finally:
+            self.store.db.execute = original
+        self.assertGreaterEqual(got["total"], 1)
+        self.assertGreaterEqual(calls["fts"], 1)
+        self.assertFalse(self.store.db.fts_enabled)
+        like_page = self.store.query_scan_groups_page(
+            self.scan_id, needle="alpha", use_fts=False)
+        self.assertEqual(got["total"], like_page["total"])
+
     def test_write_append_delete_keep_scan_files_consistent(self):
         scan_id = scanner_module.make_scan_id()
         self.store.save_scan_meta(scan_id, {

@@ -40,18 +40,30 @@ scan_groups(
   payload_json TEXT NOT NULL,
   PRIMARY KEY (scan_id, ordinal)
 );
+-- v5：scan_files 只存路径/分组/保留/勾选，不再冗余保存 payload_json
+-- （group payload 才是结果真源）。
 CREATE TABLE scan_files(
   scan_id TEXT NOT NULL,
   group_id TEXT NOT NULL,
-  file_id TEXT,
+  file_id TEXT NOT NULL,
   path TEXT NOT NULL,
-  size INTEGER,
-  is_keep INTEGER,
-  default_selected INTEGER,
-  payload_json TEXT
+  size INTEGER NOT NULL DEFAULT 0,
+  is_keep INTEGER NOT NULL DEFAULT 0,
+  default_selected INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (scan_id, group_id, file_id)
 );
 CREATE INDEX idx_scan_files_path ON scan_files(scan_id,path);
+CREATE INDEX idx_scan_files_group ON scan_files(scan_id,group_id);
 CREATE INDEX idx_scan_groups_type ON scan_groups(scan_id, match_type);
+
+-- v5：FTS5 外部内容索引（仅当 SQLite 支持 FTS5 + trigram tokenizer 时创建；
+-- content_rowid 指向 scan_files.rowid，三个触发器保证增删改同步）。
+CREATE VIRTUAL TABLE scan_files_fts USING fts5(
+  path, content='scan_files', content_rowid='rowid', tokenize='trigram'
+);
+CREATE TRIGGER scan_files_fts_ai AFTER INSERT ON scan_files ...
+CREATE TRIGGER scan_files_fts_ad AFTER DELETE ON scan_files ...
+CREATE TRIGGER scan_files_fts_au AFTER UPDATE ON scan_files ...
 
 deletion_jobs(
   job_id TEXT PRIMARY KEY,
@@ -116,7 +128,9 @@ subtitle_jobs(
 旧 JSON 兼容：
 - v2 起 scan_groups 增加 wasted_bytes/size/similarity_score/created_epoch，scan_files 保存路径/保留/勾选明细，供 SQL 分页/搜索/排序。
 - v3 起暂停断点 FileRecord 拆到 scan_checkpoint_records，scan_checkpoints 只存 stage/progress/stats；旧 payload records 仍可回退读取。
-- 启动时检测 `scans/*/meta.json`、`groups.jsonl`、`deletions/*.meta.json`、`*.jsonl`、`feature_cache.json`，导入 SQLite；v1→v2 从 payload 回填。
+- v4 起字幕任务 ASR 分片缓存落 subtitle_chunks，支持暂停/续跑。
+- v5 起 scan_files 去掉 payload_json；v4→v5 用“建新表→INSERT SELECT→DROP→RENAME→重建索引”迁移（兼容旧 SQLite，不依赖 DROP COLUMN），行数/路径/分组数据不变。
+- 启动时 `scans/*/meta.json`、`groups.jsonl`、`deletions/*.meta.json`、`*.jsonl`、`feature_cache.json`，导入 SQLite；v1→v2 从 payload 回填。
 - 导入使用 INSERT OR IGNORE，幂等；不删除源文件；写 `schema_meta('migrated_v1')=1`。
 - 读取时 DB 优先；空则回退旧 JSON。
 - 删除扫描/任务时同时清理旧 JSON 文件（如果存在）。
@@ -133,6 +147,25 @@ subtitle_jobs(
 - API 分页/搜索可基于 DB，但本版至少保证迭代不读全文件。
 - 每 N 组批量事务；WAL checkpoint 在退出/低峰执行。
 - 数据库损坏：启动时备份 `dupcleaner.sqlite3.corrupt-<ts>` 并重建空库；旧 JSON 可重新导入。
+
+### 4.1 FTS5(trigram) 路径搜索（schema v5）
+
+- 能力探测：打开 DB 时在临时表真实执行 `CREATE VIRTUAL TABLE ... fts5(path, tokenize='trigram')` 并删除；**只有 FTS5 与 trigram tokenizer 都可用才启用**（仅 FTS5 而 trigram 不可用时 unicode61 不满足子串语义，继续 LIKE）。
+- 启用时创建 `scan_files_fts(content='scan_files', content_rowid='rowid', tokenize='trigram')` + 3 个 AFTER INSERT/DELETE/UPDATE 触发器，使写入/重写/删除自动同步；打开时若索引缺失/触发器缺失/行数不一致会 rebuild，并记录 `scan_files 行数 == FTS 行数` 一致性日志。
+- 查询语义（与旧 LIKE 子串、ASCII 大小写不敏感一致）：
+  - `needle` 长度 >= 3 且 FTS 可用：路径走 `scan_files_fts MATCH "短语"`（双引号转义），命中 group_id 物化到连接级 TEMP 表后再参与 COUNT/分页，避免 IN 子查询被优化器逐组重算；
+  - `needle` 长度 < 3、或 FTS 不可用/运行时查询报错：自动回退 `lower(path) LIKE '%needle%' ESCAPE '\'`（%/_/\ 按字面转义）；
+  - group hash 搜索条件始终 LIKE，不受 FTS 影响。
+- 运行时 FTS 查询报错只在本连接降级 LIKE 并记 warning，不崩溃、不改主数据；若 DB 曾在支持 FTS 的环境建过索引、之后在不支持 FTS5/trigram 的环境打开，启动时安全 DROP 触发器与 FTS 派生表（不动 scan_files 主数据）并回退 LIKE，避免触发器写失败。
+- 基准（`python qa/bench_search.py`，10k 组 × 10 文件 = 100k scan_files，本机 Python 3.12/SQLite 3.45）：
+  | 场景 | P50 | P95 |
+  |---|---|---|
+  | FTS 命中（100 组） | 77.2 ms | 79.1 ms |
+  | FTS 未命中 | 62.7 ms | 70.9 ms |
+  | 强制 LIKE 命中 | 162.0 ms | 164.4 ms |
+  | 强制 LIKE 未命中 | 151.4 ms | 155.7 ms |
+  目标 FTS P95 < 500ms：PASS。写入 100k 行（含 FTS 触发器）约 7.1s（一次性扫描入库成本；查询收益显著）。
+  注：不同机器/负载下实测 P95 约在 80~400ms 之间波动，仍满足目标。
 
 ## 5. 诊断/备份/维护
 
@@ -152,6 +185,7 @@ subtitle_jobs(
 
 - 迁移：旧 scans/deletions/feature_cache JSON 导入且幂等；DB 优先。
 - CRUD：meta/groups/jobs/results/feature cache/checkpoint。
+- v4→v5 迁移（scan_files 去 payload_json）、FTS5 trigram 与 LIKE 搜索/转义等价、短 needle/无 FTS 回退、触发器写入/重写/删除同步、100k 搜索基准。
 - 并发读写、WAL、损坏恢复、schema version。
 - 中断状态标记。
 - 现有 219 测试继续通过。

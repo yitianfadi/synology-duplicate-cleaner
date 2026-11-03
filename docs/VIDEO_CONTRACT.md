@@ -14,7 +14,8 @@
 | video_max_sample_interval_sec | 300 | 60..600 |
 | video_similarity_threshold | 90 | 0..100 |
 | video_concurrency | 1 | 1..2 |
-| video_hwaccel | "auto" | auto/off |
+| ffmpeg_path | "" | 外部 FFmpeg 路径；空=内置/自动探测；非空必须是存在且可执行的绝对路径（≤512） |
+| video_hwaccel | "auto" | auto/off/vaapi/qsv/nvdec/videotoolbox；显式模式不受支持时回退 none |
 | video_max_file_mb | 8192 | 1..102400 |
 | video_timeout_sec | 180 | 30..1800 |
 | video_cache | true | 布尔 |
@@ -29,14 +30,20 @@ ASR 语音辅助为可选外部命令（默认关闭，不内置模型/不联网
 ## 2. FFmpeg
 
 - 由 SPK 自带 Linux 静态 FFmpeg（x86_64 + aarch64），启动脚本按 `uname -m` 导出 `DUP_FFMPEG_PATH`。
-- 后端优先使用 `DUP_FFMPEG_PATH`；开发模式可回退 PATH 中的 `ffmpeg`；可配置外部路径（企业可换带硬解的 ffmpeg）。
+- 解析优先级（v0021 P1）：**显式 cmd > settings.ffmpeg_path > DUP_FFMPEG_PATH / runtime_config.ffmpeg_path > PATH 中的 ffmpeg**。settings.ffmpeg_path 为空表示内置/自动探测；设置变化时重新解析并清空 version/hwaccels 缓存。
+- 解析来源 `source`：settings / env / which / unavailable；`configured_path` 为设置中显式配置的路径（空=自动）。
 - 不依赖 ffprobe：用 `ffmpeg -i` stderr 的 `Duration:` 解析时长；解析失败则跳过并记录。
 - 所有调用必须：`-nostdin -hide_banner -loglevel error`、参数数组、无 shell；单次超时；停止扫描时 kill 子进程。
 - 硬件解码：
-  - 检测 `ffmpeg -hwaccels`；auto 时尝试 `-hwaccel auto`；
-  - 失败自动回退软件解码；
-  - 每个视频记录实际 hwaccel（none/vaapi/qsv/nvdec）。
-- 后端 `/api/meta` 增加 `video` 能力：enabled, ffmpeg_path, ffmpeg_version, hwaccels, gpu_hint, default settings。
+  - 检测 `ffmpeg -hwaccels`；
+  - `off`：不加 `-hwaccel`（纯软件解码）；`auto`：沿用旧逻辑用 `-hwaccel auto` 并上报探测到的能力标签；
+  - 显式 `vaapi/qsv/nvdec/videotoolbox`：使用 `-hwaccel <name>`；若该名称不在 `ffmpeg -hwaccels` 列表则回退 none（能力接口 `hwaccel_fallback=true`）；`nvdec` 归一为 ffmpeg 实际名称（NVIDIA 上通常是 `cuda`，旧版本为 `cuvid`）；
+  - 抽帧失败自动回退软件解码；
+  - 每个视频记录实际使用的 hwaccel（none/vaapi/qsv/nvdec）与 `hwaccel_fallback`。
+- 后端 `/api/meta` 的 `video` 能力：enabled, ffmpeg_path/ffmpeg_version（旧键兼容）, hwaccels, gpu_hint, default settings，以及：
+  - `ffmpeg{available,path,version,source,configured_path,hwaccels}`；
+  - `hwaccel_modes`（完整枚举）、`hwaccel_supported`（当前 ffmpeg 实际支持的显式模式，UI 据此启用下拉项，nvdec 已归一）、`hwaccel_mode`（当前设置）、`hwaccel_effective`（实际生效标签）、`hwaccel_fallback`。
+- `/api/diagnostics` 的 `ffmpeg` 块：available/path/version/hwaccels/gpu_hint + configured_path/source/hwaccel/hwaccel_mode/hwaccel_fallback。
 
 ## 3. 动态采样与指纹
 

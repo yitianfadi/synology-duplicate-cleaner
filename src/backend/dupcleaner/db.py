@@ -32,7 +32,16 @@ DB_FILENAME = "dupcleaner.sqlite3"
 # v3（v0017 优化 plan B）：暂停断点的 FileRecord 列表拆到 scan_checkpoint_records，
 # checkpoint payload 只保留 stage/progress/stats/record_count，避免单个巨大 JSON。
 # v4（v0019 优化 plan C）：字幕任务 ASR 分片结果落 subtitle_chunks，支持暂停/续跑。
-CURRENT_SCHEMA_VERSION = 4
+# v5（v0025 优化 P1）：scan_files 去掉冗余 payload_json；FTS5(trigram) 路径索引
+# + 触发器同步，trigram 不可用时自动回退 LIKE 子串搜索。
+CURRENT_SCHEMA_VERSION = 5
+FTS_TABLE = "scan_files_fts"
+FTS_TRIGGER_NAMES = (
+    "scan_files_fts_ai",
+    "scan_files_fts_ad",
+    "scan_files_fts_au",
+)
+FTS_MIN_NEEDLE = 3
 BUSY_TIMEOUT_MS = 5000
 BATCH_SIZE = 200
 
@@ -98,7 +107,6 @@ _SCHEMA_STATEMENTS = (
         size INTEGER NOT NULL DEFAULT 0,
         is_keep INTEGER NOT NULL DEFAULT 0,
         default_selected INTEGER NOT NULL DEFAULT 0,
-        payload_json TEXT NOT NULL,
         PRIMARY KEY (scan_id, group_id, file_id)
     )
     """,
@@ -199,6 +207,43 @@ _V4_MIGRATION_STATEMENTS = (
     """,
 )
 
+# v5：scan_files 重建后需要重新创建的索引（DROP TABLE 会一并删除旧索引）。
+_V5_SCAN_FILES_INDEX_STATEMENTS = (
+    """
+    CREATE INDEX IF NOT EXISTS idx_scan_files_path
+        ON scan_files(scan_id, path)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_scan_files_group
+        ON scan_files(scan_id, group_id)
+    """,
+)
+
+# v5：FTS5 外部内容表 + 触发器（仅在探测到 FTS5 + trigram 时创建）。
+_FTS_CREATE_STATEMENT = (
+    "CREATE VIRTUAL TABLE IF NOT EXISTS scan_files_fts USING fts5("
+    "path, content='scan_files', content_rowid='rowid',"
+    " tokenize='trigram')"
+)
+
+_FTS_TRIGGER_STATEMENTS = (
+    "CREATE TRIGGER IF NOT EXISTS scan_files_fts_ai"
+    " AFTER INSERT ON scan_files BEGIN"
+    " INSERT INTO scan_files_fts(rowid, path) VALUES (new.rowid, new.path);"
+    " END",
+    "CREATE TRIGGER IF NOT EXISTS scan_files_fts_ad"
+    " AFTER DELETE ON scan_files BEGIN"
+    " INSERT INTO scan_files_fts(scan_files_fts, rowid, path)"
+    " VALUES ('delete', old.rowid, old.path);"
+    " END",
+    "CREATE TRIGGER IF NOT EXISTS scan_files_fts_au"
+    " AFTER UPDATE ON scan_files BEGIN"
+    " INSERT INTO scan_files_fts(scan_files_fts, rowid, path)"
+    " VALUES ('delete', old.rowid, old.path);"
+    " INSERT INTO scan_files_fts(rowid, path) VALUES (new.rowid, new.path);"
+    " END",
+)
+
 # v3：plan B 断点记录明细表（v2 升级时只建表，旧 payload 内 records 惰性回退读取）。
 _V3_MIGRATION_STATEMENTS = (
     """
@@ -242,7 +287,6 @@ _V2_MIGRATION_STATEMENTS = (
         size INTEGER NOT NULL DEFAULT 0,
         is_keep INTEGER NOT NULL DEFAULT 0,
         default_selected INTEGER NOT NULL DEFAULT 0,
-        payload_json TEXT NOT NULL,
         PRIMARY KEY (scan_id, group_id, file_id)
     )
     """,
@@ -332,9 +376,14 @@ def group_file_rows(scan_id, ordinal, payload):
             _as_int(item.get("size")),
             1 if item.get("is_keep") else 0,
             1 if item.get("default_selected") else 0,
-            json.dumps(item, ensure_ascii=False),
         ))
     return rows
+
+
+def fts_path_phrase(needle):
+    """把搜索词转成 FTS5 短语查询（双引号转义，trigram 子串语义）。"""
+    text = str(needle or "")
+    return '"' + text.replace('"', '""') + '"'
 
 
 class Database(object):
@@ -347,6 +396,10 @@ class Database(object):
         self._conn = None
         self._tx_depth = 0
         self._closed = False
+        # v5：FTS5(trigram) 路径索引可用性（不支持/运行时报错时回退 LIKE）
+        self.fts_enabled = False
+        self.fts_note = ""
+        self.fts_probe_error = ""
         self._open_with_recovery()
 
     # ------------------------------------------------------------------
@@ -466,6 +519,8 @@ class Database(object):
                     logger.warning(
                         u"数据库 schema 版本 %s 高于程序支持的 %s，按兼容模式打开",
                         version, CURRENT_SCHEMA_VERSION)
+        # v5：建表/迁移后初始化 FTS5(trigram) 路径索引（不支持则回退 LIKE）。
+        self._ensure_search_index()
 
     def _apply_migrations(self, from_version):
         """按版本迁移；迁移与版本号写入在同一事务内（失败整体回滚）。"""
@@ -478,6 +533,8 @@ class Database(object):
                 self._migrate_v3()
             elif next_version == 4:
                 self._migrate_v4()
+            elif next_version == 5:
+                self._migrate_v5()
             version = next_version
             self._conn.execute(
                 "INSERT OR REPLACE INTO schema_meta(key, value) "
@@ -521,6 +578,47 @@ class Database(object):
             conn.execute(statement)
         logger.info(u"SQLite schema 迁移到 v4 完成：已创建 subtitle_chunks 表")
 
+    def _migrate_v5(self):
+        """v4→v5：重建 scan_files 去掉冗余 payload_json（不用 DROP COLUMN）。
+
+        兼容旧 SQLite：新表→INSERT SELECT→DROP 旧表→RENAME→重建索引；
+        行数/路径/分组/保留/勾选数据保持不变。FTS 派生对象在重建前清理，
+        迁移完成后由 _ensure_search_index 重新创建并 rebuild。
+        """
+        conn = self._conn
+        if not self._table_exists("scan_files"):
+            return
+        columns = {str(row[1]) for row in
+                   conn.execute("PRAGMA table_info(scan_files)").fetchall()}
+        if "payload_json" in columns:
+            self._drop_search_index()
+            conn.execute("DROP TABLE IF EXISTS scan_files_v5")
+            conn.execute(
+                "CREATE TABLE scan_files_v5 ("
+                "scan_id TEXT NOT NULL,"
+                " group_id TEXT NOT NULL,"
+                " file_id TEXT NOT NULL,"
+                " path TEXT NOT NULL,"
+                " size INTEGER NOT NULL DEFAULT 0,"
+                " is_keep INTEGER NOT NULL DEFAULT 0,"
+                " default_selected INTEGER NOT NULL DEFAULT 0,"
+                " PRIMARY KEY (scan_id, group_id, file_id))")
+            conn.execute(
+                "INSERT INTO scan_files_v5"
+                "(scan_id, group_id, file_id, path, size, is_keep,"
+                " default_selected)"
+                " SELECT scan_id, group_id, file_id, path, size, is_keep,"
+                " default_selected FROM scan_files")
+            before = int(conn.execute(
+                "SELECT COUNT(*) FROM scan_files_v5").fetchone()[0])
+            conn.execute("DROP TABLE scan_files")
+            conn.execute("ALTER TABLE scan_files_v5 RENAME TO scan_files")
+            logger.info(
+                u"SQLite schema v5：scan_files 去掉 payload_json，保留 %d 行",
+                before)
+        for statement in _V5_SCAN_FILES_INDEX_STATEMENTS:
+            conn.execute(statement)
+
     def _backfill_scan_group_columns(self):
         """按 rowid 分批回填 scan_groups 索引列与 scan_files（不整表载入）。"""
         conn = self._conn
@@ -556,10 +654,144 @@ class Database(object):
                 conn.executemany(
                     "INSERT OR IGNORE INTO scan_files"
                     "(scan_id, group_id, file_id, path, size, is_keep,"
-                    " default_selected, payload_json)"
-                    " VALUES(?, ?, ?, ?, ?, ?, ?, ?)", file_rows)
+                    " default_selected) VALUES(?, ?, ?, ?, ?, ?, ?)",
+                    file_rows)
                 files += len(file_rows)
         return groups, files
+
+    # ------------------------------------------------------------------
+    # v5：FTS5(trigram) 路径索引（不可用时回退 LIKE 子串搜索）
+    # ------------------------------------------------------------------
+    def _table_exists(self, name):
+        row = self._conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+            (str(name),)).fetchone()
+        return row is not None
+
+    def _fts_triggers(self):
+        rows = self._conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='trigger'"
+            " AND name IN (?, ?, ?)", FTS_TRIGGER_NAMES).fetchall()
+        return [str(row[0]) for row in rows]
+
+    def _probe_fts_trigram(self):
+        """在临时表上真实创建 fts5(trigram)：仅 FTS5 可用但无 trigram 时返回 False。"""
+        try:
+            self._conn.execute("DROP TABLE IF EXISTS temp.dc_fts_probe")
+            self._conn.execute(
+                "CREATE VIRTUAL TABLE temp.dc_fts_probe USING fts5("
+                "path, tokenize='trigram')")
+            self._conn.execute("DROP TABLE temp.dc_fts_probe")
+            return True
+        except sqlite3.Error as exc:
+            try:
+                self._conn.execute("DROP TABLE IF EXISTS temp.dc_fts_probe")
+            except sqlite3.Error:
+                pass
+            self.fts_probe_error = str(exc)
+            logger.info(u"FTS5 trigram 探测失败（将回退 LIKE）: %s", exc)
+            return False
+
+    def _drop_search_index(self):
+        """只清理 FTS 派生表/触发器，不触碰 scan_files 主数据。"""
+        for name in FTS_TRIGGER_NAMES:
+            try:
+                self._conn.execute("DROP TRIGGER IF EXISTS %s" % name)
+            except sqlite3.Error:
+                pass
+        try:
+            self._conn.execute("DROP TABLE IF EXISTS scan_files_fts")
+        except sqlite3.Error:
+            pass
+        self.fts_enabled = False
+        self.fts_note = "dropped"
+
+    def _rebuild_search_index(self):
+        """重建外部内容 FTS 索引，并校验行数与 scan_files 一致（写日志）。"""
+        conn = self._conn
+        conn.execute(
+            "INSERT INTO scan_files_fts(scan_files_fts) VALUES('rebuild')")
+        rows = int(conn.execute("SELECT COUNT(*) FROM scan_files").fetchone()[0])
+        fts_rows = int(conn.execute(
+            "SELECT COUNT(*) FROM scan_files_fts").fetchone()[0])
+        if rows != fts_rows:
+            logger.warning(
+                u"FTS5 路径索引一致性校验失败: scan_files=%d, fts=%d",
+                rows, fts_rows)
+        else:
+            logger.info(
+                u"FTS5 路径索引 rebuild 完成且一致: %d 行", rows)
+
+    def _verify_search_index(self):
+        conn = self._conn
+        try:
+            rows = int(conn.execute(
+                "SELECT COUNT(*) FROM scan_files").fetchone()[0])
+            fts_rows = int(conn.execute(
+                "SELECT COUNT(*) FROM scan_files_fts").fetchone()[0])
+        except sqlite3.Error as exc:
+            logger.warning(u"FTS5 路径索引校验失败，重建索引: %s", exc)
+            self._rebuild_search_index()
+            return
+        if rows != fts_rows:
+            logger.warning(
+                u"FTS5 路径索引行数不一致（scan_files=%d, fts=%d），重建",
+                rows, fts_rows)
+            self._rebuild_search_index()
+
+    def _ensure_search_index(self):
+        """打开数据库时初始化 FTS5(trigram) 路径索引；失败安全回退 LIKE。"""
+        with self._lock:
+            if not self._table_exists("scan_files"):
+                self.fts_enabled = False
+                return
+            probe_ok = self._probe_fts_trigram()
+            table_exists = self._table_exists(FTS_TABLE)
+            triggers = self._fts_triggers()
+            if not probe_ok:
+                self.fts_enabled = False
+                self.fts_note = "like-fallback"
+                if table_exists or triggers:
+                    # 同一 DB 曾在支持 FTS5 的环境创建过索引：清理派生对象，
+                    # 避免 scan_files 触发器在不支持 FTS5 的 SQLite 上写失败。
+                    self._drop_search_index()
+                    logger.warning(
+                        u"当前 SQLite 不支持 FTS5 trigram；已清理 "
+                        u"scan_files FTS 派生表/触发器，路径搜索回退 LIKE")
+                else:
+                    logger.info(
+                        u"当前 SQLite 不支持 FTS5 trigram，路径搜索使用 LIKE")
+                return
+            missing_triggers = set(FTS_TRIGGER_NAMES) - set(triggers)
+            try:
+                with self.transaction():
+                    self._conn.execute(_FTS_CREATE_STATEMENT)
+                    for statement in _FTS_TRIGGER_STATEMENTS:
+                        self._conn.execute(statement)
+                    if not table_exists or missing_triggers:
+                        self._rebuild_search_index()
+                    else:
+                        self._verify_search_index()
+                self.fts_enabled = True
+                self.fts_note = "fts5-trigram"
+            except sqlite3.Error as exc:
+                self.fts_enabled = False
+                self.fts_note = "like-fallback: %s" % exc
+                logger.warning(
+                    u"创建 FTS5 路径索引失败，降级 LIKE 子串搜索: %s", exc)
+                try:
+                    self._drop_search_index()
+                except sqlite3.Error:
+                    pass
+
+    def disable_fts(self, reason=""):
+        """运行时 FTS 查询报错：仅本连接降级 LIKE（不崩、不改主数据）。"""
+        with self._lock:
+            if self.fts_enabled:
+                logger.warning(
+                    u"FTS5 路径查询运行时报错，本连接降级 LIKE: %s", reason)
+            self.fts_enabled = False
+            self.fts_note = "runtime-fallback"
 
     # ------------------------------------------------------------------
     # 事务 / 查询

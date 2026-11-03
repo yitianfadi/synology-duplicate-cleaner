@@ -17,7 +17,7 @@
 | REQ-08 | 报告统计（组数/副本数/可释放空间/跳过计数） | stats 字段齐全且数值自洽，wasted=size*(count-1) | scanner | e2e 断言 stats |  |
 | REQ-09 | 删除必须两次确认 | 前端第一屏清单 + 第二屏最终确认；永久删除输入“永久删除” | app.js | 静态审查 + DOM/字符串证据 |  |
 | REQ-10 | 默认移入回收站，可选永久删除 | recycle=true → #recycle/@duplicate-cleaner/...；recycle=false 需短语 | deletion.py | e2e: 两种删除都验证 + 目标路径 |  |
-| REQ-11 | 操作日志持久化可追溯 | audit.jsonl + scans/*.json + deletions/*.jsonl + logs；重启后可见 | store/deletion | e2e: 检查文件与 /api/logs、重启后列表 |  |
+| REQ-11 | 操作日志持久化可追溯 | audit.jsonl + SQLite（扫描/删除结果）+ logs；重启后可见 | store/deletion | e2e: 检查 audit/DB 与 /api/logs、重启后列表 |  |
 | REQ-12 | DSM 7 / Btrfs / EXT4 兼容 | INFO os_min_ver=7.0；statx x86_64=332/aarch64=291；Python 3.8 语法 | spk/INFO, timeutil, 全部 py | 静态检查 + py_compile + SPK 结构 |  |
 | REQ-13 | 跳过系统目录/符号链接/空文件/隐藏文件/后缀过滤 | 分别有 skipped 计数；系统目录（@eaDir/#recycle 等）永不进入 | scanner/fsutil | e2e: 构造各类 fixture；断言 groups/skipped |  |
 | REQ-14 | 扫描可暂停/继续/停止 | 状态机 paused/stopped 合法；非法转换报错 | scanner/api | e2e: 限速大文件扫描中 pause/resume/stop |  |

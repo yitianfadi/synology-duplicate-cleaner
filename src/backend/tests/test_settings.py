@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 import os
 import shutil
+import sys
 import tempfile
 import unittest
 
@@ -100,3 +101,82 @@ class SettingsPersistenceTest(unittest.TestCase):
             handle.write(b"{not json")
         manager = SettingsManager(self.store)
         self.assertEqual(manager.get()["keep_mode"], "latest")
+
+
+class ExternalFFmpegSettingsTest(unittest.TestCase):
+    """v0021 P1：外部 FFmpeg 路径与硬解模式枚举。"""
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp(prefix="dc-ffmpeg-settings-")
+        # 复制当前 Python 解释器作为可执行文件（Windows/POSIX 都可执行）。
+        self.executable = os.path.join(self.tmpdir, "ffmpeg_fake")
+        shutil.copyfile(sys.executable, self.executable)
+        try:
+            os.chmod(self.executable, 0o755)
+        except OSError:
+            pass
+
+    def tearDown(self):
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def test_default_ffmpeg_path_empty(self):
+        defaults = default_settings()
+        self.assertIn("ffmpeg_path", defaults)
+        self.assertEqual(defaults["ffmpeg_path"], "")
+        self.assertEqual(settings_module.validate_patch(
+            {"ffmpeg_path": ""})["ffmpeg_path"], "")
+
+    def test_ffmpeg_path_accepts_absolute_executable(self):
+        patch = settings_module.validate_patch(
+            {"ffmpeg_path": self.executable})
+        self.assertEqual(patch["ffmpeg_path"], self.executable)
+        # 两端空白应被规范化。
+        patch = settings_module.validate_patch(
+            {"ffmpeg_path": "  %s  " % self.executable})
+        self.assertEqual(patch["ffmpeg_path"], self.executable)
+
+    def test_ffmpeg_path_rejects_relative_missing_directory(self):
+        invalid = [
+            "ffmpeg",
+            "./ffmpeg",
+            os.path.join(self.tmpdir, "missing-ffmpeg"),
+            self.tmpdir,
+            "x" * 600,
+        ]
+        for value in invalid:
+            with self.assertRaises(ApiError, msg=value) as ctx:
+                settings_module.validate_patch({"ffmpeg_path": value})
+            self.assertEqual(ctx.exception.code, "INVALID_ARGUMENT")
+            self.assertEqual(ctx.exception.details.get("key"), "ffmpeg_path")
+
+    def test_ffmpeg_path_rejects_non_executable_on_posix(self):
+        plain = os.path.join(self.tmpdir, "not-executable")
+        with open(plain, "wb") as handle:
+            handle.write(b"#!/bin/sh\n")
+        os.chmod(plain, 0o600)
+        if os.access(plain, os.X_OK):
+            # Windows 的 os.access(X_OK) 对已存在文件恒为 True，无法判定。
+            self.skipTest("当前平台无法用 os.access 判定可执行位")
+        with self.assertRaises(ApiError):
+            settings_module.validate_patch({"ffmpeg_path": plain})
+
+    def test_video_hwaccel_enum(self):
+        valid = ("auto", "off", "vaapi", "qsv", "nvdec", "videotoolbox")
+        for value in valid:
+            patch = settings_module.validate_patch({"video_hwaccel": value})
+            self.assertEqual(patch["video_hwaccel"], value)
+        for value in ("cuda", "d3d11va", "AUTO", "", None, 1):
+            with self.assertRaises(ApiError, msg=repr(value)):
+                settings_module.validate_patch({"video_hwaccel": value})
+
+    def test_settings_manager_persists_ffmpeg_path(self):
+        store = Store(os.path.join(self.tmpdir, "data"))
+        try:
+            manager = SettingsManager(store)
+            manager.update({"ffmpeg_path": self.executable,
+                            "video_hwaccel": "qsv"})
+            reloaded = SettingsManager(store).get()
+            self.assertEqual(reloaded["ffmpeg_path"], self.executable)
+            self.assertEqual(reloaded["video_hwaccel"], "qsv")
+        finally:
+            store.close()

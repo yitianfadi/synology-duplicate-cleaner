@@ -7,9 +7,9 @@ import os
 import re
 
 APP_NAME = "DuplicateCleaner"
-APP_VERSION = "1.1.0-0024"
+APP_VERSION = "1.1.0-0025"
 DISPLAY_NAME = "重复文件清理与字幕"
-SPK_VERSION = "1.1.0-0024"
+SPK_VERSION = "1.1.0-0025"
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8787
@@ -97,7 +97,10 @@ VIDEO_MAX_SAMPLE_FRAMES = 100
 VIDEO_DEFAULT_SAMPLE_FRAMES = 20
 VIDEO_DEFAULT_MAX_INTERVAL = 300
 VIDEO_DEFAULT_THRESHOLD = 90
-VIDEO_HWACCEL_MODES = ("auto", "off")
+# 硬解模式：auto=按检测能力自动；off=纯软件；其余为显式 -hwaccel 名称。
+# 显式模式若不在 ffmpeg -hwaccels 列表，运行时回退 none（软件解码）。
+VIDEO_HWACCEL_MODES = ("auto", "off", "vaapi", "qsv", "nvdec", "videotoolbox")
+VIDEO_HWACCEL_EXPLICIT = ("vaapi", "qsv", "nvdec", "videotoolbox")
 VIDEO_MIN_COVERAGE = 0.6
 VIDEO_DURATION_RATIO_MIN = 0.7
 VIDEO_DURATION_RATIO_MAX = 1.4

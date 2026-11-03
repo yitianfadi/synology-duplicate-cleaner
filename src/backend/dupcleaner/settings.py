@@ -4,6 +4,7 @@
 from __future__ import absolute_import
 
 import copy
+import os
 import re
 import threading
 
@@ -41,6 +42,8 @@ DEFAULT_SETTINGS = {
     "similarity_max_file_mb": 32,
     "similarity_allow_binary": False,
     # --- 视频视觉相似度（docs/VIDEO_CONTRACT.md §1）---
+    # 外部 FFmpeg 路径：空=内置/自动探测；非空必须是可执行的绝对路径。
+    "ffmpeg_path": "",
     "video_similarity_enabled": False,
     "video_extensions": list(config.DEFAULT_VIDEO_EXTENSIONS),
     "video_sample_frames": config.VIDEO_DEFAULT_SAMPLE_FRAMES,
@@ -264,9 +267,22 @@ def _normalize_value(key, value):
         return _check_int(key, value, 0, 100)
     if key == "video_concurrency":
         return _check_int(key, value, 1, 2)
+    if key == "ffmpeg_path":
+        # 空=自动探测（内置/环境变量/PATH）；非空必须是存在且可执行的绝对路径。
+        text = _check_str(key, value, max_len=512).strip()
+        if not text:
+            return ""
+        if not os.path.isabs(text):
+            _err(u"设置 ffmpeg_path 必须是绝对路径", {"key": key})
+        if not os.path.isfile(text):
+            _err(u"设置 ffmpeg_path 指向的文件不存在", {"key": key})
+        if not os.access(text, os.X_OK):
+            _err(u"设置 ffmpeg_path 指向的文件不可执行", {"key": key})
+        return text
     if key == "video_hwaccel":
         if value not in config.VIDEO_HWACCEL_MODES:
-            _err(u"video_hwaccel 只能是 auto 或 off", {"key": key})
+            _err(u"video_hwaccel 只能是 auto/off/vaapi/qsv/nvdec/videotoolbox",
+                 {"key": key})
         return value
     if key == "video_max_file_mb":
         return _check_int(key, value, 1, 102400)

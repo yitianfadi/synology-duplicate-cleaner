@@ -1,7 +1,7 @@
 /* ==========================================================================
-   重复文件清理 · DuplicateCleaner —— 前端应用
+   重复文件清理 · DuplicateCleaner —— 前端应用（ES module 入口）
    --------------------------------------------------------------------------
-   · 纯静态单文件脚本（无框架、无构建、无 CDN），ES2019 语法。
+   · 纯静态 ES modules（无框架、无构建、无 CDN），ES2019 语法。
    · 仅调用 docs/CONTRACT.md 中约定的同源 REST API：
        POST /api/auth/login  GET /api/auth/me  POST /api/auth/logout
        GET  /api/meta  GET /api/shares  GET /api/browse  GET /api/settings
@@ -14,472 +14,43 @@
        GET  /api/preview  GET /api/logs  GET /api/logs/download
    · 安全约定：服务端返回的路径 / 哈希 / 日志内容一律通过 textContent 渲染，
      绝不使用 innerHTML 拼接；不读取 localStorage 保存会话；不使用 eval。
-   · 组织方式：常量与状态 → 工具 → API → Toast/弹窗 → 登录 → 导航 →
-     文件夹选择器 → 扫描选项 → 进度 → 结果 → 选择 → 预览 → 删除 →
-     历史 / 日志 / 设置 → 启动。
+   · 常量 / 状态 / 工具 / API / Toast / 弹窗已拆到 ./js/*.js，本文件保留业务：
+     登录 → 导航 → 文件夹选择器 → 扫描选项 → 进度 → 结果 → 选择 → 预览 →
+     删除 → 历史 / 日志 / 设置 → 启动。
    ========================================================================== */
+
+import {
+  ACTIVE_STATUS, AUDIT_LABEL, CSRF_KEY, DEFAULT_SETTINGS, DEFAULT_SIMILARITY_EXTENSIONS,
+  DEFAULT_VIDEO_EXTENSIONS, DELETE_REASON_LABEL, DELETE_STATUS_LABEL,
+  ERROR_FALLBACK, JOB_STATUS_LABEL, KEEP_LABEL, KEEP_MODE_LABEL,
+  MTIME_FALLBACK_LABEL, MTIME_FALLBACK_REASONS, POLL_MS,
+  SIZE_UNITS, SOURCE_INFO, STAGE_LABEL, STATUS_BADGE, STATUS_LABEL,
+  TERMINAL_STATUS, VIDEO_HWACCEL_LABEL, VIDEO_HWACCEL_MODES, VIEWS, VIEW_HEADINGS
+} from './js/constants.js';
+import { els, IDS, state } from './js/state.js';
+import {
+  $, $$, appendChildren, byId, clear, el, focusSoon, getFocusable, hide, icon,
+  scrollToNode, setBusy, setHidden, setText, show, statusBadge, syncTopStackHeight
+} from './js/dom.js';
+import { fmtBytes, fmtDateTime, fmtElapsed, fmtInt } from './js/format.js';
+import {
+  clamp, clonePlain, copyText, debounce, encodePath, extListToText, isUnderRoots,
+  normalizeExtList, normalizePathList
+} from './js/util.js';
+import { ApiError, api, errorMessage, saveCsrf, setUnauthorizedHandler } from './js/api.js';
+import { toast } from './js/toast.js';
+import {
+  closeModal, confirmDialog, getActiveModal, isModalOpen, openModal, setModalDismissible,
+  trapModalKeys
+} from './js/modal.js';
+
 (function () {
   'use strict';
 
-  // ==================== 0. 常量 ====================
-  var CSRF_KEY = 'dc_csrf';
-  var POLL_MS = 800;                 // 扫描 / 删除任务轮询间隔（毫秒）
-  var GROUPS_LIMIT = 50;             // 结果分页大小
-  var TERMINAL_STATUS = ['completed', 'failed', 'stopped', 'interrupted'];
-  var ACTIVE_STATUS = ['queued', 'running', 'paused', 'stopping'];
-  var VIEWS = ['scan', 'history', 'logs', 'settings'];
-  var VIEW_HEADINGS = { scan: 'scanHeading', history: 'historyHeading', logs: 'logsHeading', settings: 'settingsHeading' };
+  // 401 未授权处理：api.js 通过回调通知 app.js，避免模块循环依赖。
+  setUnauthorizedHandler(handleUnauthorized);
 
-  var STATUS_LABEL = {
-    queued: '排队中', running: '扫描中', paused: '已暂停', stopping: '正在停止',
-    stopped: '已停止', completed: '已完成', failed: '失败', interrupted: '已中断'
-  };
-  var STATUS_BADGE = {
-    queued: 'badge-gray', running: 'badge-blue', paused: 'badge-amber',
-    stopping: 'badge-amber', stopped: 'badge-gray', completed: 'badge-green', failed: 'badge-red', interrupted: 'badge-amber'
-  };
-  var STAGE_LABEL = {
-    enumerate: '枚举文件', size: '按大小分组', sample: '快速指纹采样',
-    hash: '计算哈希', similarity: '内容相似度分析', video: '视频视觉分析',
-    finalize: '归并结果', done: '完成'
-  };
-  var KEEP_LABEL = {
-    latest_created: '最晚创建', earliest_created: '最早创建',
-    pinned_path: '指定路径', manual: '需手动选择', tie: '创建时间相同',
-    latest_modified_fallback: '按修改时间保留（无创建时间，最晚修改）',
-    earliest_modified_fallback: '按修改时间保留（无创建时间，最早修改）',
-    mtime_tie: '修改时间相同（按修改时间保留）'
-  };
-  var MTIME_FALLBACK_LABEL = '无创建时间 · 按修改时间保留';
-  var MTIME_FALLBACK_REASONS = ['latest_modified_fallback', 'earliest_modified_fallback', 'mtime_tie'];
-  var KEEP_MODE_LABEL = { latest: '最晚创建', earliest: '最早创建', pinned: '指定路径' };
-  var SCAN_MODE_LABEL = { exact: '精准哈希', similar: '内容相似' };
-  var SCAN_MODE_BADGE = { exact: 'badge-gray', similar: 'badge-purple' };
-  var DEFAULT_SIMILARITY_EXTENSIONS = [
-    '.txt', '.md', '.markdown', '.csv', '.json', '.xml', '.html', '.htm', '.log',
-    '.pdf', '.docx', '.odt', '.png', '.jpg', '.jpeg', '.webp'
-  ];
-  var SIMILARITY_OPTION_KEYS = ['scan_mode', 'similarity_threshold', 'similarity_extensions',
-    'similarity_exclude_extensions', 'similarity_concurrency', 'similarity_cache',
-    'similarity_max_file_mb', 'similarity_allow_binary'];
-  var DEFAULT_VIDEO_EXTENSIONS = ['.mp4', '.mkv', '.mov', '.avi', '.flv', '.wmv', '.webm', '.m4v', '.ts', '.mpg', '.mpeg'];
-  var DEFAULT_VIDEO_SETTINGS = {
-    video_similarity_enabled: false,
-    video_extensions: DEFAULT_VIDEO_EXTENSIONS.slice(),
-    video_sample_frames: 20,
-    video_max_sample_interval_sec: 300,
-    video_similarity_threshold: 90,
-    video_concurrency: 1,
-    video_hwaccel: 'auto',
-    video_max_file_mb: 8192,
-    video_timeout_sec: 180,
-    video_cache: true,
-    video_asr_enabled: false,
-    video_asr_command: '',
-    video_asr_weight: 0.15,
-    video_asr_timeout_sec: 300,
-    video_asr_max_sec: 600
-  };
-  var VIDEO_HWACCEL_LABEL = { none: '软件解码', vaapi: 'VA-API', qsv: 'Intel QSV', nvdec: 'NVDEC', auto: '自动' };
-  var SOURCE_INFO = {
-    statx: { short: 'statx', title: 'statx：文件系统创建时间（可靠）', cls: 'is-ok' },
-    birthtime: { short: 'birthtime', title: 'birthtime：系统提供的创建时间', cls: 'is-ok' },
-    ctime: { short: 'ctime', title: 'ctime：文件状态变更时间（降级值，不能当作创建时间，存在风险）', cls: 'is-fallback' },
-    unknown: { short: '未知', title: '未知：无法读取文件系统创建时间（不会用 ctime 冒充创建时间）', cls: 'is-unknown' }
-  };
-  var DELETE_STATUS_LABEL = { recycled: '已移入回收站', deleted: '已删除', skipped: '已跳过', failed: '失败' };
-  var DELETE_REASON_LABEL = {
-    FILE_CHANGED: '文件已被修改', HASH_MISMATCH: '哈希不一致', KEEP_FILE_MISSING: '保留文件不存在',
-    PATH_NOT_ALLOWED: '路径不在允许范围', NOT_FOUND: '文件不存在', PERMISSION_DENIED: '没有权限',
-    RECYCLE_UNAVAILABLE: '回收站不可用', CROSS_DEVICE: '跨文件系统无法移动', PLAN_EXPIRED: '计划已过期'
-  };
-  var JOB_STATUS_LABEL = {
-    running: '删除中', completed: '删除完成', partial: '部分成功',
-    failed: '删除失败', stopped: '已停止'
-  };
-  var AUDIT_LABEL = {
-    login: '登录', logout: '退出登录', scan_start: '开始扫描', scan_finish: '扫描完成',
-    scan_stop: '停止扫描', scan_pause: '暂停扫描', scan_resume: '继续扫描',
-    delete_plan: '创建删除计划', delete_start: '开始删除', delete_file: '删除文件',
-    delete_finish: '删除完成', settings_update: '更新设置', preview: '预览文件'
-  };
-  var ERROR_FALLBACK = {
-    AUTH_REQUIRED: '登录已过期，请重新登录。',
-    AUTH_FAILED: '账号或密码错误。',
-    FORBIDDEN: '没有权限执行该操作。',
-    CSRF_FAILED: '安全校验失败，请刷新页面后重试。',
-    NOT_FOUND: '请求的资源不存在。',
-    INVALID_ARGUMENT: '请求参数不正确。',
-    INVALID_PATH: '路径不合法。',
-    PATH_NOT_ALLOWED: '该路径不在允许的共享文件夹范围内。',
-    SCAN_BUSY: '已有扫描任务正在运行，请等待其结束。',
-    SCAN_NOT_DONE: '扫描尚未完成，暂时无法查看结果。',
-    PLAN_EXPIRED: '删除计划已过期，请重新确认。',
-    PLAN_INVALID: '删除计划无效，请重新确认。',
-    HASH_MISMATCH: '文件哈希与扫描时不一致。',
-    FILE_CHANGED: '文件在扫描后已被修改。',
-    RECYCLE_UNAVAILABLE: '回收站不可用，请改用永久删除。',
-    SIMILAR_REVIEW_REQUIRED: '相似组需要人工复核：请先逐组勾选“人工复核”，并逐条选择要删除的副本。',
-    INTERNAL_ERROR: '服务内部错误，请稍后重试。'
-  };
-  var DEFAULT_SETTINGS = {
-    hash_algo: 'sha256', keep_mode: 'latest', pinned_path: '',
-    skip_empty: true, skip_hidden: true, skip_symlinks: true,
-    include_extensions: [], exclude_extensions: [], ignore_case_ext: true,
-    min_size_bytes: 0, max_size_bytes: 0, quick_sample_kb: 64,
-    concurrency: 2, hash_rate_mbps: 0, recycle_default: true,
-    create_recycle_dir: false, max_files: 500000, allow_ctime_fallback: false,
-    scan_mode: 'exact', similarity_threshold: 85, similarity_extensions: [],
-    similarity_exclude_extensions: [], similarity_concurrency: 2, similarity_cache: true,
-    similarity_max_file_mb: 32, similarity_allow_binary: false,
-    video_similarity_enabled: false, video_extensions: DEFAULT_VIDEO_EXTENSIONS.slice(),
-    video_sample_frames: 20, video_max_sample_interval_sec: 300, video_similarity_threshold: 90,
-    video_concurrency: 1, video_hwaccel: 'auto', video_max_file_mb: 8192,
-    video_timeout_sec: 180, video_cache: true,
-    video_asr_enabled: false, video_asr_command: '', video_asr_weight: 0.15,
-    video_asr_timeout_sec: 300, video_asr_max_sec: 600,
-    subtitle_enabled: false,
-    subtitle_asr_base_url: 'https://api.openai.com/v1',
-    subtitle_asr_api_key: '',
-    subtitle_asr_model: 'whisper-1',
-    subtitle_asr_language: 'auto',
-    subtitle_asr_timeout_sec: 300,
-    subtitle_asr_chunk_sec: 600,
-    subtitle_asr_max_audio_mb: 24,
-    subtitle_translate_enabled: false,
-    subtitle_llm_base_url: 'https://api.openai.com/v1',
-    subtitle_llm_api_key: '',
-    subtitle_llm_model: 'gpt-4.1-mini',
-    subtitle_translate_target: 'zh',
-    subtitle_translate_timeout_sec: 120,
-    subtitle_translate_batch_size: 20
-  };
-  var SIZE_UNITS = { kb: 1024, mb: 1048576, gb: 1073741824 };
-
-  // ==================== 1. 应用状态 ====================
-  var state = {
-    csrf: '',
-    user: null,
-    meta: null,
-    settings: null,
-    defaults: null,
-    view: 'scan',
-    booted: false,
-    loginSubmitting: false,
-    // 扫描范围
-    roots: [],
-    excludes: [],
-    pinnedPath: '',
-    recycleDefault: true,
-    scanMode: 'exact',
-    similarity: { supported: true, extensions: DEFAULT_SIMILARITY_EXTENSIONS.slice(), defaultThreshold: 85, maxConcurrency: 4, binaryExtensions: [] },
-    video: { supported: true, available: true, extensions: DEFAULT_VIDEO_EXTENSIONS.slice(), ffmpegPath: '', ffmpegVersion: '', hwaccels: [], gpuHint: '', cache: '' },
-    subtitle: { supported: false, enabled: false, asrKeySet: false, llmKeySet: false, asrLanguage: 'auto', translateEnabled: false, targetLang: 'zh' },
-    subtitleJobs: { list: [], timer: null, loading: false, lastError: '', modal: null },
-    // 当前扫描
-    scan: { id: null, data: null, stats: null, timer: null, abort: null, polling: false, errors: 0, handled: false },
-    // 结果
-    results: {
-      groups: [], total: 0, offset: 0, limit: GROUPS_LIMIT, q: '', sort: 'wasted_desc',
-      mode: 'none', selected: new Map(), excluded: new Map(), manualKeep: new Map(),
-      loading: false, seq: 0, loaded: false,
-      scanMode: 'exact', exactTotal: 0, similarTotal: 0,
-      similarGroups: [], similarOffset: 0, similarLoading: false, similarLoaded: false,
-      similarSeq: 0, similarReview: new Set(), similarSelected: new Map(),
-      videoGroups: [], videoTotal: 0, videoOffset: 0, videoLoading: false, videoLoaded: false,
-      videoSeq: 0, videoSelected: new Map(), videoSelectAllMode: false
-    },
-    // 删除流程
-    deleteFlow: { plan: null, job: null, timer: null, abort: null, running: false, busy: false, modal: null, recycle: true, override: null },
-    picker: null,
-    preview: { urls: [], abort: null },
-    historyCache: null,
-    // 任务中心标签页：history / subtitles / deletions / storage
-    taskTab: 'history',
-    deletionJobs: { list: [], loading: false, loaded: false, lastError: '' },
-    diagnostics: { data: null, loading: false, loaded: false, busy: false },
-    logsLoaded: false,
-    settingsLoaded: false,
-    logsLimit: 50
-  };
-
-  var els = {};
-  var IDS = ('loginView loginForm loginUsername loginPassword loginOtp loginSubmit loginError app riskBanner envBadge userChip userName ' +
-    'logoutBtn main view-scan view-history view-logs view-settings scanHeading historyHeading logsHeading settingsHeading ' +
-    'rootsList rootsCount rootsError pickRootsBtn clearRootsBtn excludeChips excludeCount pickExcludesBtn optionsForm resetOptionsBtn ' +
-    'hashAlgo keepMode keepModeHint pinnedField pinnedValue pinnedError pickPinnedBtn clearPinnedBtn minSize minUnit minSizeError maxSize maxUnit ' +
-    'maxSizeError includeExt includeExtError excludeExt excludeExtError ignoreCaseExt skipEmpty skipHidden recycleDefault ' +
-    'quickSampleKb quickSampleError concurrency concurrencyError hashRate hashRateError maxFiles maxFilesError allowCtimeFallback ' +
-    'createRecycleDir skipSymlinks optionsError scanSummary startScanBtn progressPanel progressStatus progressScanId progressStage ' +
-    'progressPct progressBar progressFill progressMessage counterFilesSeen counterFilesScanned counterCandidates counterGroups ' +
-    'counterDuplicateFiles counterReclaimable counterRate counterErrors progressPath progressElapsed pauseBtn resumeBtn stopBtn ' +
-    'viewResultsBtn resultsSection resultsSubtitle refreshResultsBtn resultsSummary searchGroups sortGroups resultsCountLabel ' +
-    'selectAllBtn clearSelectionBtn csvLink deleteSelectedBtn selectionSummary resultsLoading resultsError resultsEmpty groupsList ' +
-    'loadMoreBtn loadMoreStatus historyRefreshBtn historyLoading historyError historyEmpty historyList logLimitSelect logsRefreshBtn ' +
-    'logsLoading logsError auditCount auditEmpty auditList logFilesCount logFilesEmpty logFilesList settingsForm settingsLoading ' +
-    'settingsLoadError setHashAlgo setKeepMode setPinnedPath setMinSizeMb setMinSizeError setMaxSizeMb setMaxSizeError ' +
-    'setIncludeExt setIncludeExtError setExcludeExt setExcludeExtError setIgnoreCase setSkipEmpty setSkipHidden setSkipSymlinks ' +
-    'setQuickSampleKb setQuickSampleError setConcurrency setConcurrencyError setHashRate setHashRateError setMaxFiles ' +
-    'setMaxFilesError setRecycleDefault setCreateRecycleDir setAllowCtime settingsError saveSettingsBtn resetSettingsBtn ' +
-    'modeExactBtn modeSimilarBtn modeDesc modeCapabilityBadge similarityOptions simThreshold simThresholdRange simThresholdError ' +
-    'simConcurrency simConcurrencyError simMaxFileMb simMaxFileError simCache simAllowBinary simExtList simExtError ' +
-    'similarityCounters simFeatures simCacheHits simCandidates simSkipped resultsModeBadge mtimeFallbackNotice mtimeFallbackNoticeText exactPartition exactPartitionTitle ' +
-    'exactPartitionBadge exactPartitionCount similarPartition similarPartitionCount similarLoading similarError similarEmpty ' +
-    'similarGroupsList similarLoadMoreBtn similarLoadMoreStatus settingsSimilarityDetails setScanMode setSimilarityThreshold ' +
-    'setSimilarityThresholdError setSimilarityConcurrency setSimilarityConcurrencyError setSimilarityMaxMb setSimilarityMaxFileError ' +
-    'setSimilarityCache setSimilarityAllowBinary setSimExtList setSimilarityExtError setSimilarityExcludeExt ' +
-    'setSimilarityExcludeExtError videoOptionsDetails videoStatusBadge videoStatusHint videoEnabled videoFields ' +
-    'videoThreshold videoThresholdError videoSampleFrames videoFramesError videoMaxInterval videoIntervalError ' +
-    'videoConcurrency videoConcurrencyError videoHwaccel videoMaxFileMb videoMaxFileError videoTimeout videoTimeoutError ' +
-    'videoCache videoExtList videoExtError videoCounters videoCandidates videoCacheHits videoFfmpegUsed videoSkipped ' +
-    'xlsxLink videoPartition videoPartitionCount selectAllVideoBtn videoLoading videoError videoEmpty videoGroupsList ' +
-    'videoLoadMoreBtn videoLoadMoreStatus settingsVideoDetails setVideoStatusBadge setVideoStatusHint setVideoEnabled ' +
-    'setVideoFields setVideoThreshold setVideoThresholdError setVideoSampleFrames setVideoFramesError setVideoMaxInterval ' +
-    'setVideoIntervalError setVideoConcurrency setVideoConcurrencyError setVideoHwaccel setVideoMaxMb setVideoMaxFileError ' +
-    'setVideoTimeout setVideoTimeoutError setVideoCache setVideoExtList setVideoExtError ' +
-    'videoAsrSection videoAsrStatusBadge videoAsrStatusHint videoAsrEnabled videoAsrFields videoAsrCommand ' +
-    'videoAsrCommandError videoAsrWeight videoAsrWeightError videoAsrTimeout videoAsrTimeoutError ' +
-    'videoAsrMaxSec videoAsrMaxSecError setVideoAsrStatusBadge setVideoAsrStatusHint ' +
-    'setVideoAsrEnabled setVideoAsrFields setVideoAsrCommand setVideoAsrCommandError setVideoAsrWeight ' +
-    'setVideoAsrWeightError setVideoAsrTimeout setVideoAsrTimeoutError setVideoAsrMaxSec setVideoAsrMaxSecError ' +
-    'settingsSubtitleDetails subtitleStatusBadge subtitleStatusHint subtitleFields subtitleEnabled subtitleAsrBaseUrl ' +
-    'settingsOverview settingsScanGroup settingsScanSummary settingsSimilaritySummary settingsVideoSummary ' +
-    'settingsSubtitleSummary settingsStorageGroup settingsStorageSummary settingsStatusSummary ' +
-    'batchSubtitleBtn subtitleJobsPanel subtitleJobsHeading subtitleJobsStatus subtitleJobsRefreshBtn ' +
-    'subtitleJobsLoading subtitleJobsError subtitleJobsEmpty subtitleJobsList ' +
-    'subtitleAsrBaseUrlError subtitleAsrModel subtitleAsrModelError subtitleAsrApiKey subtitleAsrApiKeyError ' +
-    'subtitleAsrKeySetBadge subtitleClearAsrKey subtitleAsrLanguage subtitleAsrTimeout subtitleAsrTimeoutError ' +
-    'subtitleAsrChunk subtitleAsrChunkError subtitleAsrMaxAudioMb subtitleAsrMaxAudioMbError subtitleTranslateEnabled ' +
-    'subtitleLlmBaseUrl subtitleLlmBaseUrlError subtitleLlmModel subtitleLlmModelError subtitleLlmApiKey ' +
-    'subtitleLlmApiKeyError subtitleLlmKeySetBadge subtitleClearLlmKey subtitleTranslateTarget subtitleTranslateTimeout ' +
-    'subtitleTranslateTimeoutError subtitleTranslateBatchSize subtitleTranslateBatchSizeError ' +
-    'taskTabHistory taskTabSubtitles taskTabDeletions taskTabStorage ' +
-    'taskPanelHistory taskPanelSubtitles taskPanelDeletions taskPanelStorage ' +
-    'deletionJobsPanel deletionJobsHeading deletionJobsStatus deletionJobsRefreshBtn ' +
-    'deletionJobsLoading deletionJobsError deletionJobsEmpty deletionJobsList ' +
-    'deletionJobsTable deletionJobsTableWrap ' +
-    'storagePanel storagePanelHeading storageStatus storageRefreshBtn storageLoading storageError ' +
-    'storageContent storageSummary storageDbList storageTablesList storageCachesList ' +
-    'storageMediaList storageRuntimeList storageKeysList storageOtherSection storageOtherList ' +
-    'storageBackupBtn storageMaintenanceBtn storageMaintenanceVacuum ' +
-    'storageActionLoading storageActionResult ' +
-    'footerMeta toastRoot modalRoot').split(' ');
-
-  var activeModal = null;
-  var modalSeq = 0;
-
-  // ==================== 2. 通用工具 ====================
-  function $(sel, root) { return (root || document).querySelector(sel); }
-  function $$(sel, root) { return Array.prototype.slice.call((root || document).querySelectorAll(sel)); }
-  function byId(id) { return document.getElementById(id); }
-  function clear(node) { if (!node) return; while (node.firstChild) { node.removeChild(node.firstChild); } }
-  function show(node) { if (node) { node.hidden = false; } }
-  function hide(node) { if (node) { node.hidden = true; } }
-  function setHidden(node, hidden) { if (node) { node.hidden = !!hidden; } }
-  function setText(node, text) { if (node) { node.textContent = (text === null || text === undefined) ? '' : String(text); } }
-
-  /** 安全创建 DOM 节点。opts: {className, text, attrs, dataset, on} */
-  function el(tag, opts, children) {
-    var node = document.createElement(tag);
-    if (opts) {
-      if (opts.className) { node.className = opts.className; }
-      if (opts.text !== undefined && opts.text !== null) { node.textContent = String(opts.text); }
-      if (opts.attrs) {
-        Object.keys(opts.attrs).forEach(function (k) {
-          var v = opts.attrs[k];
-          if (v === null || v === undefined || v === false) { return; }
-          if (k === 'checked' || k === 'disabled' || k === 'selected') { node[k] = !!v; return; }
-          if (k === 'value') { node.value = v; return; }
-          node.setAttribute(k, v === true ? '' : String(v));
-        });
-      }
-      if (opts.dataset) {
-        Object.keys(opts.dataset).forEach(function (k) { node.dataset[k] = String(opts.dataset[k]); });
-      }
-      if (opts.on) {
-        Object.keys(opts.on).forEach(function (ev) { node.addEventListener(ev, opts.on[ev]); });
-      }
-    }
-    appendChildren(node, children);
-    return node;
-  }
-
-  function appendChildren(node, children) {
-    if (children === null || children === undefined) { return; }
-    if (Array.isArray(children)) {
-      children.forEach(function (child) { appendChildren(node, child); });
-      return;
-    }
-    if (children instanceof Node) { node.appendChild(children); }
-    else { node.appendChild(document.createTextNode(String(children))); }
-  }
-
-  function icon(name, extraClass) {
-    var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-    svg.setAttribute('class', 'icon' + (extraClass ? ' ' + extraClass : ''));
-    svg.setAttribute('aria-hidden', 'true');
-    svg.setAttribute('focusable', 'false');
-    var use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
-    use.setAttribute('href', '#i-' + name);
-    use.setAttributeNS('http://www.w3.org/1999/xlink', 'xlink:href', '#i-' + name);
-    svg.appendChild(use);
-    return svg;
-  }
-
-  function fmtBytes(bytes, digits) {
-    var n = Number(bytes);
-    if (!isFinite(n) || n <= 0) { return '0 B'; }
-    var units = ['B', 'KB', 'MB', 'GB', 'TB', 'PB'];
-    var i = 0;
-    var v = n;
-    while (v >= 1024 && i < units.length - 1) { v = v / 1024; i += 1; }
-    var d = digits;
-    if (d === undefined || d === null) {
-      d = i === 0 ? 0 : (v >= 100 ? 0 : (v >= 10 ? 1 : 2));
-    }
-    var s = v.toFixed(d);
-    if (s.indexOf('.') !== -1) { s = s.replace(/0+$/, '').replace(/\.$/, ''); }
-    return s + ' ' + units[i];
-  }
-
-  function fmtInt(value) {
-    var n = Number(value);
-    if (!isFinite(n)) { return '0'; }
-    try { return n.toLocaleString('zh-CN'); } catch (e) { return String(n); }
-  }
-
-  function fmtDateTime(iso) {
-    if (!iso) { return '—'; }
-    var d = new Date(iso);
-    if (isNaN(d.getTime())) { return String(iso); }
-    function p(n) { return n < 10 ? '0' + n : String(n); }
-    return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' +
-      p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
-  }
-
-  function fmtElapsed(seconds) {
-    var sec = Number(seconds);
-    if (!isFinite(sec) || sec < 0) { return '—'; }
-    sec = Math.round(sec);
-    if (sec < 60) { return sec + ' 秒'; }
-    var m = Math.floor(sec / 60);
-    var s = sec % 60;
-    if (m < 60) { return m + ' 分 ' + s + ' 秒'; }
-    var h = Math.floor(m / 60);
-    return h + ' 小时 ' + (m % 60) + ' 分';
-  }
-
-  function clamp(value, min, max) { return Math.min(max, Math.max(min, value)); }
-
-  function debounce(fn, wait) {
-    var timer = null;
-    return function () {
-      var args = arguments;
-      var self = this;
-      if (timer) { clearTimeout(timer); }
-      timer = setTimeout(function () { timer = null; fn.apply(self, args); }, wait);
-    };
-  }
-
-  function clonePlain(value) {
-    try { return JSON.parse(JSON.stringify(value)); } catch (e) { return null; }
-  }
-
-  /** 解析扩展名输入：逗号/空格分隔，自动补点号，最长 16 字符（含点）。 */
-  function normalizeExtList(raw) {
-    var text = String(raw === null || raw === undefined ? '' : raw).trim();
-    if (!text) { return { list: [], error: '' }; }
-    var parts = text.split(/[\s,，;；]+/).filter(function (s) { return s.length > 0; });
-    var list = [];
-    for (var i = 0; i < parts.length; i += 1) {
-      var v = parts[i].trim();
-      if (!v) { continue; }
-      if (v.charAt(0) !== '.') { v = '.' + v; }
-      if (v === '.' || /[\\/]/.test(v)) {
-        return { list: [], error: '后缀“' + parts[i] + '”格式不正确，只能包含字母、数字、点、下划线和短横线' };
-      }
-      if (v.length > 16) {
-        return { list: [], error: '后缀“' + parts[i] + '”过长（含点号最多 16 个字符）' };
-      }
-      if (list.indexOf(v) === -1) { list.push(v); }
-    }
-    return { list: list, error: '' };
-  }
-
-  function extListToText(list) {
-    if (!Array.isArray(list)) { return ''; }
-    return list.join(',');
-  }
-
-  function normalizePathList(list) {
-    if (!Array.isArray(list)) { return []; }
-    var out = [];
-    list.forEach(function (item) {
-      var p = typeof item === 'string' ? item : (item && item.path);
-      if (typeof p === 'string' && p && out.indexOf(p) === -1) { out.push(p); }
-    });
-    return out;
-  }
-
-  function isUnderRoots(path, roots) {
-    if (!path || !roots || !roots.length) { return false; }
-    return roots.some(function (root) {
-      var rp = typeof root === 'string' ? root : root.path;
-      if (!rp) { return false; }
-      var normalized = String(rp).replace(/[\\/]+$/, '');
-      return path === normalized ||
-        path.indexOf(normalized + '/') === 0 ||
-        path.indexOf(normalized + '\\') === 0;
-    });
-  }
-
-  function encodePath(path) { return encodeURIComponent(String(path === null || path === undefined ? '' : path)); }
-
-  function setBusy(btn, busy, label) {
-    if (!btn) { return; }
-    if (busy) {
-      if (!btn.__originalChildren) {
-        btn.__originalChildren = Array.prototype.slice.call(btn.childNodes).map(function (n) { return n.cloneNode(true); });
-      }
-      btn.disabled = true;
-      clear(btn);
-      btn.appendChild(el('span', { className: 'spinner' }));
-      btn.appendChild(document.createTextNode(label || '处理中…'));
-    } else {
-      btn.disabled = false;
-      if (btn.__originalChildren) {
-        clear(btn);
-        btn.__originalChildren.forEach(function (n) { btn.appendChild(n.cloneNode(true)); });
-      }
-    }
-  }
-
-  function legacyCopy(text) {
-    return new Promise(function (resolve, reject) {
-      try {
-        var ta = document.createElement('textarea');
-        ta.value = text;
-        ta.setAttribute('readonly', '');
-        ta.style.position = 'fixed';
-        ta.style.left = '-9999px';
-        ta.style.top = '0';
-        document.body.appendChild(ta);
-        ta.select();
-        var ok = document.execCommand('copy');
-        document.body.removeChild(ta);
-        if (ok) { resolve(); } else { reject(new Error('当前浏览器不支持自动复制')); }
-      } catch (e) { reject(e); }
-    });
-  }
-
-  function copyText(text) {
-    var value = String(text === null || text === undefined ? '' : text);
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-      return navigator.clipboard.writeText(value).catch(function () { return legacyCopy(value); });
-    }
-    return legacyCopy(value);
-  }
-
+  // ==================== 通用工具（依赖 toast / copyText） ====================
   function copyWithFeedback(text, btn) {
     copyText(text).then(function () {
       toast('已复制到剪贴板。', 'success', 1800);
@@ -489,305 +60,6 @@
       }
     }).catch(function (err) {
       toast((err && err.message) ? err.message : '复制失败，请手动选择文本复制。', 'error');
-    });
-  }
-
-  function getFocusable(root) {
-    return $$('a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])', root)
-      .filter(function (node) { return node.offsetParent !== null || node === document.activeElement; });
-  }
-
-  function focusSoon(node) {
-    if (!node) { return; }
-    setTimeout(function () {
-      try { node.focus({ preventScroll: true }); } catch (e) { node.focus(); }
-    }, 0);
-  }
-
-  function scrollToNode(node) {
-    if (!node) { return; }
-    try { node.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch (e) { node.scrollIntoView(); }
-  }
-
-  function syncTopStackHeight() {
-    var stack = document.querySelector('.top-stack');
-    if (!stack) { return; }
-    var height = stack.offsetHeight;
-    if (height > 0) {
-      document.documentElement.style.setProperty('--top-stack-h', height + 'px');
-    }
-  }
-
-  function statusBadge(status) {
-    var label = STATUS_LABEL[status] || status || '未知';
-    return el('span', { className: 'badge ' + (STATUS_BADGE[status] || 'badge-gray'), text: label });
-  }
-
-  // ==================== 3. API 客户端 ====================
-  class ApiError extends Error {
-    constructor(status, code, message, details) {
-      super(message || '请求失败');
-      this.name = 'ApiError';
-      this.status = status;
-      this.code = code;
-      this.details = details;
-    }
-  }
-
-  function errorMessage(err, fallback) {
-    if (!err) { return fallback || '操作失败，请稍后重试。'; }
-    if (err.name === 'AbortError') { return '请求已取消。'; }
-    if (err instanceof ApiError) {
-      if (err.message) { return err.message; }
-      return ERROR_FALLBACK[err.code] || fallback || '操作失败，请稍后重试。';
-    }
-    if (err.message) { return err.message; }
-    return fallback || '网络异常，请检查连接后重试。';
-  }
-
-  function saveCsrf(token) {
-    state.csrf = token || '';
-    try {
-      if (state.csrf) { sessionStorage.setItem(CSRF_KEY, state.csrf); }
-      else { sessionStorage.removeItem(CSRF_KEY); }
-    } catch (e) { /* 隐私模式下忽略 */ }
-  }
-
-  /**
-   * 同源 JSON 请求：自动携带 Cookie 与 X-CSRF-Token，统一错误对象与 401 处理。
-   * options: {method, body, timeout, signal, skipAuthHandler, headers}
-   */
-  async function api(path, options) {
-    options = options || {};
-    var method = (options.method || 'GET').toUpperCase();
-    var controller = new AbortController();
-    var headers = Object.assign({ Accept: 'application/json' }, options.headers || {});
-    var init = { method: method, credentials: 'same-origin', headers: headers, signal: controller.signal };
-    var timer = null;
-    var timedOut = false;
-    var timeout = options.timeout === undefined ? 30000 : options.timeout;
-    if (timeout > 0) {
-      timer = setTimeout(function () { timedOut = true; controller.abort(); }, timeout);
-    }
-    var externalAbort = null;
-    if (options.signal) {
-      if (options.signal.aborted) { controller.abort(); }
-      else {
-        externalAbort = function () { controller.abort(); };
-        options.signal.addEventListener('abort', externalAbort);
-      }
-    }
-    if (options.body !== undefined) {
-      headers['Content-Type'] = 'application/json';
-      init.body = JSON.stringify(options.body);
-    }
-    if (method !== 'GET' && method !== 'HEAD' && state.csrf) {
-      headers['X-CSRF-Token'] = state.csrf;
-    }
-    var response;
-    try {
-      response = await fetch(path, init);
-    } catch (err) {
-      if (timedOut) { throw new ApiError(0, 'TIMEOUT', '请求超时，请稍后重试。'); }
-      if (err && err.name === 'AbortError') { throw err; }
-      throw new ApiError(0, 'NETWORK', '无法连接服务，请确认后端服务已启动。');
-    } finally {
-      if (timer) { clearTimeout(timer); }
-      if (externalAbort && options.signal) { options.signal.removeEventListener('abort', externalAbort); }
-    }
-    var contentType = response.headers.get('Content-Type') || '';
-    var payload = null;
-    if (contentType.indexOf('application/json') !== -1) {
-      try { payload = await response.json(); } catch (e) { payload = null; }
-    }
-    if (response.status === 401 && !options.skipAuthHandler) {
-      handleUnauthorized();
-      throw new ApiError(401, 'AUTH_REQUIRED', ERROR_FALLBACK.AUTH_REQUIRED);
-    }
-    if (!response.ok) {
-      var errorObj = payload && payload.error ? payload.error : null;
-      var code = errorObj && errorObj.code ? errorObj.code : 'HTTP_' + response.status;
-      var message = errorObj && errorObj.message ? errorObj.message
-        : (ERROR_FALLBACK[code] || '请求失败（HTTP ' + response.status + '）。');
-      throw new ApiError(response.status, code, message, errorObj ? errorObj.details : null);
-    }
-    return payload || {};
-  }
-
-  // ==================== 4. Toast ====================
-  function toast(message, type, duration) {
-    type = type || 'info';
-    if (!els.toastRoot) { return; }
-    var current = $$('.toast', els.toastRoot);
-    if (current.length >= 4) { removeToast(current[0]); }
-    var iconName = type === 'error' ? 'warning' : (type === 'success' ? 'check' : 'info');
-    var node = el('div', {
-      className: 'toast toast-' + type,
-      attrs: { role: type === 'error' ? 'alert' : 'status' }
-    }, [icon(iconName), el('span', { className: 'toast-msg', text: message })]);
-    els.toastRoot.appendChild(node);
-    var ms = duration || (type === 'error' ? 5600 : 3200);
-    node.__timer = setTimeout(function () { removeToast(node); }, ms);
-  }
-
-  function removeToast(node) {
-    if (!node || node.__removed) { return; }
-    node.__removed = true;
-    if (node.__timer) { clearTimeout(node.__timer); }
-    node.classList.add('is-leaving');
-    setTimeout(function () {
-      if (node.parentNode) { node.parentNode.removeChild(node); }
-    }, 220);
-  }
-
-  // ==================== 5. 弹窗系统（焦点陷阱 / ESC / 还原焦点） ====================
-  function openModal(options) {
-    options = options || {};
-    if (activeModal) { closeModal(true); }
-    var root = els.modalRoot;
-    clear(root);
-    var previousFocus = document.activeElement;
-    var titleId = 'modal-title-' + (++modalSeq);
-    var dismissible = options.dismissible !== false;
-    var titleEl = el('h2', { className: 'modal-title', attrs: { id: titleId, tabindex: '-1' }, text: options.title || '对话框' });
-    var headMain = el('div', { className: 'modal-head-main' }, [
-      titleEl,
-      options.subtitle ? el('p', { className: 'modal-subtitle', text: options.subtitle }) : null
-    ]);
-    var header = el('div', { className: 'modal-header' }, [headMain]);
-    var closeBtn = null;
-    if (dismissible) {
-      closeBtn = el('button', {
-        className: 'modal-close', attrs: { type: 'button', 'aria-label': '关闭对话框' },
-        on: { click: function () { closeModal(); } }
-      }, [icon('close')]);
-      header.appendChild(closeBtn);
-    }
-    var bodyEl = el('div', { className: 'modal-body' }, options.body || null);
-    var footerEl = el('div', { className: 'modal-footer' });
-    renderFooter(footerEl, options.footer);
-    var sizeClass = options.size === 'lg' ? ' modal-lg' : (options.size === 'xl' ? ' modal-xl' : '');
-    var modal = el('div', {
-      className: 'modal' + sizeClass,
-      attrs: { role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': titleId }
-    }, [header, bodyEl, footerEl]);
-    var backdrop = el('div', {
-      className: 'modal-backdrop',
-      on: { click: function () { if (activeModal && activeModal.dismissible) { closeModal(); } } }
-    });
-    root.appendChild(backdrop);
-    root.appendChild(modal);
-    hide(root);
-    show(root);
-    document.body.style.overflow = 'hidden';
-
-    var entry = {
-      root: root, modal: modal, bodyEl: bodyEl, footerEl: footerEl, titleEl: titleEl,
-      previousFocus: previousFocus, dismissible: dismissible, onClose: options.onClose || null
-    };
-    activeModal = entry;
-
-    var controller = {
-      modal: modal,
-      bodyEl: bodyEl,
-      setTitle: function (text) { setText(titleEl, text); },
-      setSubtitle: function (text) {
-        var sub = $('.modal-subtitle', header);
-        if (!sub && text) { sub = el('p', { className: 'modal-subtitle' }); headMain.appendChild(sub); }
-        if (sub) { setText(sub, text || ''); sub.hidden = !text; }
-      },
-      setBody: function (node) { clear(bodyEl); if (node) { bodyEl.appendChild(node); } },
-      setFooter: function (footer) { clear(footerEl); renderFooter(footerEl, footer); },
-      setBusy: function (busy) { closeBtn.disabled = !!busy; },
-      close: function () { closeModal(true); }
-    };
-
-    var focusTarget = options.initialFocus;
-    if (typeof focusTarget === 'string') { focusTarget = $(focusTarget, modal); }
-    var first = focusTarget || getFocusable(modal)[0] || titleEl;
-    focusSoon(first);
-    return controller;
-  }
-
-  function renderFooter(footerEl, footer) {
-    if (!footer) { return; }
-    if (Array.isArray(footer)) {
-      footer.forEach(function (node) { if (node) { footerEl.appendChild(node); } });
-      return;
-    }
-    if (footer.left) {
-      footerEl.appendChild(el('div', { className: 'footer-left' }, footer.left));
-    }
-    if (footer.right) {
-      (Array.isArray(footer.right) ? footer.right : [footer.right]).forEach(function (node) {
-        if (node) { footerEl.appendChild(node); }
-      });
-    }
-  }
-
-  function closeModal(force) {
-    var entry = activeModal;
-    if (!entry) { return; }
-    if (!entry.dismissible && force !== true) { return; }
-    activeModal = null;
-    if (entry.onClose) {
-      try { entry.onClose(); } catch (e) { /* 忽略清理异常 */ }
-    }
-    clear(entry.root);
-    hide(entry.root);
-    document.body.style.overflow = '';
-    if (entry.previousFocus && entry.previousFocus.isConnected) {
-      try { entry.previousFocus.focus({ preventScroll: true }); } catch (e2) { /* 忽略 */ }
-    }
-  }
-
-  function trapModalKeys(event) {
-    if (!activeModal) { return; }
-    if (event.key === 'Escape') {
-      if (activeModal.dismissible) {
-        event.preventDefault();
-        closeModal();
-      }
-      return;
-    }
-    if (event.key !== 'Tab') { return; }
-    var modal = activeModal.modal;
-    var focusables = getFocusable(modal);
-    if (!focusables.length) { event.preventDefault(); return; }
-    var first = focusables[0];
-    var last = focusables[focusables.length - 1];
-    var current = document.activeElement;
-    if (!modal.contains(current)) { event.preventDefault(); first.focus(); return; }
-    if (event.shiftKey && current === first) { event.preventDefault(); last.focus(); }
-    else if (!event.shiftKey && current === last) { event.preventDefault(); first.focus(); }
-  }
-
-  function confirmDialog(options) {
-    return new Promise(function (resolve) {
-      var settled = false;
-      var cancelBtn = el('button', {
-        className: 'btn btn-ghost', attrs: { type: 'button' }, text: options.cancelText || '取消'
-      });
-      var okBtn = el('button', {
-        className: 'btn ' + (options.danger === false ? 'btn-primary' : 'btn-danger'),
-        attrs: { type: 'button' }, text: options.confirmText || '确认'
-      });
-      function finish(value) {
-        if (settled) { return; }
-        settled = true;
-        closeModal(true);
-        resolve(value);
-      }
-      cancelBtn.addEventListener('click', function () { finish(false); });
-      okBtn.addEventListener('click', function () { finish(true); });
-      openModal({
-        title: options.title || '请确认',
-        body: el('div', {}, options.body || el('p', { className: 'modal-note', text: options.message || '' })),
-        size: 'md',
-        footer: [cancelBtn, okBtn],
-        initialFocus: options.danger === false ? okBtn : cancelBtn,
-        onClose: function () { if (!settled) { settled = true; resolve(false); } }
-      });
     });
   }
 
@@ -1718,6 +990,8 @@
     videoMaxFile: { input: 'videoMaxFileMb', error: 'videoMaxFileError' },
     videoTimeout: { input: 'videoTimeout', error: 'videoTimeoutError' },
     videoExt: { input: 'videoExtList', error: 'videoExtError' },
+    videoFfmpegPath: { input: 'videoFfmpegPath', error: 'videoFfmpegPathError' },
+    videoHwaccel: { input: 'videoHwaccel', error: 'videoHwaccelError' },
     videoAsrCommand: { input: 'videoAsrCommand', error: 'videoAsrCommandError' },
     videoAsrWeight: { input: 'videoAsrWeight', error: 'videoAsrWeightError' },
     videoAsrTimeout: { input: 'videoAsrTimeout', error: 'videoAsrTimeoutError' },
@@ -2001,26 +1275,207 @@
       extensions = videoDefaults.video_extensions.slice();
     }
     if (!extensions.length) { extensions = DEFAULT_VIDEO_EXTENSIONS.slice(); }
-    var ffmpegPath = (video && video.ffmpeg_path) || '';
-    var ffmpegVersion = (video && video.ffmpeg_version) || '';
+    // v0021 P1：后端 video.ffmpeg 提供解析结果（available/path/version/source/configured_path/hwaccels）；
+    // 同时兼容旧键 ffmpeg_path/ffmpeg_version/hwaccels。
+    var ffmpeg = (video && video.ffmpeg && typeof video.ffmpeg === 'object') ? video.ffmpeg : {};
+    var ffmpegPath = ffmpeg.path || (video && video.ffmpeg_path) || '';
+    var ffmpegVersion = ffmpeg.version || (video && video.ffmpeg_version) || '';
+    var hwaccels = Array.isArray(ffmpeg.hwaccels) ? ffmpeg.hwaccels.slice()
+      : (video && Array.isArray(video.hwaccels) ? video.hwaccels.slice() : []);
     var ffmpegAvailable = false;
-    if (video) {
-      if (typeof video.available === 'boolean') {
-        ffmpegAvailable = video.available;
-      } else {
-        ffmpegAvailable = !!ffmpegPath && !!ffmpegVersion && ffmpegVersion !== 'unavailable';
-      }
+    if (typeof ffmpeg.available === 'boolean') {
+      ffmpegAvailable = ffmpeg.available;
+    } else if (video && typeof video.available === 'boolean') {
+      ffmpegAvailable = video.available;
+    } else {
+      ffmpegAvailable = !!ffmpegPath && !!ffmpegVersion && ffmpegVersion !== 'unavailable';
     }
+    var fallbackModes = (typeof VIDEO_HWACCEL_MODES !== 'undefined' && VIDEO_HWACCEL_MODES.length)
+      ? VIDEO_HWACCEL_MODES.slice()
+      : ['auto', 'off', 'vaapi', 'qsv', 'nvdec', 'videotoolbox'];
+    var hwaccelModes = (video && Array.isArray(video.hwaccel_modes) && video.hwaccel_modes.length)
+      ? video.hwaccel_modes.slice() : fallbackModes;
     return {
       supported: supported,
       available: supported && ffmpegAvailable,
       extensions: extensions,
       ffmpegPath: ffmpegPath,
       ffmpegVersion: ffmpegVersion,
-      hwaccels: video && Array.isArray(video.hwaccels) ? video.hwaccels : [],
+      hwaccels: hwaccels,
       gpuHint: (video && video.gpu_hint) || '',
-      cache: (video && video.cache) || ''
+      cache: (video && video.cache) || '',
+      ffmpegSource: ffmpeg.source || '',
+      configuredPath: ffmpeg.configured_path || '',
+      ffmpeg: {
+        available: ffmpegAvailable,
+        path: ffmpegPath,
+        version: ffmpegVersion,
+        source: ffmpeg.source || '',
+        configuredPath: ffmpeg.configured_path || '',
+        hwaccels: hwaccels
+      },
+      hwaccelModes: hwaccelModes,
+      // hwaccel_supported 为后端归一后的“实际支持”列表（nvdec 已包含 cuda/cuvid 归一）；
+      // 缺少该字段时回退到 hwaccels 与完整枚举的交集，保持旧后端可用。
+      hwaccelSupported: (video && Array.isArray(video.hwaccel_supported))
+        ? video.hwaccel_supported.slice() : [],
+      hwaccelMode: (video && video.hwaccel_mode) || 'auto',
+      hwaccelEffective: (video && video.hwaccel_effective) || '',
+      hwaccelFallback: !!(video && video.hwaccel_fallback)
     };
+  }
+
+  function videoFfmpegSourceLabel(source) {
+    var labels = {
+      settings: '设置', env: '环境变量/内置', which: 'PATH 自动探测',
+      explicit: '显式参数', unavailable: '不可用'
+    };
+    var key = String(source || '').toLowerCase();
+    return labels[key] || key || '未知';
+  }
+
+  function videoFfmpegInfo(cap) {
+    cap = cap || state.video || videoCapability();
+    var ffmpeg = cap.ffmpeg || {};
+    return {
+      available: ffmpeg.available !== undefined ? ffmpeg.available === true : cap.available === true,
+      path: ffmpeg.path || cap.ffmpegPath || '',
+      version: ffmpeg.version || cap.ffmpegVersion || '',
+      source: ffmpeg.source || cap.ffmpegSource || '',
+      configuredPath: ffmpeg.configuredPath || cap.configuredPath || '',
+      hwaccels: Array.isArray(ffmpeg.hwaccels) ? ffmpeg.hwaccels : (cap.hwaccels || []),
+      supported: videoHwaccelSupported(cap)
+    };
+  }
+
+  /** 当前 ffmpeg 实际支持的显式硬解模式（后端 hwaccel_supported 优先）。 */
+  function videoHwaccelSupported(cap) {
+    cap = cap || state.video || videoCapability();
+    var modes = ['vaapi', 'qsv', 'nvdec', 'videotoolbox'];
+    var supported = [];
+    if (Array.isArray(cap.hwaccelSupported) && cap.hwaccelSupported.length) {
+      cap.hwaccelSupported.forEach(function (name) {
+        var value = String(name || '').toLowerCase();
+        if (modes.indexOf(value) !== -1 && supported.indexOf(value) === -1) { supported.push(value); }
+      });
+      return supported;
+    }
+    (cap.hwaccels || []).forEach(function (name) {
+      var value = String(name || '').toLowerCase();
+      if (modes.indexOf(value) !== -1 && supported.indexOf(value) === -1) { supported.push(value); }
+      else if ((value === 'cuda' || value === 'cuvid') && supported.indexOf('nvdec') === -1) { supported.push('nvdec'); }
+    });
+    return supported;
+  }
+
+  function videoFfmpegHintText() {
+    var cap = state.video || videoCapability();
+    var info = videoFfmpegInfo(cap);
+    if (cap.supported === false) { return '后端未提供视频能力，无法配置外部 FFmpeg。'; }
+    if (!cap.available) {
+      return '当前解析：未找到 FFmpeg。可填写外部 FFmpeg 的绝对路径，或检查 SPK 内置路径 / 环境变量 DUP_FFMPEG_PATH。';
+    }
+    var text = '当前解析：' + (info.path || '—') + ' · 版本 ' + (info.version || '—') +
+      ' · 来源 ' + videoFfmpegSourceLabel(info.source);
+    if (info.configuredPath && info.source !== 'settings') {
+      text += '；设置中的路径未被采用，已回退到其他来源。';
+    }
+    return text;
+  }
+
+  function videoHwaccelEffectiveFor(mode, cap) {
+    cap = cap || state.video || videoCapability();
+    var supported = videoHwaccelSupported(cap);
+    var value = String(mode === null || mode === undefined || mode === '' ? 'auto' : mode).toLowerCase();
+    if (value === 'off') { return { label: 'none', fallback: false }; }
+    if (value === 'auto') {
+      var autoLabel = cap.hwaccelEffective || (supported[0] || 'none');
+      if (autoLabel === 'auto') { autoLabel = supported[0] || 'none'; }
+      return { label: autoLabel, fallback: false };
+    }
+    if (supported.indexOf(value) !== -1) { return { label: value, fallback: false }; }
+    return { label: 'none', fallback: true };
+  }
+
+  function videoHwaccelHintForSelect(select) {
+    var cap = state.video || videoCapability();
+    if (cap.supported === false) { return '后端未提供视频能力。'; }
+    if (!cap.available) { return 'FFmpeg 不可用，视频视觉相似无法启用。'; }
+    var modeValue = select && select.value ? select.value : 'auto';
+    var effective = videoHwaccelEffectiveFor(modeValue, cap);
+    var supported = videoHwaccelSupported(cap);
+    var detected = supported.length
+      ? supported.map(function (name) { return videoHwaccelLabel(name); }).join(' / ')
+      : '未检测到受支持的硬件加速';
+    var text = '实际生效：' + videoHwaccelLabel(effective.label) + ' · 支持：' + detected;
+    if (effective.fallback) {
+      text += '。所选模式未出现在 ffmpeg -hwaccels，运行时回退软件解码（hwaccel_fallback）。';
+    }
+    return text;
+  }
+
+  function renderVideoHwaccelOptions(select, selectedValue) {
+    if (!select) { return; }
+    var cap = state.video || videoCapability();
+    var modes = (cap.hwaccelModes && cap.hwaccelModes.length) ? cap.hwaccelModes.slice() : ['auto', 'off'];
+    var detected = videoHwaccelSupported(cap);
+    var current = String(selectedValue === null || selectedValue === undefined || selectedValue === ''
+      ? 'auto' : selectedValue).toLowerCase();
+    var base = [
+      { value: 'auto', label: '自动（检测到时启用硬件加速）' },
+      { value: 'off', label: '关闭（仅软件解码）' }
+    ];
+    clear(select);
+    base.forEach(function (item) {
+      select.appendChild(el('option', { attrs: { value: item.value }, text: item.label }));
+    });
+    modes.forEach(function (mode) {
+      var value = String(mode).toLowerCase();
+      if (value === 'auto' || value === 'off') { return; }
+      var isDetected = detected.indexOf(value) !== -1;
+      var isCurrent = value === current;
+      var label = videoHwaccelLabel(value) +
+        (isDetected ? '（已检测到）' : '（未检测到，运行时回退软件解码）');
+      var optionNode = el('option', { attrs: { value: value }, text: label });
+      optionNode.disabled = !isDetected && !isCurrent;
+      select.appendChild(optionNode);
+    });
+    select.value = current;
+    if (select.value !== current) { select.value = 'auto'; }
+  }
+
+  function updateVideoFfmpegHints() {
+    var text = videoFfmpegHintText();
+    [els.videoFfmpegHint, els.setVideoFfmpegHint].forEach(function (hint) {
+      if (!hint) { return; }
+      setText(hint, text);
+      hint.setAttribute('title', text);
+    });
+  }
+
+  function updateVideoHwaccelHints() {
+    [els.videoHwaccelHint, els.setVideoHwaccelHint].forEach(function (hint) {
+      if (!hint) { return; }
+      var select = hint === els.videoHwaccelHint ? els.videoHwaccel : els.setVideoHwaccel;
+      var text = videoHwaccelHintForSelect(select);
+      setText(hint, text);
+      hint.setAttribute('title', text);
+    });
+  }
+
+  function updateVideoHwaccelOptions() {
+    var cap = state.video || videoCapability();
+    var scanValue = state.settings && state.settings.video_hwaccel ? state.settings.video_hwaccel : 'auto';
+    var settingsValue = scanValue;
+    if (els.videoHwaccel) {
+      if (els.videoHwaccel.value && els.videoHwaccel.options.length) { scanValue = els.videoHwaccel.value; }
+      renderVideoHwaccelOptions(els.videoHwaccel, scanValue);
+    }
+    if (els.setVideoHwaccel) {
+      if (els.setVideoHwaccel.value && els.setVideoHwaccel.options.length) { settingsValue = els.setVideoHwaccel.value; }
+      renderVideoHwaccelOptions(els.setVideoHwaccel, settingsValue);
+    }
+    updateVideoHwaccelHints();
   }
 
   function videoStatusInfo() {
@@ -2075,6 +1530,8 @@
     updateVideoFieldsState();
     updateSettingsVideoFieldsState();
     updateAsrStatusUi();
+    updateVideoFfmpegHints();
+    updateVideoHwaccelOptions();
   }
 
   function updateVideoFieldsState() {
@@ -2107,7 +1564,8 @@
     setVideoNumberValue(els.videoConcurrency, settings.video_concurrency, 1, 1, 2);
     setVideoNumberValue(els.videoMaxFileMb, settings.video_max_file_mb, 8192, 1, 102400);
     setVideoNumberValue(els.videoTimeout, settings.video_timeout_sec, 180, 30, 1800);
-    if (els.videoHwaccel) { els.videoHwaccel.value = settings.video_hwaccel === 'off' ? 'off' : 'auto'; }
+    if (els.videoFfmpegPath) { els.videoFfmpegPath.value = settings.ffmpeg_path || ''; }
+    if (els.videoHwaccel) { renderVideoHwaccelOptions(els.videoHwaccel, settings.video_hwaccel || 'auto'); }
     if (els.videoCache) { els.videoCache.checked = settings.video_cache !== false; }
     var selected = (Array.isArray(settings.video_extensions) && settings.video_extensions.length)
       ? settings.video_extensions : cap.extensions;
@@ -2128,13 +1586,29 @@
     setVideoNumberValue(els.setVideoConcurrency, settings.video_concurrency, 1, 1, 2);
     setVideoNumberValue(els.setVideoMaxMb, settings.video_max_file_mb, 8192, 1, 102400);
     setVideoNumberValue(els.setVideoTimeout, settings.video_timeout_sec, 180, 30, 1800);
-    if (els.setVideoHwaccel) { els.setVideoHwaccel.value = settings.video_hwaccel === 'off' ? 'off' : 'auto'; }
+    if (els.setVideoFfmpegPath) { els.setVideoFfmpegPath.value = settings.ffmpeg_path || ''; }
+    if (els.setVideoHwaccel) { renderVideoHwaccelOptions(els.setVideoHwaccel, settings.video_hwaccel || 'auto'); }
     if (els.setVideoCache) { els.setVideoCache.checked = settings.video_cache !== false; }
     var selected = (Array.isArray(settings.video_extensions) && settings.video_extensions.length)
       ? settings.video_extensions : cap.extensions;
     renderExtChips(els.setVideoExtList, cap.extensions, selected, null);
     fillAsrSettingsForm(settings);
     updateVideoAvailabilityUi();
+  }
+
+  function readHwaccelSelect(select) {
+    var value = String(select && select.value ? select.value : 'auto').toLowerCase();
+    return VIDEO_HWACCEL_MODES.indexOf(value) === -1 ? 'auto' : value;
+  }
+
+  function readFfmpegPathInput(input) {
+    var raw = String(input && input.value !== null && input.value !== undefined ? input.value : '').trim();
+    if (!raw) { return { value: '', error: '' }; }
+    if (raw.length > 512) { return { value: '', error: 'FFmpeg 路径过长（最多 512 个字符）。' }; }
+    if (!/^(?:\/|[A-Za-z]:[\\/])/.test(raw)) {
+      return { value: '', error: '请填写 FFmpeg 的绝对路径（以 / 开头）；留空表示使用内置/自动探测。' };
+    }
+    return { value: raw, error: '' };
   }
 
   function readVideoScanOptions(options, errors) {
@@ -2155,7 +1629,10 @@
     if (maxFile.error) { errors.videoMaxFile = maxFile.error; } else { options.video_max_file_mb = maxFile.value; }
     var timeout = readIntOption(els.videoTimeout, 30, 1800, false, 0, '单视频超时（秒）');
     if (timeout.error) { errors.videoTimeout = timeout.error; } else { options.video_timeout_sec = timeout.value; }
-    options.video_hwaccel = els.videoHwaccel && els.videoHwaccel.value === 'off' ? 'off' : 'auto';
+    var ffmpegPath = readFfmpegPathInput(els.videoFfmpegPath);
+    if (ffmpegPath.error) { errors.videoFfmpegPath = ffmpegPath.error; }
+    else { options.ffmpeg_path = ffmpegPath.value; }
+    options.video_hwaccel = readHwaccelSelect(els.videoHwaccel);
     options.video_cache = !!(els.videoCache && els.videoCache.checked);
     var ext = readExtChips(els.videoExtList);
     if (!ext.length) { errors.videoExt = '请至少选择一种视频后缀。'; } else { options.video_extensions = ext; }
@@ -2178,7 +1655,10 @@
     if (maxFile.error) { errors.videoMaxFile = maxFile.error; } else { settings.video_max_file_mb = maxFile.value; }
     var timeout = readIntOption(els.setVideoTimeout, 30, 1800, false, 0, '单视频超时（秒）');
     if (timeout.error) { errors.videoTimeout = timeout.error; } else { settings.video_timeout_sec = timeout.value; }
-    settings.video_hwaccel = els.setVideoHwaccel && els.setVideoHwaccel.value === 'off' ? 'off' : 'auto';
+    var ffmpegPath = readFfmpegPathInput(els.setVideoFfmpegPath);
+    if (ffmpegPath.error) { errors.videoFfmpegPath = ffmpegPath.error; }
+    else { settings.ffmpeg_path = ffmpegPath.value; }
+    settings.video_hwaccel = readHwaccelSelect(els.setVideoHwaccel);
     settings.video_cache = !!(els.setVideoCache && els.setVideoCache.checked);
     var ext = readExtChips(els.setVideoExtList);
     if (!ext.length) { errors.videoExt = '请至少选择一种视频后缀。'; } else { settings.video_extensions = ext; }
@@ -2659,6 +2139,18 @@
     updateScanSummary();
   }
 
+  var BACKEND_VIDEO_FIELD_KEYS = { ffmpeg_path: 'videoFfmpegPath', video_hwaccel: 'videoHwaccel' };
+
+  /** 把后端 INVALID_ARGUMENT 的 details.key 映射到前端字段错误（中文文案用后端 message）。 */
+  function videoFieldErrorsFromApi(err) {
+    if (!err || err.code !== 'INVALID_ARGUMENT' || !err.details || !err.details.key) { return null; }
+    var field = BACKEND_VIDEO_FIELD_KEYS[err.details.key];
+    if (!field) { return null; }
+    var errors = {};
+    errors[field] = err.message || '该选项值不合法，请检查后重试。';
+    return errors;
+  }
+
   function clearOptionsErrors() {
     Object.keys(OPTION_ERROR_FIELDS).forEach(function (key) {
       var map = OPTION_ERROR_FIELDS[key];
@@ -2911,8 +2403,13 @@
     } catch (err) {
       var msg = errorMessage(err, '启动扫描失败，请稍后重试。');
       if (err && err.code === 'SCAN_BUSY') { msg = '已有扫描任务正在运行，同一时间只允许一个扫描任务。'; }
-      setText(els.optionsError, msg);
-      show(els.optionsError);
+      var scanFieldErrors = videoFieldErrorsFromApi(err);
+      if (scanFieldErrors) {
+        showOptionErrors(scanFieldErrors);
+      } else {
+        setText(els.optionsError, msg);
+        show(els.optionsError);
+      }
       toast(msg, 'error');
     } finally {
       setBusy(els.startScanBtn, false);
@@ -4866,7 +4363,7 @@
             })
           ]);
         }
-        if (activeModal) { activeModal.dismissible = true; }
+        setModalDismissible(true);
         if (status === 'done') {
           toast('字幕生成完成，可下载 SRT/VTT 文件。', 'success', 5000);
         } else if (status === 'failed') {
@@ -4877,7 +4374,7 @@
       } else {
         ui.cancelTaskBtn.disabled = false;
         setText(ui.cancelTaskBtn, '取消任务');
-        if (activeModal) { activeModal.dismissible = true; }
+        setModalDismissible(true);
       }
     }
 
@@ -4923,7 +4420,7 @@
             setText(cloud.progressUi.messageEl, '进度轮询已中断。');
           }
           if (cloud.modal) { cloud.modal.setBusy(false); }
-          if (activeModal) { activeModal.dismissible = true; }
+          setModalDismissible(true);
           if (cloud.modal) {
             cloud.modal.setFooter([el('button', {
               className: 'btn btn-ghost', attrs: { type: 'button' }, text: '关闭',
@@ -5974,7 +5471,7 @@
     flow.running = true;
     flow.polling = true;
     flow.pollErrors = 0;
-    if (activeModal) { activeModal.dismissible = false; }
+    setModalDismissible(false);
     if (flow.modal) { flow.modal.setBusy(true); }
     pollDeleteOnce();
     flow.timer = setInterval(pollDeleteOnce, POLL_MS);
@@ -6010,7 +5507,7 @@
         if (flow.timer) { clearInterval(flow.timer); flow.timer = null; }
         flow.running = false;
         flow.busy = false;
-        if (activeModal) { activeModal.dismissible = true; }
+        setModalDismissible(true);
         if (flow.modal) { flow.modal.setBusy(false); }
         finishDelete(res.job);
       }
@@ -6022,7 +5519,7 @@
         if (flow.timer) { clearInterval(flow.timer); flow.timer = null; }
         flow.running = false;
         flow.busy = false;
-        if (activeModal) { activeModal.dismissible = true; }
+        setModalDismissible(true);
         if (flow.modal) { flow.modal.setBusy(false); }
         toast('删除任务进度轮询中断，请稍后在操作日志中查看结果。', 'error', 6000);
       }
@@ -7706,6 +7203,8 @@
     videoMaxFile: { input: 'setVideoMaxMb', error: 'setVideoMaxFileError' },
     videoTimeout: { input: 'setVideoTimeout', error: 'setVideoTimeoutError' },
     videoExt: { input: 'setVideoExtList', error: 'setVideoExtError' },
+    videoFfmpegPath: { input: 'setVideoFfmpegPath', error: 'setVideoFfmpegPathError' },
+    videoHwaccel: { input: 'setVideoHwaccel', error: 'setVideoHwaccelError' },
     videoAsrCommand: { input: 'setVideoAsrCommand', error: 'setVideoAsrCommandError' },
     videoAsrWeight: { input: 'setVideoAsrWeight', error: 'setVideoAsrWeightError' },
     videoAsrTimeout: { input: 'setVideoAsrTimeout', error: 'setVideoAsrTimeoutError' },
@@ -7751,6 +7250,12 @@
       var vcap = state.video || videoCapability();
       var videoBits = [els.setVideoEnabled && els.setVideoEnabled.checked ? '默认开启' : '默认关闭'];
       videoBits.push(vcap.available ? 'FFmpeg ' + (vcap.ffmpegVersion || '可用') : 'FFmpeg 不可用');
+      if (vcap.available) {
+        if (vcap.configuredPath) { videoBits.push('外部 FFmpeg'); }
+        var videoEffective = videoHwaccelEffectiveFor(vcap.hwaccelMode || 'auto', vcap);
+        videoBits.push('硬解 ' + videoHwaccelLabel(videoEffective.label));
+        if (vcap.hwaccelFallback) { videoBits.push('显式模式不支持，回退软件'); }
+      }
       setText(els.settingsVideoSummary, videoBits.join(' · '));
     }
     if (els.settingsSubtitleSummary) {
@@ -7796,8 +7301,13 @@
     timeBits.push(meta.statx_supported === true ? 'statx 可用' : 'statx 不可用');
     var ffmpegText = '不可用';
     if (vcap.available) {
-      ffmpegText = '可用' + (vcap.ffmpegVersion ? ' · ' + vcap.ffmpegVersion : '');
-      if (vcap.hwaccels && vcap.hwaccels.length) { ffmpegText += ' · 硬解 ' + vcap.hwaccels.join('/'); }
+      var ffmpegInfo = videoFfmpegInfo(vcap);
+      var supportedHw = videoHwaccelSupported(vcap);
+      ffmpegText = '可用' + (ffmpegInfo.version ? ' · ' + ffmpegInfo.version : '');
+      if (ffmpegInfo.source) { ffmpegText += ' · 来源 ' + videoFfmpegSourceLabel(ffmpegInfo.source); }
+      if (supportedHw.length) {
+        ffmpegText += ' · 硬解 ' + supportedHw.map(function (name) { return videoHwaccelLabel(name); }).join('/');
+      }
     }
     var asrText = '未启用';
     var metaAsr = meta.video && meta.video.asr;
@@ -8003,6 +7513,19 @@
     return false;
   }
 
+  /** 保存设置后重新拉取 /api/meta，刷新 FFmpeg 解析结果与硬解能力。 */
+  async function refreshMetaCapabilities() {
+    try {
+      var meta = await api('/api/meta', { timeout: 10000 });
+      if (meta) {
+        state.meta = meta;
+        applyMeta(meta);
+      }
+    } catch (e) {
+      /* 能力刷新失败不影响已成功保存的设置；下次进入设置页会再次加载。 */
+    }
+  }
+
   async function saveSettings() {
     if (state.settingsSaving) { return; }
     var parsed = readSettingsForm();
@@ -8016,6 +7539,8 @@
       var res = await api('/api/settings', { method: 'PUT', body: { settings: parsed.settings }, timeout: 20000 });
       if (res && res.settings) {
         state.settings = Object.assign({}, DEFAULT_SETTINGS, res.settings);
+        // 外部 FFmpeg 路径/硬解模式变化会影响后端解析结果，保存成功后刷新能力。
+        await refreshMetaCapabilities();
         state.similarity = similarityCapability();
         state.video = videoCapability();
         updateModeAvailability();
@@ -8027,8 +7552,13 @@
       state.recycleDefault = state.settings ? state.settings.recycle_default !== false : state.recycleDefault;
       toast('设置已保存。', 'success');
     } catch (err) {
-      setText(els.settingsError, errorMessage(err, '保存设置失败，请稍后重试。'));
-      show(els.settingsError);
+      var fieldErrors = videoFieldErrorsFromApi(err);
+      if (fieldErrors) {
+        showSettingsErrors(fieldErrors);
+      } else {
+        setText(els.settingsError, errorMessage(err, '保存设置失败，请稍后重试。'));
+        show(els.settingsError);
+      }
       toast('设置保存失败，请查看错误提示。', 'error');
     } finally {
       state.settingsSaving = false;
@@ -8065,6 +7595,9 @@
     if (els.setVideoAsrSection) {
       els.setVideoAsrSection.addEventListener('change', clearSettingsErrors);
     }
+    [els.videoHwaccel, els.setVideoHwaccel].forEach(function (select) {
+      if (select) { select.addEventListener('change', updateVideoHwaccelHints); }
+    });
     if (els.subtitleEnabled) {
       els.subtitleEnabled.addEventListener('change', function () { clearSettingsErrors(); updateSubtitleAvailabilityUi(); });
     }
@@ -8108,10 +7641,12 @@
     window.addEventListener('resize', syncTopStackHeight, { passive: true });
     document.addEventListener('keydown', trapModalKeys);
     document.addEventListener('focusin', function (event) {
-      if (!activeModal) { return; }
-      if (activeModal.root.contains(event.target)) { return; }
+      if (!isModalOpen()) { return; }
+      var modalEntry = getActiveModal();
+      if (!modalEntry) { return; }
+      if (modalEntry.root.contains(event.target)) { return; }
       if (els.toastRoot && els.toastRoot.contains(event.target)) { return; }
-      var first = getFocusable(activeModal.modal)[0];
+      var first = getFocusable(modalEntry.modal)[0];
       if (first) { first.focus(); }
     });
   }

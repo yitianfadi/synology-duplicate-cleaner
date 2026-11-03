@@ -427,7 +427,12 @@ class Api(object):
         row_counts = store.table_row_counts()
         feature_entries = store.feature_cache_len()
         video_cache = video_similarity.video_cache_stats(self.config)
-        ffmpeg_info = video_similarity.probe_ffmpeg(self.config)
+        # settings.ffmpeg_path 参与解析；设置路径变化会得到新的探测结果。
+        ffmpeg_info = video_similarity.probe_ffmpeg(self.config, settings)
+        hwaccel_mode = str(settings.get("video_hwaccel") or "auto").strip().lower()
+        hwaccel_effective, _hwaccel_flag, hwaccel_fallback = (
+            video_similarity.hwaccel_for_mode(
+                hwaccel_mode, ffmpeg_info.get("hwaccels") or []))
         asr = video_similarity.asr_availability(
             settings, ffmpeg_info.get("available"))
         scan_counts = self.services.scanner.active_stats()
@@ -447,10 +452,16 @@ class Api(object):
             "video_cache": video_cache,
             "ffmpeg": {
                 "available": bool(ffmpeg_info.get("available")),
-                "path": ffmpeg_info.get("ffmpeg_path") or "",
-                "version": ffmpeg_info.get("ffmpeg_version") or "unavailable",
+                "path": ffmpeg_info.get("path") or "",
+                "version": ffmpeg_info.get("version") or "unavailable",
                 "hwaccels": list(ffmpeg_info.get("hwaccels") or []),
                 "gpu_hint": bool(ffmpeg_info.get("hwaccels")),
+                # v0021 P1：外部 FFmpeg 配置路径/解析来源/实际硬解标签
+                "configured_path": ffmpeg_info.get("configured_path") or "",
+                "source": ffmpeg_info.get("source") or "unavailable",
+                "hwaccel": hwaccel_effective,
+                "hwaccel_mode": hwaccel_mode,
+                "hwaccel_fallback": bool(hwaccel_fallback),
             },
             "asr": {
                 "enabled": bool(asr.get("enabled")),

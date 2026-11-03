@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-11-02T08:06:56+0800",
+  "generated_at": "2026-11-03T08:15:17+0800",
   "python": "3.12.9 | packaged by Anaconda, Inc. | (main, Feb  6 2025, 18:49:16) [MSC v.1929 64 bit (AMD64)]",
   "repo": "D:\\code\\zhouyi\\qunhui",
   "summary": {
@@ -11,11 +11,11 @@
     "fixture_files": 46,
     "python": "3.12.9",
     "birthtime_supported": true,
-    "backend_port": 6670,
+    "backend_port": 2535,
     "csrf_token_len": 43,
     "meta": {
       "ok": true,
-      "app_version": "1.1.0-0003",
+      "app_version": "1.1.0-0025",
       "dsm_version": "dev",
       "python_version": "3.12.9",
       "creation_time_supported": true,
@@ -65,7 +65,52 @@
         "similarity_concurrency": 2,
         "similarity_cache": true,
         "similarity_max_file_mb": 32,
-        "similarity_allow_binary": false
+        "similarity_allow_binary": false,
+        "ffmpeg_path": "",
+        "video_similarity_enabled": false,
+        "video_extensions": [
+          ".mp4",
+          ".mkv",
+          ".mov",
+          ".avi",
+          ".flv",
+          ".wmv",
+          ".webm",
+          ".m4v",
+          ".ts",
+          ".mpg",
+          ".mpeg"
+        ],
+        "video_sample_frames": 20,
+        "video_max_sample_interval_sec": 300,
+        "video_similarity_threshold": 90,
+        "video_concurrency": 1,
+        "video_hwaccel": "auto",
+        "video_max_file_mb": 8192,
+        "video_timeout_sec": 180,
+        "video_cache": true,
+        "video_asr_enabled": false,
+        "video_asr_command": "",
+        "video_asr_weight": 0.15,
+        "video_asr_timeout_sec": 300,
+        "video_asr_max_sec": 600,
+        "subtitle_enabled": false,
+        "subtitle_asr_base_url": "https://api.openai.com/v1",
+        "subtitle_asr_api_key": "",
+        "subtitle_asr_model": "whisper-1",
+        "subtitle_asr_language": "auto",
+        "subtitle_asr_timeout_sec": 300,
+        "subtitle_asr_chunk_sec": 600,
+        "subtitle_asr_max_audio_mb": 24,
+        "subtitle_translate_enabled": false,
+        "subtitle_llm_base_url": "https://api.openai.com/v1",
+        "subtitle_llm_api_key": "",
+        "subtitle_llm_model": "gpt-4.1-mini",
+        "subtitle_translate_target": "zh",
+        "subtitle_translate_timeout_sec": 120,
+        "subtitle_translate_batch_size": 20,
+        "subtitle_asr_api_key_set": false,
+        "subtitle_llm_api_key_set": false
       },
       "limits": {
         "max_files": 500000,
@@ -153,9 +198,97 @@
         "default_threshold": 85,
         "signature_size": 64,
         "cache": "feature_cache.json"
+      },
+      "video": {
+        "enabled": false,
+        "ffmpeg_path": "C:\\Users\\zhouyi\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\\ffmpeg-9.0.2-full_build\\bin\\ffmpeg.EXE",
+        "ffmpeg_version": "9.0.2-full_build-www.gyan.dev",
+        "hwaccels": [
+          "cuda",
+          "vaapi",
+          "dxva2",
+          "qsv",
+          "d3d11va",
+          "opencl",
+          "vulkan",
+          "d3d12va",
+          "amf"
+        ],
+        "gpu_hint": true,
+        "ffmpeg": {
+          "available": true,
+          "path": "C:\\Users\\zhouyi\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\\ffmpeg-9.0.2-full_build\\bin\\ffmpeg.EXE",
+          "version": "9.0.2-full_build-www.gyan.dev",
+          "source": "which",
+          "configured_path": "",
+          "hwaccels": [
+            "cuda",
+            "vaapi",
+            "dxva2",
+            "qsv",
+            "d3d11va",
+            "opencl",
+            "vulkan",
+            "d3d12va",
+            "amf"
+          ]
+        },
+        "hwaccel_modes": [
+          "auto",
+          "off",
+          "vaapi",
+          "qsv",
+          "nvdec",
+          "videotoolbox"
+        ],
+        "hwaccel_mode": "auto",
+        "hwaccel_effective": "vaapi",
+        "hwaccel_fallback": false,
+        "hwaccel_supported": [
+          "vaapi",
+          "qsv",
+          "nvdec"
+        ],
+        "asr": {
+          "enabled": false,
+          "configured": false,
+          "available": false,
+          "reason": "disabled",
+          "weight": 0.15
+        },
+        "defaults": {
+          "ffmpeg_path": "",
+          "video_similarity_enabled": false,
+          "video_extensions": [
+            ".mp4",
+            ".mkv",
+            ".mov",
+            ".avi",
+            ".flv",
+            ".wmv",
+            ".webm",
+            ".m4v",
+            ".ts",
+            ".mpg",
+            ".mpeg"
+          ],
+          "video_sample_frames": 20,
+          "video_max_sample_interval_sec": 300,
+          "video_similarity_threshold": 90,
+          "video_concurrency": 1,
+          "video_hwaccel": "auto",
+          "video_max_file_mb": 8192,
+          "video_timeout_sec": 180,
+          "video_cache": true,
+          "video_asr_enabled": false,
+          "video_asr_command": "",
+          "video_asr_weight": 0.15,
+          "video_asr_timeout_sec": 300,
+          "video_asr_max_sec": 600
+        }
       }
     },
-    "main_scan_id": "20261102-080649-58a1b7",
+    "main_scan_id": "20261103-081511-0ba934",
     "main_scan_final": "completed",
     "main_stats": {
       "files_seen": 38,
@@ -169,7 +302,7 @@
       "selectable_duplicate_files": 15,
       "selectable_reclaimable_bytes": 4403200,
       "bytes_hashed": 8753152,
-      "bytes_per_sec": 194202396,
+      "bytes_per_sec": 409404855,
       "errors": 0,
       "skipped": {
         "symlink": 0,
@@ -192,6 +325,8 @@
       "similarity_cache_hits": 0,
       "similarity_cache_misses": 0,
       "similarity_pairs_checked": 0,
+      "mtime_fallback_groups": 0,
+      "mtime_fallback_files": 0,
       "similarity_skipped": {
         "type": 0,
         "size": 0,
@@ -199,17 +334,41 @@
         "decode": 0,
         "no_text": 0,
         "error": 0
+      },
+      "video_groups": 0,
+      "video_files": 0,
+      "video_candidates": 0,
+      "video_reclaimable_bytes": 0,
+      "video_cache_hits": 0,
+      "video_cache_misses": 0,
+      "video_ffmpeg_used": 0,
+      "video_asr_used": 0,
+      "video_asr_skipped": {
+        "disabled": 0,
+        "unavailable": 0,
+        "no_speech": 0,
+        "failed": 0,
+        "timeout": 0,
+        "extract_failed": 0
+      },
+      "video_skipped": {
+        "type": 0,
+        "size": 0,
+        "decode": 0,
+        "no_duration": 0,
+        "timeout": 0,
+        "error": 0
       }
     },
     "main_groups_total": 12,
     "recycle_plan": {
-      "plan_id": "plan-c803f897443fb664",
+      "plan_id": "plan-e31bb3a60b2cfde6",
       "count": 2,
       "bytes": 40960,
       "groups_affected": 1
     },
     "recycle_job": {
-      "job_id": "del-20261102-080650-bfa430",
+      "job_id": "del-20261103-081511-3d1711",
       "status": "completed",
       "done": 2,
       "failed": 0,
@@ -503,7 +662,7 @@
       "id": "SKIP-04",
       "name": "符号链接跳过（当前环境无法创建 symlink）",
       "status": "UNVERIFIED",
-      "detail": "os.symlink failed: [WinError 1314] 客户端没有所需的特权。: 'C:\\\\Users\\\\zhouyi\\\\AppData\\\\Local\\\\Temp\\\\dupqa-_9e07zyu\\\\qa-share-a\\\\dup' -> 'C:\\\\Users\\\\zhouyi\\\\AppData\\\\Local\\\\Temp\\\\dupqa-_9e07zyu\\\\qa-share-a\\\\link_to_dup'"
+      "detail": "os.symlink failed: [WinError 1314] 客户端没有所需的特权。: 'C:\\\\Users\\\\zhouyi\\\\AppData\\\\Local\\\\Temp\\\\dupqa-k3v9ra79\\\\qa-share-a\\\\dup' -> 'C:\\\\Users\\\\zhouyi\\\\AppData\\\\Local\\\\Temp\\\\dupqa-k3v9ra79\\\\qa-share-a\\\\link_to_dup'"
     },
     {
       "id": "HARDLINK-01",
@@ -765,7 +924,7 @@
     },
     {
       "id": "AUDIT-02",
-      "name": "deletions/*.jsonl 逐文件删除记录已持久化",
+      "name": "逐文件删除结果已持久化（SQLite deletion_results）",
       "status": "PASS",
       "detail": ""
     },

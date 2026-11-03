@@ -1,7 +1,7 @@
 {
-  "generated_at": "2026-11-03T07:36:59+0800",
+  "generated_at": "2026-11-03T08:21:11+0800",
   "summary": {
-    "PASS": 111,
+    "PASS": 118,
     "FAIL": 0,
     "UNVERIFIED": 0
   },
@@ -52,7 +52,7 @@
       "id": "BE-UNITTEST-LOG",
       "name": "unittest 结果",
       "status": "INFO",
-      "detail": "Ran 310 tests in 96.987s"
+      "detail": "Ran 338 tests in 78.351s"
     },
     {
       "id": "BE-NO-AUTODELETE",
@@ -193,8 +193,32 @@
       "detail": ""
     },
     {
+      "id": "FE-MODULE-FILES",
+      "name": "前端 ES modules 八个模块文件齐全（js/*.js）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "FE-MODULE-ENTRY",
+      "name": "index.html 以 type=module 加载 app.js 并保留 ?v= 版本参数",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
       "id": "FE-NODECHECK",
-      "name": "node --check src/web/app.js 语法通过",
+      "name": "node --check app.js 与 js/*.js 模块语法通过",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "FE-MODULE-GRAPH",
+      "name": "ES module 图可解析且顶层代码无异常（stub DOM 动态 import）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "FE-BROWSER-SMOKE",
+      "name": "无头浏览器冒烟（ES modules 可运行、资源 MIME、控制台无异常）",
       "status": "PASS",
       "detail": ""
     },
@@ -283,6 +307,24 @@
       "detail": ""
     },
     {
+      "id": "FE-FFMPEG-SETTING",
+      "name": "视频设置提供外部 FFmpeg 路径输入/解析来源提示/错误提示",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "FE-HWACCEL-SETTING",
+      "name": "硬解下拉用 hwaccel_modes 渲染、hwaccel_supported 决定可用，并展示 effective/fallback",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "FE-VIDEO-ERROR-KEY",
+      "name": "INVALID_ARGUMENT details.key 映射到 ffmpeg_path/video_hwaccel 字段错误",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
       "id": "FE-ES2019",
       "name": "未使用 ES2020+ 语法/API（兼容 DSM 内置浏览器）",
       "status": "PASS",
@@ -296,7 +338,7 @@
     },
     {
       "id": "FE-INNERHTML",
-      "name": "app.js innerHTML 使用次数（需人工确认不含不可信数据）",
+      "name": "前端 JS（app.js + js/*.js）innerHTML 使用次数（需人工确认不含不可信数据）",
       "status": "INFO",
       "detail": "0"
     },
@@ -578,7 +620,7 @@
     },
     {
       "id": "SPK-DIST",
-      "name": "构建产物存在（DuplicateCleaner-1.1.0-0024.spk）",
+      "name": "构建产物存在（DuplicateCleaner-1.1.0-0025.spk）",
       "status": "PASS",
       "detail": ""
     },
@@ -590,7 +632,7 @@
     },
     {
       "id": "SPK-VERSION",
-      "name": "SPK INFO.version 与当前源码 APP_VERSION（1.1.0-0024）一致",
+      "name": "SPK INFO.version 与当前源码 APP_VERSION（1.1.0-0025）一致",
       "status": "PASS",
       "detail": ""
     },

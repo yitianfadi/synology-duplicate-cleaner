@@ -372,8 +372,13 @@ class V21ApiTest(unittest.TestCase):
             "SELECT meta_json FROM scans"))
         payloads.extend(row[0] for row in db.query(
             "SELECT payload_json FROM scan_groups"))
+        # v5：scan_files 不再保存冗余 payload_json；改为检查路径列不含密钥，
+        # 并断言该列已从表结构中移除。
         payloads.extend(row[0] for row in db.query(
-            "SELECT payload_json FROM scan_files"))
+            "SELECT path FROM scan_files"))
+        columns = {row[1] for row in db.query(
+            "PRAGMA table_info(scan_files)")}
+        self.assertNotIn("payload_json", columns)
         payloads.extend(row[0] for row in db.query(
             "SELECT meta_json FROM deletion_jobs"))
         payloads.extend(row[0] for row in db.query(

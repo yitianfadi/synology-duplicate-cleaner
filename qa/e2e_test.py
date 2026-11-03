@@ -23,6 +23,7 @@ import os
 import re
 import shutil
 import socket
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -1151,9 +1152,11 @@ def run():
               "cd=%s" % resp.header("content-disposition"))
         text = body.decode("utf-8-sig")
         rows = list(csv.reader(io.StringIO(text)))
+        # 契约 §8：v1.1 起增加 时间回退 / 保留时间来源 两列（mtime fallback）。
         expected_header = ["组号", "匹配类型", "状态", "文件路径", "大小(字节)",
                            "SHA256/MD5", "创建时间", "修改时间", "保留",
-                           "默认勾选", "时间来源", "相似度分值"]
+                           "默认勾选", "时间来源", "相似度分值",
+                           "时间回退", "保留时间来源"]
         check("CSV-03", "CSV 表头与契约列完全一致",
               rows and rows[0] == expected_header,
               "header=%s" % (rows[0] if rows else None))
@@ -1419,13 +1422,26 @@ def run():
         check("AUDIT-01", "audit.jsonl 落盘并包含扫描/计划/逐文件删除事件",
               required_actions.issubset(set(audit_actions)),
               "actions=%s" % sorted(set(a for a in audit_actions if a)))
-        del_dir = os.path.join(data_dir, "deletions")
-        del_files = []
-        if os.path.isdir(del_dir):
-            del_files = [name for name in os.listdir(del_dir) if name.endswith(".jsonl")]
-        check("AUDIT-02", "deletions/*.jsonl 逐文件删除记录已持久化",
-              len(del_files) >= 2,
-              "deletions=%s" % del_files)
+        # v0021 起逐文件删除结果落 SQLite（deletion_results），不再写
+        # deletions/*.jsonl（旧文件仅作为迁移来源读取）。
+        result_rows = []
+        db_path = os.path.join(data_dir, "dupcleaner.sqlite3")
+        try:
+            connection = sqlite3.connect(db_path, timeout=5)
+            try:
+                result_rows = connection.execute(
+                    "SELECT job_id, COUNT(*) FROM deletion_results"
+                    " GROUP BY job_id").fetchall()
+            finally:
+                connection.close()
+        except sqlite3.Error as exc:
+            result_rows = []
+            audit_detail = "sqlite error: %s" % exc
+        else:
+            audit_detail = "job_rows=%s" % result_rows
+        check("AUDIT-02", "逐文件删除结果已持久化（SQLite deletion_results）",
+              bool(result_rows) and sum(int(row[1]) for row in result_rows) >= 2,
+              audit_detail)
         resp = client.get(q("/api/logs", limit=100))
         data = jd(resp)
         audit_api = data.get("audit") if isinstance(data.get("audit"), list) else []

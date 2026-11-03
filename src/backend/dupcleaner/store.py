@@ -22,6 +22,7 @@ import logging
 import os
 import re
 import shutil
+import sqlite3
 import tempfile
 import threading
 import time
@@ -65,6 +66,11 @@ class Store(object):
         self._audit_path = os.path.join(self.data_dir, "audit.jsonl")
         self._audit_lock = threading.Lock()
         self._job_lock = threading.Lock()
+        # v5 FTS 查询会把命中的 group_id 物化到 TEMP 表（避免 IN 子查询被
+        # 优化器改写成每行重算）；锁保证 TEMP 表在“物化+统计+分页”期间不被
+        # 其它线程覆盖。
+        self._fts_lock = threading.RLock()
+        self._fts_temp_ready = False
 
         # 业务元数据统一 SQLite（WAL/短事务/RLock/损坏恢复见 db.Database）。
         self.db_path = os.path.join(self.data_dir, db_module.DB_FILENAME)
@@ -630,10 +636,10 @@ class Store(object):
                           "scan_id, ordinal, group_id, match_type, payload_json,"
                           " wasted_bytes, size, similarity_score, created_epoch,"
                           " group_hash) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+    # v5：scan_files 不再保存 payload_json（group payload 才是真源）。
     _FILE_INSERT_SQL = ("INSERT OR IGNORE INTO scan_files("
                         "scan_id, group_id, file_id, path, size, is_keep,"
-                        " default_selected, payload_json)"
-                        " VALUES(?, ?, ?, ?, ?, ?, ?, ?)")
+                        " default_selected) VALUES(?, ?, ?, ?, ?, ?, ?)")
     _PAGE_SORTS = {
         "wasted_desc": "g.wasted_bytes DESC, g.size DESC, g.group_id DESC",
         "size_desc": "g.size DESC, g.wasted_bytes DESC, g.group_id DESC",
@@ -774,9 +780,16 @@ class Store(object):
                 .replace("_", "\\_"))
 
     def query_scan_groups_page(self, scan_id, offset=0, limit=100, needle="",
-                               sort="wasted_desc", match_type=None):
-        """SQL 分页/搜索/排序（docs/STORAGE_CONTRACT.md §4）。
+                               sort="wasted_desc", match_type=None,
+                               use_fts=None):
+        """SQL 分页/搜索/排序（docs/STORAGE_CONTRACT.md §4/§6）。
 
+        路径搜索：needle >= 3 且 FTS5(trigram) 可用时走 scan_files_fts MATCH
+        短语查询；否则沿用 LIKE '%needle%'（短词/不支持 FTS 时的兼容语义）。
+        group_hash 条件始终 LIKE。运行时 FTS 查询报错只在本连接降级 LIKE，
+        不崩溃、不影响主数据。
+
+        use_fts=False 可强制 LIKE（基准脚本对比用）；默认 None 自动选择。
         返回与旧内存实现相同的响应字段；DB 无分组或未回填 scan_files 时返回
         None，由 scanner 回退旧 JSON/内存实现（兼容 v1 数据与旧 JSON）。
         """
@@ -799,31 +812,71 @@ class Store(object):
         video_total = int(counts.get("video", 0))
         exact_total = max(0, groups_total - similar_total - video_total)
 
-        where = ["g.scan_id = ?"]
-        params = [scan_id]
-        if match_type == "exact":
-            where.append(type_expr + " NOT IN ('similar', 'video')")
-        elif match_type in ("similar", "video"):
-            where.append(type_expr + " = ?")
-            params.append(match_type)
         needle = (needle or "").strip().lower()
-        if needle:
-            pattern = "%" + self._escape_like(needle) + "%"
-            where.append(
-                "(lower(COALESCE(g.group_hash, '')) LIKE ? ESCAPE '\\'"
-                " OR EXISTS (SELECT 1 FROM scan_files f"
-                " WHERE f.scan_id = g.scan_id AND f.group_id = g.group_id"
-                " AND lower(f.path) LIKE ? ESCAPE '\\'))")
-            params.extend([pattern, pattern])
-        where_sql = " AND ".join(where)
-        total = int(self.db.scalar(
-            "SELECT COUNT(*) FROM scan_groups g WHERE " + where_sql,
-            tuple(params), 0) or 0)
+        fts_mode = False
+        if needle and len(needle) >= db_module.FTS_MIN_NEEDLE:
+            if use_fts is False:
+                fts_mode = False
+            elif self.db.fts_enabled:
+                fts_mode = True
+
+        def build_where(with_fts):
+            where = ["g.scan_id = ?"]
+            params = [scan_id]
+            if match_type == "exact":
+                where.append(type_expr + " NOT IN ('similar', 'video')")
+            elif match_type in ("similar", "video"):
+                where.append(type_expr + " = ?")
+                params.append(match_type)
+            if needle:
+                pattern = "%" + self._escape_like(needle) + "%"
+                hash_like = ("lower(COALESCE(g.group_hash, ''))"
+                             " LIKE ? ESCAPE '\\'")
+                if with_fts:
+                    # FTS5 外部内容索引：MATCH 短语（trigram 子串），
+                    # 只用于 scan_files.path；group hash 仍用 LIKE。
+                    # 命中 group_id 已由 _materialize_fts_matches 物化到
+                    # TEMP 表，避免 IN 子查询被改写成逐组重算（10k 组会卡住）。
+                    where.append(
+                        "(" + hash_like
+                        + " OR g.group_id IN ("
+                        "  SELECT group_id FROM dc_fts_matches))")
+                    params.append(pattern)
+                else:
+                    where.append(
+                        "(" + hash_like
+                        + " OR g.group_id IN ("
+                        "  SELECT f.group_id FROM scan_files f"
+                        "  WHERE f.scan_id = ?"
+                        "  AND lower(f.path) LIKE ? ESCAPE '\\'))")
+                    params.extend([pattern, scan_id, pattern])
+            return " AND ".join(where), tuple(params)
+
+        def run_queries(with_fts):
+            where_sql, query_params = build_where(with_fts)
+            total = int(self.db.scalar(
+                "SELECT COUNT(*) FROM scan_groups g WHERE " + where_sql,
+                query_params, 0) or 0)
+            rows = self.db.query(
+                "SELECT g.payload_json FROM scan_groups g WHERE " + where_sql
+                + " ORDER BY " + order_sql + " LIMIT ? OFFSET ?",
+                query_params + (limit, offset))
+            return total, rows
+
         order_sql = self._PAGE_SORTS.get(sort) or self._PAGE_SORTS["wasted_desc"]
-        rows = self.db.query(
-            "SELECT g.payload_json FROM scan_groups g WHERE " + where_sql
-            + " ORDER BY " + order_sql + " LIMIT ? OFFSET ?",
-            tuple(params) + (limit, offset))
+        try:
+            if fts_mode:
+                with self._fts_lock:
+                    self._materialize_fts_matches(scan_id, needle)
+                    total, rows = run_queries(True)
+            else:
+                total, rows = run_queries(False)
+        except sqlite3.Error as exc:
+            if not fts_mode:
+                raise
+            # 运行时 FTS 异常：仅本连接降级 LIKE，不影响主数据/其它查询。
+            self.db.disable_fts(str(exc))
+            total, rows = run_queries(False)
         groups = []
         for row in rows:
             payload = self._loads(row["payload_json"], None)
@@ -839,6 +892,30 @@ class Store(object):
             "video_total": video_total,
             "groups": groups,
         }
+
+    def _materialize_fts_matches(self, scan_id, needle):
+        """用 FTS5 MATCH 一次性取出命中的 group_id，写入连接级 TEMP 表。
+
+        直接在主查询里写 IN (SELECT ... MATCH ...) 会被 SQLite 优化器改写成
+        按 group 逐行重算（10k 组时非常慢）；物化后 COUNT/分页都走索引。
+        """
+        # 连接级 TEMP 表可能因数据库损坏恢复（重开连接）而丢失，每次都做
+        # 一次 IF NOT EXISTS 兜底；代价可忽略，避免恢复后 FTS 永久降级。
+        self.db.execute(
+            "CREATE TEMP TABLE IF NOT EXISTS dc_fts_matches"
+            " (group_id TEXT PRIMARY KEY)")
+        self._fts_temp_ready = True
+        phrase = db_module.fts_path_phrase(needle)
+        with self.db.transaction():
+            self.db.execute("DELETE FROM dc_fts_matches")
+            self.db.execute(
+                "INSERT OR IGNORE INTO dc_fts_matches(group_id)"
+                " SELECT f.group_id FROM scan_files f"
+                " WHERE f.scan_id = ? AND f.rowid IN ("
+                "  SELECT rowid FROM scan_files_fts"
+                "  WHERE scan_files_fts MATCH ?)", (scan_id, phrase))
+        return int(self.db.scalar(
+            "SELECT COUNT(*) FROM dc_fts_matches", (), 0) or 0)
 
     def scan_file_stats(self, scan_id):
         """扩展名/目录统计用明细（不加载 group payload；group size 语义同旧版）。"""

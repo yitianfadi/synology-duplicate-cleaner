@@ -1,0 +1,144 @@
+/* ==========================================================================
+   重复文件清理 · DuplicateCleaner —— 常量定义（ES module）
+   由 app.js 第 0 节拆出；数值、文案、语义保持完全一致。ES2019。
+   ========================================================================== */
+
+export var CSRF_KEY = 'dc_csrf';
+export var POLL_MS = 800;                 // 扫描 / 删除任务轮询间隔（毫秒）
+export var GROUPS_LIMIT = 50;             // 结果分页大小
+export var TERMINAL_STATUS = ['completed', 'failed', 'stopped', 'interrupted'];
+export var ACTIVE_STATUS = ['queued', 'running', 'paused', 'stopping'];
+export var VIEWS = ['scan', 'history', 'logs', 'settings'];
+export var VIEW_HEADINGS = { scan: 'scanHeading', history: 'historyHeading', logs: 'logsHeading', settings: 'settingsHeading' };
+
+export var STATUS_LABEL = {
+  queued: '排队中', running: '扫描中', paused: '已暂停', stopping: '正在停止',
+  stopped: '已停止', completed: '已完成', failed: '失败', interrupted: '已中断'
+};
+export var STATUS_BADGE = {
+  queued: 'badge-gray', running: 'badge-blue', paused: 'badge-amber',
+  stopping: 'badge-amber', stopped: 'badge-gray', completed: 'badge-green', failed: 'badge-red', interrupted: 'badge-amber'
+};
+export var STAGE_LABEL = {
+  enumerate: '枚举文件', size: '按大小分组', sample: '快速指纹采样',
+  hash: '计算哈希', similarity: '内容相似度分析', video: '视频视觉分析',
+  finalize: '归并结果', done: '完成'
+};
+export var KEEP_LABEL = {
+  latest_created: '最晚创建', earliest_created: '最早创建',
+  pinned_path: '指定路径', manual: '需手动选择', tie: '创建时间相同',
+  latest_modified_fallback: '按修改时间保留（无创建时间，最晚修改）',
+  earliest_modified_fallback: '按修改时间保留（无创建时间，最早修改）',
+  mtime_tie: '修改时间相同（按修改时间保留）'
+};
+export var MTIME_FALLBACK_LABEL = '无创建时间 · 按修改时间保留';
+export var MTIME_FALLBACK_REASONS = ['latest_modified_fallback', 'earliest_modified_fallback', 'mtime_tie'];
+export var KEEP_MODE_LABEL = { latest: '最晚创建', earliest: '最早创建', pinned: '指定路径' };
+export var SCAN_MODE_LABEL = { exact: '精准哈希', similar: '内容相似' };
+export var SCAN_MODE_BADGE = { exact: 'badge-gray', similar: 'badge-purple' };
+export var DEFAULT_SIMILARITY_EXTENSIONS = [
+  '.txt', '.md', '.markdown', '.csv', '.json', '.xml', '.html', '.htm', '.log',
+  '.pdf', '.docx', '.odt', '.png', '.jpg', '.jpeg', '.webp'
+];
+export var SIMILARITY_OPTION_KEYS = ['scan_mode', 'similarity_threshold', 'similarity_extensions',
+  'similarity_exclude_extensions', 'similarity_concurrency', 'similarity_cache',
+  'similarity_max_file_mb', 'similarity_allow_binary'];
+export var DEFAULT_VIDEO_EXTENSIONS = ['.mp4', '.mkv', '.mov', '.avi', '.flv', '.wmv', '.webm', '.m4v', '.ts', '.mpg', '.mpeg'];
+export var DEFAULT_VIDEO_SETTINGS = {
+  ffmpeg_path: '',
+  video_similarity_enabled: false,
+  video_extensions: DEFAULT_VIDEO_EXTENSIONS.slice(),
+  video_sample_frames: 20,
+  video_max_sample_interval_sec: 300,
+  video_similarity_threshold: 90,
+  video_concurrency: 1,
+  video_hwaccel: 'auto',
+  video_max_file_mb: 8192,
+  video_timeout_sec: 180,
+  video_cache: true,
+  video_asr_enabled: false,
+  video_asr_command: '',
+  video_asr_weight: 0.15,
+  video_asr_timeout_sec: 300,
+  video_asr_max_sec: 600
+};
+export var VIDEO_HWACCEL_LABEL = {
+  none: '软件解码', auto: '自动', off: '关闭',
+  vaapi: 'VA-API', qsv: 'Intel QSV', nvdec: 'NVDEC', videotoolbox: 'VideoToolbox'
+};
+export var VIDEO_HWACCEL_MODES = ['auto', 'off', 'vaapi', 'qsv', 'nvdec', 'videotoolbox'];
+export var SOURCE_INFO = {
+  statx: { short: 'statx', title: 'statx：文件系统创建时间（可靠）', cls: 'is-ok' },
+  birthtime: { short: 'birthtime', title: 'birthtime：系统提供的创建时间', cls: 'is-ok' },
+  ctime: { short: 'ctime', title: 'ctime：文件状态变更时间（降级值，不能当作创建时间，存在风险）', cls: 'is-fallback' },
+  unknown: { short: '未知', title: '未知：无法读取文件系统创建时间（不会用 ctime 冒充创建时间）', cls: 'is-unknown' }
+};
+export var DELETE_STATUS_LABEL = { recycled: '已移入回收站', deleted: '已删除', skipped: '已跳过', failed: '失败' };
+export var DELETE_REASON_LABEL = {
+  FILE_CHANGED: '文件已被修改', HASH_MISMATCH: '哈希不一致', KEEP_FILE_MISSING: '保留文件不存在',
+  PATH_NOT_ALLOWED: '路径不在允许范围', NOT_FOUND: '文件不存在', PERMISSION_DENIED: '没有权限',
+  RECYCLE_UNAVAILABLE: '回收站不可用', CROSS_DEVICE: '跨文件系统无法移动', PLAN_EXPIRED: '计划已过期'
+};
+export var JOB_STATUS_LABEL = {
+  running: '删除中', completed: '删除完成', partial: '部分成功',
+  failed: '删除失败', stopped: '已停止'
+};
+export var AUDIT_LABEL = {
+  login: '登录', logout: '退出登录', scan_start: '开始扫描', scan_finish: '扫描完成',
+  scan_stop: '停止扫描', scan_pause: '暂停扫描', scan_resume: '继续扫描',
+  delete_plan: '创建删除计划', delete_start: '开始删除', delete_file: '删除文件',
+  delete_finish: '删除完成', settings_update: '更新设置', preview: '预览文件'
+};
+export var ERROR_FALLBACK = {
+  AUTH_REQUIRED: '登录已过期，请重新登录。',
+  AUTH_FAILED: '账号或密码错误。',
+  FORBIDDEN: '没有权限执行该操作。',
+  CSRF_FAILED: '安全校验失败，请刷新页面后重试。',
+  NOT_FOUND: '请求的资源不存在。',
+  INVALID_ARGUMENT: '请求参数不正确。',
+  INVALID_PATH: '路径不合法。',
+  PATH_NOT_ALLOWED: '该路径不在允许的共享文件夹范围内。',
+  SCAN_BUSY: '已有扫描任务正在运行，请等待其结束。',
+  SCAN_NOT_DONE: '扫描尚未完成，暂时无法查看结果。',
+  PLAN_EXPIRED: '删除计划已过期，请重新确认。',
+  PLAN_INVALID: '删除计划无效，请重新确认。',
+  HASH_MISMATCH: '文件哈希与扫描时不一致。',
+  FILE_CHANGED: '文件在扫描后已被修改。',
+  RECYCLE_UNAVAILABLE: '回收站不可用，请改用永久删除。',
+  SIMILAR_REVIEW_REQUIRED: '相似组需要人工复核：请先逐组勾选“人工复核”，并逐条选择要删除的副本。',
+  INTERNAL_ERROR: '服务内部错误，请稍后重试。'
+};
+export var DEFAULT_SETTINGS = {
+  hash_algo: 'sha256', keep_mode: 'latest', pinned_path: '',
+  skip_empty: true, skip_hidden: true, skip_symlinks: true,
+  include_extensions: [], exclude_extensions: [], ignore_case_ext: true,
+  min_size_bytes: 0, max_size_bytes: 0, quick_sample_kb: 64,
+  concurrency: 2, hash_rate_mbps: 0, recycle_default: true,
+  create_recycle_dir: false, max_files: 500000, allow_ctime_fallback: false,
+  scan_mode: 'exact', similarity_threshold: 85, similarity_extensions: [],
+  similarity_exclude_extensions: [], similarity_concurrency: 2, similarity_cache: true,
+  similarity_max_file_mb: 32, similarity_allow_binary: false,
+  ffmpeg_path: '',
+  video_similarity_enabled: false, video_extensions: DEFAULT_VIDEO_EXTENSIONS.slice(),
+  video_sample_frames: 20, video_max_sample_interval_sec: 300, video_similarity_threshold: 90,
+  video_concurrency: 1, video_hwaccel: 'auto', video_max_file_mb: 8192,
+  video_timeout_sec: 180, video_cache: true,
+  video_asr_enabled: false, video_asr_command: '', video_asr_weight: 0.15,
+  video_asr_timeout_sec: 300, video_asr_max_sec: 600,
+  subtitle_enabled: false,
+  subtitle_asr_base_url: 'https://api.openai.com/v1',
+  subtitle_asr_api_key: '',
+  subtitle_asr_model: 'whisper-1',
+  subtitle_asr_language: 'auto',
+  subtitle_asr_timeout_sec: 300,
+  subtitle_asr_chunk_sec: 600,
+  subtitle_asr_max_audio_mb: 24,
+  subtitle_translate_enabled: false,
+  subtitle_llm_base_url: 'https://api.openai.com/v1',
+  subtitle_llm_api_key: '',
+  subtitle_llm_model: 'gpt-4.1-mini',
+  subtitle_translate_target: 'zh',
+  subtitle_translate_timeout_sec: 120,
+  subtitle_translate_batch_size: 20
+};
+export var SIZE_UNITS = { kb: 1024, mb: 1048576, gb: 1073741824 };

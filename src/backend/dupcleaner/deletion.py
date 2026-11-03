@@ -1005,7 +1005,8 @@ class DeletionManager(object):
                 u"total: %s done: %s failed: %s skipped: %s" % (
                     job.total, job.done, job.failed, job.skipped),
                 u"bytes_total: %s bytes_done: %s" % (job.bytes_total, job.bytes_done),
-                u"results_log: deletions/%s.jsonl" % job.job_id,
+                u"results: SQLite deletion_results（逐文件结果已入库；"
+                u"旧 log_file 字段仅作兼容标识）",
                 u"",
             ]
             self.store.write_log("delete-%s.log" % job.job_id, "\n".join(lines) + "\n")

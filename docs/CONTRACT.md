@@ -1,7 +1,7 @@
 # 实现契约（前后端共享，版本 1.0）
 
 > 本文件是前后端并行开发的唯一接口约定。任何一方需要改动字段，先改本文件并在团队任务中说明。
-> 产品名：**DuplicateCleaner**；显示名：**重复文件清理与字幕**；SPK 版本：**1.1.0-0024**。
+> 产品名：**DuplicateCleaner**；显示名：**重复文件清理与字幕**；SPK 版本：**1.1.0-0025**。
 > v1.1 新增内容相似度模式；相似模式字段与行为见 [SIMILARITY_CONTRACT.md](SIMILARITY_CONTRACT.md)，**精准模式规则不变**。
 
 ## 1. 仓库与写入边界
@@ -76,7 +76,7 @@ Cookie：`HttpOnly; SameSite=Strict; Path=/; Max-Age=28800`，TLS 时加 `Secure
 ### GET /api/meta
 ```json
 {
- "app_version": "1.1.0-0024",
+ "app_version": "1.1.0-0025",
  "dsm_version": "7.2.2-72806" | "dev",
  "python_version": "3.8.16",
  "creation_time_supported": true,
@@ -228,9 +228,10 @@ Cookie：`HttpOnly; SameSite=Strict; Path=/; Max-Age=28800`，TLS 时加 `Secure
 
 ### GET /api/scans/{scan_id}/csv
 `text/csv; charset=utf-8`，带 UTF-8 BOM；列：
-`组号,匹配类型,状态,文件路径,大小(字节),SHA256/MD5,创建时间,修改时间,保留,默认勾选,时间来源,相似度分值`
+`组号,匹配类型,状态,文件路径,大小(字节),SHA256/MD5,创建时间,修改时间,保留,默认勾选,时间来源,相似度分值,时间回退,保留时间来源`
 
 - 匹配类型：`哈希一致` / `内容相似`（相似模式见 [SIMILARITY_CONTRACT.md](SIMILARITY_CONTRACT.md)）；相似度分值 0–100，精准组为 100。
+- 时间回退：该组是否因缺少创建时间而降级按修改时间保留（是/否）；保留时间来源：btime/mtime（仅诊断用途）。
 Content-Disposition: attachment; filename="duplicate-scan-<id>.csv"
 
 ### POST /api/scans/{scan_id}/delete-plan
@@ -285,6 +286,7 @@ Content-Disposition: attachment; filename="duplicate-scan-<id>.csv"
  "started_at":"...","finished_at":null,"log_file":"deletions/....jsonl"
 }}
 ```
+- v0021 起逐文件结果持久化在 SQLite `deletion_results` 表（重启后可读）；`log_file` 字段仅为兼容历史命名的标识，不再单独写 `deletions/*.jsonl` 文件。
 - 关闭页面后仍可通过该接口查看；重启后历史从磁盘恢复（至少列表可见）。
 
 ## 8. 预览与日志
@@ -338,4 +340,4 @@ Content-Disposition: attachment; filename="duplicate-scan-<id>.csv"
 - 后端 unittest 覆盖：statx 时间读取降级、哈希分片/限速、重复分组与三种保留策略、
   路径黑名单、删除前重校验、回收站路径生成、CSV、API 鉴权。
 - 前端可用静态检查 + 本地 dev 后端联调；QA 用 dev 模式在临时目录生成重复文件跑完整 API 流程。
-- 打包产物 `dist/DuplicateCleaner-1.1.0-0024.spk` 必须能通过 `tar -tf` 检查，包含 INFO/package.tgz/scripts/conf/ui。
+- 打包产物 `dist/DuplicateCleaner-1.1.0-0025.spk` 必须能通过 `tar -tf` 检查，包含 INFO/package.tgz/scripts/conf/ui。

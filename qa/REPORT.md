@@ -40,7 +40,7 @@
 | REQ-08 | 报告统计 | PASS | E2E STATS-01（groups/duplicate_groups/duplicate_files/reclaimable 自洽）、STATS-02（wasted=size*(count-1)）；实测 groups=12、duplicate_files=27、reclaimable=4,403,200 B |
 | REQ-09 | 删除两次确认 | PASS | static FE-CONFIRM-1/2（“第 1 步/共 2 步”“第 2 步：最终确认”、永久删除短语、按钮防重复）；E2E DEL-05/06（缺 confirm/错误 confirm 均 400） |
 | REQ-10 | 默认回收站，可选永久删除 | PASS | E2E DEL-04/08/10（recycled → `<share>/#recycle/@duplicate-cleaner/<ts>/<relpath>`）、DEL-13/15/16（永久删除 unlink，无 #recycle 残留） |
-| REQ-11 | 操作日志持久化 | PASS | E2E AUDIT-01/02/03（audit.jsonl 含 scan/plan/delete 事件、deletions/*.jsonl）、LOGS-01..03、RESTART-01..07（重启后历史/报告/设置/日志仍可读） |
+| REQ-11 | 操作日志持久化 | PASS | E2E AUDIT-01/02/03（audit.jsonl 含 scan/plan/delete 事件、SQLite deletion_results 逐文件结果）、LOGS-01..03、RESTART-01..07（重启后历史/报告/设置/日志仍可读） |
 | REQ-12 | DSM 7 / Btrfs / EXT4 兼容 | PASS（静态）/ UNVERIFIED（真机） | static SPK-INFO-VALUES（os_min_ver=7.0）、BE-PY38（ast feature_version=3.8）、BE-STATX；无 DSM 真机可测 |
 | REQ-13 | 跳过系统目录/符号链接/空/隐藏/后缀 | PASS / 1 项 UNVERIFIED | E2E SKIP-01..03、EXCLUDE-02、FILT-04/05；SKIP-04 因 Windows 无 symlink 权限 UNVERIFIED（后端单测在支持平台覆盖 symlink 拒绝） |
 | REQ-14 | 暂停/继续/停止 | PASS | E2E PAUSE-01..05：paused、SCAN_BUSY、resume、stop、停止后 resume 返回 400 |
@@ -87,7 +87,7 @@ skipped={hidden:2, empty:2, hardlink:1, excluded:4}`。
 - 删除：keeper 被拒(IS_KEEPER)、被修改文件跳过(FILE_CHANGED)、回收站 plan(2 文件/40,960B)+两次确认+job completed、
   回收路径 `#recycle/@duplicate-cleaner/<ts>/` 且原路径消失、keeper 仍在、plan 重放被拒、永久删除需短语且无回收站残留。
 - scope=all_duplicates：shareB 显式启用回收站后 plan count=2/groups_affected=2，任务 completed，keeper 保留。
-- 日志：audit.jsonl 含 scan_start/scan_end/delete_plan/delete_start/delete_file/delete_end；deletions/*.jsonl ≥2。
+- 日志：audit.jsonl 含 scan_start/scan_end/delete_plan/delete_start/delete_file/delete_end；SQLite deletion_results 逐文件结果 ≥2 行。
 - 暂停/停止：限速 1MB/s 扫描中 pause→paused、并发扫描 409 SCAN_BUSY、resume→running、stop→stopped。
 - 重启：扫描历史/报告/groups/设置 concurrency=3/日志/删除任务仍可读，healthz OK。
 

@@ -11,6 +11,7 @@ from __future__ import absolute_import
 import json
 import os
 import shutil
+import sqlite3
 import tempfile
 import threading
 import time
@@ -49,6 +50,106 @@ def _write_lines(path, items):
             handle.write(json.dumps(item, ensure_ascii=False) + "\n")
 
 
+def _v5_groups():
+    """v4→v5 迁移测试数据（含大小写/特殊字符/中文路径）。"""
+    return [
+        {
+            "group_id": "g-000001", "match_type": "exact",
+            "wasted_bytes": 20, "size": 10, "similarity_score": 100,
+            "hash": "abcdef" * 8,
+            "files": [
+                {"file_id": "f-1", "path": "/share/Docs/Alpha-01.txt",
+                 "name": "Alpha-01.txt", "size": 10, "is_keep": False,
+                 "default_selected": True, "created_ts": 1000},
+                {"file_id": "f-2", "path": "/share/docs/beta.txt",
+                 "name": "beta.txt", "size": 10, "is_keep": True,
+                 "default_selected": False, "created_ts": 2000},
+            ],
+        },
+        {
+            "group_id": "s-000001", "match_type": "similar",
+            "wasted_bytes": 5, "size": 12, "similarity_score": 88,
+            "hash": "",
+            "files": [
+                {"file_id": "sf-1", "path": "/share/中文/文档-a.txt",
+                 "name": "文档-a.txt", "size": 12, "is_keep": False,
+                 "default_selected": False, "created_ts": 3000},
+            ],
+        },
+    ]
+
+
+def _make_v4_db(path, scan_id, groups):
+    """构造 v4 形态数据库：scan_files 含 payload_json、schema_version=4。"""
+    conn = sqlite3.connect(path)
+    try:
+        conn.execute("CREATE TABLE schema_meta ("
+                     "key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+        conn.execute("CREATE TABLE scans ("
+                     "scan_id TEXT PRIMARY KEY, meta_json TEXT NOT NULL,"
+                     " created_epoch REAL NOT NULL, updated_epoch REAL NOT NULL,"
+                     " status TEXT NOT NULL,"
+                     " interrupted INTEGER NOT NULL DEFAULT 0)")
+        conn.execute("CREATE TABLE scan_groups ("
+                     "scan_id TEXT NOT NULL, ordinal INTEGER NOT NULL,"
+                     " group_id TEXT NOT NULL, match_type TEXT,"
+                     " payload_json TEXT NOT NULL,"
+                     " wasted_bytes INTEGER NOT NULL DEFAULT 0,"
+                     " size INTEGER NOT NULL DEFAULT 0,"
+                     " similarity_score INTEGER NOT NULL DEFAULT 0,"
+                     " created_epoch REAL NOT NULL DEFAULT 0,"
+                     " group_hash TEXT,"
+                     " PRIMARY KEY (scan_id, ordinal))")
+        conn.execute("CREATE INDEX idx_scan_groups_type"
+                     " ON scan_groups(scan_id, match_type)")
+        conn.execute("CREATE TABLE scan_files ("
+                     "scan_id TEXT NOT NULL, group_id TEXT NOT NULL,"
+                     " file_id TEXT NOT NULL, path TEXT NOT NULL,"
+                     " size INTEGER NOT NULL DEFAULT 0,"
+                     " is_keep INTEGER NOT NULL DEFAULT 0,"
+                     " default_selected INTEGER NOT NULL DEFAULT 0,"
+                     " payload_json TEXT NOT NULL,"
+                     " PRIMARY KEY (scan_id, group_id, file_id))")
+        conn.execute("CREATE INDEX idx_scan_files_path"
+                     " ON scan_files(scan_id, path)")
+        conn.execute("CREATE INDEX idx_scan_files_group"
+                     " ON scan_files(scan_id, group_id)")
+        conn.execute("INSERT INTO schema_meta(key, value)"
+                     " VALUES('schema_version', '4')")
+        conn.execute("PRAGMA user_version = 4")
+        meta = {"scan_id": scan_id, "status": "completed",
+                "created_epoch": 1000.0, "stats": {}}
+        conn.execute(
+            "INSERT INTO scans(scan_id, meta_json, created_epoch,"
+            " updated_epoch, status, interrupted) VALUES(?, ?, ?, ?, ?, 0)",
+            (scan_id, json.dumps(meta), 1000.0, 1000.0, "completed"))
+        for ordinal, group in enumerate(groups):
+            row = db_module.group_index_columns(group, ordinal)
+            conn.execute(
+                "INSERT INTO scan_groups(scan_id, ordinal, group_id,"
+                " match_type, payload_json, wasted_bytes, size,"
+                " similarity_score, created_epoch, group_hash)"
+                " VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (scan_id, ordinal, row["group_id"], row["match_type"],
+                 json.dumps(group, ensure_ascii=False),
+                 row["wasted_bytes"], row["size"],
+                 row["similarity_score"], row["created_epoch"],
+                 row["group_hash"]))
+            for index, file_info in enumerate(group.get("files") or []):
+                conn.execute(
+                    "INSERT INTO scan_files(scan_id, group_id, file_id, path,"
+                    " size, is_keep, default_selected, payload_json)"
+                    " VALUES(?, ?, ?, ?, ?, ?, ?, ?)",
+                    (scan_id, row["group_id"], file_info.get("file_id"),
+                     file_info.get("path"), int(file_info.get("size") or 0),
+                     1 if file_info.get("is_keep") else 0,
+                     1 if file_info.get("default_selected") else 0,
+                     json.dumps(file_info, ensure_ascii=False)))
+        conn.commit()
+    finally:
+        conn.close()
+
+
 class StoreTestCase(unittest.TestCase):
     def setUp(self):
         self.tmpdir = tempfile.mkdtemp(prefix="dc-sqlite-")
@@ -79,8 +180,86 @@ class SchemaTest(StoreTestCase):
             "SELECT name FROM sqlite_master WHERE type='table'")}
         for table in ("schema_meta", "scans", "scan_groups", "deletion_jobs",
                       "deletion_results", "feature_cache", "scan_checkpoints",
-                      "subtitle_jobs"):
+                      "subtitle_chunks", "subtitle_jobs"):
             self.assertIn(table, names)
+        # v5：scan_files 不再冗余保存 payload_json（group payload 才是真源）
+        self.assertEqual(db_module.CURRENT_SCHEMA_VERSION, 5)
+        scan_files_columns = {row[1] for row in store.db.query(
+            "PRAGMA table_info(scan_files)")}
+        self.assertNotIn("payload_json", scan_files_columns)
+        for column in ("scan_id", "group_id", "file_id", "path", "size",
+                       "is_keep", "default_selected"):
+            self.assertIn(column, scan_files_columns)
+        # FTS5 表/触发器与探测结果保持一致（不支持时绝不残留触发写失败的对象）
+        fts_table = "scan_files_fts" in names
+        self.assertEqual(fts_table, bool(store.db.fts_enabled))
+        triggers = {row[0] for row in store.db.query(
+            "SELECT name FROM sqlite_master WHERE type='trigger'")}
+        if store.db.fts_enabled:
+            for trigger in db_module.FTS_TRIGGER_NAMES:
+                self.assertIn(trigger, triggers)
+        else:
+            self.assertFalse(
+                set(db_module.FTS_TRIGGER_NAMES) & triggers)
+
+    def test_v4_to_v5_migration_drops_payload_and_preserves_rows(self):
+        groups = _v5_groups()
+        _make_v4_db(os.path.join(self.tmpdir, "dupcleaner.sqlite3"),
+                    SCAN_A, groups)
+        store = Store(self.tmpdir)
+        try:
+            self.assertEqual(store.db.schema_version(),
+                             db_module.CURRENT_SCHEMA_VERSION)
+            columns = {row[1] for row in store.db.query(
+                "PRAGMA table_info(scan_files)")}
+            self.assertNotIn("payload_json", columns)
+            expected_files = sum(len(group.get("files") or [])
+                                 for group in groups)
+            self.assertEqual(store.count_scan_files(SCAN_A), expected_files)
+            self.assertEqual(store.count_scan_groups(SCAN_A), len(groups))
+            # 行数据（路径/组/大小/保留/勾选）不变
+            rows = {row["path"]: row for row in store.db.query(
+                "SELECT group_id, file_id, path, size, is_keep,"
+                " default_selected FROM scan_files WHERE scan_id=?", (SCAN_A,))}
+            self.assertIn("/share/Docs/Alpha-01.txt", rows)
+            alpha = rows["/share/Docs/Alpha-01.txt"]
+            self.assertEqual(alpha["group_id"], "g-000001")
+            self.assertEqual(int(alpha["size"]), 10)
+            self.assertEqual(int(alpha["is_keep"]), 0)
+            self.assertEqual(int(alpha["default_selected"]), 1)
+            self.assertIn("/share/中文/文档-a.txt", rows)
+            # scan_groups payload 真源不变
+            stored_groups = list(store.iter_scan_groups(SCAN_A))
+            self.assertEqual([item["group_id"] for item in stored_groups],
+                             [group["group_id"] for group in groups])
+            page = store.query_scan_groups_page(
+                SCAN_A, limit=10, needle="alpha", use_fts=True)
+            self.assertEqual(page["total"], 1)
+            if store.db.fts_enabled:
+                names = {row[0] for row in store.db.query(
+                    "SELECT name FROM sqlite_master WHERE type='table'")}
+                self.assertIn("scan_files_fts", names)
+                # rebuild 一致性：scan_files 行数 == FTS 行数
+                scan_rows = int(store.db.scalar(
+                    "SELECT COUNT(*) FROM scan_files", (), 0) or 0)
+                fts_rows = int(store.db.scalar(
+                    "SELECT COUNT(*) FROM scan_files_fts", (), 0) or 0)
+                self.assertEqual(scan_rows, fts_rows)
+                matched = int(store.db.scalar(
+                    "SELECT COUNT(*) FROM scan_files_fts"
+                    " WHERE scan_files_fts MATCH ?",
+                    (db_module.fts_path_phrase("alpha"),), 0) or 0)
+                self.assertGreaterEqual(matched, 1)
+        finally:
+            store.close()
+        # 重开幂等：不重复建表/不丢行
+        reopened = Store(self.tmpdir)
+        try:
+            self.assertEqual(reopened.count_scan_files(SCAN_A), expected_files)
+            self.assertEqual(reopened.db.schema_version(),
+                             db_module.CURRENT_SCHEMA_VERSION)
+        finally:
+            reopened.close()
 
     def test_schema_version_upgrade_from_zero(self):
         store = self.new_store()
@@ -101,6 +280,99 @@ class SchemaTest(StoreTestCase):
             self.assertEqual(os.path.getsize(wal), 0)
         reopened = self.new_store()
         self.assertEqual(reopened.load_scan_meta(SCAN_A)["status"], "completed")
+
+
+class FtsFallbackOpenTest(StoreTestCase):
+    def test_open_without_fts_cleans_derived_objects_and_writes_work(self):
+        store = Store(self.tmpdir)
+        if not store.db.fts_enabled:
+            store.close()
+            self.skipTest("本机 SQLite 不支持 FTS5 trigram")
+        try:
+            store.save_scan_meta(SCAN_A, {
+                "scan_id": SCAN_A, "status": "completed",
+                "created_epoch": 1000.0})
+            groups = _v5_groups()
+            store.write_scan_groups(SCAN_A, groups)
+            expected_files = sum(len(group.get("files") or [])
+                                 for group in groups)
+        finally:
+            store.close()
+
+        original_probe = db_module.Database._probe_fts_trigram
+        db_module.Database._probe_fts_trigram = lambda self: False
+        reopened = None
+        try:
+            with self.assertLogs("dupcleaner.db", level="WARNING"):
+                reopened = Store(self.tmpdir)
+            self.assertFalse(reopened.db.fts_enabled)
+            names = {row[0] for row in reopened.db.query(
+                "SELECT name FROM sqlite_master WHERE type='table'")}
+            self.assertNotIn("scan_files_fts", names)
+            triggers = {row[0] for row in reopened.db.query(
+                "SELECT name FROM sqlite_master WHERE type='trigger'")}
+            self.assertFalse(set(db_module.FTS_TRIGGER_NAMES) & triggers)
+            # 主数据不丢
+            self.assertEqual(reopened.count_scan_files(SCAN_A),
+                             expected_files)
+            # 派生对象清理后，写 scan_files 不再因缺失 FTS 表失败
+            reopened.save_scan_meta(SCAN_B, {
+                "scan_id": SCAN_B, "status": "completed",
+                "created_epoch": 2000.0})
+            reopened.write_scan_groups(SCAN_B, _v5_groups())
+            page = reopened.query_scan_groups_page(
+                SCAN_B, needle="alpha", use_fts=True)
+            self.assertEqual(page["total"], 1)
+        finally:
+            db_module.Database._probe_fts_trigram = original_probe
+            if reopened is not None:
+                reopened.close()
+
+
+class FtsRebuildTest(StoreTestCase):
+    def test_missing_trigger_rebuild_indexes_existing_rows(self):
+        store = Store(self.tmpdir)
+        if not store.db.fts_enabled:
+            store.close()
+            self.skipTest("本机 SQLite 不支持 FTS5 trigram")
+        try:
+            store.save_scan_meta(SCAN_A, {
+                "scan_id": SCAN_A, "status": "completed",
+                "created_epoch": 1000.0})
+            store.write_scan_groups(SCAN_A, _v5_groups())
+            # 模拟索引/触发器损坏：删掉 INSERT 触发器后直接写一行（FTS 不会收到），
+            # 关闭后重新打开应检测到触发器缺失并 rebuild。
+            store.db.execute("DROP TRIGGER IF EXISTS scan_files_fts_ai")
+            store.db.execute(
+                "INSERT OR REPLACE INTO scan_files"
+                "(scan_id, group_id, file_id, path, size, is_keep,"
+                " default_selected) VALUES(?, ?, ?, ?, ?, ?, ?)",
+                (SCAN_A, "g-000001", "f-stale", "/share/stale/rebuild-token.txt",
+                 10, 0, 1))
+        finally:
+            store.close()
+
+        reopened = Store(self.tmpdir)
+        try:
+            self.assertTrue(reopened.db.fts_enabled)
+            triggers = {row[0] for row in reopened.db.query(
+                "SELECT name FROM sqlite_master WHERE type='trigger'")}
+            self.assertIn("scan_files_fts_ai", triggers)
+            matched = int(reopened.db.scalar(
+                "SELECT COUNT(*) FROM scan_files_fts"
+                " WHERE scan_files_fts MATCH ?",
+                (db_module.fts_path_phrase("rebuild-token"),), 0) or 0)
+            self.assertGreaterEqual(matched, 1)
+            page = reopened.query_scan_groups_page(
+                SCAN_A, needle="rebuild-token", use_fts=True)
+            self.assertEqual(page["total"], 1)
+            scan_rows = int(reopened.db.scalar(
+                "SELECT COUNT(*) FROM scan_files", (), 0) or 0)
+            fts_rows = int(reopened.db.scalar(
+                "SELECT COUNT(*) FROM scan_files_fts", (), 0) or 0)
+            self.assertEqual(scan_rows, fts_rows)
+        finally:
+            reopened.close()
 
 
 class ScanStoreTest(StoreTestCase):

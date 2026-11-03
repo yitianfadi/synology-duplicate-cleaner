@@ -574,7 +574,9 @@ class SubtitleService(object):
         self.shares = share_service
         self._settings = settings_provider
         self.client = client or OpenAIClient(retry_delay=retry_delay)
-        self.ffmpeg = ffmpeg or video_similarity.FFmpegTool()
+        # 外部 FFmpeg 路径来自 settings.ffmpeg_path（空=内置/自动探测）。
+        self.ffmpeg = ffmpeg or video_similarity.FFmpegTool(
+            settings_provider=settings_provider)
         try:
             self.ffmpeg.resolve(runtime_config)
         except Exception:

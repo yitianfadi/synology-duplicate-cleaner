@@ -236,7 +236,9 @@ class SubtitleChunkStoreTest(unittest.TestCase):
         from dupcleaner import db as db_module
         self.assertEqual(self.store.db.schema_version(),
                          db_module.CURRENT_SCHEMA_VERSION)
-        self.assertEqual(db_module.CURRENT_SCHEMA_VERSION, 4)
+        # schema 会继续演进（当前 v5），此处只要求 v4 引入的 subtitle_chunks
+        # 仍存在，不再硬编码具体版本号。
+        self.assertGreaterEqual(db_module.CURRENT_SCHEMA_VERSION, 4)
         names = {row[0] for row in self.store.db.query(
             "SELECT name FROM sqlite_master WHERE type='table'")}
         self.assertIn("subtitle_chunks", names)
