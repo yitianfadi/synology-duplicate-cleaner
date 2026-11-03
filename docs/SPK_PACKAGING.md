@@ -43,7 +43,7 @@ DSM 会把它链接到 `/usr/syno/synoman/webman/3rdparty/DuplicateCleaner/`，�
 ### 3.1 本机（Windows / Linux / macOS）
 
 ```bash
-cd D:\code\zhouyi\qunhui
+cd D:\code\zhouyi\qunhui\synology-duplicate-cleaner
 python build/build_spk.py
 # 或：python3 build/build_spk.py
 ```
