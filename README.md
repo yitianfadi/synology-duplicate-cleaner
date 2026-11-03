@@ -15,7 +15,7 @@
 - 🔍 **精准模式（默认）**：大小 → 头尾采样指纹 → 全量 SHA-256/MD5，完全一致才算重复（文件名不参与）
 - 🧠 **内容相似模式**：文本/PDF/DOCX/ODT/PNG 等特征向量 + MinHash/感知哈希检索，可调 0–100% 阈值；精准组与相似组分开展示
 - 🎬 **视频视觉相似（默认关闭）**：SPK 内置 FFmpeg（x86_64/aarch64），按总时长动态抽取 5–100 帧，生成时序 pHash 指纹并用 DTW 比较；独立分区，默认不勾选，支持组级/全局全选视频副本批量删除；指纹 SQLite 缓存、独立并发、硬解探测与显式硬解模式（auto/off/vaapi/qsv/nvdec/videotoolbox），可配置外部 FFmpeg 绝对路径（留空=内置/自动探测）
-- 🗣️ **云端字幕（实验，默认关闭）**：OpenAI 兼容 ASR（`/audio/transcriptions`）+ OpenAI 兼容 LLM（`/chat/completions`）翻译；FFmpeg 抽音频、自动分块、SRT/VTT/双语字幕下载；设置页支持从服务端 `GET /models` 获取模型列表、一键测试 ASR/LLM 连接（ASR 测试发送约 1 秒静音音频、LLM 测试发送 1 条测试文本，费用极小）；音频会发送到所配置的第三方服务，必须显式勾选确认
+- 🗣️ **云端字幕（实验，默认关闭）**：OpenAI 兼容 ASR（`/audio/transcriptions`）+ OpenAI 兼容 LLM（`/chat/completions`）翻译；FFmpeg 抽音频、自动分块、SRT/VTT/双语字幕下载；设置页支持从服务端 `GET /models` 获取模型列表、一键测试 ASR/LLM 连接（ASR 测试发送约 1 秒静音音频、LLM 测试发送 1 条测试文本，费用极小）；音频会发送到所配置的第三方服务，必须显式勾选确认。也可指向**局域网自建 [WhisperLiveKit](https://github.com/QuentinFuxa/WhisperLiveKit)**（OpenAI 兼容 `/v1/audio/transcriptions` + `/v1/models`），实现本地 ASR、音频不出局域网，见 [字幕契约 §9](docs/SUBTITLE_CONTRACT.md)
 - 🕒 保留策略：最晚创建（默认）/ 最早创建 / 指定路径；优先读取 `statx` btime；无创建时间时整组按修改时间自动选择并标记，拒绝用 `st_ctime` 冒充
 - 📊 分组报告：路径、大小、完整哈希、创建时间、修改时间、匹配类型、相似度；保留项高亮；可预览、导出 CSV
 - ⚡ 大库性能：结果分页/搜索/排序走 SQLite；`scan_files` 路径搜索在 SQLite 支持时使用 FTS5 trigram（100k 明细 P95 ≈ 80ms），不支持或搜索词 <3 字符自动回退 LIKE 子串（100k P95 ≈ 164ms）
@@ -35,7 +35,7 @@
 ```bash
 python build/fetch_ffmpeg.py   # 首次构建：下载两个架构的静态 FFmpeg 到 vendor/ffmpeg/
 python build/build_spk.py
-# 生成 dist/DuplicateCleaner-1.1.0-0026.spk
+# 生成 dist/DuplicateCleaner-1.1.0-0027.spk
 ```
 
 构建机需要 Python 3.8+；FFmpeg 二进制不提交到 Git，首次构建需运行 `build/fetch_ffmpeg.py`。重新生成图标需要 Pillow（仓库已带 PNG，可 `--no-icons`）。
@@ -43,7 +43,7 @@ python build/build_spk.py
 ### 2. 安装到 DSM
 
 1. DSM 套件中心先安装 **Python3**（3.8+）。
-2. 套件中心 → 手动安装 → 选择 `dist/DuplicateCleaner-1.1.0-0026.spk`。
+2. 套件中心 → 手动安装 → 选择 `dist/DuplicateCleaner-1.1.0-0027.spk`。
 3. 启动套件；从 DSM 主菜单打开“重复文件清理与字幕”，或访问 `http://<NAS>:8787/`。
 4. 使用 administrators 组账号登录。
 5. 按页面黄色“权限提示”给 `duplicatecleaner` 系统内部用户授权目标共享文件夹（读取；删除副本需读取/写入）。
@@ -92,7 +92,7 @@ python qa/bench_search.py
 - [前后端实现契约](docs/CONTRACT.md)：接口、字段、错误码、安全规则（精准模式）
 - [内容相似度扩展契约](docs/SIMILARITY_CONTRACT.md)：相似模式接口、特征算法、人工复核门禁
 - [视频视觉相似契约](docs/VIDEO_CONTRACT.md)：FFmpeg、动态采样、指纹、DTW、缓存、视频批量删除与 Excel
-- [云端字幕契约](docs/SUBTITLE_CONTRACT.md)：OpenAI 兼容 ASR/LLM、分块、SRT/VTT、双语字幕、密钥与隐私
+- [云端字幕契约](docs/SUBTITLE_CONTRACT.md)：OpenAI 兼容 ASR/LLM、分块、SRT/VTT、双语字幕、密钥与隐私；含自建 WhisperLiveKit 本地 ASR 部署与兼容性说明
 - [存储层契约](docs/STORAGE_CONTRACT.md)：SQLite 元数据、旧 JSON 迁移、检查点、WAL 与备份
 - [扫描暂停/升级 drain 契约](docs/RESUME_CONTRACT.md)：暂停断点、升级前 drain、重启后手动继续
 - [QA 验收报告](qa/REPORT.md)：需求逐项对照与测试证据
@@ -137,6 +137,7 @@ dist/               构建产物（.spk 与 SHA256）
 - 云端字幕为 OpenAI 兼容接口，不绑定厂商；ASR 模型必须返回带时间戳的 `verbose_json` 片段或 SRT，纯文本模型无法生成字幕。
 - 字幕「获取模型列表」依赖服务端实现 `GET /models`：未实现时返回明确提示，仍可手动填写模型名；列表不做 ASR/LLM 能力过滤，最多显示 500 条。
 - 字幕「测试连接」会向所配置服务发送最小测试数据（ASR：约 1 秒静音 MP3；LLM：1 条短文本）；测试通过只说明连通/鉴权/接口格式可用，不代表字幕质量。API Key 不会出现在响应、界面提示或日志中。
+- 自建本地 ASR（可选）：可把 ASR Base URL 指向局域网 WhisperLiveKit 服务（`http://<主机>:8000/v1`，模型字段被其忽略，token 用 `--api-token` 一致的值），音频留在本地；WhisperLiveKit 是独立服务（Python 3.11+/torch），不打包进 SPK，部署与调参见 [字幕契约 §9](docs/SUBTITLE_CONTRACT.md)。本地翻译需另配 OpenAI 兼容 LLM（如 Ollama）。
 - v0012 起扫描/组/文件/删除任务/特征缓存/字幕任务元数据存入 `<var>/dupcleaner.sqlite3`；设置、审计、运行日志、字幕文件仍保留文件形式。升级/备份时请连同 `dupcleaner.sqlite3` 与 `var/` 一起备份。
 - v0014 起支持升级前暂停扫描并写断点；升级后需在扫描历史中手动点“继续扫描”，不会自动续跑。字幕任务仍会因重启失败，需要重新提交；删除任务不会续跑。
 - v0025 起 SQLite schema v5：`scan_files` 不再冗余保存 payload（组 payload 为真源）；FTS5 trigram 路径搜索仅在 FTS5 + trigram 都可用时启用，否则自动 LIKE 回退；搜索词 <3 字符始终走 LIKE。

@@ -6,8 +6,8 @@
 <meta name="color-scheme" content="light">
 <meta name="referrer" content="same-origin">
 <title>重复文件清理与字幕 · Duplicate Cleaner &amp; Subtitles</title>
-<link rel="icon" href="./assets/favicon.svg?v=1.1.0-0026" type="image/svg+xml">
-<link rel="stylesheet" href="./styles.css?v=1.1.0-0026">
+<link rel="icon" href="./assets/favicon.svg?v=1.1.0-0027" type="image/svg+xml">
+<link rel="stylesheet" href="./styles.css?v=1.1.0-0027">
 </head>
 <body>
 <a class="skip-link" href="#main">跳到主要内容</a>
@@ -1013,6 +1013,7 @@
               <div class="field">
                 <label for="subtitleAsrBaseUrl">ASR Base URL</label>
                 <input id="subtitleAsrBaseUrl" type="text" placeholder="https://api.openai.com/v1" autocomplete="off" spellcheck="false">
+                <p class="hint">可指向局域网自建 WhisperLiveKit（如 http://192.168.1.10:8000/v1），音频不出局域网；模型名以该服务为准。</p>
                 <p class="field-error" id="subtitleAsrBaseUrlError" role="alert" hidden></p>
               </div>
               <div class="field">
@@ -1179,6 +1180,6 @@
   <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.6" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M12 10.8v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="12" cy="7.6" r="1.05" fill="currentColor"/></symbol>
 </svg>
 
-<script type="module" src="./app.js?v=1.1.0-0026"></script>
+<script type="module" src="./app.js?v=1.1.0-0027"></script>
 </body>
 </html>

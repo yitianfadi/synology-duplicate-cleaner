@@ -1130,9 +1130,19 @@ class SubtitleService(object):
             if isinstance(segments, list):
                 value = payload.get("text")
                 text_chars = len(value) if isinstance(value, str) else 0
+                # 静音测试音频在兼容服务（如自建 WhisperLiveKit）上通常返回
+                # 空 segments；只要响应带 verbose_json 结构就说明接口兼容，
+                # 不应让用户误以为模型不支持时间轴。
+                verbose_shape = (
+                    isinstance(payload.get("task"), str)
+                    or "duration" in payload or "language" in payload)
+                warning = (
+                    u"测试音频为静音，未产生转写（服务已返回 verbose_json "
+                    u"结构，接口兼容）" if verbose_shape
+                    else u"响应 segments 为空，未返回时间轴")
                 return {"format": "verbose_json", "segments": 0,
                         "has_timestamps": False, "text_chars": text_chars,
-                        "warning": u"响应 segments 为空，未返回时间轴"}
+                        "warning": warning}
             extra_srt = payload.get("srt") or payload.get("subtitle")
             if isinstance(extra_srt, str):
                 cues = parse_srt(extra_srt)

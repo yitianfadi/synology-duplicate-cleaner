@@ -168,9 +168,75 @@ job schema：
 - 错误 message 统一脱敏：api_key 替换为 `***`、去控制字符、截断 300；响应/日志/审计/任务 JSON 绝不出现 api_key。
 - base_url 拒绝 userinfo（`user:pass@host`），避免凭据进入 URL/日志；模型名字符集放宽允许 `@` 与 `+`。
 
-## 9. 测试
+## 9. 自建本地 ASR：WhisperLiveKit（可选，v0027）
+
+参考项目：[QuentinFuxa/WhisperLiveKit](https://github.com/QuentinFuxa/WhisperLiveKit)（Apache-2.0，Python 3.11+，FastAPI + faster-whisper/torch）。
+它提供 **OpenAI 兼容 REST**，可直接作为本套件的“云端字幕 → ASR”后端，把音频留在局域网/本机：
+
+| 能力 | WhisperLiveKit | 本套件用法 |
+|---|---|---|
+| 转写 | `POST /v1/audio/transcriptions`（multipart，支持 `verbose_json`/`srt`/`vtt`/`diarized_json`） | 现有 ASR 客户端直接兼容（请求 `response_format=verbose_json`；`model` 字段被 WLK 忽略） |
+| 模型列表 | `GET /v1/models`（返回当前加载的单个模型） | 设置页「获取模型列表」可直接解析 |
+| 鉴权 | 可选 `--api-token` / `WLK_API_TOKEN`，REST 用 `Authorization: Bearer` | 本套件“ASR API Key”填同一个 token；未设置 token 时留空 |
+| 翻译 | WLK 提供服务内翻译，但**不提供** `/chat/completions` | 本套件 LLM 翻译仍指向 OpenAI 兼容 LLM（如本地 Ollama/LM Studio/vLLM） |
+
+### 9.1 启动服务（在 NAS 的 Container Manager 或局域网服务器上）
+
+Docker（上游 CPU 镜像构建，见其 docs/deployment.md；需先初始化 submodule）：
+
+```bash
+git clone --recurse-submodules https://github.com/QuentinFuxa/WhisperLiveKit.git
+cd WhisperLiveKit
+docker build -f Dockerfile.cpu -t wlk-cpu --build-arg EXTRAS=cpu .
+# 默认 tiny；CPU 推荐 base/small，按 NAS 性能选择
+docker run -d --name wlk -p 8000:8000 -v hf-cache:/root/.cache/huggingface/hub -e WLK_API_TOKEN=“<自定义令牌>” wlk-cpu --model base --language zh
+```
+
+或直接 pip 安装（Python 3.11–3.13）：
+
+```bash
+pip install whisperlivekit
+wlk --host 0.0.0.0 --port 8000 --model base --language zh --api-token “<自定义令牌>”
+```
+
+> 模型首次使用自动下载（tiny≈75MB、base≈150MB、small≈500MB、large≈3GB）；CPU 转写速度约为实时速度的 0.1–0.5×（RTF），建议先用 base/small 评估。
+> WLK 所在主机需要 `ffmpeg`（其 Docker 镜像已包含）；REST 单请求音频上限 512MB，处理预算默认 `max(120s, 2.5×音频时长)`。
+
+### 9.2 本套件设置映射
+
+| 设置项 | 建议值 |
+|---|---|
+| 启用云端字幕 | 打开 |
+| ASR Base URL | `http://<WLK主机>:8000/v1` |
+| ASR 模型 | 任意非空（WLK 忽略该字段）；可点「获取模型列表」选 `whisper-base` / `faster-whisper/base` 等以保持一致 |
+| ASR API Key | 与 WLK 的 `--api-token` 相同；WLK 未启用 token 时留空 |
+| 识别语言 | auto（不发送 language）/ zh / en / ja / ko |
+| ASR 超时 | CPU 慢时建议 900–1800s |
+| 音频分块 | CPU 建议 120–300s（否则单个 10 分钟分块可能超过超时） |
+| 单块音频上限 | 保持 24MB 左右；分块过大会增加单请求时长 |
+| LLM Base URL / 模型 | 翻译才需要：指向本地 OpenAI 兼容 LLM（如 Ollama `http://<主机>:11434/v1` + `qwen2.5:7b`），或继续用云端 |
+
+配置后建议先点「获取模型列表」与「测试连接」：
+- 测试 ASR 时本套件会发送 **1 秒静音 MP3**；WLK 对静音通常返回空 segments，但响应仍是 `verbose_json` 结构，本套件会显示“静音测试未产生转写（接口兼容）”的黄字提示，属正常。
+- 真正生成字幕后，音频会按分块上传到 `subtitle_asr_base_url`；不再发往公网。
+
+### 9.3 安全与限制
+
+- WLK 是**独立服务**，不打包进 SPK：其 Python 3.11+、torch/faster-whisper 与模型体积远超 SPK（本套件后端保持 Python 3.8 标准库）。
+- 建议部署在 NAS 的 Container Manager（x86_64 机型更稳妥；aarch64 的 torch/ctranslate2 wheel 可用性依 DSM 版本而定）或局域网 PC，仅开放给本套件主机访问，不要暴露到公网。
+- 本套件只向配置的 base URL 发送音频；API Key/Token 仍遵循“只写不读、响应/日志/审计不出现密钥”的约束。WLK 自身的日志/数据保留策略需单独评估。
+- 本套件的批量字幕流程是**离线文件**处理，不使用 WLK 的实时 WebSocket 流式接口；WLK 的说话人分离（`diarized_json`）暂未写入 SRT（后续可选：说话人前缀/轨道）。
+- 文字翻译依赖 `/chat/completions`，WLK 不提供；若不配置 LLM，可只生成原文字幕。
+
+### 9.4 兼容性测试
+
+- 回归用例（`tests/test_subtitles.py::WhisperLiveKitCompatTest`）模拟 WLK 的 `/v1/models` 与 `/v1/audio/transcriptions(verbose_json)` 响应，验证：模型列表解析、Bearer token 透传、verbose_json segments 生成字幕、静音探测告警文案。
+- 实际联调步骤见 9.2：启动 WLK → 设置 base URL/token → 获取模型列表/测试连接 → 选一个视频生成字幕。
+
+## 10. 测试
 
 - 后端 fake HTTP server：ASR verbose_json/SRT/无时间轴/401/429重试/超时；LLM 正常/长度不符/JSON 围栏/部分失败；chunk 偏移合并、no_audio、取消、密钥不回传/不日志、目录穿越、任务清理。
 - v0026：fake server 增加 GET /models（排序/去重/500 上限/401/404/timeout/空列表/Authorization 记录），fake ffmpeg 增加 lavfi 静音分支；覆盖错误码映射、探测锁、密钥不泄漏/不落盘。
+- v0027：模拟 WhisperLiveKit OpenAI 兼容响应（/v1/models 单模型、verbose_json 含 task/duration/text、静音空 segments）验证自建本地 ASR 可用；静音探测告警改为“接口兼容”文案。
 - 前端 node --check + E2E（mock API）。
 - 现有测试必须继续全部通过。

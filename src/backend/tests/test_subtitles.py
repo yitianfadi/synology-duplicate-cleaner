@@ -93,6 +93,12 @@ class FakeCloudHandler(http.server.BaseHTTPRequestHandler):
             if mode == "bad_shape":
                 self._send(200, {"data": {"not": "a list"}})
                 return
+            if mode == "wlk":
+                # WhisperLiveKit GET /v1/models（OpenAI 兼容，单模型）
+                self._send(200, {"object": "list", "data": [
+                    {"id": "whisper-base", "object": "model",
+                     "owned_by": "whisperlivekit"}]})
+                return
             self._send(200, {"data": [
                 {"id": "zeta", "owned_by": "openai"},
                 "Alpha",
@@ -137,6 +143,28 @@ class FakeCloudHandler(http.server.BaseHTTPRequestHandler):
                 return
             if mode == "no_timestamps":
                 self._send(200, {"text": "plain transcript without timeline"})
+                return
+            if mode == "wlk":
+                # WhisperLiveKit REST verbose_json（含 task/duration/text，多余字段
+                # 我们的解析应忽略；segments 用于生成字幕）。
+                self._send(200, {
+                    "task": "transcribe", "language": "en",
+                    "duration": 7.16, "text": "Hello world",
+                    "segments": [
+                        {"id": 0, "start": 0.0, "end": 1.0,
+                         "text": "Hello world"},
+                        {"id": 1, "start": 1.0, "end": 2.0,
+                         "text": "Second line"}],
+                    "usage": {"type": "duration", "seconds": 7},
+                })
+                return
+            if mode == "wlk_empty":
+                # 静音音频在 WLK 上返回空 segments，但仍是 verbose_json 结构。
+                self._send(200, {
+                    "task": "transcribe", "language": "en",
+                    "duration": 1.0, "text": "", "segments": [],
+                    "usage": {"type": "duration", "seconds": 1},
+                })
                 return
             prefix = getattr(server, "asr_text_prefix", "chunk-cue")
             payload = {"segments": [
@@ -902,6 +930,53 @@ class SubtitleProbeTest(SubtitleTestBase):
         data_text = self.data_files_text()
         for secret in ("SECRET_ASR_KEY_XYZ", "SECRET_LLM_KEY_XYZ"):
             self.assertNotIn(secret, data_text)
+
+
+class WhisperLiveKitCompatTest(SubtitleTestBase):
+    """v0027：自建 WhisperLiveKit（OpenAI 兼容 REST）兼容性回归。
+
+    参考 https://github.com/QuentinFuxa/WhisperLiveKit 的 /v1/models 与
+    /v1/audio/transcriptions(verbose_json) 契约，确保我们的云端字幕客户端
+    可直接指向自建 WLK 服务（音频不出局域网）。
+    """
+
+    def test_models_and_verbose_json_shape(self):
+        self.cloud.httpd.models_mode = "wlk"
+        result = self.service.list_models("asr", {})
+        self.assertEqual([item["id"] for item in result["models"]],
+                         ["whisper-base"])
+        self.assertEqual(result["models"][0]["owned_by"], "whisperlivekit")
+        self.assertEqual(self.cloud.httpd.models_authorizations[-1],
+                         "Bearer SECRET_ASR_KEY_XYZ")
+
+        self.cloud.httpd.asr_mode = "wlk"
+        audio = os.path.join(self.harness.tmpdir, "wlk-audio.mp3")
+        write_text(audio, "fake audio bytes")
+        cues = self.service.client.transcribe(
+            self.cloud.base_url, "WLK_TOKEN", "whisper-base", "en",
+            audio, 30, None)
+        self.assertEqual([cue["text"] for cue in cues],
+                         ["Hello world", "Second line"])
+        self.assertEqual(cues[0]["start"], 0.0)
+        self.assertEqual(self.cloud.httpd.authorizations[-1],
+                         "Bearer WLK_TOKEN")
+
+    def test_job_uses_wlk_verbose_json(self):
+        self.cloud.httpd.asr_mode = "wlk"
+        job = self.submit(self.make_video(duration=60), translate=False)
+        final = self.wait_job(job["job_id"])
+        self.assertEqual(final["status"], "done", final.get("error"))
+        srt = self.file_text(job["job_id"], "original.srt")
+        self.assertIn("Hello world", srt)
+        self.assertIn("Second line", srt)
+
+    def test_silence_probe_warning_is_compatible(self):
+        self.cloud.httpd.asr_mode = "wlk_empty"
+        result = self.service.test_connection("asr", {})
+        self.assertFalse(result["detail"]["has_timestamps"])
+        self.assertEqual(result["detail"]["format"], "verbose_json")
+        self.assertTrue(result["warning"])
+        self.assertIn(u"静音", result["warning"])
 
 
 class SubtitleApiTest(SubtitleTestBase):
