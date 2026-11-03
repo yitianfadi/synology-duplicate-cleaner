@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-11-03T08:15:17+0800",
+  "generated_at": "2026-11-03T22:08:08+0800",
   "python": "3.12.9 | packaged by Anaconda, Inc. | (main, Feb  6 2025, 18:49:16) [MSC v.1929 64 bit (AMD64)]",
   "repo": "D:\\code\\zhouyi\\qunhui",
   "summary": {
@@ -11,11 +11,11 @@
     "fixture_files": 46,
     "python": "3.12.9",
     "birthtime_supported": true,
-    "backend_port": 2535,
+    "backend_port": 13887,
     "csrf_token_len": 43,
     "meta": {
       "ok": true,
-      "app_version": "1.1.0-0025",
+      "app_version": "1.1.0-0026",
       "dsm_version": "dev",
       "python_version": "3.12.9",
       "creation_time_supported": true,
@@ -288,7 +288,7 @@
         }
       }
     },
-    "main_scan_id": "20261103-081511-0ba934",
+    "main_scan_id": "20261103-220801-d5a580",
     "main_scan_final": "completed",
     "main_stats": {
       "files_seen": 38,
@@ -302,7 +302,7 @@
       "selectable_duplicate_files": 15,
       "selectable_reclaimable_bytes": 4403200,
       "bytes_hashed": 8753152,
-      "bytes_per_sec": 409404855,
+      "bytes_per_sec": 409765842,
       "errors": 0,
       "skipped": {
         "symlink": 0,
@@ -362,13 +362,13 @@
     },
     "main_groups_total": 12,
     "recycle_plan": {
-      "plan_id": "plan-e31bb3a60b2cfde6",
+      "plan_id": "plan-5b9ab1193d022993",
       "count": 2,
       "bytes": 40960,
       "groups_affected": 1
     },
     "recycle_job": {
-      "job_id": "del-20261103-081511-3d1711",
+      "job_id": "del-20261103-220802-4b497f",
       "status": "completed",
       "done": 2,
       "failed": 0,
@@ -662,7 +662,7 @@
       "id": "SKIP-04",
       "name": "符号链接跳过（当前环境无法创建 symlink）",
       "status": "UNVERIFIED",
-      "detail": "os.symlink failed: [WinError 1314] 客户端没有所需的特权。: 'C:\\\\Users\\\\zhouyi\\\\AppData\\\\Local\\\\Temp\\\\dupqa-k3v9ra79\\\\qa-share-a\\\\dup' -> 'C:\\\\Users\\\\zhouyi\\\\AppData\\\\Local\\\\Temp\\\\dupqa-k3v9ra79\\\\qa-share-a\\\\link_to_dup'"
+      "detail": "os.symlink failed: [WinError 1314] 客户端没有所需的特权。: 'C:\\\\Users\\\\zhouyi\\\\AppData\\\\Local\\\\Temp\\\\dupqa-t4_xf4zp\\\\qa-share-a\\\\dup' -> 'C:\\\\Users\\\\zhouyi\\\\AppData\\\\Local\\\\Temp\\\\dupqa-t4_xf4zp\\\\qa-share-a\\\\link_to_dup'"
     },
     {
       "id": "HARDLINK-01",

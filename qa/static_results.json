@@ -1,7 +1,7 @@
 {
-  "generated_at": "2026-11-03T08:21:11+0800",
+  "generated_at": "2026-11-03T22:07:55+0800",
   "summary": {
-    "PASS": 118,
+    "PASS": 120,
     "FAIL": 0,
     "UNVERIFIED": 0
   },
@@ -52,7 +52,7 @@
       "id": "BE-UNITTEST-LOG",
       "name": "unittest 结果",
       "status": "INFO",
-      "detail": "Ran 338 tests in 78.351s"
+      "detail": "Ran 359 tests in 81.603s"
     },
     {
       "id": "BE-NO-AUTODELETE",
@@ -194,7 +194,7 @@
     },
     {
       "id": "FE-MODULE-FILES",
-      "name": "前端 ES modules 八个模块文件齐全（js/*.js）",
+      "name": "前端 ES modules 九个模块文件齐全（js/*.js）",
       "status": "PASS",
       "detail": ""
     },
@@ -463,6 +463,18 @@
       "detail": ""
     },
     {
+      "id": "FE-SUBTITLE-PROBE",
+      "name": "字幕设置提供获取模型列表/测试连接 UI（10 个 id/按钮/选择器/结果节点）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "FE-SUBTITLE-PROBE-SECRET",
+      "name": "字幕探测提示/结果不写入 API Key（仅请求体传 api_key）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
       "id": "SPK-INFO-REQ",
       "name": "SPK/INFO 包含必需字段",
       "status": "PASS",
@@ -620,7 +632,7 @@
     },
     {
       "id": "SPK-DIST",
-      "name": "构建产物存在（DuplicateCleaner-1.1.0-0025.spk）",
+      "name": "构建产物存在（DuplicateCleaner-1.1.0-0026.spk）",
       "status": "PASS",
       "detail": ""
     },
@@ -632,7 +644,7 @@
     },
     {
       "id": "SPK-VERSION",
-      "name": "SPK INFO.version 与当前源码 APP_VERSION（1.1.0-0025）一致",
+      "name": "SPK INFO.version 与当前源码 APP_VERSION（1.1.0-0026）一致",
       "status": "PASS",
       "detail": ""
     },

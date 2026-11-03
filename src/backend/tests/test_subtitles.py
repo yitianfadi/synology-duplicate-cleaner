@@ -9,6 +9,7 @@ import threading
 import time
 import unittest
 import urllib.parse
+from unittest import mock
 
 from tests.helpers import Harness, WebServer, write_text
 from tests.test_video import FAKE_FFMPEG, make_video
@@ -48,6 +49,62 @@ class FakeCloudHandler(http.server.BaseHTTPRequestHandler):
             self.wfile.write(body)
         except OSError:
             pass
+
+    def do_GET(self):
+        server = self.server
+        path = self.path.split("?")[0]
+        if path.endswith("/models"):
+            server.models_calls += 1
+            authorization = self.headers.get("Authorization") or ""
+            server.models_authorizations.append(authorization)
+            server.authorizations.append(authorization)
+            mode = server.models_mode
+            if mode == "401":
+                self._send(401, {"error": {
+                    "message": "invalid key %s" % server.error_echo}})
+                return
+            if mode == "404":
+                self._send(404, {"error": {"message": "not supported"}})
+                return
+            if mode == "500":
+                self._send(500, {"error": {"message": "server error"}})
+                return
+            if mode == "html":
+                self._send_raw(200, "<html>not json</html>", "text/html")
+                return
+            if mode == "timeout":
+                time.sleep(2.0)
+                self._send(200, {"data": []})
+                return
+            if mode == "empty":
+                self._send(200, {"data": []})
+                return
+            if mode == "toplevel":
+                self._send(200, [{"id": "b-model"}, "a-model"])
+                return
+            if mode == "models_key":
+                self._send(200, {"models": [{"id": "m3", "owned_by": "o"},
+                                            "m1"]})
+                return
+            if mode == "many":
+                self._send(200, {"data": [
+                    {"id": "model-%04d" % index} for index in range(600)]})
+                return
+            if mode == "bad_shape":
+                self._send(200, {"data": {"not": "a list"}})
+                return
+            self._send(200, {"data": [
+                {"id": "zeta", "owned_by": "openai"},
+                "Alpha",
+                {"id": "whisper-1", "owned_by": "openai"},
+                {"id": "whisper-1"},
+                {"id": ""},
+                {"id": 123},
+                {"id": "x" * 201},
+                {"id": "beta+fp16", "owned_by": "org"},
+            ]})
+            return
+        self._send(404, {"error": "not found"})
 
     def do_POST(self):
         server = self.server
@@ -92,6 +149,8 @@ class FakeCloudHandler(http.server.BaseHTTPRequestHandler):
             return
         if path.endswith("/chat/completions"):
             server.llm_calls += 1
+            server.authorizations.append(
+                self.headers.get("Authorization") or "")
             try:
                 request_payload = json.loads(body.decode("utf-8"))
                 cues = json.loads(
@@ -99,6 +158,14 @@ class FakeCloudHandler(http.server.BaseHTTPRequestHandler):
             except (ValueError, KeyError, TypeError, IndexError):
                 cues = []
             mode = server.llm_mode
+            if mode == "401":
+                self._send(401, {"error": {
+                    "message": "invalid key %s" % server.error_echo}})
+                return
+            if mode == "invalid":
+                self._send(200, {"choices": [{"message": {
+                    "content": json.dumps({"bad": "not a string array"})}}]})
+                return
             if mode == "fenced":
                 content = (FENCE + "json\n"
                            + json.dumps([u"T:" + cue for cue in cues],
@@ -127,6 +194,11 @@ class FakeCloudServer(object):
         self.httpd.audio_sizes = []
         self.httpd.authorizations = []
         self.httpd.asr_text_prefix = "chunk-cue"
+        # v0026 模型列表 / 连接测试
+        self.httpd.models_mode = "ok"
+        self.httpd.models_calls = 0
+        self.httpd.models_authorizations = []
+        self.httpd.error_echo = "ECHO_SECRET_PLACEHOLDER"
         self.thread = threading.Thread(target=self.httpd.serve_forever,
                                        kwargs={"poll_interval": 0.02},
                                        daemon=True)
@@ -306,6 +378,38 @@ class SubtitleSettingsTest(unittest.TestCase):
         self.assertEqual(patch["subtitle_llm_api_key"], "NEW")
         self.assertNotIn("subtitle_asr_api_key_set", patch)
         self.assertIn("subtitle_llm_api_key", clears)
+
+
+    def test_base_url_rejects_userinfo(self):
+        for value in ("http://user:pass@example.com/v1",
+                      "https://token@example.com/v1",
+                      "http://:pw@example.com/v1"):
+            with self.assertRaises(ApiError, msg=value) as ctx:
+                settings_module.validate_patch(
+                    {"subtitle_asr_base_url": value})
+            self.assertEqual(ctx.exception.code, "INVALID_ARGUMENT")
+        self.assertEqual(
+            settings_module.validate_base_url_value(
+                "subtitle_asr_base_url", "http://127.0.0.1:9000/v1/"),
+            "http://127.0.0.1:9000/v1")
+        with self.assertRaises(ApiError):
+            settings_module.validate_base_url_value(
+                "subtitle_asr_base_url", "http://a:b@host/v1")
+        with self.assertRaises(ApiError):
+            settings_module.validate_patch(
+                {"subtitle_llm_base_url": "http://a:b@host/v1"})
+
+    def test_model_name_charset(self):
+        for value in ("openai/whisper-1", "org/model@v1", "model+fp16",
+                      "meta-llama/Llama-3.1-8B@latest"):
+            patch = settings_module.validate_patch(
+                {"subtitle_asr_model": value})
+            self.assertEqual(patch["subtitle_asr_model"], value)
+        for value in ("bad model name", "model\tname", "x" * 101,
+                      "mo del"):
+            with self.assertRaises(ApiError, msg=repr(value)):
+                settings_module.validate_patch(
+                    {"subtitle_llm_model": value})
 
 
 class SubtitleHelperTest(unittest.TestCase):
@@ -578,6 +682,228 @@ class SubtitleServiceTest(SubtitleTestBase):
                 self.service.get_file(job["job_id"], bad)
 
 
+class SubtitleProbeTest(SubtitleTestBase):
+    """v0026：模型列表 / 连接测试（fake HTTP + fake ffmpeg，无真实网络）。"""
+
+    def test_list_models_sort_dedupe_filter_and_key_fallback(self):
+        result = self.service.list_models("asr", {})
+        self.assertEqual(result["kind"], "asr")
+        self.assertEqual(result["base_url"], self.cloud.base_url)
+        self.assertFalse(result["truncated"])
+        self.assertGreaterEqual(result["latency_ms"], 0)
+        ids = [item["id"] for item in result["models"]]
+        self.assertEqual(ids, ["Alpha", "beta+fp16", "whisper-1", "zeta"])
+        owned = {item["id"]: item["owned_by"] for item in result["models"]}
+        self.assertEqual(owned["whisper-1"], "openai")
+        self.assertEqual(owned["Alpha"], "")
+        self.assertEqual(result["warning"], "")
+        self.assertEqual(self.cloud.httpd.models_calls, 1)
+        self.assertEqual(self.cloud.httpd.models_authorizations,
+                         ["Bearer SECRET_ASR_KEY_XYZ"])
+        self.assertNotIn("SECRET_ASR_KEY_XYZ", json.dumps(result))
+
+    def test_list_models_explicit_override(self):
+        result = self.service.list_models(
+            "llm", {"base_url": self.cloud.base_url,
+                    "api_key": "OVERRIDE_KEY_123"})
+        self.assertEqual(result["kind"], "llm")
+        self.assertEqual(self.cloud.httpd.models_authorizations[-1],
+                         "Bearer OVERRIDE_KEY_123")
+        self.assertNotIn("OVERRIDE_KEY_123", json.dumps(result))
+
+    def test_list_models_ignores_model_and_language_overrides(self):
+        # 模型/语言输入框暂态非法不能阻塞“获取模型列表”。
+        result = self.service.list_models("asr", {
+            "model": "bad model name", "language": "not a language",
+            "target_lang": "auto"})
+        self.assertEqual(result["count"], 4)
+        self.assertEqual(self.cloud.httpd.models_calls, 1)
+
+    def test_list_models_shapes_and_limit(self):
+        self.cloud.httpd.models_mode = "toplevel"
+        result = self.service.list_models("asr", {})
+        self.assertEqual([item["id"] for item in result["models"]],
+                         ["a-model", "b-model"])
+        self.cloud.httpd.models_mode = "models_key"
+        result = self.service.list_models("asr", {})
+        self.assertEqual([item["id"] for item in result["models"]],
+                         ["m1", "m3"])
+        self.cloud.httpd.models_mode = "many"
+        result = self.service.list_models("asr", {})
+        self.assertEqual(result["count"], 500)
+        self.assertTrue(result["truncated"])
+        self.assertEqual(result["models"][0]["id"], "model-0000")
+        self.assertEqual(result["models"][-1]["id"], "model-0499")
+
+    def test_list_models_empty_and_bad_shape(self):
+        self.cloud.httpd.models_mode = "empty"
+        result = self.service.list_models("asr", {})
+        self.assertEqual(result["count"], 0)
+        self.assertEqual(result["models"], [])
+        self.assertTrue(result["warning"])
+        self.cloud.httpd.models_mode = "bad_shape"
+        with self.assertRaises(subtitles.SubtitleError) as ctx:
+            self.service.list_models("asr", {})
+        self.assertEqual(ctx.exception.code, "MODELS_UNSUPPORTED")
+
+    def test_list_models_error_mapping_and_no_retry(self):
+        self.cloud.httpd.models_mode = "401"
+        self.cloud.httpd.error_echo = "SECRET_ASR_KEY_XYZ"
+        with self.assertRaises(subtitles.SubtitleError) as ctx:
+            self.service.list_models("asr", {})
+        self.assertEqual(ctx.exception.code, "PROVIDER_AUTH_FAILED")
+        self.assertNotIn("SECRET_ASR_KEY_XYZ", ctx.exception.message)
+
+        for mode, code in (("404", "MODELS_UNSUPPORTED"),
+                           ("html", "MODELS_UNSUPPORTED"),
+                           ("500", "PROVIDER_HTTP_ERROR")):
+            self.cloud.httpd.models_mode = mode
+            before = self.cloud.httpd.models_calls
+            with self.assertRaises(subtitles.SubtitleError) as ctx:
+                self.service.list_models("asr", {})
+            self.assertEqual(ctx.exception.code, code, mode)
+            self.assertEqual(self.cloud.httpd.models_calls, before + 1,
+                             mode)
+
+    def test_list_models_timeout_and_network(self):
+        self.service.client = subtitles.OpenAIClient(
+            retry_delay=0.01, timeout_cap=0.3)
+        self.cloud.httpd.models_mode = "timeout"
+        started = time.time()
+        with self.assertRaises(subtitles.SubtitleError) as ctx:
+            self.service.list_models("asr", {})
+        self.assertEqual(ctx.exception.code, "PROVIDER_TIMEOUT")
+        self.assertLess(time.time() - started, 5.0)
+
+        with mock.patch.object(self.service.client, "_get_raw",
+                               return_value=("network", "x", b"")):
+            with self.assertRaises(subtitles.SubtitleError) as ctx:
+                self.service.list_models("asr", {})
+        self.assertEqual(ctx.exception.code, "PROVIDER_NETWORK_ERROR")
+
+    def test_probe_busy(self):
+        self.assertTrue(self.service._probe_lock.acquire(False))
+        try:
+            for call in (lambda: self.service.list_models("asr", {}),
+                         lambda: self.service.test_connection("llm", {})):
+                with self.assertRaises(subtitles.SubtitleError) as ctx:
+                    call()
+                self.assertEqual(ctx.exception.code, "PROBE_BUSY")
+        finally:
+            self.service._probe_lock.release()
+
+    def test_invalid_kind_and_base_url(self):
+        for kind in ("bad", "", None):
+            with self.assertRaises(ApiError) as ctx:
+                self.service.list_models(kind, {})
+            self.assertEqual(ctx.exception.code, "INVALID_ARGUMENT")
+        for overrides in ({"base_url": "ftp://host/v1"},
+                          {"base_url": "http://user:pass@host/v1"},
+                          {"base_url": "not-a-url"}):
+            with self.assertRaises(ApiError) as ctx:
+                self.service.test_connection("asr", overrides)
+            self.assertEqual(ctx.exception.code, "INVALID_ARGUMENT")
+
+    def test_asr_connection_success_verbose(self):
+        result = self.service.test_connection("asr", {})
+        self.assertEqual(result["kind"], "asr")
+        self.assertEqual(result["mode"], "asr")
+        self.assertEqual(result["model"], "whisper-1")
+        self.assertEqual(result["base_url"], self.cloud.base_url)
+        detail = result["detail"]
+        self.assertEqual(detail["format"], "verbose_json")
+        self.assertEqual(detail["segments"], 2)
+        self.assertTrue(detail["has_timestamps"])
+        self.assertGreater(detail["text_chars"], 0)
+        self.assertEqual(detail["warning"], "")
+        self.assertEqual(result["warning"], detail["warning"])
+        self.assertEqual(self.cloud.httpd.asr_calls, 1)
+        self.assertEqual(self.cloud.httpd.authorizations[-1],
+                         "Bearer SECRET_ASR_KEY_XYZ")
+        self.assertNotIn("SECRET_ASR_KEY_XYZ", json.dumps(result))
+        # 静音测试音频与临时目录必须清理
+        tmp_root = os.path.join(self.harness.data_dir, "tmp")
+        leftovers = []
+        if os.path.isdir(tmp_root):
+            leftovers = [name for name in os.listdir(tmp_root)
+                         if name.startswith("dc-subtitle-probe-")]
+        self.assertEqual(leftovers, [])
+
+    def test_asr_connection_no_timestamps_and_srt(self):
+        self.cloud.httpd.asr_mode = "no_timestamps"
+        result = self.service.test_connection("asr", {})
+        detail = result["detail"]
+        self.assertEqual(detail["format"], "text")
+        self.assertFalse(detail["has_timestamps"])
+        self.assertGreater(detail["text_chars"], 0)
+        self.assertTrue(detail["warning"])
+        # 顶层 warning 与 detail.warning 一致，前端统一按告警展示。
+        self.assertEqual(result["warning"], detail["warning"])
+        self.cloud.httpd.asr_mode = "srt"
+        detail = self.service.test_connection("asr", {})["detail"]
+        self.assertEqual(detail["format"], "srt")
+        self.assertTrue(detail["has_timestamps"])
+        self.assertEqual(detail["segments"], 2)
+
+    def test_asr_connection_auth_failure_no_retry(self):
+        self.cloud.httpd.asr_mode = "401"
+        self.cloud.httpd.error_echo = "SECRET_ASR_KEY_XYZ"
+        with self.assertRaises(subtitles.SubtitleError) as ctx:
+            self.service.test_connection("asr", {})
+        self.assertEqual(ctx.exception.code, "PROVIDER_AUTH_FAILED")
+        self.assertNotIn("SECRET_ASR_KEY_XYZ", ctx.exception.message)
+        self.assertEqual(self.cloud.httpd.asr_calls, 1)
+
+    def test_asr_connection_ffmpeg_failures(self):
+        with mock.patch.object(self.service.ffmpeg, "available",
+                               return_value=False):
+            with self.assertRaises(subtitles.SubtitleError) as ctx:
+                self.service.test_connection("asr", {})
+        self.assertEqual(ctx.exception.code, "FFMPEG_UNAVAILABLE")
+        with mock.patch.dict(os.environ,
+                             {"FAKE_FFMPEG_SILENCE_FAIL": "1"}):
+            with self.assertRaises(subtitles.SubtitleError) as ctx:
+                self.service.test_connection("asr", {})
+        self.assertEqual(ctx.exception.code, "AUDIO_FAILED")
+        self.assertEqual(self.cloud.httpd.asr_calls, 0)
+
+    def test_llm_connection_success_and_errors(self):
+        result = self.service.test_connection("llm", {})
+        self.assertEqual(result["kind"], "llm")
+        self.assertEqual(result["mode"], "chat")
+        self.assertEqual(result["model"], "gpt-4.1-mini")
+        self.assertEqual(result["detail"]["items"], 1)
+        self.assertGreater(result["detail"]["text_chars"], 0)
+        self.assertEqual(result["warning"], "")
+        self.assertTrue(result["detail"]["preview"])
+        self.assertNotIn("SECRET_LLM_KEY_XYZ", json.dumps(result))
+        self.assertEqual(self.cloud.httpd.authorizations[-1],
+                         "Bearer SECRET_LLM_KEY_XYZ")
+        self.cloud.httpd.llm_mode = "invalid"
+        with self.assertRaises(subtitles.SubtitleError) as ctx:
+            self.service.test_connection("llm", {})
+        self.assertEqual(ctx.exception.code, "PROVIDER_REJECTED")
+        self.cloud.httpd.llm_mode = "401"
+        self.cloud.httpd.error_echo = "SECRET_LLM_KEY_XYZ"
+        with self.assertRaises(subtitles.SubtitleError) as ctx:
+            self.service.test_connection("llm", {})
+        self.assertEqual(ctx.exception.code, "PROVIDER_AUTH_FAILED")
+        self.assertNotIn("SECRET_LLM_KEY_XYZ", ctx.exception.message)
+
+    def test_no_secret_persisted_after_probes(self):
+        self.cloud.httpd.error_echo = "SECRET_ASR_KEY_XYZ"
+        self.cloud.httpd.models_mode = "401"
+        with self.assertRaises(subtitles.SubtitleError):
+            self.service.list_models("asr", {})
+        self.cloud.httpd.models_mode = "ok"
+        self.service.list_models("asr", {})
+        self.service.test_connection("asr", {})
+        self.service.test_connection("llm", {})
+        data_text = self.data_files_text()
+        for secret in ("SECRET_ASR_KEY_XYZ", "SECRET_LLM_KEY_XYZ"):
+            self.assertNotIn(secret, data_text)
+
+
 class SubtitleApiTest(SubtitleTestBase):
     def setUp(self):
         SubtitleTestBase.setUp(self)
@@ -693,3 +1019,89 @@ class SubtitleApiTest(SubtitleTestBase):
             "POST", "/api/subtitles/%s/cancel" % job_id, {}, csrf=self.csrf)
         self.assertEqual(status, 200)
         self.assertIn(payload["job"]["status"], ("running", "cancelled"))
+
+    def test_models_and_test_api(self):
+        status, _headers, payload = self.client.json(
+            "POST", "/api/subtitles/models", {"kind": "asr"},
+            csrf=self.csrf)
+        self.assertEqual(status, 200, payload)
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["kind"], "asr")
+        self.assertGreater(payload["count"], 0)
+        self.assertFalse(payload["truncated"])
+        self.assertIn("models", payload)
+        self.assertIn("latency_ms", payload)
+        self.assertNotIn("SECRET_ASR_KEY_XYZ", json.dumps(payload))
+
+        status, _headers, payload = self.client.json(
+            "POST", "/api/subtitles/test", {"kind": "llm"},
+            csrf=self.csrf)
+        self.assertEqual(status, 200, payload)
+        self.assertEqual(payload["mode"], "chat")
+        self.assertIn("detail", payload)
+        self.assertNotIn("SECRET_LLM_KEY_XYZ", json.dumps(payload))
+
+        # 非法 kind / base URL / userinfo → 400 INVALID_ARGUMENT
+        for path, body in (
+                ("/api/subtitles/models", {"kind": "bad"}),
+                ("/api/subtitles/models",
+                 {"kind": "asr", "base_url": "ftp://host/v1"}),
+                ("/api/subtitles/models",
+                 {"kind": "asr",
+                  "base_url": "http://user:pass@127.0.0.1/v1"}),
+                ("/api/subtitles/test",
+                 {"kind": "asr", "base_url": "not-a-url"})):
+            status, _headers, payload = self.client.json(
+                "POST", path, body, csrf=self.csrf)
+            self.assertEqual(status, 400, (path, body, payload))
+            self.assertEqual(payload["error"]["code"], "INVALID_ARGUMENT")
+
+        # 未登录 → 401
+        status, _headers, payload = self.client.json(
+            "POST", "/api/subtitles/models", {"kind": "asr"},
+            use_cookie=False)
+        self.assertEqual(status, 401)
+        self.assertEqual(payload["error"]["code"], "AUTH_REQUIRED")
+
+    def test_probe_api_error_mapping(self):
+        # Provider 401 必须映射为 400（不能返回 401 让前端登出）
+        self.cloud.httpd.models_mode = "401"
+        self.cloud.httpd.error_echo = "SECRET_ASR_KEY_XYZ"
+        status, _headers, payload = self.client.json(
+            "POST", "/api/subtitles/models", {"kind": "asr"},
+            csrf=self.csrf)
+        self.assertEqual(status, 400)
+        self.assertEqual(payload["error"]["code"], "PROVIDER_AUTH_FAILED")
+        self.assertNotIn("SECRET_ASR_KEY_XYZ", json.dumps(payload))
+
+        self.cloud.httpd.models_mode = "404"
+        status, _headers, payload = self.client.json(
+            "POST", "/api/subtitles/models", {"kind": "asr"},
+            csrf=self.csrf)
+        self.assertEqual(status, 400)
+        self.assertEqual(payload["error"]["code"], "MODELS_UNSUPPORTED")
+
+        self.cloud.httpd.models_mode = "500"
+        status, _headers, payload = self.client.json(
+            "POST", "/api/subtitles/models", {"kind": "asr"},
+            csrf=self.csrf)
+        self.assertEqual(status, 502)
+        self.assertEqual(payload["error"]["code"], "PROVIDER_HTTP_ERROR")
+
+        # 探测锁占用 → 409 PROBE_BUSY
+        self.assertTrue(self.service._probe_lock.acquire(False))
+        try:
+            status, _headers, payload = self.client.json(
+                "POST", "/api/subtitles/models", {"kind": "asr"},
+                csrf=self.csrf)
+        finally:
+            self.service._probe_lock.release()
+        self.assertEqual(status, 409)
+        self.assertEqual(payload["error"]["code"], "PROBE_BUSY")
+
+        # CSRF 缺失 → 403（非 GET 接口）
+        self.cloud.httpd.models_mode = "ok"
+        status, _headers, payload = self.client.json(
+            "POST", "/api/subtitles/test", {"kind": "llm"})
+        self.assertEqual(status, 403)
+        self.assertEqual(payload["error"]["code"], "CSRF_FAILED")

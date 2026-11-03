@@ -24,7 +24,7 @@ import urllib.request
 import uuid
 from collections import deque
 
-from . import config, timeutil, video_similarity
+from . import config, settings as settings_module, timeutil, video_similarity
 from .errors import ApiError, invalid, not_found
 
 JOB_ID_RE = re.compile(r"^sub-[0-9]{8}-[0-9]{6}-[0-9a-f]{6}$")
@@ -50,6 +50,43 @@ CHUNK_DONE = "done"
 CHUNK_FAILED = "failed"
 
 _FENCE = chr(96) * 3
+
+# v0026 云端字幕探测（模型列表 / 连接测试）：固定超时、不重试。
+MODELS_TIMEOUT_SEC = 20.0
+CONNECTION_TEST_TIMEOUT_SEC = 60.0
+MODELS_MAX = 500
+MODEL_ID_MAX_LEN = 200
+_ERROR_TEXT_MAX = 300
+_CONTROL_CHARS_RE = re.compile(r"[\x00-\x1f\x7f]+")
+
+
+def mask_secret(text, api_key=""):
+    """错误消息脱敏：替换 api_key 为 ***、去控制字符、截断 300。
+
+    响应/日志/审计/任务 JSON 绝不出现 api_key；错误 body 里的回显也一并处理。
+    """
+    if text is None:
+        return ""
+    value = str(text)
+    if api_key:
+        value = value.replace(str(api_key), "***")
+    value = _CONTROL_CHARS_RE.sub(" ", value)
+    return value.strip()[:_ERROR_TEXT_MAX]
+
+
+def provider_error_message(prefix, status, body, api_key=""):
+    """构造脱敏后的 Provider 错误消息（可含响应片段，但先去密钥/控制字符）。"""
+    text = u"%s（HTTP %s）" % (prefix, status)
+    if body:
+        try:
+            snippet = body.decode("utf-8", "replace") \
+                if isinstance(body, (bytes, bytearray)) else str(body)
+        except Exception:
+            snippet = ""
+        snippet = mask_secret(snippet, api_key)
+        if snippet:
+            text += u"：" + snippet[:200]
+    return mask_secret(text, api_key)
 
 
 class SubtitleError(Exception):
@@ -316,9 +353,16 @@ class OpenAIClient(object):
                 raise SubtitleCancelled()
             time.sleep(min(0.05, max(0.0, deadline - time.monotonic())))
 
-    def _post(self, url, api_key, data, content_type, timeout, cancel_event):
-        request = urllib.request.Request(url, data=data, method="POST")
-        request.add_header("Content-Type", content_type)
+    def _request_raw(self, method, url, api_key, data, content_type, timeout,
+                     cancel_event=None):
+        """单次 HTTP 请求（线程 + 硬超时），返回 (kind, status, body)。
+
+        kind: ok / http / timeout / network。不重试；供原有重试逻辑与 v0026
+        探测接口共用（探测接口不调用 _post_with_retry）。
+        """
+        request = urllib.request.Request(url, data=data, method=method)
+        if content_type:
+            request.add_header("Content-Type", content_type)
         request.add_header("Accept", "application/json")
         if api_key:
             request.add_header("Authorization", "Bearer " + api_key)
@@ -363,6 +407,10 @@ class OpenAIClient(object):
             return ("network", error[1], b"")
         status, body = outcome.get("result") or (0, b"")
         return ("ok", status, body or b"")
+
+    def _post(self, url, api_key, data, content_type, timeout, cancel_event):
+        return self._request_raw("POST", url, api_key, data, content_type,
+                                 timeout, cancel_event)
 
     def _post_with_retry(self, url, api_key, data, content_type, timeout,
                          cancel_event):
@@ -461,6 +509,79 @@ class OpenAIClient(object):
         if not all(isinstance(item, str) for item in parsed):
             return None
         return parsed
+
+    # ------------------------------------------------------------------
+    # v0026 探测用低层方法（单次请求、不重试；错误码由 Service 映射）
+    # ------------------------------------------------------------------
+    def _get_raw(self, url, api_key, timeout=MODELS_TIMEOUT_SEC):
+        """GET 原始响应：返回 (kind, status, body)，不重试。"""
+        return self._request_raw("GET", url, api_key, None, None,
+                                 self._effective_timeout(timeout))
+
+    def _probe_request(self, method, url, api_key, data, content_type,
+                       timeout):
+        kind, status, body = self._request_raw(
+            method, url, api_key, data, content_type,
+            self._effective_timeout(timeout))
+        if kind == "timeout":
+            raise SubtitleError("PROVIDER_TIMEOUT", u"云端请求超时")
+        if kind == "network":
+            raise SubtitleError("PROVIDER_NETWORK_ERROR", u"无法连接云端服务")
+        if kind == "http":
+            if status in (401, 403):
+                raise SubtitleError(
+                    "PROVIDER_AUTH_FAILED",
+                    u"云端服务认证失败，请检查 API Key 配置")
+            if status in (400, 404, 405, 409, 422):
+                raise SubtitleError(
+                    "PROVIDER_REJECTED",
+                    provider_error_message(u"云端服务拒绝了请求", status,
+                                           body, api_key))
+            raise SubtitleError(
+                "PROVIDER_HTTP_ERROR",
+                provider_error_message(u"云端服务请求失败", status, body,
+                                       api_key))
+        return status, body
+
+    def probe_transcribe(self, base_url, api_key, model, language,
+                         audio_path, timeout=CONNECTION_TEST_TIMEOUT_SEC):
+        """单次 ASR 探测（静音音频，不重试）。成功返回 (status, body)。"""
+        url = (base_url or "").rstrip("/") + "/audio/transcriptions"
+        fields = {
+            "model": model,
+            "response_format": "verbose_json",
+            "temperature": "0",
+        }
+        if language and language != "auto":
+            fields["language"] = language
+        data, content_type = encode_multipart(fields, "file", audio_path,
+                                              "silence.mp3")
+        return self._probe_request("POST", url, api_key, data, content_type,
+                                   timeout)
+
+    def probe_chat(self, base_url, api_key, model, texts, target_lang,
+                   timeout=CONNECTION_TEST_TIMEOUT_SEC):
+        """单次 LLM 探测（固定测试文本，不重试）。成功返回 (status, body)。"""
+        url = (base_url or "").rstrip("/") + "/chat/completions"
+        system_prompt = (
+            u"You are a subtitle translation connectivity test. Translate "
+            u"every item into the target language (%s). Return ONLY a JSON "
+            u"array of strings with exactly the same number of items, "
+            u"preserving order. No explanations." % target_lang)
+        user_content = json.dumps(
+            {"target_language": target_lang, "cues": list(texts or [])},
+            ensure_ascii=False)
+        payload = {
+            "model": model,
+            "temperature": 0,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_content},
+            ],
+        }
+        data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        return self._probe_request("POST", url, api_key, data,
+                                   "application/json", timeout)
 
 
 # ---------------------------------------------------------------------------
@@ -587,6 +708,8 @@ class SubtitleService(object):
         os.makedirs(self._jobs_dir, exist_ok=True)
         self._lock = threading.RLock()
         self._cond = threading.Condition(self._lock)
+        # v0026：同一时间只允许一个“模型列表/连接测试”探测（占线返回 PROBE_BUSY）。
+        self._probe_lock = threading.Lock()
         self._jobs = {}
         self._queue = deque()
         self._active_id = None
@@ -750,6 +873,331 @@ class SubtitleService(object):
         if not os.path.isfile(path):
             raise not_found(u"字幕文件不存在")
         return path
+
+    # ------------------------------------------------------------------
+    # v0026 云端探测：模型列表 / 连接测试（管理员；单次请求、不重试）
+    # ------------------------------------------------------------------
+    _PROBE_PREFIXES = {"asr": "subtitle_asr_", "llm": "subtitle_llm_"}
+
+    def _probe_settings(self):
+        try:
+            return self._settings() or {}
+        except Exception:
+            return {}
+
+    def _resolve_provider(self, kind, overrides=None):
+        """解析探测用的 kind/base_url/api_key/model（显式覆盖 > settings）。"""
+        overrides = overrides if isinstance(overrides, dict) else {}
+        kind = str(kind or "").strip().lower()
+        prefix = self._PROBE_PREFIXES.get(kind)
+        if prefix is None:
+            raise invalid(u"kind 必须是 asr 或 llm", details={"key": "kind"})
+        settings = self._probe_settings()
+        for field in ("base_url", "api_key", "model"):
+            if (field in overrides and overrides.get(field) is not None
+                    and not isinstance(overrides.get(field), str)):
+                raise invalid(u"参数 %s 必须是字符串" % field,
+                              details={"key": field})
+        base_url = overrides.get("base_url")
+        if not isinstance(base_url, str) or not base_url.strip():
+            base_url = settings.get(prefix + "base_url") or ""
+        base_url = settings_module.validate_base_url_value(
+            "subtitle_%s_base_url" % kind, base_url)
+        api_key = overrides.get("api_key")
+        if not isinstance(api_key, str) or not api_key.strip():
+            api_key = settings.get(prefix + "api_key") or ""
+        api_key = api_key.strip() if isinstance(api_key, str) else ""
+        model = overrides.get("model")
+        if not isinstance(model, str) or not model.strip():
+            model = settings.get(prefix + "model") or ""
+        model = str(model).strip()
+        if model:
+            model_key = prefix + "model"
+            model = settings_module.validate_patch(
+                {model_key: model})[model_key]
+        return {"kind": kind, "base_url": base_url, "api_key": api_key,
+                "model": model, "settings": settings}
+
+    def _acquire_probe(self):
+        if not self._probe_lock.acquire(False):
+            raise SubtitleError("PROBE_BUSY",
+                                u"已有云端探测请求正在进行，请稍后重试")
+
+    def _release_probe(self):
+        try:
+            self._probe_lock.release()
+        except RuntimeError:
+            pass
+
+    @staticmethod
+    def _parse_models(body, api_key=""):
+        """解析 /models 响应：兼容 data/models/顶层数组；去重排序过滤后取前 500。"""
+        if isinstance(body, (bytes, bytearray)):
+            text = bytes(body).decode("utf-8", "replace")
+        else:
+            text = str(body or "")
+        try:
+            payload = json.loads(text)
+        except (ValueError, TypeError):
+            raise SubtitleError(
+                "MODELS_UNSUPPORTED",
+                u"模型列表响应不是合法 JSON（该服务可能不支持 /models）")
+        items = None
+        if isinstance(payload, dict):
+            data = payload.get("data")
+            if isinstance(data, list):
+                items = data
+            elif isinstance(payload.get("models"), list):
+                items = payload.get("models")
+        elif isinstance(payload, list):
+            items = payload
+        if items is None:
+            raise SubtitleError(
+                "MODELS_UNSUPPORTED",
+                u"模型列表响应格式不受支持（缺少 data/models 数组）")
+        seen = {}
+        for item in items:
+            if isinstance(item, str):
+                model_id = item
+                owned_by = ""
+            elif isinstance(item, dict):
+                model_id = item.get("id")
+                owned_by = item.get("owned_by")
+                if not isinstance(owned_by, str):
+                    owned_by = ""
+            else:
+                continue
+            if not isinstance(model_id, str):
+                continue
+            model_id = model_id.strip()
+            if not model_id or len(model_id) > MODEL_ID_MAX_LEN:
+                continue
+            key = model_id.lower()
+            if key in seen:
+                continue
+            seen[key] = {"id": model_id,
+                         "owned_by": owned_by.strip()[:100]}
+        ordered = sorted(seen.values(),
+                         key=lambda entry: (entry["id"].lower(), entry["id"]))
+        truncated = len(ordered) > MODELS_MAX
+        return ordered[:MODELS_MAX], truncated
+
+    def list_models(self, kind, overrides=None):
+        """GET {base_url}/models（20s 超时、不重试；密钥绝不回传）。
+
+        模型列表只依赖 base_url/api_key；忽略 model/language 等覆盖值，
+        避免用户模型输入框暂态非法时连列表都取不到。
+        """
+        overrides = overrides if isinstance(overrides, dict) else {}
+        provider = self._resolve_provider(kind, {
+            "base_url": overrides.get("base_url"),
+            "api_key": overrides.get("api_key"),
+        })
+        base_url = provider["base_url"]
+        api_key = provider["api_key"]
+        url = base_url.rstrip("/") + "/models"
+        self._acquire_probe()
+        started = time.monotonic()
+        try:
+            raw_kind, status, body = self.client._get_raw(
+                url, api_key, MODELS_TIMEOUT_SEC)
+            latency_ms = int(round((time.monotonic() - started) * 1000))
+            if raw_kind == "timeout":
+                raise SubtitleError("PROVIDER_TIMEOUT", u"获取模型列表超时")
+            if raw_kind == "network":
+                raise SubtitleError("PROVIDER_NETWORK_ERROR",
+                                    u"无法连接云端服务")
+            if raw_kind == "http":
+                if status in (401, 403):
+                    raise SubtitleError(
+                        "PROVIDER_AUTH_FAILED",
+                        u"云端服务认证失败，请检查 API Key 配置")
+                if status in (404, 405, 501):
+                    raise SubtitleError(
+                        "MODELS_UNSUPPORTED",
+                        u"该服务不支持模型列表接口（HTTP %d）" % status)
+                raise SubtitleError(
+                    "PROVIDER_HTTP_ERROR",
+                    provider_error_message(u"获取模型列表失败", status, body,
+                                           api_key))
+            models, truncated = self._parse_models(body, api_key)
+            warning = ""
+            if not models:
+                warning = u"未获取到任何模型（服务可能不支持 /models 或账号无权限）"
+            return {
+                "kind": provider["kind"],
+                "base_url": base_url,
+                "count": len(models),
+                "truncated": bool(truncated),
+                "latency_ms": latency_ms,
+                "models": models,
+                "warning": warning,
+            }
+        finally:
+            self._release_probe()
+
+    def test_connection(self, kind, overrides=None):
+        """连接测试：ASR 用 1s 静音音频、LLM 翻译固定短句（60s 超时、不重试）。"""
+        provider = self._resolve_provider(kind, overrides)
+        overrides = overrides if isinstance(overrides, dict) else {}
+        if provider["kind"] == "asr":
+            return self._test_connection_asr(provider, overrides)
+        return self._test_connection_llm(provider, overrides)
+
+    def _make_probe_tempdir(self):
+        root = os.path.join(self.config.data_dir, "tmp")
+        try:
+            os.makedirs(root, exist_ok=True)
+        except OSError:
+            root = None
+        return tempfile.mkdtemp(prefix="dc-subtitle-probe-", dir=root)
+
+    def _test_connection_asr(self, provider, overrides):
+        settings = provider["settings"]
+        api_key = provider["api_key"]
+        model = provider["model"] or "whisper-1"
+        language = overrides.get("language") \
+            or settings.get("subtitle_asr_language") or "auto"
+        if not isinstance(language, str) or not LANGUAGE_RE.match(
+                language.strip()):
+            raise invalid(u"语言代码非法", details={"key": "language"})
+        language = language.strip()
+        self._acquire_probe()
+        started = time.monotonic()
+        tempdir = None
+        try:
+            if not self.ffmpeg.available():
+                raise SubtitleError("FFMPEG_UNAVAILABLE",
+                                    u"未找到 FFmpeg，无法生成测试音频")
+            try:
+                tempdir = self._make_probe_tempdir()
+                audio_path = os.path.join(tempdir, "silence.mp3")
+                self.ffmpeg.extract_silence_mp3(audio_path, 1.0, 15.0)
+            except video_similarity.VideoTimeout:
+                raise SubtitleError("AUDIO_FAILED", u"测试音频生成超时")
+            except video_similarity.VideoSkip as exc:
+                raise SubtitleError(
+                    "AUDIO_FAILED",
+                    mask_secret(u"测试音频生成失败：%s" % (exc.detail or ""),
+                                api_key))
+            except OSError:
+                raise SubtitleError("AUDIO_FAILED",
+                                    u"测试音频生成失败（临时目录不可用）")
+            status, body = self.client.probe_transcribe(
+                provider["base_url"], api_key, model, language, audio_path,
+                CONNECTION_TEST_TIMEOUT_SEC)
+            latency_ms = int(round((time.monotonic() - started) * 1000))
+            detail = self._asr_probe_detail(body, api_key)
+            return {
+                "kind": "asr",
+                "mode": "asr",
+                "model": model,
+                "base_url": provider["base_url"],
+                "latency_ms": latency_ms,
+                # 顶层 warning 便于前端统一按“成功但有告警”展示；
+                # detail.warning 保留给需要细节的调用方。
+                "warning": detail.get("warning") or "",
+                "detail": detail,
+            }
+        finally:
+            if tempdir:
+                shutil.rmtree(tempdir, ignore_errors=True)
+            self._release_probe()
+
+    @staticmethod
+    def _asr_probe_detail(body, api_key=""):
+        """按响应结构判定 format/segments/has_timestamps/text_chars/warning。"""
+        if isinstance(body, (bytes, bytearray)):
+            text = bytes(body).decode("utf-8", "replace")
+        else:
+            text = str(body or "")
+        try:
+            payload = json.loads(text)
+        except (ValueError, TypeError):
+            payload = None
+        if isinstance(payload, dict):
+            segments = payload.get("segments")
+            if isinstance(segments, list) and segments:
+                valid = [item for item in segments if isinstance(item, dict)]
+                text_chars = 0
+                for item in valid:
+                    value = item.get("text")
+                    if isinstance(value, str):
+                        text_chars += len(value)
+                return {"format": "verbose_json", "segments": len(valid),
+                        "has_timestamps": True, "text_chars": text_chars,
+                        "warning": ""}
+            if isinstance(segments, list):
+                value = payload.get("text")
+                text_chars = len(value) if isinstance(value, str) else 0
+                return {"format": "verbose_json", "segments": 0,
+                        "has_timestamps": False, "text_chars": text_chars,
+                        "warning": u"响应 segments 为空，未返回时间轴"}
+            extra_srt = payload.get("srt") or payload.get("subtitle")
+            if isinstance(extra_srt, str):
+                cues = parse_srt(extra_srt)
+                if cues:
+                    return {"format": "srt", "segments": len(cues),
+                            "has_timestamps": True,
+                            "text_chars": sum(len(cue["text"])
+                                              for cue in cues),
+                            "warning": ""}
+            if isinstance(payload.get("text"), str):
+                return {"format": "text", "segments": 0,
+                        "has_timestamps": False,
+                        "text_chars": len(payload["text"]),
+                        "warning": u"响应只有纯文本，没有时间轴；"
+                                   u"请使用支持 verbose_json/segments 的模型"}
+        cues = parse_srt(text.strip())
+        if cues:
+            return {"format": "srt", "segments": len(cues),
+                    "has_timestamps": True,
+                    "text_chars": sum(len(cue["text"]) for cue in cues),
+                    "warning": ""}
+        return {"format": "unknown", "segments": 0,
+                "has_timestamps": False, "text_chars": len(text.strip()),
+                "warning": u"无法识别 ASR 响应格式（连接成功，但可能不返回字幕时间轴）"}
+
+    def _test_connection_llm(self, provider, overrides):
+        settings = provider["settings"]
+        api_key = provider["api_key"]
+        model = provider["model"] or "gpt-4.1-mini"
+        target_lang = overrides.get("target_lang") \
+            or settings.get("subtitle_translate_target") or "zh"
+        if (not isinstance(target_lang, str)
+                or not LANGUAGE_RE.match(target_lang.strip())
+                or target_lang.strip().lower() == "auto"):
+            raise invalid(u"目标语言非法", details={"key": "target_lang"})
+        target_lang = target_lang.strip()
+        self._acquire_probe()
+        started = time.monotonic()
+        try:
+            status, body = self.client.probe_chat(
+                provider["base_url"], api_key, model, ["Hello world"],
+                target_lang, CONNECTION_TEST_TIMEOUT_SEC)
+            latency_ms = int(round((time.monotonic() - started) * 1000))
+            text = (bytes(body).decode("utf-8", "replace")
+                    if isinstance(body, (bytes, bytearray)) else str(body or ""))
+            parsed = OpenAIClient._parse_chat_content(text)
+            if (not isinstance(parsed, list) or len(parsed) != 1
+                    or not isinstance(parsed[0], str)
+                    or not parsed[0].strip()):
+                raise SubtitleError(
+                    "PROVIDER_REJECTED",
+                    u"LLM 返回格式不正确：需要长度 1 的字符串数组")
+            return {
+                "kind": "llm",
+                "mode": "chat",
+                "model": model,
+                "base_url": provider["base_url"],
+                "latency_ms": latency_ms,
+                "warning": "",
+                "detail": {"items": 1, "text_chars": len(parsed[0]),
+                           "preview": parsed[0][:200],
+                           "warning": ""},
+            }
+        finally:
+            self._release_probe()
 
     # ------------------------------------------------------------------
     # 提交 / 取消

@@ -7,9 +7,9 @@
 | key | 默认 | 约束 |
 |---|---|---|
 | subtitle_enabled | false | 总开关 |
-| subtitle_asr_base_url | https://api.openai.com/v1 | http/https，去尾部 / |
+| subtitle_asr_base_url | https://api.openai.com/v1 | http/https，去尾部 /；拒绝 URL userinfo（user:pass@host） |
 | subtitle_asr_api_key | "" | 密钥；GET 不回传明文 |
-| subtitle_asr_model | whisper-1 | 必须支持 verbose_json/segments 或 srt |
+| subtitle_asr_model | whisper-1 | 必须支持 verbose_json/segments 或 srt；字符集 [A-Za-z0-9._/:@+-]{1,100} |
 | subtitle_asr_language | auto | auto/zh/en/ja/ko/... |
 | subtitle_asr_timeout_sec | 300 | 30..1800 |
 | subtitle_asr_chunk_sec | 600 | 60..1800 |
@@ -99,8 +99,78 @@ job schema：
 - 未配置/未启用时按钮禁用或提示；不阻塞视频查重。
 - 所有 API Key 输入不回填明文。
 
-## 8. 测试
+## 8. 模型列表与连接测试 API（v0026）
+
+供设置页“获取模型列表 / 测试连接”使用。两个接口都要求**管理员 + CSRF**（POST），只用于探测：
+**不上传真实用户数据**（连接测试使用 1s 静音音频与固定短句），不重试，单次请求。
+
+### 8.1 模型列表
+
+`POST /api/subtitles/models`
+
+```json
+{"kind":"asr","base_url":"https://api.openai.com/v1","api_key":"sk-..."}
+```
+
+- `kind` 必填，`asr` | `llm`；`base_url`/`api_key` 缺省（或空串）时从 `subtitle_asr_*` / `subtitle_llm_*` settings 回退。
+- 后端 GET `{base_url}/models`，超时 20s（受 client timeout_cap 限制），不重试。
+- 响应兼容 `{"data":[...]}`、顶层数组、`{"models":[...]}`；元素可为字符串或含 `id` 的对象。
+- 去重（id 不区分大小写）、按 id 不区分大小写排序；跳过空/非字符串/id 长度 >200；最多返回 500 条（`truncated=true`）。
+- 空列表视为成功（`count=0` + `warning`）。
+
+```json
+{"ok":true,"kind":"asr","base_url":"https://api.openai.com/v1","count":2,
+ "truncated":false,"latency_ms":120,
+ "models":[{"id":"whisper-1","owned_by":"openai"},{"id":"gpt-4o-transcribe","owned_by":""}],
+ "warning":""}
+```
+
+### 8.2 连接测试
+
+`POST /api/subtitles/test`
+
+```json
+{"kind":"asr","base_url":"...","api_key":"...","model":"whisper-1","language":"auto","target_lang":"zh"}
+```
+
+- ASR：FFmpeg `-f lavfi -i anullsrc=r=16000:cl=mono -t 1` 生成 1s 静音 MP3（临时文件，完成后删除），POST `/audio/transcriptions`（verbose_json、temperature=0）；按响应结构判定：
+  - `format` = `verbose_json` | `srt` | `text` | `unknown`；`segments`、`has_timestamps`、`text_chars`、`warning`。
+- LLM：POST `/chat/completions` 翻译固定短句 `["Hello world"]`，必须返回长度 1 的字符串数组，否则 `PROVIDER_REJECTED`。
+- 超时 60s（受 client timeout_cap 限制），不重试。
+
+```json
+{"ok":true,"kind":"asr","mode":"asr","model":"whisper-1",
+ "base_url":"https://api.openai.com/v1","latency_ms":430,
+ "warning":"",
+ "detail":{"format":"verbose_json","segments":2,"has_timestamps":true,
+           "text_chars":42,"warning":""}}
+```
+
+- 顶层 `warning` 与 `detail.warning` 一致：非空表示“连接成功但有告警”
+  （如响应只有纯文本、无时间轴），前端用黄色提示展示。
+- 模型列表接口只使用 `base_url`/`api_key`；`model`/`language` 等字段即使传入也会被忽略，避免模型输入框暂态非法时无法获取列表。
+
+### 8.3 错误码与安全
+
+| code | HTTP | 场景 |
+|---|---|---|
+| INVALID_ARGUMENT | 400 | kind/base_url/model 等参数非法（含 URL userinfo） |
+| PROVIDER_AUTH_FAILED | 400 | Provider 返回 401/403（**不使用 401，避免前端误判登录失效**） |
+| PROVIDER_REJECTED | 400 | Provider 拒绝请求/LLM 返回格式不符 |
+| MODELS_UNSUPPORTED | 400 | 不支持 /models、404/405、响应非 JSON/缺 data/models |
+| PROVIDER_HTTP_ERROR | 502 | 其他 Provider HTTP 错误（不重试） |
+| PROVIDER_NETWORK_ERROR | 502 | 网络不可达 |
+| PROVIDER_TIMEOUT | 504 | 请求超时 |
+| AUDIO_FAILED | 400 | 静音测试音频生成失败 |
+| FFMPEG_UNAVAILABLE | 400 | 无可用 FFmpeg |
+| PROBE_BUSY | 409 | 已有探测请求进行中（服务内探测锁，同一时间仅 1 个） |
+
+- 错误 message 统一脱敏：api_key 替换为 `***`、去控制字符、截断 300；响应/日志/审计/任务 JSON 绝不出现 api_key。
+- base_url 拒绝 userinfo（`user:pass@host`），避免凭据进入 URL/日志；模型名字符集放宽允许 `@` 与 `+`。
+
+## 9. 测试
 
 - 后端 fake HTTP server：ASR verbose_json/SRT/无时间轴/401/429重试/超时；LLM 正常/长度不符/JSON 围栏/部分失败；chunk 偏移合并、no_audio、取消、密钥不回传/不日志、目录穿越、任务清理。
+- v0026：fake server 增加 GET /models（排序/去重/500 上限/401/404/timeout/空列表/Authorization 记录），fake ffmpeg 增加 lavfi 静音分支；覆盖错误码映射、探测锁、密钥不泄漏/不落盘。
 - 前端 node --check + E2E（mock API）。
-- 现有 193 测试必须继续通过。
+- 现有测试必须继续全部通过。

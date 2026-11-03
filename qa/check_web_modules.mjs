@@ -156,11 +156,13 @@ const EXPECTED = {
   'api.js': ['ApiError', 'errorMessage', 'saveCsrf', 'api', 'setUnauthorizedHandler'],
   'toast.js': ['toast', 'removeToast'],
   'modal.js': ['openModal', 'renderFooter', 'closeModal', 'trapModalKeys', 'confirmDialog',
-    'isModalOpen', 'getActiveModal', 'setModalDismissible']
+    'isModalOpen', 'getActiveModal', 'setModalDismissible'],
+  'subtitle-probe.js': ['normalizeProbeKind', 'readProbePayload', 'fetchModelList', 'testProvider',
+    'normalizeModelList', 'formatModelListHint', 'formatProbeResult', 'formatProbeError']
 };
 
 const MODULE_ORDER = ['constants.js', 'state.js', 'format.js', 'util.js', 'dom.js',
-  'api.js', 'toast.js', 'modal.js'];
+  'api.js', 'toast.js', 'modal.js', 'subtitle-probe.js'];
 
 const results = [];
 
@@ -237,6 +239,92 @@ async function main() {
       record('WEB-MOD-HELPERS', '关键工具函数导出且行为不变（el/statusBadge/clamp/fmtBytes）',
         false, String(err));
     }
+      // ---- subtitle-probe.js 纯函数与请求用例（v0026） ----
+      const probeMod = await importFile(path.join(JS_DIR, 'subtitle-probe.js'));
+      const kindOk = probeMod.normalizeProbeKind('LLM') === 'llm'
+        && probeMod.normalizeProbeKind('bad') === 'asr';
+      record('WEB-MOD-PROBE-KIND', 'normalizeProbeKind 归一 asr/llm', kindOk);
+      const payloadAsr = probeMod.readProbePayload('asr', {
+        baseUrl: ' https://api.example/v1 ', apiKey: '', model: '', language: 'zh', targetLang: ''
+      });
+      const payloadLlm = probeMod.readProbePayload('llm', {
+        baseUrl: 'https://api.example/v1', apiKey: 'sk-SECRET-KEY', model: 'gpt-4.1-mini', targetLang: 'zh'
+      });
+      record('WEB-MOD-PROBE-PAYLOAD', 'payload 只含非空字段且 kind 归一',
+        payloadAsr.kind === 'asr' && payloadAsr.base_url === 'https://api.example/v1'
+        && !('api_key' in payloadAsr) && !('model' in payloadAsr) && payloadAsr.language === 'zh'
+        && !('target_lang' in payloadAsr)
+        && payloadLlm.kind === 'llm' && payloadLlm.api_key === 'sk-SECRET-KEY'
+        && payloadLlm.target_lang === 'zh',
+        JSON.stringify({ asr: Object.keys(payloadAsr), llm: Object.keys(payloadLlm) }));
+      const normalized = probeMod.normalizeModelList({
+        models: [{ id: 'whisper-1', owned_by: 'openai' }, { id: 'b-model' }, { id: 'b-model' }, { id: '' }],
+        count: 9, truncated: true, warning: '仅展示前几个'
+      });
+      record('WEB-MOD-PROBE-NORMALIZE', 'normalizeModelList 去重排序并保留 truncated/warning',
+        normalized.models.map(function (m) { return m.id; }).join(',') === 'b-model,whisper-1'
+        && normalized.models[1].owned_by === 'openai'
+        && normalized.count === 9 && normalized.truncated === true
+        && normalized.warning === '仅展示前几个',
+        JSON.stringify(normalized));
+      const listHint = probeMod.formatModelListHint('asr', normalized);
+      record('WEB-MOD-PROBE-HINT', 'formatModelListHint 文案含数量/来源/截断',
+        listHint.indexOf('获取到 2 个ASR模型') !== -1 && listHint.indexOf('/models') !== -1
+        && listHint.indexOf('列表已截断') !== -1,
+        listHint);
+      const okAsr = probeMod.formatProbeResult('asr', {
+        ok: true, latency_ms: 123.4, model: 'whisper-1',
+        detail: { format: 'verbose_json', segments: 5 }
+      });
+      const okLlm = probeMod.formatProbeResult('llm', {
+        ok: true, latency_ms: 60, model: 'gpt-4.1-mini',
+        detail: { text_preview: '你好，世界' }, warning: '仅供参考'
+      });
+      record('WEB-MOD-PROBE-RESULT', 'formatProbeResult 展示延迟/ASR 段数/LLM 预览/warning 级别',
+        okAsr.level === 'ok' && okAsr.text.indexOf('延迟 123 ms') !== -1
+        && okAsr.text.indexOf('段落 5 个') !== -1 && okAsr.text.indexOf('verbose_json') !== -1
+        && okLlm.level === 'warn' && okLlm.text.indexOf('预览：你好，世界') !== -1
+        && okLlm.text.indexOf('仅供参考') !== -1,
+        JSON.stringify({ asr: okAsr, llm: okLlm }));
+      const errFormatted = probeMod.formatProbeError({
+        code: 'PROVIDER_AUTH_FAILED', message: '认证失败，请检查 key sk-SECRET-KEY'
+      });
+      record('WEB-MOD-PROBE-ERROR', 'formatProbeError 使用中文 message 且脱敏',
+        errFormatted.level === 'error' && errFormatted.text.indexOf('认证失败') !== -1
+        && errFormatted.text.indexOf('sk-SECRET-KEY') === -1,
+        errFormatted.text);
+      let capturedRequests = [];
+      const originalFetch = globalThis.fetch;
+      try {
+        globalThis.fetch = async function (url, init) {
+          capturedRequests.push({ url: url, init: init });
+          return {
+            ok: true, status: 200,
+            headers: { get: function () { return 'application/json'; } },
+            json: async function () { return { ok: true, kind: 'asr', models: [] }; }
+          };
+        };
+        await probeMod.fetchModelList('asr', {
+          baseUrl: 'https://api.example/v1', apiKey: 'sk-SECRET-KEY', model: 'whisper-1'
+        });
+        await probeMod.testProvider('llm', {
+          baseUrl: 'https://api.example/v1', apiKey: 'sk-SECRET-KEY', model: 'gpt-4.1-mini', targetLang: 'zh'
+        });
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+      const firstBody = capturedRequests[0] ? JSON.parse(capturedRequests[0].init.body) : {};
+      const secondBody = capturedRequests[1] ? JSON.parse(capturedRequests[1].init.body) : {};
+      record('WEB-MOD-PROBE-REQUESTS', 'fetchModelList/testProvider 请求路径、方法、body 正确',
+        capturedRequests.length === 2
+        && capturedRequests[0].url === '/api/subtitles/models' && capturedRequests[0].init.method === 'POST'
+        && firstBody.kind === 'asr' && firstBody.api_key === 'sk-SECRET-KEY'
+        && firstBody.model === 'whisper-1'
+        && capturedRequests[1].url === '/api/subtitles/test' && capturedRequests[1].init.method === 'POST'
+        && secondBody.kind === 'llm' && secondBody.target_lang === 'zh',
+        JSON.stringify(capturedRequests.map(function (item) {
+          return { url: item.url, method: item.init.method };
+        })));
   }
 
   const failed = results.filter(function (item) { return item.status !== 'PASS'; });

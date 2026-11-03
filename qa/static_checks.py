@@ -342,11 +342,11 @@ def check_frontend():
     # 并逐个文件执行 node --check（Node 24 可直接检查 ESM 语法）。
     js_dir = os.path.join(web, "js")
     module_names = ["constants.js", "state.js", "dom.js", "format.js",
-                    "util.js", "api.js", "toast.js", "modal.js"]
+                    "util.js", "api.js", "toast.js", "modal.js", "subtitle-probe.js"]
     module_paths = [os.path.join(js_dir, name) for name in module_names]
     missing_modules = [name for name in module_names
                        if not os.path.isfile(os.path.join(js_dir, name))]
-    check("FE-MODULE-FILES", "前端 ES modules 八个模块文件齐全（js/*.js）",
+    check("FE-MODULE-FILES", "前端 ES modules 九个模块文件齐全（js/*.js）",
           not missing_modules, "missing=%s" % missing_modules)
     check("FE-MODULE-ENTRY", "index.html 以 type=module 加载 app.js 并保留 ?v= 版本参数",
           bool(re.search(r'<script\s+type="module"\s+src="\./app\.js\?v=[^"]+"', html)),
@@ -421,6 +421,8 @@ def check_frontend():
         ("/api/preview", "预览"),
         ("/api/logs", "日志"),
         ("/api/logs/download", "日志下载"),
+        ("/api/subtitles/models", "字幕模型列表"),
+        ("/api/subtitles/test", "字幕连接测试"),
     ]
     missing = [name for marker, name in endpoints if marker not in app]
     check("FE-ENDPOINTS", "前端覆盖契约全部 API 端点",
@@ -608,6 +610,36 @@ def check_frontend():
               ("simFeatures", "simCacheHits", "simCandidates", "simSkipped"))
           and "similarityCounters" in html,
           "similarity counters missing")
+
+    # ---- v0026 字幕设置：获取模型列表 / 测试连接 ----
+    probe_ids = [
+        "subtitleAsrModelsBtn", "subtitleAsrModelPicker", "subtitleAsrModelsHint",
+        "subtitleAsrTestBtn", "subtitleAsrTestResult",
+        "subtitleLlmModelsBtn", "subtitleLlmModelPicker", "subtitleLlmModelsHint",
+        "subtitleLlmTestBtn", "subtitleLlmTestResult",
+    ]
+    missing_html_ids = [pid for pid in probe_ids if ('id="%s"' % pid) not in html]
+    missing_app_ids = [pid for pid in probe_ids if pid not in app]
+    probe_ok = (not missing_html_ids and not missing_app_ids
+                and 'role="status"' in html
+                and all(marker in app for marker in (
+                    "/api/subtitles/models", "/api/subtitles/test",
+                    "fetchModelList", "testProvider", "normalizeModelList",
+                    "formatProbeResult", "formatProbeError")))
+    check("FE-SUBTITLE-PROBE", "字幕设置提供获取模型列表/测试连接 UI（10 个 id/按钮/选择器/结果节点）",
+          probe_ok,
+          "missing_html=%s missing_app=%s" % (missing_html_ids, missing_app_ids))
+    probe_src_path = os.path.join(js_dir, "subtitle-probe.js")
+    probe_src = read(probe_src_path) if os.path.isfile(probe_src_path) else ""
+    secret_leak = re.search(
+        r"(?i)(?:setText|textContent)\s*\([^;\n]*(?:api_?key|provider\.apiKey)"
+        r"|formatProbe(?:Result|Error)\s*\([^;\n]*api_?key"
+        r"|(?:modelsHint|testResult)[^;\n]*(?:\+\s*[^;\n]*api_?key|api_?key\s*\+)",
+        app)
+    check("FE-SUBTITLE-PROBE-SECRET", "字幕探测提示/结果不写入 API Key（仅请求体传 api_key）",
+          ("api_key" in probe_src) and ("apiKey" in probe_src) and not secret_leak,
+          "secret leak pattern=%s" % (
+              secret_leak.group(0)[:160] if secret_leak else ""))
 
 
 # ---------------------------------------------------------------------------

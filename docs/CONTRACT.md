@@ -1,7 +1,7 @@
 # 实现契约（前后端共享，版本 1.0）
 
 > 本文件是前后端并行开发的唯一接口约定。任何一方需要改动字段，先改本文件并在团队任务中说明。
-> 产品名：**DuplicateCleaner**；显示名：**重复文件清理与字幕**；SPK 版本：**1.1.0-0025**。
+> 产品名：**DuplicateCleaner**；显示名：**重复文件清理与字幕**；SPK 版本：**1.1.0-0026**。
 > v1.1 新增内容相似度模式；相似模式字段与行为见 [SIMILARITY_CONTRACT.md](SIMILARITY_CONTRACT.md)，**精准模式规则不变**。
 
 ## 1. 仓库与写入边界
@@ -51,6 +51,10 @@ Cookie：`HttpOnly; SameSite=Strict; Path=/; Max-Age=28800`，TLS 时加 `Secure
 `INVALID_PATH`、`PATH_NOT_ALLOWED`、`SCAN_BUSY`、`SCAN_NOT_DONE`、`PLAN_EXPIRED`、`PLAN_INVALID`、
 `HASH_MISMATCH`、`FILE_CHANGED`、`RECYCLE_UNAVAILABLE`、`INTERNAL_ERROR`。
 
+字幕探测类错误码（`PROVIDER_AUTH_FAILED`、`PROVIDER_REJECTED`、`MODELS_UNSUPPORTED`、
+`PROVIDER_HTTP_ERROR`、`PROVIDER_NETWORK_ERROR`、`PROVIDER_TIMEOUT`、`AUDIO_FAILED`、
+`FFMPEG_UNAVAILABLE`、`PROBE_BUSY`）见 [SUBTITLE_CONTRACT.md](SUBTITLE_CONTRACT.md)。
+
 ## 4. 认证
 
 ### POST /api/auth/login（免登录）
@@ -76,7 +80,7 @@ Cookie：`HttpOnly; SameSite=Strict; Path=/; Max-Age=28800`，TLS 时加 `Secure
 ### GET /api/meta
 ```json
 {
- "app_version": "1.1.0-0025",
+ "app_version": "1.1.0-0026",
  "dsm_version": "7.2.2-72806" | "dev",
  "python_version": "3.8.16",
  "creation_time_supported": true,
@@ -340,4 +344,4 @@ Content-Disposition: attachment; filename="duplicate-scan-<id>.csv"
 - 后端 unittest 覆盖：statx 时间读取降级、哈希分片/限速、重复分组与三种保留策略、
   路径黑名单、删除前重校验、回收站路径生成、CSV、API 鉴权。
 - 前端可用静态检查 + 本地 dev 后端联调；QA 用 dev 模式在临时目录生成重复文件跑完整 API 流程。
-- 打包产物 `dist/DuplicateCleaner-1.1.0-0025.spk` 必须能通过 `tar -tf` 检查，包含 INFO/package.tgz/scripts/conf/ui。
+- 打包产物 `dist/DuplicateCleaner-1.1.0-0026.spk` 必须能通过 `tar -tf` 检查，包含 INFO/package.tgz/scripts/conf/ui。

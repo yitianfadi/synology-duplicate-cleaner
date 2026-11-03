@@ -163,13 +163,25 @@ def _check_base_url(key, value):
     parsed = urlsplit(text)
     if parsed.scheme not in ("http", "https") or not parsed.netloc:
         _err(u"设置 %s 必须是 http/https URL" % key, {"key": key})
+    # v0026 安全：拒绝 URL 内嵌 userinfo（user:pass@host），避免密钥进入 URL/
+    # 日志/错误消息，也避免把凭据发给非预期主机。
+    if ("@" in parsed.netloc or parsed.username is not None
+            or parsed.password is not None):
+        _err(u"设置 %s 不能包含账号密码（userinfo）" % key, {"key": key})
     if parsed.query or parsed.fragment:
         _err(u"设置 %s 不能包含查询串或片段" % key, {"key": key})
     return text.rstrip("/")
 
 
+def validate_base_url_value(key, value):
+    """公共 base URL 校验（云端字幕探测/设置复用；返回去尾斜杠的 URL）。"""
+    return _check_base_url(key, value)
+
+
 _LANGUAGE_RE = re.compile(r"^(?:[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})?)$")
-_MODEL_NAME_RE = re.compile(r"^[A-Za-z0-9._/:-]{1,100}$")
+# v0026：模型名放宽到常见 OpenAI 兼容命名（允许 @ 与 +，如
+# "meta-llama/Llama-3.1-8B@latest"、"model+fp16"）；仍拒绝空白与 shell 元字符。
+_MODEL_NAME_RE = re.compile(r"^[A-Za-z0-9._/:@+\-]{1,100}$")
 
 
 def _check_language(key, value, allow_auto=False):

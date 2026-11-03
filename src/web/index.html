@@ -6,8 +6,8 @@
 <meta name="color-scheme" content="light">
 <meta name="referrer" content="same-origin">
 <title>重复文件清理与字幕 · Duplicate Cleaner &amp; Subtitles</title>
-<link rel="icon" href="./assets/favicon.svg?v=1.1.0-0025" type="image/svg+xml">
-<link rel="stylesheet" href="./styles.css?v=1.1.0-0025">
+<link rel="icon" href="./assets/favicon.svg?v=1.1.0-0026" type="image/svg+xml">
+<link rel="stylesheet" href="./styles.css?v=1.1.0-0026">
 </head>
 <body>
 <a class="skip-link" href="#main">跳到主要内容</a>
@@ -1020,6 +1020,15 @@
                 <input id="subtitleAsrModel" type="text" placeholder="whisper-1" autocomplete="off" spellcheck="false">
                 <p class="hint">需支持 verbose_json/segments（如 whisper-1）。</p>
                 <p class="field-error" id="subtitleAsrModelError" role="alert" hidden></p>
+                <div class="probe-actions">
+                  <button type="button" class="btn btn-ghost btn-sm" id="subtitleAsrModelsBtn">获取模型列表</button>
+                  <button type="button" class="btn btn-ghost btn-sm" id="subtitleAsrTestBtn">测试连接</button>
+                </div>
+                <select id="subtitleAsrModelPicker" class="probe-picker" aria-label="从服务端模型列表选择 ASR 模型" hidden>
+                  <option value="">选择模型…</option>
+                </select>
+                <p class="hint probe-hint" id="subtitleAsrModelsHint" hidden></p>
+                <p class="probe-result" id="subtitleAsrTestResult" role="status" hidden></p>
               </div>
               <div class="field">
                 <label for="subtitleAsrApiKey">ASR API Key</label>
@@ -1067,6 +1076,15 @@
                 <label for="subtitleLlmModel">LLM 模型</label>
                 <input id="subtitleLlmModel" type="text" placeholder="gpt-4.1-mini" autocomplete="off" spellcheck="false">
                 <p class="field-error" id="subtitleLlmModelError" role="alert" hidden></p>
+                <div class="probe-actions">
+                  <button type="button" class="btn btn-ghost btn-sm" id="subtitleLlmModelsBtn">获取模型列表</button>
+                  <button type="button" class="btn btn-ghost btn-sm" id="subtitleLlmTestBtn">测试连接</button>
+                </div>
+                <select id="subtitleLlmModelPicker" class="probe-picker" aria-label="从服务端模型列表选择 LLM 模型" hidden>
+                  <option value="">选择模型…</option>
+                </select>
+                <p class="hint probe-hint" id="subtitleLlmModelsHint" hidden></p>
+                <p class="probe-result" id="subtitleLlmTestResult" role="status" hidden></p>
               </div>
               <div class="field">
                 <label for="subtitleLlmApiKey">LLM API Key</label>
@@ -1161,6 +1179,6 @@
   <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.6" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M12 10.8v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="12" cy="7.6" r="1.05" fill="currentColor"/></symbol>
 </svg>
 
-<script type="module" src="./app.js?v=1.1.0-0025"></script>
+<script type="module" src="./app.js?v=1.1.0-0026"></script>
 </body>
 </html>

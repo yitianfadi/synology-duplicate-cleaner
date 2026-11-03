@@ -2102,3 +2102,47 @@ input[type="checkbox"]:disabled { cursor: not-allowed; }
 .subtitle-cue-table td:nth-child(3), .subtitle-cue-table td:nth-child(4) { max-width: 420px; white-space: pre-wrap; }
 .subtitle-cue-time { white-space: nowrap; color: #5c6b76; }
 @media (max-width: 680px) { .subtitle-cue-table { font-size: 12px; } .subtitle-cue-table th, .subtitle-cue-table td { padding: 6px; } }
+
+/* ==========================================================================
+   v0026 字幕设置：获取模型列表 / 测试连接
+   ========================================================================== */
+.probe-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+.probe-picker {
+  display: block;
+  width: 100%;
+  margin-top: 8px;
+}
+.probe-result {
+  margin: 8px 0 0;
+  padding: 6px 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--card-soft);
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.probe-result.is-ok {
+  color: var(--success);
+  border-color: #c4e3d2;
+  background: var(--success-soft);
+}
+.probe-result.is-warn {
+  color: var(--warning);
+  border-color: #efdba4;
+  background: var(--warning-soft);
+}
+.probe-result.is-error {
+  color: var(--danger);
+  border-color: #f0c4c4;
+  background: var(--danger-soft);
+}
+@media (max-width: 560px) {
+  .probe-actions .btn { flex: 1 1 auto; }
+}

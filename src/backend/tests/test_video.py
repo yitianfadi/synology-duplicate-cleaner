@@ -45,6 +45,28 @@ if "-version" in args:
 if "-hwaccels" in args:
     sys.stdout.write("Hardware acceleration methods:\nvaapi\nqsv\n")
     sys.exit(0)
+if "-f" in args and "lavfi" in args:
+    # v0026：云端字幕连接测试用的静音 MP3（anullsrc），不读取输入文件。
+    if os.environ.get("FAKE_FFMPEG_SILENCE_FAIL") == "1":
+        fail("silence generation failed")
+    seconds = 1.0
+    if "-t" in args:
+        try:
+            seconds = float(args[args.index("-t") + 1])
+        except (IndexError, ValueError):
+            seconds = 1.0
+    per_sec = float(os.environ.get("FAKE_MP3_BYTES_PER_SEC", "2000") or 2000)
+    size = max(16, int(seconds * per_sec))
+    if "-y" in args and args.index("-y") + 1 < len(args):
+        target = args[args.index("-y") + 1]
+    else:
+        target = args[-1]
+    try:
+        with open(target, "wb") as handle:
+            handle.write(b"ID3" + b"\x00" * (size - 3))
+    except OSError:
+        fail("cannot write silence mp3")
+    sys.exit(0)
 if "-i" not in args:
     fail("missing input")
 path = args[args.index("-i") + 1]
@@ -549,6 +571,38 @@ class RealFFmpegIntegrationTest(unittest.TestCase):
             self.assertTrue(analysis["fingerprint"].startswith("v1:"))
         finally:
             shutil.rmtree(tmpdir, ignore_errors=True)
+
+
+class FFmpegSilenceMp3Test(FakeFFmpegBase):
+    """v0026：云端字幕连接测试的 1s 静音 MP3 生成（fake ffmpeg）。"""
+
+    def test_extract_silence_mp3_command_and_file(self):
+        out_path = os.path.join(self.harness.tmpdir, "silence.mp3")
+        log_path = os.path.join(self.harness.tmpdir, "silence.log")
+        tool = video_similarity.FFmpegTool(cmd=self.ffmpeg_cmd)
+        with mock.patch.dict(os.environ, {"FAKE_FFMPEG_LOG": log_path}):
+            tool.extract_silence_mp3(out_path, seconds=1.0, timeout=15.0)
+        self.assertTrue(os.path.isfile(out_path))
+        self.assertGreater(os.path.getsize(out_path), 0)
+        with open(out_path, "rb") as handle:
+            self.assertEqual(handle.read(3), b"ID3")
+        with open(log_path, "r", encoding="utf-8") as handle:
+            lines = [line for line in handle.read().splitlines() if line]
+        command = [line for line in lines if "-f lavfi" in line][-1]
+        self.assertIn("anullsrc=r=16000:cl=mono", command)
+        self.assertIn("-t 1.000", command)
+        self.assertIn("-f mp3", command)
+        self.assertIn(out_path, command)
+
+    def test_extract_silence_mp3_failure(self):
+        out_path = os.path.join(self.harness.tmpdir, "silence-fail.mp3")
+        tool = video_similarity.FFmpegTool(cmd=self.ffmpeg_cmd)
+        with mock.patch.dict(os.environ,
+                             {"FAKE_FFMPEG_SILENCE_FAIL": "1"}):
+            with self.assertRaises(video_similarity.VideoSkip) as ctx:
+                tool.extract_silence_mp3(out_path)
+        self.assertEqual(ctx.exception.reason, "audio")
+        self.assertFalse(os.path.isfile(out_path))
 
 
 class FFmpegProbeTest(FakeFFmpegBase):

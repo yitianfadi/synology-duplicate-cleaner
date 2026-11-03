@@ -669,6 +669,28 @@ class FFmpegTool(object):
             detail = stderr.decode("utf-8", "replace").strip()[-300:]
             raise VideoSkip("decode", detail or "audio chunk extract failed")
 
+    def extract_silence_mp3(self, out_path, seconds=1.0, timeout=15.0):
+        """用 lavfi anullsrc 生成指定秒数的 16kHz 单声道静音 MP3。
+
+        v0026 云端字幕“测试连接”专用：不上传任何真实用户音频。
+        失败抛 VideoSkip('audio', ...)，由字幕服务转成 AUDIO_FAILED。
+        """
+        try:
+            duration = max(0.1, float(seconds))
+        except (TypeError, ValueError):
+            duration = 1.0
+        args = ["-nostdin", "-hide_banner", "-loglevel", "error",
+                "-f", "lavfi", "-i", "anullsrc=r=16000:cl=mono",
+                "-t", "%.3f" % duration,
+                "-vn", "-ac", "1", "-ar", str(config.ASR_AUDIO_RATE),
+                "-b:a", "32k", "-f", "mp3", "-y", out_path]
+        code, _stdout, stderr = self._run(args, timeout)
+        if (code != 0 or not os.path.isfile(out_path)
+                or os.path.getsize(out_path) <= 0):
+            detail = stderr.decode("utf-8", "replace").strip()[-300:]
+            raise VideoSkip("audio",
+                            detail or "silence audio generation failed")
+
     def extract_frame(self, path, timestamp, timeout, hwaccel_label="none",
                       stop_check=None):
         args = ["-nostdin", "-hide_banner", "-loglevel", "error", "-threads", "1"]

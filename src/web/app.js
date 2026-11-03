@@ -38,6 +38,10 @@ import {
   normalizeExtList, normalizePathList
 } from './js/util.js';
 import { ApiError, api, errorMessage, saveCsrf, setUnauthorizedHandler } from './js/api.js';
+import {
+  fetchModelList, formatModelListHint, formatProbeError, formatProbeResult,
+  normalizeModelList, normalizeProbeKind, testProvider
+} from './js/subtitle-probe.js';
 import { toast } from './js/toast.js';
 import {
   closeModal, confirmDialog, getActiveModal, isModalOpen, openModal, setModalDismissible,
@@ -2009,6 +2013,8 @@ import {
     if (els.subtitleClearLlmKey) { els.subtitleClearLlmKey.checked = false; }
     if (els.subtitleAsrApiKey) { els.subtitleAsrApiKey.disabled = false; }
     if (els.subtitleLlmApiKey) { els.subtitleLlmApiKey.disabled = false; }
+    clearSubtitleProbeUi('asr');
+    clearSubtitleProbeUi('llm');
     updateSubtitleAvailabilityUi();
   }
 
@@ -2082,6 +2088,199 @@ import {
     } else if (llmKey) {
       settings.subtitle_llm_api_key = llmKey;
     }
+  }
+
+  // ---------- 云端字幕：获取模型列表 / 测试连接（v0026） ----------
+  var SUBTITLE_PROBE_UI = {
+    asr: {
+      modelsBtn: 'subtitleAsrModelsBtn', testBtn: 'subtitleAsrTestBtn',
+      picker: 'subtitleAsrModelPicker', modelsHint: 'subtitleAsrModelsHint',
+      testResult: 'subtitleAsrTestResult', modelInput: 'subtitleAsrModel'
+    },
+    llm: {
+      modelsBtn: 'subtitleLlmModelsBtn', testBtn: 'subtitleLlmTestBtn',
+      picker: 'subtitleLlmModelPicker', modelsHint: 'subtitleLlmModelsHint',
+      testResult: 'subtitleLlmTestResult', modelInput: 'subtitleLlmModel'
+    }
+  };
+
+  function subtitleProbeUi(kind) {
+    var map = SUBTITLE_PROBE_UI[normalizeProbeKind(kind)];
+    if (!map) { return null; }
+    return {
+      modelsBtn: byId(map.modelsBtn),
+      testBtn: byId(map.testBtn),
+      picker: byId(map.picker),
+      modelsHint: byId(map.modelsHint),
+      testResult: byId(map.testResult),
+      modelInput: byId(map.modelInput)
+    };
+  }
+
+  /** 读取当前表单值；API Key 只用于请求体，绝不回填/展示。 */
+  function readSubtitleProbeProvider(kind) {
+    var isLlm = normalizeProbeKind(kind) === 'llm';
+    var baseUrlInput = isLlm ? els.subtitleLlmBaseUrl : els.subtitleAsrBaseUrl;
+    var modelInput = isLlm ? els.subtitleLlmModel : els.subtitleAsrModel;
+    var apiKeyInput = isLlm ? els.subtitleLlmApiKey : els.subtitleAsrApiKey;
+    var clearInput = isLlm ? els.subtitleClearLlmKey : els.subtitleClearAsrKey;
+    var provider = {
+      baseUrl: baseUrlInput ? String(baseUrlInput.value || '').trim() : '',
+      model: modelInput ? String(modelInput.value || '').trim() : '',
+      apiKey: ''
+    };
+    if (apiKeyInput && !(clearInput && clearInput.checked)) {
+      provider.apiKey = String(apiKeyInput.value || '').trim();
+    }
+    if (isLlm) {
+      provider.targetLang = els.subtitleTranslateTarget ? els.subtitleTranslateTarget.value : '';
+    } else {
+      provider.language = els.subtitleAsrLanguage ? els.subtitleAsrLanguage.value : '';
+    }
+    return provider;
+  }
+
+  function setSubtitleProbeBusy(ui, busy) {
+    if (!ui) { return; }
+    if (ui.modelsBtn) { setBusy(ui.modelsBtn, busy, '获取中…'); }
+    if (ui.testBtn) { setBusy(ui.testBtn, busy, '测试中…'); }
+  }
+
+  function resetSubtitleProbePicker(ui) {
+    if (!ui || !ui.picker) { return; }
+    clear(ui.picker);
+    ui.picker.appendChild(el('option', { attrs: { value: '' }, text: '选择模型…' }));
+    ui.picker.value = '';
+    setHidden(ui.picker, true);
+  }
+
+  function hideSubtitleProbeHint(ui) {
+    if (!ui || !ui.modelsHint) { return; }
+    setText(ui.modelsHint, '');
+    setHidden(ui.modelsHint, true);
+  }
+
+  function hideSubtitleProbeResult(ui) {
+    if (!ui || !ui.testResult) { return; }
+    setText(ui.testResult, '');
+    ui.testResult.className = 'probe-result';
+    setHidden(ui.testResult, true);
+  }
+
+  function setSubtitleProbeResult(ui, level, text) {
+    if (!ui || !ui.testResult) { return; }
+    ui.testResult.className = 'probe-result is-' + level;
+    setText(ui.testResult, text);
+    setHidden(ui.testResult, false);
+  }
+
+  function clearSubtitleProbeUi(kind) {
+    var ui = subtitleProbeUi(kind);
+    if (!ui) { return; }
+    resetSubtitleProbePicker(ui);
+    hideSubtitleProbeHint(ui);
+    hideSubtitleProbeResult(ui);
+  }
+
+  /** base URL / 模型 / API Key 改变后：缓存的模型列表与测试结果失效。 */
+  function markSubtitleProbeConfigChanged(kind) {
+    var ui = subtitleProbeUi(kind);
+    if (!ui) { return; }
+    resetSubtitleProbePicker(ui);
+    hideSubtitleProbeHint(ui);
+    setSubtitleProbeResult(ui, 'warn', '配置已修改，请重新测试。');
+  }
+
+  function renderSubtitleModelPicker(kind, normalized) {
+    var ui = subtitleProbeUi(kind);
+    if (!ui || !ui.picker) { return; }
+    clear(ui.picker);
+    ui.picker.appendChild(el('option', { attrs: { value: '' }, text: '选择模型…' }));
+    normalized.models.forEach(function (item) {
+      var label = item.id + (item.owned_by ? ' · ' + item.owned_by : '');
+      ui.picker.appendChild(el('option', { attrs: { value: item.id }, text: label }));
+    });
+    ui.picker.value = '';
+    setHidden(ui.picker, false);
+  }
+
+  async function handleFetchSubtitleModels(kind) {
+    var ui = subtitleProbeUi(kind);
+    if (!ui) { return; }
+    setSubtitleProbeBusy(ui, true);
+    hideSubtitleProbeResult(ui);
+    hideSubtitleProbeHint(ui);
+    try {
+      var res = await fetchModelList(kind, readSubtitleProbeProvider(kind));
+      var normalized = normalizeModelList(res);
+      renderSubtitleModelPicker(kind, normalized);
+      if (ui.modelsHint) {
+        setText(ui.modelsHint, formatModelListHint(kind, normalized));
+        setHidden(ui.modelsHint, false);
+      }
+      if (normalized.warning) {
+        setSubtitleProbeResult(ui, 'warn', normalized.warning);
+      }
+    } catch (err) {
+      var formatted = formatProbeError(err);
+      setSubtitleProbeResult(ui, formatted.level, formatted.text);
+    } finally {
+      setSubtitleProbeBusy(ui, false);
+    }
+  }
+
+  async function handleTestSubtitleProvider(kind) {
+    var ui = subtitleProbeUi(kind);
+    if (!ui) { return; }
+    setSubtitleProbeBusy(ui, true);
+    hideSubtitleProbeResult(ui);
+    try {
+      var res = await testProvider(kind, readSubtitleProbeProvider(kind));
+      var formatted = formatProbeResult(kind, res);
+      setSubtitleProbeResult(ui, formatted.level, formatted.text);
+    } catch (err) {
+      var formattedError = formatProbeError(err);
+      setSubtitleProbeResult(ui, formattedError.level, formattedError.text);
+    } finally {
+      setSubtitleProbeBusy(ui, false);
+    }
+  }
+
+  function onSubtitlePickerChange(kind) {
+    var ui = subtitleProbeUi(kind);
+    if (!ui || !ui.picker) { return; }
+    var value = ui.picker.value;
+    if (!value) { return; }
+    if (ui.modelInput) { ui.modelInput.value = value; }
+    hideSubtitleProbeHint(ui);
+    hideSubtitleProbeResult(ui);
+  }
+
+  function bindSubtitleProbeEvents() {
+    ['asr', 'llm'].forEach(function (kind) {
+      var ui = subtitleProbeUi(kind);
+      if (!ui) { return; }
+      if (ui.modelsBtn) {
+        ui.modelsBtn.addEventListener('click', function () { handleFetchSubtitleModels(kind); });
+      }
+      if (ui.testBtn) {
+        ui.testBtn.addEventListener('click', function () { handleTestSubtitleProvider(kind); });
+      }
+      if (ui.picker) {
+        ui.picker.addEventListener('change', function () { onSubtitlePickerChange(kind); });
+      }
+      var watched = [
+        ui.modelInput,
+        kind === 'llm' ? els.subtitleLlmBaseUrl : els.subtitleAsrBaseUrl,
+        kind === 'llm' ? els.subtitleLlmApiKey : els.subtitleAsrApiKey,
+        kind === 'llm' ? els.subtitleClearLlmKey : els.subtitleClearAsrKey
+      ];
+      watched.forEach(function (input) {
+        if (input) {
+          input.addEventListener('change', function () { markSubtitleProbeConfigChanged(kind); });
+        }
+      });
+    });
   }
 
   function sizeFieldValue(bytes) {
@@ -7627,6 +7826,7 @@ import {
         clearSettingsErrors();
       });
     }
+    bindSubtitleProbeEvents();
   }
 
   // ==================== 18. 启动 ====================

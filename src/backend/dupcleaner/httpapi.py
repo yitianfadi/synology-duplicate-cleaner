@@ -206,6 +206,11 @@ class Api(object):
             ("GET", re.compile(
                 r"^/api/subtitles/(?P<job_id>[^/]+)/file/(?P<name>[^/]+)$"),
              self._subtitle_file, False),
+            # v0026：模型列表 / 连接测试（管理员+CSRF；密钥不回传）
+            ("POST", re.compile(r"^/api/subtitles/models$"),
+             self._subtitle_models, False),
+            ("POST", re.compile(r"^/api/subtitles/test$"),
+             self._subtitle_test, False),
         ]
 
     # ------------------------------------------------------------------
@@ -622,6 +627,33 @@ class Api(object):
                 "Cache-Control": "no-store",
             },
         )
+
+    # ------------------------------------------------------------------
+    # v0026 云端字幕探测（仅管理员；错误码映射见 errors.ERROR_STATUS）
+    # ------------------------------------------------------------------
+    def _subtitle_models(self, request, session, params):
+        service = self._require_subtitle_admin(session)
+        body = _json_body(request, required=False)
+        try:
+            result = service.list_models(body.get("kind"), body)
+        except SubtitleError as exc:
+            # 默认 ApiError 按 ERROR_STATUS 映射（PROVIDER_AUTH_FAILED=400 等，
+            # 不使用 401，避免前端误判会话失效）。
+            raise ApiError(exc.code, exc.message)
+        payload = {"ok": True}
+        payload.update(result)
+        return json_response(payload)
+
+    def _subtitle_test(self, request, session, params):
+        service = self._require_subtitle_admin(session)
+        body = _json_body(request, required=False)
+        try:
+            result = service.test_connection(body.get("kind"), body)
+        except SubtitleError as exc:
+            raise ApiError(exc.code, exc.message)
+        payload = {"ok": True}
+        payload.update(result)
+        return json_response(payload)
 
     # ------------------------------------------------------------------
     # 扫描
