@@ -180,10 +180,11 @@ class SchemaTest(StoreTestCase):
             "SELECT name FROM sqlite_master WHERE type='table'")}
         for table in ("schema_meta", "scans", "scan_groups", "deletion_jobs",
                       "deletion_results", "feature_cache", "scan_checkpoints",
-                      "subtitle_chunks", "subtitle_jobs"):
+                      "subtitle_chunks", "subtitle_jobs", "subtitle_batches"):
             self.assertIn(table, names)
         # v5：scan_files 不再冗余保存 payload_json（group payload 才是真源）
-        self.assertEqual(db_module.CURRENT_SCHEMA_VERSION, 5)
+        # v6（v0028）：新增 subtitle_batches 批次表
+        self.assertEqual(db_module.CURRENT_SCHEMA_VERSION, 6)
         scan_files_columns = {row[1] for row in store.db.query(
             "PRAGMA table_info(scan_files)")}
         self.assertNotIn("payload_json", scan_files_columns)

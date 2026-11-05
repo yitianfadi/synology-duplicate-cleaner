@@ -8,8 +8,8 @@ export var POLL_MS = 800;                 // 扫描 / 删除任务轮询间隔�
 export var GROUPS_LIMIT = 50;             // 结果分页大小
 export var TERMINAL_STATUS = ['completed', 'failed', 'stopped', 'interrupted'];
 export var ACTIVE_STATUS = ['queued', 'running', 'paused', 'stopping'];
-export var VIEWS = ['scan', 'history', 'logs', 'settings'];
-export var VIEW_HEADINGS = { scan: 'scanHeading', history: 'historyHeading', logs: 'logsHeading', settings: 'settingsHeading' };
+export var VIEWS = ['scan', 'subtitles', 'history', 'logs', 'settings'];
+export var VIEW_HEADINGS = { scan: 'scanHeading', subtitles: 'subtitlesHeading', history: 'historyHeading', logs: 'logsHeading', settings: 'settingsHeading' };
 
 export var STATUS_LABEL = {
   queued: '排队中', running: '扫描中', paused: '已暂停', stopping: '正在停止',

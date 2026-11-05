@@ -2146,3 +2146,53 @@ input[type="checkbox"]:disabled { cursor: not-allowed; }
 @media (max-width: 560px) {
   .probe-actions .btn { flex: 1 1 auto; }
 }
+
+/* ==========================================================================
+   v0028 directory batch subtitles page
+   ========================================================================== */
+.subtitle-dir-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.subtitle-dir-row input { flex: 1 1 320px; min-width: 0; }
+.subtitle-enumerate-row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-top: 10px; }
+.subtitle-list-toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.subtitle-list-toolbar select { min-width: 130px; }
+.subtitle-videos-list { display: flex; flex-direction: column; gap: 2px; margin-top: 10px; max-height: 520px; overflow: auto; }
+.subtitle-video-row { display: flex; gap: 10px; align-items: flex-start; padding: 7px 8px; border-radius: 8px; cursor: pointer; }
+.subtitle-video-row:hover { background: var(--card-soft); }
+.subtitle-video-row input { margin-top: 3px; flex: 0 0 auto; }
+.subtitle-video-main { display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: 1 1 auto; }
+.subtitle-video-path { font-family: var(--mono); font-size: 12.5px; overflow-wrap: anywhere; }
+.subtitle-video-meta { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 12px; }
+.subtitle-video-size { color: var(--muted); font-variant-numeric: tabular-nums; }
+.subtitle-mode-row { display: flex; gap: 18px; align-items: center; flex-wrap: wrap; margin: 6px 0 12px; }
+.subtitle-submit-row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-top: 12px; }
+.subtitle-submit-row .muted { font-size: 12px; }
+.subtitle-batch-progress { height: 10px; border-radius: 999px; background: #e7edf5; overflow: hidden; margin: 8px 0; }
+.subtitle-batch-bar { height: 100%; width: 0; background: var(--primary, #2f6fed); transition: width .3s ease; }
+.subtitle-batch-list { display: flex; flex-direction: column; gap: 2px; margin: 10px 0; max-height: 360px; overflow: auto; }
+.subtitle-batch-row { padding: 5px 8px; border-radius: 8px; }
+.subtitle-batch-row:hover { background: var(--card-soft); }
+.subtitle-batch-main { display: flex; gap: 10px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
+.subtitle-batch-path { font-family: var(--mono); font-size: 12.5px; overflow-wrap: anywhere; min-width: 0; }
+.subtitle-batch-meta { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.subtitle-batch-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.subtitle-batch-rejected { margin-top: 8px; }
+.subtitle-batch-rejected-list { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; }
+.subtitle-batch-rejected-list .mono { font-size: 12px; overflow-wrap: anywhere; }
+
+.subtitle-dir-body { display: flex; flex-direction: column; gap: 10px; }
+.subtitle-dir-toolbar { display: flex; gap: 8px; align-items: center; }
+.subtitle-dir-current { font-family: var(--mono); font-size: 12.5px; overflow-wrap: anywhere; color: var(--muted); }
+.subtitle-dir-list { display: flex; flex-direction: column; gap: 2px; max-height: 360px; overflow: auto; }
+.subtitle-dir-item {
+  text-align: left;
+  padding: 8px 10px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  cursor: pointer;
+  font-size: 13px;
+  color: inherit;
+}
+.subtitle-dir-item:hover:not(:disabled) { background: var(--card-soft); border-color: var(--border); }
+.subtitle-dir-item.is-excluded { color: var(--muted); cursor: not-allowed; }
+

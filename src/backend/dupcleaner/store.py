@@ -1081,7 +1081,7 @@ class Store(object):
     # 诊断 / 备份 / 维护（v0021 P0）
     # ------------------------------------------------------------------
     DIAGNOSTIC_TABLES = ("scans", "scan_groups", "scan_files",
-                         "feature_cache", "subtitle_jobs")
+                         "feature_cache", "subtitle_jobs", "subtitle_batches")
 
     def database_info(self):
         """数据库路径/尺寸/schema 版本（只读；不做 checkpoint 以免影响运行）。"""
@@ -1506,6 +1506,67 @@ class Store(object):
                 "DELETE FROM subtitle_chunks WHERE job_id=?", (job_id,))
             self.db.execute(
                 "DELETE FROM subtitle_jobs WHERE job_id=?", (job_id,))
+
+    # ------------------------------------------------------------------
+    # 字幕批次（schema v6 / docs/SUBTITLE_BATCH_CONTRACT.md §7.3）
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _check_batch_id(batch_id):
+        if (not isinstance(batch_id, str)
+                or not config.SUBTITLE_BATCH_ID_RE.match(batch_id)):
+            raise invalid(u"字幕批次 ID 非法")
+        return batch_id
+
+    def save_subtitle_batch(self, batch_id, record):
+        batch_id = self._check_batch_id(batch_id)
+        if not isinstance(record, dict):
+            return False
+        try:
+            created = float(record.get("created_epoch") or time.time())
+        except (TypeError, ValueError):
+            created = time.time()
+        try:
+            updated = float(record.get("updated_epoch") or created)
+        except (TypeError, ValueError):
+            updated = created
+        self.db.execute(
+            "INSERT OR REPLACE INTO subtitle_batches"
+            "(batch_id, payload_json, created_epoch, updated_epoch)"
+            " VALUES(?, ?, ?, ?)",
+            (batch_id, json.dumps(record, ensure_ascii=False), created, updated))
+        return True
+
+    def load_subtitle_batch(self, batch_id):
+        batch_id = self._check_batch_id(batch_id)
+        row = self.db.query_one(
+            "SELECT payload_json FROM subtitle_batches WHERE batch_id=?",
+            (batch_id,))
+        if row is None:
+            return None
+        record = self._loads(row["payload_json"], None)
+        if not isinstance(record, dict):
+            return None
+        record.setdefault("batch_id", batch_id)
+        return record
+
+    def load_subtitle_batches(self, limit=200):
+        rows = self.db.query(
+            "SELECT batch_id, payload_json FROM subtitle_batches"
+            " ORDER BY created_epoch DESC, batch_id DESC LIMIT ?",
+            (max(1, int(limit or 200)),))
+        result = []
+        for row in rows:
+            record = self._loads(row["payload_json"], None)
+            if not isinstance(record, dict):
+                continue
+            record.setdefault("batch_id", row["batch_id"])
+            result.append(record)
+        return result
+
+    def delete_subtitle_batch(self, batch_id):
+        batch_id = self._check_batch_id(batch_id)
+        self.db.execute(
+            "DELETE FROM subtitle_batches WHERE batch_id=?", (batch_id,))
 
     # ------------------------------------------------------------------
     # 字幕 ASR 分片缓存（schema v4 / plan C）

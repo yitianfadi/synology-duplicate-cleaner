@@ -166,7 +166,7 @@
 
 - `source="asr"`：行为与 v1.3 一致；若 `skip_existing=true` 且视频旁已存在 `<stem>.srt` 且 `translate=false`，或已存在 `<stem>.srt` 与 `<stem>.<target>.srt`（`translate=true`），则任务直接 `done`，`skipped=true`，`message="已存在字幕，已跳过"`。
 - `source="existing_srt"`：
-  - `path` 仍传视频路径；后端解析 `<stem>.srt`，不存在则任务 `failed`（`SOURCE_SRT_MISSING`）。
+  - `path` 仍传视频路径；后端解析 `<stem>.srt`，**提交时**不存在则拒绝（400 `SOURCE_SRT_MISSING`；批次提交时为 `rejected` 项）；任务执行时源文件被删除/不可读则任务 `failed`（`SOURCE_SRT_MISSING`）。
   - **不启动 FFmpeg、不调用 ASR**；`parse_srt` → LLM 翻译 → 写 `<stem>.<target>.srt` 与 `<stem>.bilingual.<target>.srt`。
   - `translate` 必须为 `true`（默认 true），否则 400 `INVALID_ARGUMENT`。
   - `subtitle_translate_enabled` 必须已开启，否则 `TRANSLATE_DISABLED`。
@@ -285,7 +285,7 @@ CREATE TABLE IF NOT EXISTS subtitle_batches (
 | SOURCE_SRT_MISSING | 400 | 只翻译但视频旁无 `<stem>.srt` |
 | OUTPUT_NOT_WRITABLE | 400 | 视频旁目录不可写（任务级 warning，不作为接口错误抛出） |
 
-任务失败码（写入 job.error.code，不新增 HTTP 语义）：`SOURCE_SRT_MISSING`、`OUTPUT_NOT_WRITABLE`。
+任务失败码（写入 job.error.code，不新增 HTTP 语义）：`SOURCE_SRT_MISSING`（运行期源字幕丢失）、`NO_SPEECH`（已有字幕无可用内容）。`OUTPUT_NOT_WRITABLE` 只作为任务 `warning`，不判失败。
 
 ## 11. 测试
 

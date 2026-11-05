@@ -16,6 +16,7 @@
 - 🧠 **内容相似模式**：文本/PDF/DOCX/ODT/PNG 等特征向量 + MinHash/感知哈希检索，可调 0–100% 阈值；精准组与相似组分开展示
 - 🎬 **视频视觉相似（默认关闭）**：SPK 内置 FFmpeg（x86_64/aarch64），按总时长动态抽取 5–100 帧，生成时序 pHash 指纹并用 DTW 比较；独立分区，默认不勾选，支持组级/全局全选视频副本批量删除；指纹 SQLite 缓存、独立并发、硬解探测与显式硬解模式（auto/off/vaapi/qsv/nvdec/videotoolbox），可配置外部 FFmpeg 绝对路径（留空=内置/自动探测）
 - 🗣️ **云端字幕（实验，默认关闭）**：OpenAI 兼容 ASR（`/audio/transcriptions`）+ OpenAI 兼容 LLM（`/chat/completions`）翻译；FFmpeg 抽音频、自动分块、SRT/VTT/双语字幕下载；设置页支持从服务端 `GET /models` 获取模型列表、一键测试 ASR/LLM 连接（ASR 测试发送约 1 秒静音音频、LLM 测试发送 1 条测试文本，费用极小）；音频会发送到所配置的第三方服务，必须显式勾选确认。也可指向**局域网自建 [WhisperLiveKit](https://github.com/QuentinFuxa/WhisperLiveKit)**（OpenAI 兼容 `/v1/audio/transcriptions` + `/v1/models`），实现本地 ASR、音频不出局域网，见 [字幕契约 §9](docs/SUBTITLE_CONTRACT.md)
+- 📂 **目录批量字幕（v0028）**：独立「字幕」页，选目录 → 递归枚举视频 → 勾选批量提交；字幕以 `.srt` 直接写入视频同目录（Plex/Emby 可识别），已有同名 srt 默认跳过、绝不覆盖；也可对视频旁已有 `.srt` **只翻译**（不上传音频、不跑 ASR）；写回失败（只读/无写权限）时任务标记警告但仍可在任务中心下载。批次支持暂停/继续/取消/重试失败项。契约见 [目录批量字幕契约](docs/SUBTITLE_BATCH_CONTRACT.md)
 - 🕒 保留策略：最晚创建（默认）/ 最早创建 / 指定路径；优先读取 `statx` btime；无创建时间时整组按修改时间自动选择并标记，拒绝用 `st_ctime` 冒充
 - 📊 分组报告：路径、大小、完整哈希、创建时间、修改时间、匹配类型、相似度；保留项高亮；可预览、导出 CSV
 - ⚡ 大库性能：结果分页/搜索/排序走 SQLite；`scan_files` 路径搜索在 SQLite 支持时使用 FTS5 trigram（100k 明细 P95 ≈ 80ms），不支持或搜索词 <3 字符自动回退 LIKE 子串（100k P95 ≈ 164ms）
@@ -23,7 +24,7 @@
 - 🚧 图片/文档相似组默认不勾选、禁止组级全选/一键批量删除；必须勾选“人工复核”后逐条选择
 - 🎬 视频组默认不勾选；允许“全选本组/全选视频相似组副本”批量进入删除计划，仍需两次确认；ASR 为可选外部命令（默认关闭，不内置模型、不联网）
 - ⏯️ 扫描可暂停/继续/停止；精准/相似并发、哈希限速、特征缓存、低优先级（nice/ionice）
-- 🧩 前端为 ES modules（`app.js` 入口 + `js/` 下 8 个模块），无构建步骤、无第三方依赖；静态检查含模块图与无头浏览器冒烟
+- 🧩 前端为 ES modules（`app.js` 入口 + `js/` 下 10 个模块），无构建步骤、无第三方依赖；静态检查含模块图与无头浏览器冒烟
 - 🚫 跳过符号链接、空文件、隐藏/系统文件、自定义后缀；相似模式默认跳过压缩包/媒体/二进制大文件（它们仍参与哈希精准匹配）
 - 📜 扫描历史与操作日志持久化，可下载
 - ⚙️ 可选：大小区间、大小写后缀、保留指定路径、回收站/永久删除
@@ -35,7 +36,7 @@
 ```bash
 python build/fetch_ffmpeg.py   # 首次构建：下载两个架构的静态 FFmpeg 到 vendor/ffmpeg/
 python build/build_spk.py
-# 生成 dist/DuplicateCleaner-1.1.0-0027.spk
+# 生成 dist/DuplicateCleaner-1.1.0-0028.spk
 ```
 
 构建机需要 Python 3.8+；FFmpeg 二进制不提交到 Git，首次构建需运行 `build/fetch_ffmpeg.py`。重新生成图标需要 Pillow（仓库已带 PNG，可 `--no-icons`）。
@@ -43,7 +44,7 @@ python build/build_spk.py
 ### 2. 安装到 DSM
 
 1. DSM 套件中心先安装 **Python3**（3.8+）。
-2. 套件中心 → 手动安装 → 选择 `dist/DuplicateCleaner-1.1.0-0027.spk`。
+2. 套件中心 → 手动安装 → 选择 `dist/DuplicateCleaner-1.1.0-0028.spk`。
 3. 启动套件；从 DSM 主菜单打开“重复文件清理与字幕”，或访问 `http://<NAS>:8787/`。
 4. 使用 administrators 组账号登录。
 5. 按页面黄色“权限提示”给 `duplicatecleaner` 系统内部用户授权目标共享文件夹（读取；删除副本需读取/写入）。
@@ -93,6 +94,7 @@ python qa/bench_search.py
 - [内容相似度扩展契约](docs/SIMILARITY_CONTRACT.md)：相似模式接口、特征算法、人工复核门禁
 - [视频视觉相似契约](docs/VIDEO_CONTRACT.md)：FFmpeg、动态采样、指纹、DTW、缓存、视频批量删除与 Excel
 - [云端字幕契约](docs/SUBTITLE_CONTRACT.md)：OpenAI 兼容 ASR/LLM、分块、SRT/VTT、双语字幕、密钥与隐私；含自建 WhisperLiveKit 本地 ASR 部署与兼容性说明
+- [目录批量字幕契约](docs/SUBTITLE_BATCH_CONTRACT.md)：目录枚举、批次任务、同目录 `.srt` 落盘、已有字幕跳过、只翻译模式与写回失败回退
 - [存储层契约](docs/STORAGE_CONTRACT.md)：SQLite 元数据、旧 JSON 迁移、检查点、WAL 与备份
 - [扫描暂停/升级 drain 契约](docs/RESUME_CONTRACT.md)：暂停断点、升级前 drain、重启后手动继续
 - [QA 验收报告](qa/REPORT.md)：需求逐项对照与测试证据
@@ -141,6 +143,8 @@ dist/               构建产物（.spk 与 SHA256）
 - v0012 起扫描/组/文件/删除任务/特征缓存/字幕任务元数据存入 `<var>/dupcleaner.sqlite3`；设置、审计、运行日志、字幕文件仍保留文件形式。升级/备份时请连同 `dupcleaner.sqlite3` 与 `var/` 一起备份。
 - v0014 起支持升级前暂停扫描并写断点；升级后需在扫描历史中手动点“继续扫描”，不会自动续跑。字幕任务仍会因重启失败，需要重新提交；删除任务不会续跑。
 - v0025 起 SQLite schema v5：`scan_files` 不再冗余保存 payload（组 payload 为真源）；FTS5 trigram 路径搜索仅在 FTS5 + trigram 都可用时启用，否则自动 LIKE 回退；搜索词 <3 字符始终走 LIKE。
+- 目录批量字幕（v0028）：字幕只写 `.srt` 到视频同目录，不写 `.vtt`；已有同名 srt 默认跳过且**不提供覆盖开关**；写回需要 `duplicatecleaner` 对目标目录有写权限，否则任务标记 `OUTPUT_NOT_WRITABLE` 并保留任务目录下载。同一时间只执行 1 个字幕任务（串行），已完成任务保留上限 200（`subtitle_job_limit`），清理时只删任务目录、**不删视频旁 srt**；单批最多 500 个视频、单次枚举最多 5000 个视频。
+- 目录批量字幕的「只翻译已有字幕」只识别视频同目录的 `<视频名>.srt`（大小写不敏感）；不支持说话人分离、字幕人工校对或对已有译文重新翻译。
 - ES modules 需要通过后端 HTTP 访问页面（`http://<NAS>:8787/`），不能直接双击 `web/index.html`（浏览器 `file://` 模块 CORS 限制）。
 
 ## License

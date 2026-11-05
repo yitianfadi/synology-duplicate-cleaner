@@ -240,3 +240,9 @@ wlk --host 0.0.0.0 --port 8000 --model base --language zh --api-token “<自定
 - v0027：模拟 WhisperLiveKit OpenAI 兼容响应（/v1/models 单模型、verbose_json 含 task/duration/text、静音空 segments）验证自建本地 ASR 可用；静音探测告警改为“接口兼容”文案。
 - 前端 node --check + E2E（mock API）。
 - 现有测试必须继续全部通过。
+
+## 11. 目录批量字幕（v0028，另见独立契约）
+
+v0028 在 v1.3 单文件任务之上新增**目录批量生成 / 翻译**：独立「字幕」页、`POST /api/subtitles/enumerate`、`POST /api/subtitles/batch`、批次控制与 `GET /api/subtitles?batch_id=`；字幕以 `.srt` 写回视频同目录（已有文件跳过、不覆盖），并支持 `source=existing_srt` 只翻译已有字幕（不跑 ASR、不上传音频）。
+
+本节只是索引；**字段、错误码、落盘规则、测试与验收以 [SUBTITLE_BATCH_CONTRACT.md](SUBTITLE_BATCH_CONTRACT.md) 为准**。v1.3 的 `POST /api/subtitles` 保持兼容：新增字段均为可选，缺省行为不变。

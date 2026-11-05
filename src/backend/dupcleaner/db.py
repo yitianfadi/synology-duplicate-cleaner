@@ -34,7 +34,9 @@ DB_FILENAME = "dupcleaner.sqlite3"
 # v4（v0019 优化 plan C）：字幕任务 ASR 分片结果落 subtitle_chunks，支持暂停/续跑。
 # v5（v0025 优化 P1）：scan_files 去掉冗余 payload_json；FTS5(trigram) 路径索引
 # + 触发器同步，trigram 不可用时自动回退 LIKE 子串搜索。
-CURRENT_SCHEMA_VERSION = 5
+# v6（v0028 目录批量字幕）：新增 subtitle_batches 批次表
+# （docs/SUBTITLE_BATCH_CONTRACT.md §7.3）。
+CURRENT_SCHEMA_VERSION = 6
 FTS_TABLE = "scan_files_fts"
 FTS_TRIGGER_NAMES = (
     "scan_files_fts_ai",
@@ -189,6 +191,14 @@ _SCHEMA_STATEMENTS = (
         PRIMARY KEY (job_id, chunk_index)
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS subtitle_batches (
+        batch_id TEXT PRIMARY KEY,
+        payload_json TEXT NOT NULL,
+        created_epoch REAL NOT NULL,
+        updated_epoch REAL NOT NULL
+    )
+    """,
 )
 
 # v4：plan C 字幕 ASR 分片缓存表（v3 升级时只建表；chunk 行由任务运行时写入）。
@@ -203,6 +213,18 @@ _V4_MIGRATION_STATEMENTS = (
         cues_json TEXT NOT NULL,
         updated_epoch REAL NOT NULL,
         PRIMARY KEY (job_id, chunk_index)
+    )
+    """,
+)
+
+# v6（v0028 目录批量字幕）：subtitle_batches 批次表（幂等；行由批次提交时写入）。
+_V6_MIGRATION_STATEMENTS = (
+    """
+    CREATE TABLE IF NOT EXISTS subtitle_batches (
+        batch_id TEXT PRIMARY KEY,
+        payload_json TEXT NOT NULL,
+        created_epoch REAL NOT NULL,
+        updated_epoch REAL NOT NULL
     )
     """,
 )
@@ -535,6 +557,8 @@ class Database(object):
                 self._migrate_v4()
             elif next_version == 5:
                 self._migrate_v5()
+            elif next_version == 6:
+                self._migrate_v6()
             version = next_version
             self._conn.execute(
                 "INSERT OR REPLACE INTO schema_meta(key, value) "
@@ -618,6 +642,13 @@ class Database(object):
                 before)
         for statement in _V5_SCAN_FILES_INDEX_STATEMENTS:
             conn.execute(statement)
+
+    def _migrate_v6(self):
+        """v5→v6：只新建 subtitle_batches（幂等；批次行提交时写入）。"""
+        conn = self._conn
+        for statement in _V6_MIGRATION_STATEMENTS:
+            conn.execute(statement)
+        logger.info(u"SQLite schema 迁移到 v6 完成：已创建 subtitle_batches 表")
 
     def _backfill_scan_group_columns(self):
         """按 rowid 分批回填 scan_groups 索引列与 scan_files（不整表载入）。"""

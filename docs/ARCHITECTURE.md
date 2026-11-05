@@ -1,7 +1,7 @@
 # 整体方案架构
 
 > 项目：**重复文件清理与字幕（Duplicate Cleaner & Subtitles）** · 群晖 DSM 7.x SPK 套件
-> 版本：1.1.0-0027
+> 版本：1.1.0-0028
 > 原则：**先扫描、出报告、人工确认、二次确认、可回收、全程审计**。任何情况下都不自动静默删除。
 
 ## 1. 目标与边界
@@ -137,7 +137,7 @@ Linux 的 `st_ctime` 是 **inode 状态变更时间**，不是创建时间，复
 
 （详细线框图与交互见 `docs/UI_PROTOTYPE.md`）
 
-静态 SPA 采用 ES modules：`web/app.js` 为入口，常量/状态/DOM 工具/格式化/API/Toast/弹窗拆到 `web/js/` 下 8 个模块；无构建步骤、无第三方依赖。后端对 `.js/.css` 响应 `Cache-Control: no-cache`，升级后浏览器会重新校验模块文件。
+静态 SPA 采用 ES modules：`web/app.js` 为入口，常量/状态/DOM 工具/格式化/API/Toast/弹窗/字幕页拆到 `web/js/` 下模块；无构建步骤、无第三方依赖。后端对 `.js/.css` 响应 `Cache-Control: no-cache`，升级后浏览器会重新校验模块文件。
 
 1. **登录页**：DSM 账号、密码、可选 2FA；说明仅管理员可用。
 2. **主框架**：顶部常驻风险提示条 + 顶部导航 + 内容区。
@@ -151,9 +151,10 @@ Linux 的 `st_ctime` 是 **inode 状态变更时间**，不是创建时间，复
    - 组卡片：每组标题（大小、副本数、可释放）、保留项高亮 + 保留原因徽标；文件行包含路径、大小、完整哈希、创建时间（来源）、修改时间、预览、勾选。
    - 需人工组：显示警示，v1 禁止删除、禁止一键全选，需在 DSM 中人工处理。
 5. **删除向导**：第一屏“确认删除清单” → 第二屏“最终确认”（永久删除需输入短语）→ 后台任务进度 → 逐文件结果。
-6. **历史记录**：历次扫描摘要、查看结果、下载 CSV。
-7. **操作日志**：扫描/审计事件列表、日志文件下载、持久化路径说明。
-8. **设置**：默认扫描参数、并发/限速、回收站策略。
+6. **字幕页（v0028）**：选择目录 → 枚举视频（递归/非递归、跳过系统与隐藏目录）→ 勾选 → 批量生成或只翻译已有字幕；字幕以 `.srt` 写回视频同目录，批次进度支持暂停/继续/取消/重试。详见 [SUBTITLE_BATCH_CONTRACT.md](SUBTITLE_BATCH_CONTRACT.md)。
+7. **历史记录（任务中心）**：扫描历史、字幕任务、删除任务、存储诊断，标签页切换。
+8. **操作日志**：扫描/审计事件列表、日志文件下载、持久化路径说明。
+9. **设置**：默认扫描参数、并发/限速、回收站策略、云端字幕（含目录批量默认选项）。
 
 ## 5. 后端扫描处理流程
 
@@ -354,3 +355,34 @@ Linux 的 `st_ctime` 是 **inode 状态变更时间**，不是创建时间，复
 - 相似区块常驻黄色警示：
   “内容相似度为 AI/特征比对结果，存在误匹配概率，相似组必须人工复核，禁止一键批量删除相似文件。”
 - CSV 新增列：`匹配类型`（哈希一致/内容相似）、`相似度分值`（0–100）。
+
+## 12. 目录批量字幕扩展（v0028）
+
+> 详细接口、字段与验收见 [SUBTITLE_BATCH_CONTRACT.md](SUBTITLE_BATCH_CONTRACT.md)。
+
+### 12.1 与查重解耦
+
+- 新增独立「字幕」页：选目录 → 递归枚举视频 → 勾选 → 批量提交，不依赖扫描结果。
+- 后端新增 `POST /api/subtitles/enumerate`（递归枚举，跳过系统/隐藏/符号链接，只留视频后缀；不读时长、不调 FFmpeg）与 `POST /api/subtitles/batch`（批次提交，部分无效不整批失败）。
+- 批次控制：`GET /api/subtitles/batches/{id}`、`POST /api/subtitles/batches/{id}/{pause|resume|cancel|retry}`；`GET /api/subtitles?batch_id=` 支持过滤。
+
+### 12.2 两种任务来源
+
+| source | 行为 | 是否上传音频 |
+|---|---|---|
+| `asr`（默认） | FFmpeg 抽音频 → 云端 ASR → 可选 LLM 翻译 | 是 |
+| `existing_srt` | 读取视频旁 `<stem>.srt` → 只调 LLM 翻译 | 否（只上传字幕文本） |
+
+### 12.3 落盘策略
+
+- 任务目录始终生成 `original.srt`/`original.vtt`（可下载）。
+- `subtitle_output_mode=alongside_video`（默认）时，把 `.srt` 原子复制到视频同目录：`<stem>.srt`、`<stem>.<lang>.srt`、`<stem>.bilingual.<lang>.srt`；**只写 srt，不覆盖已有文件**。
+- 目标目录不可写/复制失败：任务仍为 `done`，置 `warning=OUTPUT_NOT_WRITABLE/OUTPUT_WRITE_PARTIAL`，任务目录下载保留。
+- 已有字幕按 `subtitle_skip_existing`（默认 true）跳过，不会重复调用 ASR。
+
+### 12.4 容量与恢复
+
+- 单 worker 串行执行（沿用 v1.3）；批次内按提交顺序。
+- 已完成任务保留上限 `subtitle_job_limit`（默认 200）；LRU 清理只删任务目录与 DB 记录，**不删视频旁 srt**。
+- SQLite schema v6 新增 `subtitle_batches`；重启后 queued/running 任务转 paused 可继续（沿用分片缓存）。
+- 批次状态由子任务实时聚合，不单独持久化状态机。

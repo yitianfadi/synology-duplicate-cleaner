@@ -7,9 +7,9 @@ import os
 import re
 
 APP_NAME = "DuplicateCleaner"
-APP_VERSION = "1.1.0-0027"
+APP_VERSION = "1.1.0-0028"
 DISPLAY_NAME = "重复文件清理与字幕"
-SPK_VERSION = "1.1.0-0027"
+SPK_VERSION = "1.1.0-0028"
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8787
@@ -120,6 +120,21 @@ SHORT_VIDEO_MAX_SEC = 180.0
 SHORT_VIDEO_RATIO_MIN = 0.5
 SHORT_VIDEO_RATIO_MAX = 2.0
 
+# ---------------------------------------------------------------------------
+# 云端字幕目录批量（docs/SUBTITLE_BATCH_CONTRACT.md）
+# ---------------------------------------------------------------------------
+# 已完成任务保留上限（设置 subtitle_job_limit 的缺省值）；LRU 只删任务目录，
+# 绝不删除写回视频旁的字幕文件。
+SUBTITLE_JOB_LIMIT_DEFAULT = 200
+# 单次批量提交路径上限；超出拒绝并提示分批。
+SUBTITLE_BATCH_MAX_ITEMS = 500
+# 单次目录枚举返回上限；超出截断并置 truncated=true。
+SUBTITLE_ENUMERATE_MAX_ITEMS = 5000
+# 允许写回视频同目录的字幕后缀（只写 srt，vtt 仅留在任务目录供下载）。
+SUBTITLE_ALONGSIDE_EXT = ".srt"
+SUBTITLE_OUTPUT_MODES = ("alongside_video", "download_only")
+SUBTITLE_DEFAULT_OUTPUT_MODE = "alongside_video"
+
 # 系统 / 隐藏目录名：任何一层路径出现都必须拒绝（回收站目标除外）。
 SYSTEM_DIR_NAMES = frozenset([
     "@eaDir", "@tmp", "@appstore", "@docker", "@synologydrive", "@database",
@@ -158,6 +173,7 @@ SAFE_LOG_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,120}\.(?:log|jsonl|
 SCAN_ID_RE = re.compile(r"^[0-9]{8}-[0-9]{6}-[0-9a-f]{6}$")
 PLAN_ID_RE = re.compile(r"^plan-[A-Za-z0-9._-]{6,80}$")
 JOB_ID_RE = re.compile(r"^del-[A-Za-z0-9._-]{6,80}$")
+SUBTITLE_BATCH_ID_RE = re.compile(r"^bat-[A-Za-z0-9._-]{6,80}$")
 
 
 def secure_permissions(path, mode=SECURE_FILE_MODE):

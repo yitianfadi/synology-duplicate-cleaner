@@ -158,11 +158,12 @@ const EXPECTED = {
   'modal.js': ['openModal', 'renderFooter', 'closeModal', 'trapModalKeys', 'confirmDialog',
     'isModalOpen', 'getActiveModal', 'setModalDismissible'],
   'subtitle-probe.js': ['normalizeProbeKind', 'readProbePayload', 'fetchModelList', 'testProvider',
-    'normalizeModelList', 'formatModelListHint', 'formatProbeResult', 'formatProbeError']
+    'normalizeModelList', 'formatModelListHint', 'formatProbeResult', 'formatProbeError'],
+  'subtitle-page.js': ['initSubtitlePage', 'showSubtitlePage', 'stopSubtitlePagePolling']
 };
 
 const MODULE_ORDER = ['constants.js', 'state.js', 'format.js', 'util.js', 'dom.js',
-  'api.js', 'toast.js', 'modal.js', 'subtitle-probe.js'];
+  'api.js', 'toast.js', 'modal.js', 'subtitle-probe.js', 'subtitle-page.js'];
 
 const results = [];
 
@@ -293,6 +294,24 @@ async function main() {
         errFormatted.level === 'error' && errFormatted.text.indexOf('认证失败') !== -1
         && errFormatted.text.indexOf('sk-SECRET-KEY') === -1,
         errFormatted.text);
+
+      // ---- subtitle-page.js：v0028 目录批量字幕页 ----
+      const pageMod = await importFile(path.join(JS_DIR, 'subtitle-page.js'));
+      const constantsMod = await importFile(path.join(JS_DIR, 'constants.js'));
+      let pageInitOk = true;
+      let pageInitError = '';
+      try {
+        pageMod.initSubtitlePage();
+        pageMod.showSubtitlePage();
+        pageMod.stopSubtitlePagePolling();
+      } catch (err) {
+        pageInitOk = false;
+        pageInitError = String(err && err.message ? err.message : err);
+      }
+      record('WEB-MOD-SUBTITLE-PAGE', '字幕页初始化无异常且 VIEWS/VIEW_HEADINGS 含 subtitles',
+        pageInitOk && constantsMod.VIEWS.indexOf('subtitles') !== -1
+        && constantsMod.VIEW_HEADINGS.subtitles === 'subtitlesHeading',
+        pageInitError);
       let capturedRequests = [];
       const originalFetch = globalThis.fetch;
       try {

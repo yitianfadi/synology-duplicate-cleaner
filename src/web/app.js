@@ -42,6 +42,9 @@ import {
   fetchModelList, formatModelListHint, formatProbeError, formatProbeResult,
   normalizeModelList, normalizeProbeKind, testProvider
 } from './js/subtitle-probe.js';
+import {
+  initSubtitlePage, showSubtitlePage, stopSubtitlePagePolling
+} from './js/subtitle-page.js';
 import { toast } from './js/toast.js';
 import {
   closeModal, confirmDialog, getActiveModal, isModalOpen, openModal, setModalDismissible,
@@ -273,7 +276,9 @@ import {
       if (heading) { heading.setAttribute('tabindex', '-1'); focusSoon(heading); }
     }
     if (view !== 'history') { stopSubtitleJobsPolling(); }
+    if (view !== 'subtitles') { stopSubtitlePagePolling(); }
     if (view === 'history') { setTaskTab(state.taskTab, { load: true }); }
+    else if (view === 'subtitles') { showSubtitlePage(); }
     else if (view === 'logs') { loadLogs(); }
     else if (view === 'settings') { loadSettingsPage(); }
   }
@@ -7866,6 +7871,7 @@ import {
     bindHistoryEvents();
     bindLogsEvents();
     bindSettingsEvents();
+    initSubtitlePage();
     state.view = initialViewFromHash();
     initSession();
   }

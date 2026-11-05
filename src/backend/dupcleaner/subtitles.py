@@ -24,7 +24,7 @@ import urllib.request
 import uuid
 from collections import deque
 
-from . import config, settings as settings_module, timeutil, video_similarity
+from . import config, fsutil, settings as settings_module, timeutil, video_similarity
 from .errors import ApiError, invalid, not_found
 
 JOB_ID_RE = re.compile(r"^sub-[0-9]{8}-[0-9]{6}-[0-9a-f]{6}$")
@@ -32,7 +32,17 @@ SUBTITLE_FILE_RE = re.compile(
     r"^(?:original\.(?:srt|vtt)|bilingual\.[A-Za-z0-9_-]{2,16}\.srt"
     r"|[A-Za-z0-9_-]{2,16}\.(?:srt|vtt))$")
 LANGUAGE_RE = re.compile(r"^(?:auto|[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})?)$")
-MAX_JOBS = 20
+# 已完成任务保留上限（可被设置 subtitle_job_limit 覆盖；docs/SUBTITLE_BATCH_CONTRACT.md §2）
+MAX_JOBS = config.SUBTITLE_JOB_LIMIT_DEFAULT
+BATCH_ID_RE = config.SUBTITLE_BATCH_ID_RE
+
+# 来源：asr=云端语音识别生成；existing_srt=对视频同目录已有 .srt 只翻译
+SOURCE_ASR = "asr"
+SOURCE_EXISTING_SRT = "existing_srt"
+SOURCES = (SOURCE_ASR, SOURCE_EXISTING_SRT)
+# 写回失败的 warning（任务仍 done，可下载）
+WARNING_OUTPUT_NOT_WRITABLE = "OUTPUT_NOT_WRITABLE"
+WARNING_OUTPUT_PARTIAL = "OUTPUT_WRITE_PARTIAL"
 
 STATUS_QUEUED = "queued"
 STATUS_RUNNING = "running"
@@ -314,6 +324,94 @@ def plan_chunks(duration, chunk_sec):
 
 
 # ---------------------------------------------------------------------------
+# 视频同目录字幕文件（docs/SUBTITLE_BATCH_CONTRACT.md §6）
+# ---------------------------------------------------------------------------
+
+def split_video_stem(path):
+    """返回 (目录, 去扩展名文件名)；目录可能为空，调用方需保证绝对路径。"""
+    directory = os.path.dirname(path or "")
+    stem = os.path.splitext(os.path.basename(path or ""))[0]
+    return directory, stem
+
+
+def subtitle_output_names(stem, target_lang):
+    """视频同目录字幕文件名（只写 .srt；vtt 只留在任务目录）。"""
+    return {
+        "original": u"%s.srt" % stem,
+        "translation": u"%s.%s.srt" % (stem, target_lang),
+        "bilingual": u"%s.bilingual.%s.srt" % (stem, target_lang),
+    }
+
+
+def find_existing_in_dir(directory, filename):
+    """在目录中按大小写不敏感查找普通文件；返回真实路径或 None。"""
+    if not directory or not filename:
+        return None
+    target = filename.lower()
+    try:
+        with os.scandir(directory) as iterator:
+            for entry in iterator:
+                if entry.name.lower() != target:
+                    continue
+                try:
+                    if entry.is_file(follow_symlinks=False):
+                        return entry.path
+                except OSError:
+                    continue
+    except OSError:
+        return None
+    return None
+
+
+def find_source_srt(video_path):
+    """视频同目录的 `<stem>.srt`（大小写不敏感）；不存在返回 None。"""
+    directory, stem = split_video_stem(video_path)
+    return find_existing_in_dir(directory, u"%s.srt" % stem)
+
+
+def list_related_subtitles(video_path, limit=10):
+    """视频同目录下同 stem 的 .srt 文件名列表（用于枚举接口提示，最多 limit 个）。"""
+    directory, stem = split_video_stem(video_path)
+    prefix = (stem + ".").lower()
+    found = []
+    try:
+        with os.scandir(directory) as iterator:
+            for entry in iterator:
+                name = entry.name
+                lowered = name.lower()
+                if not (lowered.startswith(prefix) and lowered.endswith(".srt")):
+                    continue
+                try:
+                    if not entry.is_file(follow_symlinks=False):
+                        continue
+                except OSError:
+                    continue
+                found.append(name)
+                if len(found) >= limit:
+                    break
+    except OSError:
+        return []
+    found.sort()
+    return found
+
+
+def atomic_write_text(path, content):
+    """UTF-8/LF 原子写入：同目录临时文件 + os.replace。返回字节数。"""
+    directory = os.path.dirname(path)
+    temporary = os.path.join(directory, "." + os.path.basename(path) + ".tmp")
+    data = content if isinstance(content, str) else str(content)
+    with open(temporary, "w", encoding="utf-8", newline="\n") as handle:
+        handle.write(data)
+        handle.flush()
+        try:
+            os.fsync(handle.fileno())
+        except OSError:
+            pass
+    os.replace(temporary, path)
+    return len(data.encode("utf-8"))
+
+
+# ---------------------------------------------------------------------------
 # OpenAI 兼容 HTTP 客户端
 # ---------------------------------------------------------------------------
 
@@ -589,13 +687,21 @@ class OpenAIClient(object):
 # ---------------------------------------------------------------------------
 
 class SubtitleJob(object):
-    def __init__(self, job_id, path, language, translate, target_lang, user):
+    def __init__(self, job_id, path, language, translate, target_lang, user,
+                 source=SOURCE_ASR, output_mode=None, skip_existing=True,
+                 batch_id=None):
         self.job_id = job_id
         self.path = path
         self.language = language
         self.translate = bool(translate)
         self.target_lang = target_lang
         self.user = user
+        self.source = source if source in SOURCES else SOURCE_ASR
+        self.output_mode = (output_mode
+                            if output_mode in config.SUBTITLE_OUTPUT_MODES
+                            else config.SUBTITLE_DEFAULT_OUTPUT_MODE)
+        self.skip_existing = bool(skip_existing)
+        self.batch_id = batch_id
         self.status = STATUS_QUEUED
         self.stage = "audio"
         self.progress = 0
@@ -603,6 +709,11 @@ class SubtitleJob(object):
         self.error = None
         self.files = []
         self.translation_partial = False
+        # v0028 目录批量：写回视频同目录的结果 / 跳过 / 警告
+        self.outputs = []
+        self.output_errors = []
+        self.skipped = False
+        self.warning = None
         self.created_epoch = time.time()
         self.updated_epoch = self.created_epoch
         self.cancel_event = threading.Event()
@@ -625,10 +736,18 @@ class SubtitleJob(object):
                 "language": self.language,
                 "translate": self.translate,
                 "target_lang": self.target_lang,
+                "source": self.source,
+                "output_mode": self.output_mode,
+                "skip_existing": bool(self.skip_existing),
+                "batch_id": self.batch_id,
                 "created_at": timeutil.iso_local(self.created_epoch),
                 "updated_at": timeutil.iso_local(self.updated_epoch),
                 "error": dict(self.error) if isinstance(self.error, dict) else None,
                 "files": list(self.files),
+                "outputs": list(self.outputs),
+                "output_errors": list(self.output_errors),
+                "skipped": bool(self.skipped),
+                "warning": self.warning,
                 "translation_partial": bool(self.translation_partial),
                 "paused": self.status == STATUS_PAUSED,
                 "resumable": bool(self.resumable),
@@ -648,10 +767,18 @@ class SubtitleJob(object):
             "translate": self.translate,
             "target_lang": self.target_lang,
             "user": self.user,
+            "source": self.source,
+            "output_mode": self.output_mode,
+            "skip_existing": bool(self.skip_existing),
+            "batch_id": self.batch_id,
             "created_epoch": self.created_epoch,
             "updated_epoch": self.updated_epoch,
             "error": self.error,
             "files": list(self.files),
+            "outputs": list(self.outputs),
+            "output_errors": list(self.output_errors),
+            "skipped": bool(self.skipped),
+            "warning": self.warning,
             "translation_partial": bool(self.translation_partial),
             "chunk_index": int(self.chunk_index),
             "chunk_total": int(self.chunk_total),
@@ -664,13 +791,21 @@ class SubtitleJob(object):
                   record.get("language") or "auto",
                   record.get("translate") is True,
                   record.get("target_lang") or "",
-                  record.get("user") or "")
+                  record.get("user") or "",
+                  source=record.get("source") or SOURCE_ASR,
+                  output_mode=record.get("output_mode"),
+                  skip_existing=record.get("skip_existing") is not False,
+                  batch_id=record.get("batch_id"))
         job.status = record.get("status") or STATUS_FAILED
         job.stage = record.get("stage") or "audio"
         job.progress = int(record.get("progress") or 0)
         job.message = record.get("message") or ""
         job.error = record.get("error") if isinstance(record.get("error"), dict) else None
         job.files = record.get("files") or []
+        job.outputs = record.get("outputs") or []
+        job.output_errors = record.get("output_errors") or []
+        job.skipped = bool(record.get("skipped"))
+        job.warning = record.get("warning")
         job.translation_partial = bool(record.get("translation_partial"))
         job.created_epoch = float(record.get("created_epoch") or time.time())
         job.updated_epoch = float(record.get("updated_epoch") or job.created_epoch)
@@ -684,11 +819,15 @@ def make_job_id():
     return "sub-" + time.strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:6]
 
 
+def make_batch_id():
+    return "bat-" + time.strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:6]
+
+
 class SubtitleService(object):
     """异步字幕任务服务：同一时间只跑 1 个任务，其余排队。"""
 
     def __init__(self, runtime_config, store, share_service, settings_provider,
-                 client=None, ffmpeg=None, job_limit=MAX_JOBS,
+                 client=None, ffmpeg=None, job_limit=None,
                  retry_delay=1.0):
         self.config = runtime_config
         self.store = store
@@ -702,10 +841,22 @@ class SubtitleService(object):
             self.ffmpeg.resolve(runtime_config)
         except Exception:
             pass
-        self.job_limit = int(job_limit or MAX_JOBS)
+        # 保留上限：显式参数 > 设置 subtitle_job_limit > 默认 200
+        # （设置变更需重启服务生效，与其它设置保持一致）。
+        if job_limit is None:
+            try:
+                job_limit = (settings_provider() or {}).get("subtitle_job_limit")
+            except Exception:
+                job_limit = None
+        try:
+            self.job_limit = max(20, int(job_limit or MAX_JOBS))
+        except (TypeError, ValueError):
+            self.job_limit = MAX_JOBS
         self._root = os.path.join(runtime_config.data_dir, "subtitles")
         self._jobs_dir = os.path.join(self._root, "jobs")
+        self._batches_dir = os.path.join(self._root, "batches")
         os.makedirs(self._jobs_dir, exist_ok=True)
+        os.makedirs(self._batches_dir, exist_ok=True)
         self._lock = threading.RLock()
         self._cond = threading.Condition(self._lock)
         # v0026：同一时间只允许一个“模型列表/连接测试”探测（占线返回 PROBE_BUSY）。
@@ -844,9 +995,11 @@ class SubtitleService(object):
         snapshot["files"] = self._list_files(job.job_id)
         return snapshot
 
-    def list(self, limit=50):
+    def list(self, limit=50, batch_id=None):
         with self._lock:
             jobs = list(self._jobs.values())
+        if batch_id is not None:
+            jobs = [item for item in jobs if item.batch_id == batch_id]
         jobs.sort(key=lambda item: item.created_epoch, reverse=True)
         return [item.snapshot() for item in jobs[:max(1, int(limit or 50))]]
 
@@ -873,6 +1026,520 @@ class SubtitleService(object):
         if not os.path.isfile(path):
             raise not_found(u"字幕文件不存在")
         return path
+
+    # ------------------------------------------------------------------
+    # v0028 目录枚举 / 批量字幕（docs/SUBTITLE_BATCH_CONTRACT.md）
+    # ------------------------------------------------------------------
+    def _batch_json(self, batch_id):
+        return os.path.join(self._batches_dir, batch_id + ".json")
+
+    def _load_batch_record(self, batch_id):
+        if not isinstance(batch_id, str) or not BATCH_ID_RE.match(batch_id):
+            raise not_found(u"字幕批次不存在")
+        record = None
+        try:
+            record = self.store.load_subtitle_batch(batch_id)
+        except Exception:
+            record = None
+        if record is None:
+            path = self._batch_json(batch_id)
+            try:
+                with open(path, "r", encoding="utf-8") as handle:
+                    candidate = json.load(handle)
+            except (OSError, ValueError, UnicodeError):
+                candidate = None
+            if isinstance(candidate, dict):
+                record = candidate
+                record.setdefault("batch_id", batch_id)
+                try:
+                    self.store.save_subtitle_batch(batch_id, record)
+                except Exception:
+                    pass
+        if record is None:
+            raise not_found(u"字幕批次不存在")
+        return record
+
+    def _save_batch_record(self, record):
+        batch_id = record.get("batch_id")
+        if not isinstance(batch_id, str) or not BATCH_ID_RE.match(batch_id):
+            raise invalid(u"字幕批次 ID 非法")
+        record["updated_epoch"] = time.time()
+        temporary = os.path.join(self._batches_dir, "." + batch_id + ".tmp")
+        try:
+            with open(temporary, "w", encoding="utf-8") as handle:
+                json.dump(record, handle, ensure_ascii=False)
+                handle.flush()
+            os.replace(temporary, self._batch_json(batch_id))
+        except OSError:
+            pass
+        try:
+            self.store.save_subtitle_batch(batch_id, record)
+        except Exception:
+            pass
+
+    def _batch_snapshot(self, record):
+        job_ids = record.get("job_ids") or []
+        counts = {}
+        for status in (STATUS_QUEUED, STATUS_RUNNING, STATUS_TRANSLATING,
+                       STATUS_PAUSED, STATUS_DONE, STATUS_FAILED, STATUS_CANCELLED):
+            counts[status] = 0
+        jobs = []
+        missing = 0
+        with self._lock:
+            for job_id in job_ids:
+                job = self._jobs.get(job_id)
+                if job is None:
+                    missing += 1
+                    continue
+                jobs.append(job.snapshot())
+                counts[job.status] = counts.get(job.status, 0) + 1
+        total = len(job_ids)
+        finished = (counts[STATUS_DONE] + counts[STATUS_FAILED]
+                    + counts[STATUS_CANCELLED])
+        if total and finished >= total:
+            if counts[STATUS_FAILED]:
+                status = STATUS_FAILED
+            elif counts[STATUS_CANCELLED] and not counts[STATUS_DONE]:
+                status = STATUS_CANCELLED
+            else:
+                status = STATUS_DONE
+        elif counts[STATUS_RUNNING] or counts[STATUS_TRANSLATING]:
+            status = STATUS_RUNNING
+        elif counts[STATUS_PAUSED]:
+            status = STATUS_PAUSED
+        else:
+            status = STATUS_QUEUED
+        return {
+            "batch_id": record.get("batch_id"),
+            "status": status,
+            "total": total,
+            "counts": counts,
+            "missing": missing,
+            "created_at": timeutil.iso_local(
+                float(record.get("created_epoch") or 0)),
+            "updated_at": timeutil.iso_local(
+                float(record.get("updated_epoch") or 0)),
+            "options": dict(record.get("options") or {}),
+            "rejected": list(record.get("rejected") or []),
+            "duplicates": list(record.get("duplicates") or []),
+            "jobs": jobs,
+        }
+
+    def get_batch(self, batch_id):
+        return self._batch_snapshot(self._load_batch_record(batch_id))
+
+    def _active_path_keys(self):
+        with self._lock:
+            jobs = list(self._jobs.values())
+        keys = set()
+        for job in jobs:
+            if job.status in ACTIVE_STATUSES:
+                keys.add(fsutil.path_key(job.path))
+        return keys
+
+    def enumerate_videos(self, path, recursive=True, max_items=None):
+        """递归枚举目录下的视频文件；不读时长、不调 FFmpeg。"""
+        if not isinstance(path, str) or not path.strip():
+            raise invalid(u"path 不能为空")
+        normalized = fsutil.check_path_safety(path)
+        if not fsutil.is_dir_nofollow(normalized):
+            raise ApiError("INVALID_DIRECTORY",
+                           u"目录不存在或不是目录: %s" % normalized)
+        self.shares.validate_root(normalized)
+        if not isinstance(recursive, bool):
+            raise invalid(u"recursive 必须是布尔值")
+        limit = config.SUBTITLE_ENUMERATE_MAX_ITEMS
+        if max_items is not None:
+            if isinstance(max_items, bool) or not isinstance(max_items, int):
+                raise invalid(u"max_items 必须是整数")
+            if max_items < 1:
+                raise ApiError("ENUMERATE_LIMIT", u"max_items 必须大于 0")
+            if max_items > config.SUBTITLE_ENUMERATE_MAX_ITEMS:
+                raise ApiError(
+                    "ENUMERATE_LIMIT",
+                    u"max_items 不能超过 %d" % config.SUBTITLE_ENUMERATE_MAX_ITEMS)
+            limit = max_items
+        settings = self._settings() or {}
+        extensions = (settings.get("video_extensions")
+                      or list(config.DEFAULT_VIDEO_EXTENSIONS))
+        allowed = frozenset(str(item).lower() for item in extensions)
+        skipped = {"system": 0, "hidden": 0, "symlink": 0,
+                   "permission": 0, "other": 0, "extension": 0}
+        items = []
+        truncated = False
+        stack = [normalized]
+        while stack:
+            current = stack.pop()
+            try:
+                with os.scandir(current) as iterator:
+                    entries = list(iterator)
+            except PermissionError:
+                skipped["permission"] += 1
+                continue
+            except OSError:
+                skipped["other"] += 1
+                continue
+            entries.sort(key=lambda item: item.name.lower())
+            # 同目录的 .srt 名单（避免每个视频再扫一次目录）
+            srt_names = []
+            for entry in entries:
+                try:
+                    if (entry.name.lower().endswith(".srt")
+                            and entry.is_file(follow_symlinks=False)):
+                        srt_names.append(entry.name)
+                except OSError:
+                    continue
+            for entry in entries:
+                name = entry.name
+                try:
+                    is_symlink = entry.is_symlink()
+                    is_dir = entry.is_dir(follow_symlinks=False)
+                except OSError:
+                    skipped["other"] += 1
+                    continue
+                if is_symlink:
+                    skipped["symlink"] += 1
+                    continue
+                if fsutil.is_system_name(name):
+                    skipped["system"] += 1
+                    continue
+                if fsutil.is_hidden_name(name):
+                    skipped["hidden"] += 1
+                    continue
+                if is_dir:
+                    if recursive:
+                        stack.append(entry.path)
+                    continue
+                extension = fsutil.extension_of(name).lower()
+                if extension not in allowed:
+                    skipped["extension"] += 1
+                    continue
+                if not fsutil.is_regular_file(entry.path):
+                    skipped["other"] += 1
+                    continue
+                try:
+                    stat_result = entry.stat(follow_symlinks=False)
+                except OSError:
+                    skipped["permission"] += 1
+                    continue
+                if len(items) >= limit:
+                    truncated = True
+                    stack = []
+                    break
+                stem = os.path.splitext(name)[0]
+                prefix = (stem + ".").lower()
+                related = sorted(
+                    item_name for item_name in srt_names
+                    if item_name.lower().startswith(prefix))
+                items.append({
+                    "path": entry.path,
+                    "name": name,
+                    "size": int(stat_result.st_size),
+                    "modified_at": timeutil.iso_local(stat_result.st_mtime),
+                    "existing_subtitles": related[:10],
+                    "has_subtitle": bool(related),
+                    "has_source_srt": any(
+                        item_name.lower() == prefix + "srt"
+                        for item_name in related),
+                })
+        items.sort(key=lambda item: item["path"])
+        return {
+            "ok": True,
+            "path": normalized,
+            "recursive": bool(recursive),
+            "video_extensions": sorted(allowed),
+            "count": len(items),
+            "total_bytes": sum(item["size"] for item in items),
+            "truncated": truncated,
+            "skipped": skipped,
+            "items": items,
+        }
+
+    def _prepare_job(self, user, payload, settings, batch_id=None):
+        """校验单条路径并构造任务对象（不注册/不入队）。"""
+        if not isinstance(payload, dict):
+            raise invalid(u"请求体必须是 JSON 对象")
+        path = payload.get("path")
+        if not isinstance(path, str) or not path.strip():
+            raise invalid(u"path 不能为空")
+        source = payload.get("source") or SOURCE_ASR
+        if not isinstance(source, str) or source not in SOURCES:
+            raise invalid(u"source 只能是 asr 或 existing_srt")
+        self.shares.validate_file(path)
+        extensions = (settings.get("video_extensions")
+                      or list(config.DEFAULT_VIDEO_EXTENSIONS))
+        allowed_ext = frozenset(str(item).lower() for item in extensions)
+        extension = os.path.splitext(path)[1].lower()
+        if extension not in allowed_ext:
+            raise SubtitleError("INVALID_VIDEO", u"只支持视频文件生成字幕")
+
+        language = (payload.get("language")
+                    or settings.get("subtitle_asr_language") or "auto")
+        if not isinstance(language, str) or not LANGUAGE_RE.match(language.strip()):
+            raise invalid(u"语言代码非法")
+        language = language.strip()
+        translate = payload.get("translate", False)
+        if not isinstance(translate, bool):
+            raise invalid(u"translate 必须是布尔值")
+        if source == SOURCE_EXISTING_SRT:
+            if not translate:
+                raise invalid(u"只翻译已有字幕时 translate 必须为 true")
+            if not settings.get("subtitle_translate_enabled"):
+                raise SubtitleError("TRANSLATE_DISABLED", u"字幕翻译功能未启用")
+            if find_source_srt(path) is None:
+                raise SubtitleError(
+                    "SOURCE_SRT_MISSING",
+                    u"视频同目录未找到 %s.srt，无法只翻译"
+                    % os.path.splitext(os.path.basename(path))[0])
+        elif translate and not settings.get("subtitle_translate_enabled"):
+            raise SubtitleError("TRANSLATE_DISABLED", u"字幕翻译功能未启用")
+        target_lang = (payload.get("target_lang")
+                       or settings.get("subtitle_translate_target") or "zh")
+        if translate:
+            if (not isinstance(target_lang, str)
+                    or not LANGUAGE_RE.match(target_lang.strip())
+                    or target_lang.strip().lower() == "auto"):
+                raise invalid(u"目标语言非法")
+            target_lang = target_lang.strip()
+        else:
+            target_lang = settings.get("subtitle_translate_target") or "zh"
+
+        output_mode = (payload.get("output_mode")
+                       or settings.get("subtitle_output_mode")
+                       or config.SUBTITLE_DEFAULT_OUTPUT_MODE)
+        if output_mode not in config.SUBTITLE_OUTPUT_MODES:
+            raise invalid(u"output_mode 只能是 alongside_video/download_only")
+        skip_existing = payload.get("skip_existing")
+        if skip_existing is None:
+            skip_existing = bool(settings.get("subtitle_skip_existing", True))
+        elif not isinstance(skip_existing, bool):
+            raise invalid(u"skip_existing 必须是布尔值")
+
+        job_id = make_job_id()
+        return SubtitleJob(job_id, os.path.normpath(path), language, translate,
+                           target_lang, user, source=source,
+                           output_mode=output_mode,
+                           skip_existing=skip_existing, batch_id=batch_id)
+
+    def _skip_message(self, job):
+        """已有目标 srt 且 skip_existing 时返回提示文案；否则 None。"""
+        if not job.skip_existing:
+            return None
+        directory, stem = split_video_stem(job.path)
+        names = subtitle_output_names(stem, job.target_lang)
+        if job.source == SOURCE_ASR:
+            if find_existing_in_dir(directory, names["original"]) is None:
+                return None
+            if not job.translate:
+                return u"已存在字幕，已跳过"
+            if (find_existing_in_dir(directory, names["translation"]) is not None
+                    or find_existing_in_dir(directory, names["bilingual"]) is not None):
+                return u"已存在字幕与译文，已跳过"
+            return None
+        if (find_existing_in_dir(directory, names["translation"]) is not None
+                or find_existing_in_dir(directory, names["bilingual"]) is not None):
+            return u"已存在译文，已跳过"
+        return None
+
+    def _register_job(self, job, enqueue=True):
+        if enqueue:
+            with self._lock:
+                self._jobs[job.job_id] = job
+                self._queue.append(job.job_id)
+                self._trim_jobs_locked()
+        else:
+            with self._lock:
+                self._jobs[job.job_id] = job
+                self._trim_jobs_locked()
+        self._persist(job)
+
+    def create_batch(self, user, payload):
+        """一次提交一组视频；部分无效不整批失败（docs/SUBTITLE_BATCH_CONTRACT.md §4.1）。"""
+        if not isinstance(payload, dict):
+            raise invalid(u"请求体必须是 JSON 对象")
+        settings = self._settings() or {}
+        if not settings.get("subtitle_enabled"):
+            raise SubtitleError("SUBTITLE_DISABLED", u"云端字幕功能未启用")
+        if payload.get("confirm_cloud") is not True:
+            raise SubtitleError("CLOUD_CONFIRM_REQUIRED",
+                                u"请先确认音频/字幕文本将上传到所配置的第三方服务")
+        paths = payload.get("paths")
+        if not isinstance(paths, list) or not paths:
+            raise invalid(u"paths 必须是非空数组")
+        if len(paths) > config.SUBTITLE_BATCH_MAX_ITEMS:
+            raise ApiError(
+                "BATCH_TOO_LARGE",
+                u"一次最多提交 %d 个视频，请分批提交"
+                % config.SUBTITLE_BATCH_MAX_ITEMS)
+        unique = []
+        seen = set()
+        for item in paths:
+            if not isinstance(item, str) or not item.strip():
+                raise invalid(u"paths 元素必须是路径字符串")
+            key = fsutil.path_key(item)
+            if key in seen:
+                continue
+            seen.add(key)
+            unique.append(item)
+
+        base = {}
+        for key in ("language", "translate", "target_lang", "source",
+                    "output_mode", "skip_existing"):
+            if key in payload:
+                base[key] = payload[key]
+        active_keys = self._active_path_keys()
+        duplicates = []
+        rejected = []
+        prepared = []
+        for path in unique:
+            key = fsutil.path_key(path)
+            if key in active_keys:
+                duplicates.append(path)
+                continue
+            item_payload = dict(base)
+            item_payload["path"] = path
+            item_payload["confirm_cloud"] = True
+            try:
+                prepared.append(self._prepare_job(user, item_payload, settings))
+            except (ApiError, SubtitleError) as exc:
+                rejected.append({
+                    "path": path,
+                    "code": getattr(exc, "code", "INVALID_ARGUMENT"),
+                    "message": getattr(exc, "message", u"提交失败"),
+                })
+        if not prepared:
+            raise ApiError("BATCH_EMPTY", u"没有可提交的字幕任务",
+                           details={"rejected": rejected,
+                                    "duplicates": duplicates})
+
+        batch_id = make_batch_id()
+        for job in prepared:
+            job.batch_id = batch_id
+        record = {
+            "batch_id": batch_id,
+            "created_epoch": time.time(),
+            "updated_epoch": time.time(),
+            "user": user,
+            "options": {
+                "source": prepared[0].source,
+                "language": prepared[0].language,
+                "translate": bool(prepared[0].translate),
+                "target_lang": prepared[0].target_lang,
+                "output_mode": prepared[0].output_mode,
+                "skip_existing": bool(prepared[0].skip_existing),
+                "recursive": payload.get("recursive") is True,
+                "root": payload.get("root") if isinstance(
+                    payload.get("root"), str) else "",
+            },
+            "job_ids": [job.job_id for job in prepared],
+            "rejected": rejected,
+            "duplicates": duplicates,
+        }
+        self._save_batch_record(record)
+        for job in prepared:
+            skip_message = self._skip_message(job)
+            if skip_message:
+                job.status = STATUS_DONE
+                job.stage = "write"
+                job.progress = 100
+                job.message = skip_message
+                job.skipped = True
+                self._register_job(job, enqueue=False)
+                self.store.audit("subtitle_skip", user, {
+                    "job_id": job.job_id,
+                    "batch_id": batch_id,
+                    "path": job.path,
+                    "reason": skip_message,
+                })
+                continue
+            self._register_job(job, enqueue=True)
+            self.store.audit("subtitle_start", user, {
+                "job_id": job.job_id,
+                "batch_id": batch_id,
+                "path": job.path,
+                "source": job.source,
+                "language": job.language,
+                "translate": bool(job.translate),
+                "target_lang": job.target_lang,
+                "output_mode": job.output_mode,
+            })
+        if any(job.status == STATUS_QUEUED for job in prepared):
+            self._ensure_worker()
+        self._save_batch_record(record)
+        return self._batch_snapshot(record)
+
+    def _batch_jobs(self, batch_id):
+        record = self._load_batch_record(batch_id)
+        job_ids = record.get("job_ids") or []
+        with self._lock:
+            return record, [self._jobs[job_id] for job_id in job_ids
+                            if job_id in self._jobs]
+
+    def pause_batch(self, batch_id):
+        record, jobs = self._batch_jobs(batch_id)
+        for job in jobs:
+            if job.status in FINISHED_STATUSES or job.status == STATUS_PAUSED:
+                continue
+            try:
+                self.pause(job.job_id)
+            except (ApiError, SubtitleError):
+                continue
+        self._save_batch_record(record)
+        return self._batch_snapshot(record)
+
+    def resume_batch(self, batch_id):
+        record, jobs = self._batch_jobs(batch_id)
+        for job in jobs:
+            if job.status != STATUS_PAUSED:
+                continue
+            try:
+                self.resume(job.job_id)
+            except (ApiError, SubtitleError):
+                continue
+        self._save_batch_record(record)
+        return self._batch_snapshot(record)
+
+    def cancel_batch(self, batch_id):
+        record, jobs = self._batch_jobs(batch_id)
+        for job in jobs:
+            if job.status in FINISHED_STATUSES:
+                continue
+            try:
+                self.cancel(job.job_id)
+            except (ApiError, SubtitleError):
+                continue
+        self._save_batch_record(record)
+        return self._batch_snapshot(record)
+
+    def retry_batch(self, batch_id):
+        record, jobs = self._batch_jobs(batch_id)
+        requeued = 0
+        for job in jobs:
+            if job.status not in (STATUS_FAILED, STATUS_CANCELLED):
+                continue
+            with self._lock:
+                job.cancel_event.clear()
+                job.pause_event.clear()
+                job.status = STATUS_QUEUED
+                job.stage = "audio"
+                job.progress = 0
+                job.message = u"重新排队等待执行"
+                job.error = None
+                job.skipped = False
+                job.warning = None
+                job.resumable = True
+                job.updated_epoch = time.time()
+                if job.job_id not in self._queue:
+                    self._queue.append(job.job_id)
+                self._cond.notify_all()
+            self._persist(job)
+            requeued += 1
+        if requeued:
+            self.store.audit("subtitle_retry", "", {
+                "batch_id": batch_id, "count": requeued})
+            self._ensure_worker()
+        self._save_batch_record(record)
+        return self._batch_snapshot(record)
 
     # ------------------------------------------------------------------
     # v0026 云端探测：模型列表 / 连接测试（管理员；单次请求、不重试）
@@ -1220,53 +1887,31 @@ class SubtitleService(object):
             raise SubtitleError("SUBTITLE_DISABLED", u"云端字幕功能未启用")
         if payload.get("confirm_cloud") is not True:
             raise SubtitleError("CLOUD_CONFIRM_REQUIRED",
-                                u"请先确认音频将上传到所配置的第三方服务")
-        path = payload.get("path")
-        if not isinstance(path, str) or not path.strip():
-            raise invalid(u"path 不能为空")
-        self.shares.validate_file(path)
-        extensions = (settings.get("video_extensions")
-                      or list(config.DEFAULT_VIDEO_EXTENSIONS))
-        allowed_ext = frozenset(str(item).lower() for item in extensions)
-        extension = os.path.splitext(path)[1].lower()
-        if extension not in allowed_ext:
-            raise SubtitleError("INVALID_VIDEO", u"只支持视频文件生成字幕")
-
-        language = (payload.get("language")
-                    or settings.get("subtitle_asr_language") or "auto")
-        if not isinstance(language, str) or not LANGUAGE_RE.match(language.strip()):
-            raise invalid(u"语言代码非法")
-        language = language.strip()
-        translate = payload.get("translate", False)
-        if not isinstance(translate, bool):
-            raise invalid(u"translate 必须是布尔值")
-        if translate and not settings.get("subtitle_translate_enabled"):
-            raise SubtitleError("TRANSLATE_DISABLED", u"字幕翻译功能未启用")
-        target_lang = (payload.get("target_lang")
-                       or settings.get("subtitle_translate_target") or "zh")
-        if translate:
-            if (not isinstance(target_lang, str)
-                    or not LANGUAGE_RE.match(target_lang.strip())
-                    or target_lang.strip().lower() == "auto"):
-                raise invalid(u"目标语言非法")
-            target_lang = target_lang.strip()
-        else:
-            target_lang = settings.get("subtitle_translate_target") or "zh"
-
-        job_id = make_job_id()
-        job = SubtitleJob(job_id, os.path.normpath(path), language, translate,
-                          target_lang, user)
-        with self._lock:
-            self._jobs[job_id] = job
-            self._queue.append(job_id)
-            self._trim_jobs_locked()
-        self._persist(job)
+                                u"请先确认音频/字幕文本将上传到所配置的第三方服务")
+        job = self._prepare_job(user, payload, settings)
+        skip_message = self._skip_message(job)
+        if skip_message:
+            job.status = STATUS_DONE
+            job.stage = "write"
+            job.progress = 100
+            job.message = skip_message
+            job.skipped = True
+            self._register_job(job, enqueue=False)
+            self.store.audit("subtitle_skip", user, {
+                "job_id": job.job_id,
+                "path": job.path,
+                "reason": skip_message,
+            })
+            return job.snapshot()
+        self._register_job(job, enqueue=True)
         self.store.audit("subtitle_start", user, {
-            "job_id": job_id,
+            "job_id": job.job_id,
             "path": job.path,
-            "language": language,
-            "translate": bool(translate),
-            "target_lang": target_lang,
+            "source": job.source,
+            "language": job.language,
+            "translate": bool(job.translate),
+            "target_lang": job.target_lang,
+            "output_mode": job.output_mode,
         })
         self._ensure_worker()
         return job.snapshot()
@@ -1460,68 +2105,10 @@ class SubtitleService(object):
                 job.updated_epoch = time.time()
             self._persist(job)
             self._check_control(job)
-            if not self.ffmpeg.available():
-                raise SubtitleError("FFMPEG_UNAVAILABLE", u"未找到 FFmpeg，无法提取音频")
-            timeout = float(settings.get("subtitle_asr_timeout_sec") or 300)
-            probe = self.ffmpeg.probe_media(job.path, timeout,
-                                            lambda: self._stop_check(job))
-            if not probe.get("has_audio"):
-                raise SubtitleError("NO_AUDIO",
-                                    u"视频没有音轨（no_audio），无法生成字幕")
-            duration = probe.get("duration")
-            if not duration or duration <= 0:
-                raise SubtitleError("NO_DURATION", u"无法读取视频时长")
-            chunk_sec = int(settings.get("subtitle_asr_chunk_sec") or 600)
-            max_audio_mb = int(settings.get("subtitle_asr_max_audio_mb") or 24)
-            max_bytes = max_audio_mb * 1024 * 1024
-            temp_root = os.path.join(self.config.data_dir, "tmp")
-            try:
-                os.makedirs(temp_root, exist_ok=True)
-            except OSError:
-                temp_root = None
-            tempdir = tempfile.mkdtemp(prefix="dc-subtitle-", dir=temp_root)
-            try:
-                plan = self._chunk_plan(job, duration, chunk_sec)
-                if not plan:
-                    raise SubtitleError("NO_AUDIO", u"视频没有可用音轨")
-                resuming = int(job.chunk_index or 0) > 0
-                self._update(
-                    job, status=STATUS_RUNNING,
-                    stage="asr" if resuming else "audio",
-                    progress=20 if resuming else 2,
-                    message=u"正在识别语音" if resuming else u"正在提取音频")
-                cues = self._run_chunked_asr(job, settings, plan, max_bytes,
-                                             tempdir)
-                cues = dedupe_cues(cues)
-                if not cues:
-                    raise SubtitleError("NO_SPEECH", u"未识别到可用字幕内容")
-                translations = None
-                partial = False
-                if job.translate:
-                    self._update(job, status=STATUS_TRANSLATING,
-                                 stage="translate", progress=70,
-                                 message=u"正在翻译字幕")
-                    translations, partial = self._translate_cues(
-                        job, settings, cues)
-                # 最后一个翻译批次结束时也要响应暂停（resume 会重跑翻译批次，
-                # 但 ASR 分片缓存保证不重复上传音频）
-                self._check_control(job)
-                self._update(job, stage="write", progress=91,
-                             message=u"正在写入字幕文件")
-                files = self._write_outputs(job, cues, translations, partial)
-                with job.lock:
-                    total = int(job.chunk_total or 0)
-                self._update(job, status=STATUS_DONE, stage="write",
-                             progress=100, message=u"字幕生成完成",
-                             files=files, error=None, resumable=False,
-                             chunk_index=total)
-                self.store.audit("subtitle_done", job.user, {
-                    "job_id": job.job_id,
-                    "files": [item["name"] for item in files],
-                    "translation_partial": bool(partial),
-                })
-            finally:
-                shutil.rmtree(tempdir, ignore_errors=True)
+            if job.source == SOURCE_EXISTING_SRT:
+                self._process_existing_srt(job, settings)
+            else:
+                self._process_asr(job, settings)
         except SubtitlePaused:
             self._handle_paused(job)
         except SubtitleCancelled:
@@ -1545,6 +2132,128 @@ class SubtitleService(object):
                 import traceback
                 traceback.print_exc()
             self._fail(job, "INTERNAL_ERROR", u"字幕生成失败，请稍后重试")
+
+    def _finish_done(self, job, files, outputs, output_errors, warning,
+                     partial, progress_message, extra_audit=None):
+        """统一收尾：任务成功 + 写回审计（写回失败只记 warning，不判失败）。"""
+        with job.lock:
+            total = int(job.chunk_total or 0)
+        audit = {
+            "job_id": job.job_id,
+            "files": [item["name"] for item in files],
+            "translation_partial": bool(partial),
+            "outputs": len(outputs or []),
+            "output_errors": len(output_errors or []),
+        }
+        if job.batch_id:
+            audit["batch_id"] = job.batch_id
+        if extra_audit:
+            audit.update(extra_audit)
+        self._update(job, status=STATUS_DONE, stage="write", progress=100,
+                     message=progress_message, files=files, error=None,
+                     resumable=False, chunk_index=total,
+                     outputs=list(outputs or []),
+                     output_errors=list(output_errors or []),
+                     warning=warning)
+        self.store.audit("subtitle_done", job.user, audit)
+        for item in (outputs or []):
+            self.store.audit("subtitle_output", job.user, {
+                "job_id": job.job_id,
+                "name": item.get("name"),
+                "path": item.get("path"),
+                "kind": item.get("kind"),
+            })
+        if output_errors:
+            self.store.audit("subtitle_output", job.user, {
+                "job_id": job.job_id,
+                "errors": len(output_errors),
+                "warning": warning,
+            })
+
+    def _process_asr(self, job, settings):
+        if not self.ffmpeg.available():
+            raise SubtitleError("FFMPEG_UNAVAILABLE", u"未找到 FFmpeg，无法提取音频")
+        timeout = float(settings.get("subtitle_asr_timeout_sec") or 300)
+        probe = self.ffmpeg.probe_media(job.path, timeout,
+                                        lambda: self._stop_check(job))
+        if not probe.get("has_audio"):
+            raise SubtitleError("NO_AUDIO",
+                                u"视频没有音轨（no_audio），无法生成字幕")
+        duration = probe.get("duration")
+        if not duration or duration <= 0:
+            raise SubtitleError("NO_DURATION", u"无法读取视频时长")
+        chunk_sec = int(settings.get("subtitle_asr_chunk_sec") or 600)
+        max_audio_mb = int(settings.get("subtitle_asr_max_audio_mb") or 24)
+        max_bytes = max_audio_mb * 1024 * 1024
+        temp_root = os.path.join(self.config.data_dir, "tmp")
+        try:
+            os.makedirs(temp_root, exist_ok=True)
+        except OSError:
+            temp_root = None
+        tempdir = tempfile.mkdtemp(prefix="dc-subtitle-", dir=temp_root)
+        try:
+            plan = self._chunk_plan(job, duration, chunk_sec)
+            if not plan:
+                raise SubtitleError("NO_AUDIO", u"视频没有可用音轨")
+            resuming = int(job.chunk_index or 0) > 0
+            self._update(
+                job, status=STATUS_RUNNING,
+                stage="asr" if resuming else "audio",
+                progress=20 if resuming else 2,
+                message=u"正在识别语音" if resuming else u"正在提取音频")
+            cues = self._run_chunked_asr(job, settings, plan, max_bytes,
+                                         tempdir)
+            cues = dedupe_cues(cues)
+            if not cues:
+                raise SubtitleError("NO_SPEECH", u"未识别到可用字幕内容")
+            translations = None
+            partial = False
+            if job.translate:
+                self._update(job, status=STATUS_TRANSLATING,
+                             stage="translate", progress=70,
+                             message=u"正在翻译字幕")
+                translations, partial = self._translate_cues(
+                    job, settings, cues)
+            # 最后一个翻译批次结束时也要响应暂停（resume 会重跑翻译批次，
+            # 但 ASR 分片缓存保证不重复上传音频）
+            self._check_control(job)
+            self._update(job, stage="write", progress=91,
+                         message=u"正在写入字幕文件")
+            files, outputs, output_errors, warning = self._write_outputs(
+                job, cues, translations, partial)
+            self._finish_done(job, files, outputs, output_errors, warning,
+                              partial, u"字幕生成完成")
+        finally:
+            shutil.rmtree(tempdir, ignore_errors=True)
+
+    def _process_existing_srt(self, job, settings):
+        """只翻译已有字幕：不启动 FFmpeg、不调用 ASR。"""
+        stem = os.path.splitext(os.path.basename(job.path))[0]
+        source_srt = find_source_srt(job.path)
+        if source_srt is None:
+            raise SubtitleError(
+                "SOURCE_SRT_MISSING",
+                u"视频同目录未找到 %s.srt，无法只翻译" % stem)
+        try:
+            with open(source_srt, "r", encoding="utf-8-sig",
+                      errors="replace") as handle:
+                text = handle.read()
+        except OSError:
+            raise SubtitleError("SOURCE_SRT_MISSING", u"无法读取已有字幕文件")
+        cues = parse_srt(text)
+        if not cues:
+            raise SubtitleError("NO_SPEECH", u"已有字幕文件没有可用内容")
+        self._update(job, status=STATUS_TRANSLATING, stage="translate",
+                     progress=10, message=u"正在翻译已有字幕")
+        translations, partial = self._translate_cues(job, settings, cues)
+        self._check_control(job)
+        self._update(job, stage="write", progress=91,
+                     message=u"正在写入字幕文件")
+        files, outputs, output_errors, warning = self._write_outputs(
+            job, cues, translations, partial, existing_source=source_srt)
+        self._finish_done(job, files, outputs, output_errors, warning,
+                          partial, u"字幕翻译完成",
+                          extra_audit={"source_srt": source_srt})
 
     def _fail(self, job, code, message):
         with job.lock:
@@ -1722,7 +2431,8 @@ class SubtitleService(object):
                              min(start + len(batch), len(cues)), len(cues)))
         return translations, partial
 
-    def _write_outputs(self, job, cues, translations, partial):
+    def _write_outputs(self, job, cues, translations, partial,
+                       existing_source=None):
         directory = self._job_dir(job.job_id)
         os.makedirs(directory, exist_ok=True)
         self._write_file(directory, "original.srt", build_srt(cues))
@@ -1736,7 +2446,48 @@ class SubtitleService(object):
             self._write_file(directory, "bilingual.%s.srt" % target,
                              build_srt(cues, translations, bilingual=True))
         job.translation_partial = bool(partial)
-        return self._list_files(job.job_id)
+        files = self._list_files(job.job_id)
+        outputs, output_errors, warning = self._write_alongside(
+            job, cues, translations, existing_source)
+        return files, outputs, output_errors, warning
+
+    def _write_alongside(self, job, cues, translations, existing_source=None):
+        """把 srt 复制到视频同目录（只写 .srt，从不覆盖已有文件）。
+
+        返回 (outputs, output_errors, warning)；写回失败只记 warning，
+        任务仍为 done，任务目录里的文件可继续下载。
+        """
+        outputs = []
+        errors = []
+        if job.output_mode != "alongside_video":
+            return outputs, errors, None
+        directory, stem = split_video_stem(job.path)
+        if not directory or not fsutil.writable_dir(directory):
+            return outputs, errors, WARNING_OUTPUT_NOT_WRITABLE
+        names = subtitle_output_names(stem, job.target_lang)
+        targets = []
+        # 原文：只有 ASR 生成才写；只翻译模式下视频旁本来就有 <stem>.srt
+        if existing_source is None:
+            targets.append(("original", names["original"], build_srt(cues)))
+        if translations is not None:
+            targets.append(("translation", names["translation"],
+                            build_srt(cues, translations)))
+            targets.append(("bilingual", names["bilingual"],
+                            build_srt(cues, translations, bilingual=True)))
+        for kind, name, content in targets:
+            path = os.path.join(directory, name)
+            if os.path.exists(path):
+                continue
+            try:
+                size = atomic_write_text(path, content)
+            except OSError:
+                errors.append({"name": name, "kind": kind,
+                               "message": u"写入失败"})
+                continue
+            outputs.append({"name": name, "path": path,
+                            "size": int(size), "kind": kind})
+        warning = WARNING_OUTPUT_PARTIAL if errors else None
+        return outputs, errors, warning
 
     @staticmethod
     def _write_file(directory, name, content):
@@ -1756,6 +2507,7 @@ class SubtitleService(object):
         while len(self._jobs) > self.job_limit and finished:
             job = finished.pop(0)
             self._jobs.pop(job.job_id, None)
+            # 只删任务目录/元数据；写回视频旁的 srt 永不删除。
             self._remove_job_files(job.job_id)
             try:
                 os.unlink(self._job_json(job.job_id))
@@ -1765,6 +2517,22 @@ class SubtitleService(object):
                 self.store.delete_subtitle_job(job.job_id)
             except Exception:
                 pass
+            self._trim_batch_locked(job.batch_id)
+
+    def _trim_batch_locked(self, batch_id):
+        """批次不再有任何任务时删除批次记录（JSON + DB）。"""
+        if not batch_id:
+            return
+        if any(item.batch_id == batch_id for item in self._jobs.values()):
+            return
+        try:
+            os.unlink(self._batch_json(batch_id))
+        except OSError:
+            pass
+        try:
+            self.store.delete_subtitle_batch(batch_id)
+        except Exception:
+            pass
 
     def _remove_job_files(self, job_id):
         try:

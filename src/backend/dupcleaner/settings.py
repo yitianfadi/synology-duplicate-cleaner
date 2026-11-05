@@ -76,6 +76,11 @@ DEFAULT_SETTINGS = {
     "subtitle_translate_target": "zh",
     "subtitle_translate_timeout_sec": 120,
     "subtitle_translate_batch_size": 20,
+    # --- 目录批量字幕（docs/SUBTITLE_BATCH_CONTRACT.md §2）---
+    # 字幕默认写回视频同目录（只写 .srt）；download_only 仅保留任务目录下载。
+    "subtitle_output_mode": config.SUBTITLE_DEFAULT_OUTPUT_MODE,
+    "subtitle_skip_existing": True,
+    "subtitle_job_limit": config.SUBTITLE_JOB_LIMIT_DEFAULT,
 }
 
 # 密钥键：GET/日志/审计/扫描结果中绝不允许出现明文
@@ -336,6 +341,15 @@ def _normalize_value(key, value):
         return _check_int(key, value, 30, 900)
     if key == "subtitle_translate_batch_size":
         return _check_int(key, value, 1, 40)
+    if key == "subtitle_output_mode":
+        if value not in config.SUBTITLE_OUTPUT_MODES:
+            _err(u"subtitle_output_mode 只能是 alongside_video/download_only",
+                 {"key": key})
+        return value
+    if key == "subtitle_skip_existing":
+        return _check_bool(key, value)
+    if key == "subtitle_job_limit":
+        return _check_int(key, value, 20, 1000)
     if key == "skip_symlinks":
         # 无论前端传什么，符号链接一律跳过（安全强制）
         if not isinstance(value, bool):

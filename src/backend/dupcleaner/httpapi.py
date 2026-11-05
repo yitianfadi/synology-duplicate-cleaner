@@ -211,6 +211,18 @@ class Api(object):
              self._subtitle_models, False),
             ("POST", re.compile(r"^/api/subtitles/test$"),
              self._subtitle_test, False),
+            # v0028：目录枚举 / 批量字幕（管理员+CSRF，docs/SUBTITLE_BATCH_CONTRACT.md）
+            ("POST", re.compile(r"^/api/subtitles/enumerate$"),
+             self._subtitle_enumerate, False),
+            ("POST", re.compile(r"^/api/subtitles/batch$"),
+             self._subtitle_batch_create, False),
+            ("GET", re.compile(
+                r"^/api/subtitles/batches/(?P<batch_id>[^/]+)$"),
+             self._subtitle_batch_get, False),
+            ("POST", re.compile(
+                r"^/api/subtitles/batches/(?P<batch_id>[^/]+)/"
+                r"(?P<action>pause|resume|cancel|retry)$"),
+             self._subtitle_batch_control, False),
         ]
 
     # ------------------------------------------------------------------
@@ -328,6 +340,13 @@ class Api(object):
             # 视频视觉相似能力（docs/VIDEO_CONTRACT.md §2）
             "video": video_similarity.video_capabilities(
                 self.config, self.services.settings.get()),
+            # v0028 目录批量字幕能力（docs/SUBTITLE_BATCH_CONTRACT.md）
+            "subtitle": {
+                "supported": self.services.subtitles is not None,
+                "batch_max_items": config.SUBTITLE_BATCH_MAX_ITEMS,
+                "enumerate_max_items": config.SUBTITLE_ENUMERATE_MAX_ITEMS,
+                "output_modes": list(config.SUBTITLE_OUTPUT_MODES),
+            },
         })
 
     def _shares(self, request, session, params):
@@ -597,8 +616,10 @@ class Api(object):
     def _list_subtitles(self, request, session, params):
         service = self._require_subtitle_admin(session)
         limit = _query_int(request, "limit", 50)
+        batch_id = request.query_last("batch_id") or None
         return json_response({"ok": True,
-                              "jobs": service.list(limit=limit)})
+                              "jobs": service.list(limit=limit,
+                                                   batch_id=batch_id)})
 
     def _subtitle_control(self, request, session, params):
         service = self._require_subtitle_admin(session)
@@ -654,6 +675,46 @@ class Api(object):
         payload = {"ok": True}
         payload.update(result)
         return json_response(payload)
+
+    # ------------------------------------------------------------------
+    # v0028 目录批量字幕（仅管理员；docs/SUBTITLE_BATCH_CONTRACT.md）
+    # ------------------------------------------------------------------
+    def _subtitle_enumerate(self, request, session, params):
+        service = self._require_subtitle_admin(session)
+        body = _json_body(request)
+        recursive = body.get("recursive", True)
+        return json_response(service.enumerate_videos(
+            body.get("path"), recursive=recursive,
+            max_items=body.get("max_items")))
+
+    def _subtitle_batch_create(self, request, session, params):
+        service = self._require_subtitle_admin(session)
+        body = _json_body(request)
+        try:
+            batch = service.create_batch(session.user, body)
+        except SubtitleError as exc:
+            raise ApiError(exc.code, exc.message, status=400)
+        return json_response({"ok": True, "batch": batch}, status=202)
+
+    def _subtitle_batch_get(self, request, session, params):
+        service = self._require_subtitle_admin(session)
+        return json_response({"ok": True,
+                              "batch": service.get_batch(params["batch_id"])})
+
+    def _subtitle_batch_control(self, request, session, params):
+        service = self._require_subtitle_admin(session)
+        action = params["action"]
+        handlers = {
+            "pause": service.pause_batch,
+            "resume": service.resume_batch,
+            "cancel": service.cancel_batch,
+            "retry": service.retry_batch,
+        }
+        handler = handlers.get(action)
+        if handler is None:
+            raise invalid(u"未知的批次操作")
+        return json_response({"ok": True,
+                              "batch": handler(params["batch_id"])})
 
     # ------------------------------------------------------------------
     # 扫描
