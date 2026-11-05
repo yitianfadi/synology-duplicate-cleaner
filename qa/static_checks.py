@@ -342,11 +342,12 @@ def check_frontend():
     # 并逐个文件执行 node --check（Node 24 可直接检查 ESM 语法）。
     js_dir = os.path.join(web, "js")
     module_names = ["constants.js", "state.js", "dom.js", "format.js",
-                    "util.js", "api.js", "toast.js", "modal.js", "subtitle-probe.js"]
+                    "util.js", "api.js", "toast.js", "modal.js",
+                    "subtitle-probe.js", "subtitle-page.js"]
     module_paths = [os.path.join(js_dir, name) for name in module_names]
     missing_modules = [name for name in module_names
                        if not os.path.isfile(os.path.join(js_dir, name))]
-    check("FE-MODULE-FILES", "前端 ES modules 九个模块文件齐全（js/*.js）",
+    check("FE-MODULE-FILES", "前端 ES modules 十个模块文件齐全（js/*.js）",
           not missing_modules, "missing=%s" % missing_modules)
     check("FE-MODULE-ENTRY", "index.html 以 type=module 加载 app.js 并保留 ?v= 版本参数",
           bool(re.search(r'<script\s+type="module"\s+src="\./app\.js\?v=[^"]+"', html)),
@@ -389,6 +390,23 @@ def check_frontend():
     else:
         record("FE-BROWSER-SMOKE", "无头浏览器冒烟", "FAIL",
                "missing qa/web_smoke.py")
+
+    # v0028：字幕页复用扫描范围目录选择器（同一共享文件夹树/面包屑/搜索/当前目录），
+    # 不再自带一套简化的目录列表；同时覆盖枚举/批次接口。
+    picker_ok = (
+        "openSubtitleDirPicker" in app
+        and "picker.mode === 'subtitle'" in app
+        and "subtitle: '选择视频目录'" in app
+        and "state.openSubtitleDirPicker" in app
+        and 'id="subtitleDirPickBtn"' in html)
+    check("FE-SUBTITLE-PICKER",
+          "字幕页复用扫描范围目录选择器（共享文件夹树/面包屑/搜索/当前目录/完成选择）",
+          picker_ok, "subtitle picker wiring missing")
+    endpoints_ok = all(token in app for token in (
+        "/api/subtitles/enumerate", "/api/subtitles/batch",
+        "/api/subtitles/batches/"))
+    check("FE-SUBTITLE-ENDPOINTS", "字幕页覆盖目录枚举/批次提交/批次控制接口",
+          endpoints_ok, "subtitle batch endpoints missing")
 
     check("FE-RISK-TEXT", "风险提示文案与契约逐字一致（index.html）",
           RISK_TEXT in html, "risk text not found verbatim")

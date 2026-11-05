@@ -1,7 +1,7 @@
 {
-  "generated_at": "2026-11-05T20:30:22+0800",
+  "generated_at": "2026-11-05T20:39:29+0800",
   "summary": {
-    "PASS": 119,
+    "PASS": 121,
     "FAIL": 0,
     "UNVERIFIED": 0
   },
@@ -182,7 +182,7 @@
     },
     {
       "id": "FE-MODULE-FILES",
-      "name": "前端 ES modules 九个模块文件齐全（js/*.js）",
+      "name": "前端 ES modules 十个模块文件齐全（js/*.js）",
       "status": "PASS",
       "detail": ""
     },
@@ -207,6 +207,18 @@
     {
       "id": "FE-BROWSER-SMOKE",
       "name": "无头浏览器冒烟（ES modules 可运行、资源 MIME、控制台无异常）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "FE-SUBTITLE-PICKER",
+      "name": "字幕页复用扫描范围目录选择器（共享文件夹树/面包屑/搜索/当前目录/完成选择）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "FE-SUBTITLE-ENDPOINTS",
+      "name": "字幕页覆盖目录枚举/批次提交/批次控制接口",
       "status": "PASS",
       "detail": ""
     },

@@ -363,15 +363,20 @@ import {
   }
 
   // ==================== 8. 文件夹选择器（共享文件夹 / 懒加载目录树） ====================
-  var PICKER_TITLES = { roots: '选择扫描范围', excludes: '选择排除目录', pinned: '选择指定保留路径' };
+  var PICKER_TITLES = {
+    roots: '选择扫描范围', excludes: '选择排除目录',
+    pinned: '选择指定保留路径', subtitle: '选择视频目录'
+  };
   var PICKER_HINTS = {
     roots: '勾选目录作为扫描范围；选中父目录会递归包含全部子目录（子目录显示为已选中但不可单独取消）。点击文件夹名称进入下一级，左侧箭头展开子目录。',
     excludes: '勾选需要排除的目录；排除目录必须位于扫描范围内，其中的文件不会被扫描或删除。',
-    pinned: '选择目录或文件作为“指定路径”保留策略的匹配前缀。'
+    pinned: '选择目录或文件作为“指定路径”保留策略的匹配前缀。',
+    subtitle: '选择要批量生成/翻译字幕的视频目录（单选）。点击文件夹名称进入下一级，左侧箭头展开子目录，点“选择当前目录”后再“完成选择”。'
   };
 
-  function openFolderPicker(mode) {
+  function openFolderPicker(mode, options) {
     if (VIEWS.indexOf(state.view) === -1) { return; }
+    options = options || {};
     var picker = {
       mode: mode,
       currentPath: '',
@@ -386,6 +391,9 @@ import {
       roots: state.roots.map(function (r) { return { path: r.path, name: r.name }; }),
       excludes: state.excludes.slice(),
       pinned: state.pinnedPath,
+      // 字幕页目录选择：单选 + 完成后回调（不修改扫描范围）
+      subtitleDir: typeof options.initial === 'string' ? options.initial : '',
+      onConfirm: typeof options.onConfirm === 'function' ? options.onConfirm : null,
       reqSeq: 0,
       bodyEl: null,
       listEl: null,
@@ -537,6 +545,7 @@ import {
       return picker.roots.some(function (r) { return r.path === path; });
     }
     if (picker.mode === 'excludes') { return picker.excludes.indexOf(path) !== -1; }
+    if (picker.mode === 'subtitle') { return picker.subtitleDir === path; }
     return picker.pinned === path;
   }
 
@@ -622,6 +631,8 @@ import {
       } else if (!checked && at !== -1) {
         picker.excludes.splice(at, 1);
       }
+    } else if (picker.mode === 'subtitle') {
+      picker.subtitleDir = checked ? path : '';
     } else {
       picker.pinned = checked ? path : '';
     }
@@ -669,6 +680,13 @@ import {
           picker.chipsEl.appendChild(buildPickerChip(picker, path, path));
         });
       }
+    } else if (picker.mode === 'subtitle') {
+      countText = picker.subtitleDir ? '已选择视频目录' : '尚未选择视频目录';
+      if (picker.subtitleDir) {
+        picker.chipsEl.appendChild(buildPickerChip(picker, picker.subtitleDir, picker.subtitleDir));
+      } else {
+        picker.chipsEl.appendChild(el('span', { className: 'chip-empty', text: '请选择视频目录' }));
+      }
     } else {
       countText = picker.pinned ? '已指定保留路径' : '尚未指定保留路径';
       if (picker.pinned) {
@@ -684,6 +702,7 @@ import {
       var disabled = !picker.currentPath || currentState.disabled || currentState.included;
       if (picker.mode === 'excludes') { label = pickerIsSelected(picker, picker.currentPath) ? '取消排除当前目录' : '排除当前目录'; }
       else if (picker.mode === 'pinned') { label = pickerIsSelected(picker, picker.currentPath) ? '当前目录已指定' : '使用当前目录'; }
+      else if (picker.mode === 'subtitle') { label = pickerIsSelected(picker, picker.currentPath) ? '取消选择当前目录' : '选择当前目录'; }
       else if (currentState.included) { label = '已包含在扫描范围'; }
       else { label = pickerIsSelected(picker, picker.currentPath) ? '取消选择当前目录' : '选择当前目录'; }
       setText(picker.currentBtn, label);
@@ -953,6 +972,11 @@ import {
   }
 
   function applyPickerSelection(picker) {
+    if (picker.mode === 'subtitle') {
+      // 字幕页目录选择：只回传路径，不修改扫描范围设置
+      if (picker.onConfirm) { picker.onConfirm(picker.subtitleDir || ''); }
+      return;
+    }
     if (picker.mode === 'roots') {
       state.roots = picker.roots.map(function (r) { return { path: r.path, name: r.name }; });
       var roots = state.roots.map(function (r) { return r.path; });
@@ -976,6 +1000,11 @@ import {
     saveLastSelection();
     updateScanSummary();
   }
+
+  // 字幕页复用同一个共享文件夹选择器（独立模块通过 state 注入调用）
+  state.openSubtitleDirPicker = function (options) {
+    openFolderPicker('subtitle', options || {});
+  };
 
   // ==================== 9. 扫描范围与选项表单 ====================
   var OPTION_ERROR_FIELDS = {

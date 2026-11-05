@@ -40,6 +40,9 @@ export var state = {
   // 删除流程
   deleteFlow: { plan: null, job: null, timer: null, abort: null, running: false, busy: false, modal: null, recycle: true, override: null },
   picker: null,
+  // app.js 注入的目录选择器（供独立模块如字幕页复用同一个扫描范围选择器）
+  // 签名：openSubtitleDirPicker({initial, onConfirm})
+  openSubtitleDirPicker: null,
   preview: { urls: [], abort: null },
   historyCache: null,
   // 任务中心标签页：history / subtitles / deletions / storage

@@ -13,9 +13,8 @@ import {
   byId, clear, el, setBusy, setHidden, setText, show
 } from './dom.js';
 import { fmtBytes, fmtInt } from './format.js';
-import { encodePath } from './util.js';
 import { toast } from './toast.js';
-import { confirmDialog, openModal } from './modal.js';
+import { confirmDialog } from './modal.js';
 
 var PAGE_LIMIT = 200;
 var POLL_MS = 1500;
@@ -178,113 +177,23 @@ function updateSubmitState() {
 }
 
 // ---------------------------------------------------------------------------
-// 目录选择器（复用 /api/shares 与 /api/browse；仅目录）
+// 目录选择器：复用扫描范围页的共享文件夹选择器（app.js 通过 state 注入）
 // ---------------------------------------------------------------------------
-function openDirBrowser(onPick) {
-  var browser = { path: '', entries: [], current: '' };
-  var pathEl = el('p', { className: 'subtitle-dir-current', text: '共享文件夹' });
-  var listEl = el('div', { className: 'subtitle-dir-list', attrs: { role: 'group', 'aria-label': '目录列表' } });
-  var errorEl = el('p', { className: 'field-error', attrs: { role: 'alert' }, hidden: true });
-  var upBtn = el('button', {
-    className: 'btn btn-ghost btn-sm', attrs: { type: 'button' }, text: '上一级'
-  });
-  var pickBtn = el('button', {
-    className: 'btn btn-primary', attrs: { type: 'button' }, text: '选择当前目录', disabled: true
-  });
-  var body = el('div', { className: 'subtitle-dir-body' }, [
-    el('div', { className: 'subtitle-dir-toolbar' }, [upBtn]),
-    pathEl,
-    listEl,
-    errorEl
-  ]);
-  var cancelBtn = el('button', {
-    className: 'btn btn-ghost', attrs: { type: 'button' }, text: '取消'
-  });
-  var modal = openModal({
-    title: '选择视频目录',
-    subtitle: '只能选择共享文件夹内的目录；系统目录与符号链接不可选择。',
-    size: 'lg',
-    body: body,
-    footer: [cancelBtn, pickBtn],
-    initialFocus: pickBtn
-  });
-  cancelBtn.addEventListener('click', function () { modal.close(); });
-  upBtn.addEventListener('click', function () { load(parentOf(browser.current)); });
-  pickBtn.addEventListener('click', function () {
-    if (!browser.current) { return; }
-    modal.close();
-    onPick(browser.current);
-  });
-
-  function parentOf(path) {
-    if (!path) { return ''; }
-    var parts = path.replace(/[\\/]+$/, '').split(/[\\/]/);
-    if (parts.length <= 1) { return ''; }
-    parts.pop();
-    return parts.join('/') || '';
+function openDirPicker() {
+  var opener = state.openSubtitleDirPicker;
+  if (typeof opener !== 'function') {
+    toast('目录选择器不可用，请刷新页面后重试。', 'error');
+    return;
   }
-
-  async function load(path) {
-    browser.path = path || '';
-    setHidden(errorEl, true);
-    clear(listEl);
-    listEl.appendChild(el('div', { className: 'state-box' }, [el('span', { className: 'spinner' }), '正在加载…']));
-    try {
-      var data;
-      if (!browser.path) {
-        data = await api('/api/shares', { timeout: 20000 });
-        browser.current = '';
-        browser.entries = (data.shares || []).map(function (share) {
-          return { name: share.name, path: share.path, type: 'dir' };
-        });
-        pathEl.textContent = '共享文件夹';
-      } else {
-        data = await api('/api/browse?path=' + encodePath(browser.path), { timeout: 20000 });
-        browser.current = data.path || browser.path;
-        browser.entries = (data.entries || []).filter(function (entry) {
-          return entry.type === 'dir';
-        }).map(function (entry) {
-          return {
-            name: entry.name, path: entry.path, type: 'dir',
-            excluded: !!entry.excluded, exclude_reason: entry.exclude_reason || ''
-          };
-        });
-        pathEl.textContent = browser.current;
-      }
-      upBtn.disabled = !browser.path;
-      pickBtn.disabled = !browser.current;
-      renderEntries();
-    } catch (err) {
-      clear(listEl);
-      setHidden(errorEl, false);
-      setText(errorEl, errorMessage(err, '读取目录失败。'));
+  var input = q('subtitleDirPath');
+  opener({
+    initial: input ? input.value.trim() : '',
+    onConfirm: function (path) {
+      if (!path) { return; }
+      if (input) { input.value = path; }
+      enumerateNow();
     }
-  }
-
-  function renderEntries() {
-    clear(listEl);
-    if (!browser.entries.length) {
-      listEl.appendChild(el('p', { className: 'muted', text: '没有可选的子目录。' }));
-      return;
-    }
-    browser.entries.forEach(function (entry) {
-      var item = el('button', {
-        className: 'subtitle-dir-item' + (entry.excluded ? ' is-excluded' : ''),
-        attrs: { type: 'button' },
-        text: entry.name
-      });
-      item.disabled = !!entry.excluded;
-      if (entry.excluded) {
-        item.title = entry.exclude_reason === 'symlink' ? '符号链接不可选择'
-          : entry.exclude_reason === 'permission' ? '没有读取权限'
-            : '系统或隐藏目录不可选择';
-      }
-      item.addEventListener('click', function () { load(entry.path); });
-      listEl.appendChild(item);
-    });
-  }
-
-  load('');
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -671,12 +580,7 @@ export function initSubtitlePage() {
 
   var pickBtn = q('subtitleDirPickBtn');
   if (pickBtn) {
-    pickBtn.addEventListener('click', function () {
-      openDirBrowser(function (path) {
-        var input = q('subtitleDirPath');
-        if (input) { input.value = path; }
-      });
-    });
+    pickBtn.addEventListener('click', openDirPicker);
   }
   var enumerateBtn = q('subtitleEnumerateBtn');
   if (enumerateBtn) { enumerateBtn.addEventListener('click', enumerateNow); }

@@ -2179,20 +2179,3 @@ input[type="checkbox"]:disabled { cursor: not-allowed; }
 .subtitle-batch-rejected-list { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; }
 .subtitle-batch-rejected-list .mono { font-size: 12px; overflow-wrap: anywhere; }
 
-.subtitle-dir-body { display: flex; flex-direction: column; gap: 10px; }
-.subtitle-dir-toolbar { display: flex; gap: 8px; align-items: center; }
-.subtitle-dir-current { font-family: var(--mono); font-size: 12.5px; overflow-wrap: anywhere; color: var(--muted); }
-.subtitle-dir-list { display: flex; flex-direction: column; gap: 2px; max-height: 360px; overflow: auto; }
-.subtitle-dir-item {
-  text-align: left;
-  padding: 8px 10px;
-  border: 1px solid transparent;
-  border-radius: 8px;
-  background: transparent;
-  cursor: pointer;
-  font-size: 13px;
-  color: inherit;
-}
-.subtitle-dir-item:hover:not(:disabled) { background: var(--card-soft); border-color: var(--border); }
-.subtitle-dir-item.is-excluded { color: var(--muted); cursor: not-allowed; }
-
