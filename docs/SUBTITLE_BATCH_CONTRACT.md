@@ -24,7 +24,7 @@
 |---|---|---|
 | subtitle_output_mode | "alongside_video" | `alongside_video` / `download_only`；其它值拒绝 |
 | subtitle_skip_existing | true | 布尔；目标 srt 已存在时跳过该视频 |
-| subtitle_job_limit | 200 | 20..1000；已完成任务保留上限（LRU 只删任务目录，不删视频旁 srt） |
+| subtitle_job_limit | 200 | 20..1000；已完成任务保留上限（LRU 只删任务目录，不删视频旁 srt）；**修改后需重启套件生效**（服务启动时读取） |
 
 以下为常量（不做成设置项，避免配置面膨胀）：
 
@@ -269,8 +269,10 @@ CREATE TABLE IF NOT EXISTS subtitle_batches (
   3. **选项**：识别语言、生成译文 + 目标语言、输出说明「字幕将写入视频同目录（只写 .srt）」、跳过已有字幕开关（默认开）。
   4. **提交**：必须勾选「音频/字幕文本将上传到第三方服务」；超过 20 条二次确认；提交后展示批次进度卡（总数/完成/失败/剩余 + 暂停/继续/取消/重试）。
 - 独立 ES module `src/web/js/subtitle-page.js`，由 `app.js` 导入；不新增第三方依赖、不用 `innerHTML`、符合 ES2019。
+- 设置页「云端字幕」分组提供 `subtitle_output_mode`（下拉）、`subtitle_skip_existing`（勾选）、`subtitle_job_limit`（数字，20–1000）；页面进度/批次状态/错误码在 `src/web/js/constants.js` 统一维护。
 - 原「视频结果行 → 生成字幕」入口保留，行为统一走 `POST /api/subtitles`（默认 `output_mode` 取自设置）。
-- 任务中心「历史记录 → 字幕任务」展示写回结果：已写入路径、跳过、`OUTPUT_NOT_WRITABLE` 警告；下载入口保留。
+- 任务中心「历史记录 → 字幕任务」列表与详情展示来源、写回路径、跳过原因、`OUTPUT_NOT_WRITABLE/OUTPUT_WRITE_PARTIAL` 警告；任务目录下载入口保留。视频结果行完成弹窗同样展示写回/跳过/警告。
+- 批次完成提醒、切换视图后轮询恢复、「在任务中心查看」直达字幕任务标签；目录/递归/模式沿用浏览器本地记忆。
 
 ## 10. 错误码
 

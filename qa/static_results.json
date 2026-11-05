@@ -1,7 +1,7 @@
 {
-  "generated_at": "2026-11-05T20:39:29+0800",
+  "generated_at": "2026-11-05T20:52:36+0800",
   "summary": {
-    "PASS": 121,
+    "PASS": 126,
     "FAIL": 0,
     "UNVERIFIED": 0
   },
@@ -41,6 +41,18 @@
       "name": "存在后端 unittest 测试文件",
       "status": "PASS",
       "detail": ""
+    },
+    {
+      "id": "BE-UNITTEST",
+      "name": "后端 unittest 全部通过",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "BE-UNITTEST-LOG",
+      "name": "unittest 结果",
+      "status": "INFO",
+      "detail": "Ran 372 tests in 96.824s"
     },
     {
       "id": "BE-NO-AUTODELETE",
@@ -219,6 +231,30 @@
     {
       "id": "FE-SUBTITLE-ENDPOINTS",
       "name": "字幕页覆盖目录枚举/批次提交/批次控制接口",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "FE-SUBTITLE-SETTINGS",
+      "name": "设置页可配置目录批量字幕输出方式/默认跳过已有/任务保留上限",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "FE-SUBTITLE-WRITEBACK",
+      "name": "字幕任务列表/详情/弹窗展示写回路径、跳过与写回警告",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "FE-SUBTITLE-META",
+      "name": "字幕页限额取自 /api/meta.subtitle，不再硬编码",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "FE-SUBTITLE-POLL-RESUME",
+      "name": "切换视图后批次轮询可恢复、跳转任务中心直达字幕任务、记住上次目录",
       "status": "PASS",
       "detail": ""
     },

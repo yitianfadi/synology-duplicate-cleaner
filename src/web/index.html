@@ -693,8 +693,8 @@
           <h2 id="subtitleBatchHeading">批次进度</h2>
           <span class="badge badge-blue" id="subtitleBatchStatus"></span>
         </div>
-        <div class="subtitle-batch-progress" role="progressbar" aria-label="批次进度">
-          <div class="subtitle-batch-bar" id="subtitleBatchBar"></div>
+        <div class="progress-bar" id="subtitleBatchBar" role="progressbar" aria-label="批次进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+          <div class="progress-fill" id="subtitleBatchFill"></div>
         </div>
         <p class="muted" id="subtitleBatchCounts"></p>
         <div id="subtitleBatchList" class="subtitle-batch-list"></div>
@@ -739,7 +739,7 @@
           </div>
           <div class="state-box" id="subtitleJobsLoading" hidden><span class="spinner" aria-hidden="true"></span>正在加载字幕任务…</div>
           <div class="state-box state-error" id="subtitleJobsError" role="alert" hidden></div>
-          <div class="state-box state-empty" id="subtitleJobsEmpty" hidden>暂无字幕任务。可在视频结果行点击“生成字幕”创建任务。</div>
+          <div class="state-box state-empty" id="subtitleJobsEmpty" hidden>暂无字幕任务。可在视频结果行点击“生成字幕”，或到「字幕」页批量提交。</div>
           <div id="subtitleJobsList" class="subtitle-jobs-list"></div>
           <p class="hint">任务进行中时本标签页会自动刷新；切换到其他标签后停止轮询，避免后台请求。</p>
         </section>
@@ -1122,7 +1122,7 @@
             <div class="form-grid">
               <div class="field field-wide">
                 <label class="check"><input id="subtitleEnabled" type="checkbox">启用云端字幕（默认关闭）</label>
-                <p class="hint">仅管理员可用；开启后视频结果行会出现“生成字幕”入口。未启用时按钮禁用，不影响查重。</p>
+                <p class="hint">仅管理员可用；开启后视频结果行和「字幕」页都会出现生成入口，可在「字幕」页按目录批量生成/翻译。未启用时按钮禁用，不影响查重。</p>
               </div>
               <div class="field">
                 <label for="subtitleAsrBaseUrl">ASR Base URL</label>
@@ -1226,6 +1226,24 @@
                 <label for="subtitleTranslateBatchSize">翻译批大小（1–40）</label>
                 <input id="subtitleTranslateBatchSize" type="number" inputmode="numeric" min="1" max="40" step="1" value="20">
                 <p class="field-error" id="subtitleTranslateBatchSizeError" role="alert" hidden></p>
+              </div>
+              <div class="field field-wide">
+                <label for="setSubtitleOutputMode">目录批量字幕：输出方式</label>
+                <select id="setSubtitleOutputMode">
+                  <option value="alongside_video">写入视频同目录（推荐）</option>
+                  <option value="download_only">仅任务目录下载</option>
+                </select>
+                <p class="hint">写入视频同目录时只写 .srt、不覆盖已有文件；视频目录不可写时自动回退为任务目录下载。</p>
+              </div>
+              <div class="field">
+                <label class="check"><input id="setSubtitleSkipExisting" type="checkbox" checked>目录批量字幕默认跳过已有字幕</label>
+                <p class="hint">目标 srt 已存在时不重复识别、不覆盖已有文件。</p>
+              </div>
+              <div class="field">
+                <label for="setSubtitleJobLimit">已完成字幕任务保留上限（20–1000）</label>
+                <input id="setSubtitleJobLimit" type="number" inputmode="numeric" min="20" max="1000" step="1" value="200">
+                <p class="hint">超出后按创建时间清理任务目录；写回视频目录的 srt 不删除。修改后需重启套件生效。</p>
+                <p class="field-error" id="setSubtitleJobLimitError" role="alert" hidden></p>
               </div>
             </div>
           </fieldset>

@@ -15,20 +15,16 @@ import {
 import { fmtBytes, fmtInt } from './format.js';
 import { toast } from './toast.js';
 import { confirmDialog } from './modal.js';
+import {
+  SUBTITLE_STATUS_BADGE, SUBTITLE_STATUS_LABEL, SUBTITLE_WARNING_LABEL
+} from './constants.js';
 
 var PAGE_LIMIT = 200;
 var POLL_MS = 1500;
-var MAX_BATCH = 500;
-
-var STATUS_LABEL = {
-  queued: '排队中', running: '识别中', translating: '翻译中',
-  paused: '已暂停', done: '已完成', failed: '失败', cancelled: '已取消'
-};
-var STATUS_CLASS = {
-  queued: 'badge-gray', running: 'badge-blue', translating: 'badge-blue',
-  paused: 'badge-amber', done: 'badge-green', failed: 'badge-red',
-  cancelled: 'badge-gray'
-};
+// 后端 /api/meta.subtitle 缺失时的兜底（与 backend config 默认值一致）
+var FALLBACK_BATCH_MAX = 500;
+var FALLBACK_ENUM_MAX = 5000;
+var LAST_CONFIG_KEY = 'dupcleaner.lastSubtitleDir.v1';
 
 var page = {
   initialized: false,
@@ -44,10 +40,47 @@ var page = {
   timer: null,
   busy: false,
   enumerated: false,
+  notified: false,
   skipTouched: false
 };
 
 function q(id) { return byId(id); }
+
+function metaLimits() {
+  var sub = state.meta && state.meta.subtitle ? state.meta.subtitle : null;
+  var batchMax = sub && Number(sub.batch_max_items);
+  var enumMax = sub && Number(sub.enumerate_max_items);
+  return {
+    batchMax: isFinite(batchMax) && batchMax > 0 ? batchMax : FALLBACK_BATCH_MAX,
+    enumMax: isFinite(enumMax) && enumMax > 0 ? enumMax : FALLBACK_ENUM_MAX
+  };
+}
+
+/** 记住上次目录/递归/模式（与扫描页记住上次扫描范围一致）。 */
+function loadPageConfig() {
+  try {
+    var raw = window.localStorage ? window.localStorage.getItem(LAST_CONFIG_KEY) : null;
+    if (!raw) { return null; }
+    var data = JSON.parse(raw);
+    if (!data || !data.dir || typeof data.dir !== 'string') { return null; }
+    return data;
+  } catch (e) {
+    return null;
+  }
+}
+
+function savePageConfig() {
+  if (!page.dir) { return; }
+  try {
+    if (!window.localStorage) { return; }
+    window.localStorage.setItem(LAST_CONFIG_KEY, JSON.stringify({
+      dir: page.dir,
+      recursive: !!page.recursive,
+      mode: modeValue(),
+      saved_at: Date.now()
+    }));
+  } catch (e) { /* 隐私模式/配额错误忽略 */ }
+}
 
 function capability() {
   var s = state.settings || {};
@@ -126,11 +159,11 @@ function updateCapabilityUi() {
   updateSubmitState();
 }
 
-function modeRequirement(supported) {
+function modeRequirement() {
   // 返回 {ok, message}：当前任务类型所需的凭据是否就绪
   var cap = capability();
   var mode = modeValue();
-  if (!supported || !cap.supported) {
+  if (!cap.supported) {
     return { ok: false, message: '当前后端未提供云端字幕能力' };
   }
   if (!cap.enabled) {
@@ -160,19 +193,20 @@ function updateSubmitState() {
   var submit = q('subtitleSubmitBtn');
   var hint = q('subtitleSelectionHint');
   var count = page.selected.size;
-  var requirement = modeRequirement(true);
+  var batchMax = metaLimits().batchMax;
+  var requirement = modeRequirement();
   if (hint) {
     setText(hint, count
-      ? '已选择 ' + count + ' 个视频' + (count > MAX_BATCH ? '（超过单批上限 ' + MAX_BATCH + '，请分批提交）' : '')
+      ? '已选择 ' + count + ' 个视频' + (count > batchMax ? '（超过单批上限 ' + batchMax + '，请分批提交）' : '')
       : '尚未选择视频');
   }
   if (!submit) { return; }
-  var ready = requirement.ok && count > 0 && count <= MAX_BATCH
+  var ready = requirement.ok && count > 0 && count <= batchMax
     && confirm && confirm.checked && !page.busy;
   submit.disabled = !ready;
   submit.title = ready ? '' : (requirement.message || (
     !count ? '请先勾选视频'
-      : count > MAX_BATCH ? '单批最多 ' + MAX_BATCH + ' 个视频'
+      : count > batchMax ? '单批最多 ' + batchMax + ' 个视频'
         : '请先确认上传第三方服务'));
 }
 
@@ -313,7 +347,7 @@ async function enumerateNow() {
       body: {
         path: path,
         recursive: !!(q('subtitleRecursive') && q('subtitleRecursive').checked),
-        max_items: 5000
+        max_items: metaLimits().enumMax
       },
       timeout: 60000
     });
@@ -337,6 +371,7 @@ async function enumerateNow() {
         + (result.truncated ? ' · 已截断' : ''));
     }
     show(q('subtitleOptionsCard'));
+    savePageConfig();
     if (!page.items.length) {
       toast('该目录下没有视频文件。', 'info');
     }
@@ -402,13 +437,16 @@ async function submitBatch() {
       timeout: 120000
     });
     page.batch = result.batch || null;
+    page.notified = false;
     page.selected = new Set();
     renderVideos();
     renderBatch();
     startPolling();
     var rejected = page.batch && page.batch.rejected ? page.batch.rejected.length : 0;
+    var duplicates = page.batch && Array.isArray(page.batch.duplicates) ? page.batch.duplicates.length : 0;
     toast('已提交 ' + (page.batch ? page.batch.total : 0) + ' 个字幕任务'
-      + (rejected ? '，' + rejected + ' 个被拒绝' : '') + '。',
+      + (rejected ? '，' + rejected + ' 个被拒绝' : '')
+      + (duplicates ? '，' + duplicates + ' 个已在队列中跳过' : '') + '。',
       rejected ? 'error' : 'success', 6000);
   } catch (err) {
     toast(errorMessage(err, '提交字幕任务失败。'), 'error', 7000);
@@ -448,6 +486,23 @@ async function pollBatch() {
   }
   if (page.batch && !isTerminal(page.batch.status)) {
     page.timer = setTimeout(pollBatch, POLL_MS);
+  } else {
+    notifyBatchFinished();
+  }
+}
+
+/** 批次进入终态时提醒一次（切换视图后返回也补提醒）。 */
+function notifyBatchFinished() {
+  if (!page.batch || !isTerminal(page.batch.status) || page.notified) { return; }
+  page.notified = true;
+  var counts = page.batch.counts || {};
+  if (page.batch.status === 'done') {
+    toast('批次已完成：成功 ' + (counts.done || 0) + ' 个'
+      + ((counts.failed || 0) ? '，失败 ' + counts.failed + ' 个' : '') + '。', 'success', 6000);
+  } else if (page.batch.status === 'failed') {
+    toast('批次结束：失败 ' + (counts.failed || 0) + ' 个，可重试失败项。', 'error', 7000);
+  } else {
+    toast('批次已取消。', 'info', 5000);
   }
 }
 
@@ -462,9 +517,11 @@ function renderBatch() {
   var finished = (counts.done || 0) + (counts.failed || 0) + (counts.cancelled || 0);
   var pct = total ? Math.round(100 * finished / total) : 0;
   setText(q('subtitleBatchStatus'),
-    (STATUS_LABEL[batch.status] || batch.status || '处理中') + ' · ' + finished + '/' + total);
-  var fill = q('subtitleBatchBar');
+    (SUBTITLE_STATUS_LABEL[batch.status] || batch.status || '处理中') + ' · ' + finished + '/' + total);
+  var fill = q('subtitleBatchFill');
   if (fill) { fill.style.width = pct + '%'; }
+  var bar = q('subtitleBatchBar');
+  if (bar) { bar.setAttribute('aria-valuenow', String(pct)); }
   setText(q('subtitleBatchCounts'),
     '完成 ' + (counts.done || 0) + ' · 失败 ' + (counts.failed || 0)
     + ' · 取消 ' + (counts.cancelled || 0) + ' · 暂停 ' + (counts.paused || 0)
@@ -490,19 +547,26 @@ function renderBatch() {
 
 function renderBatchJobRow(job) {
   var name = String(job.path || '').split(/[\\/]/).pop();
+  var pct = Math.max(0, Math.min(100, Math.round(Number(job.progress) || 0)));
   var badges = [
     el('span', {
-      className: 'badge ' + (STATUS_CLASS[job.status] || 'badge-gray'),
-      text: STATUS_LABEL[job.status] || job.status
+      className: 'badge ' + (SUBTITLE_STATUS_BADGE[job.status] || 'badge-gray'),
+      text: SUBTITLE_STATUS_LABEL[job.status] || job.status
     })
   ];
   if (job.skipped) {
     badges.push(el('span', { className: 'badge badge-gray', text: '已跳过' }));
   }
   if (job.warning === 'OUTPUT_NOT_WRITABLE') {
-    badges.push(el('span', { className: 'badge badge-amber', text: '字幕未写回（可下载）' }));
+    badges.push(el('span', {
+      className: 'badge badge-amber', text: '字幕未写回（可下载）',
+      attrs: { title: SUBTITLE_WARNING_LABEL.OUTPUT_NOT_WRITABLE }
+    }));
   } else if (job.warning === 'OUTPUT_WRITE_PARTIAL') {
-    badges.push(el('span', { className: 'badge badge-amber', text: '部分写回失败' }));
+    badges.push(el('span', {
+      className: 'badge badge-amber', text: '部分写回失败',
+      attrs: { title: SUBTITLE_WARNING_LABEL.OUTPUT_WRITE_PARTIAL }
+    }));
   }
   var outputs = Array.isArray(job.outputs) ? job.outputs : [];
   if (outputs.length) {
@@ -510,6 +574,9 @@ function renderBatchJobRow(job) {
       className: 'badge badge-green',
       text: '已写回 ' + outputs.length + ' 个 srt'
     }));
+  }
+  if (!isTerminal(job.status)) {
+    badges.push(el('span', { className: 'subtitle-pct', text: pct + '%' }));
   }
   return el('div', { className: 'subtitle-batch-row' }, [
     el('div', { className: 'subtitle-batch-main' }, [
@@ -549,6 +616,8 @@ function renderBatchActions(batch) {
     className: 'btn btn-link btn-sm', attrs: { type: 'button' }, text: '在任务中心查看'
   });
   link.addEventListener('click', function () {
+    // 任务中心默认标签是“扫描历史”，这里显式切到“字幕任务”
+    state.taskTab = 'subtitles';
     window.location.hash = '#/history';
   });
   box.appendChild(link);
@@ -574,9 +643,23 @@ async function batchAction(action, button) {
 // ---------------------------------------------------------------------------
 // 事件绑定 / 视图生命周期
 // ---------------------------------------------------------------------------
+function restorePageUi() {
+  var saved = loadPageConfig();
+  if (!saved) { return; }
+  var input = q('subtitleDirPath');
+  if (input && !input.value) { input.value = saved.dir; }
+  var recursive = q('subtitleRecursive');
+  if (recursive) { recursive.checked = saved.recursive !== false; }
+  if (saved.mode === 'existing_srt') {
+    var modeSrt = q('subtitleModeSrt');
+    if (modeSrt) { modeSrt.checked = true; }
+  }
+}
+
 export function initSubtitlePage() {
   if (page.initialized) { return; }
   page.initialized = true;
+  restorePageUi();
 
   var pickBtn = q('subtitleDirPickBtn');
   if (pickBtn) {
@@ -649,15 +732,28 @@ export function initSubtitlePage() {
     page.selected = new Set();
     updateCapabilityUi();
     renderVideos();
+    savePageConfig();
   }
   if (modeAsr) { modeAsr.addEventListener('change', onModeChange); }
   if (modeSrt) { modeSrt.addEventListener('change', onModeChange); }
+  var recursiveCheck = q('subtitleRecursive');
+  if (recursiveCheck) {
+    recursiveCheck.addEventListener('change', function () {
+      page.recursive = !!recursiveCheck.checked;
+      savePageConfig();
+    });
+  }
 }
 
 export function showSubtitlePage() {
   initSubtitlePage();
   updateCapabilityUi();
   updateSubmitState();
+  if (page.batch && !isTerminal(page.batch.status)) {
+    if (!page.timer) { startPolling(); }
+  } else {
+    notifyBatchFinished();
+  }
 }
 
 export function stopSubtitlePagePolling() {

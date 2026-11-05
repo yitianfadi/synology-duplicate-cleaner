@@ -2166,8 +2166,6 @@ input[type="checkbox"]:disabled { cursor: not-allowed; }
 .subtitle-mode-row { display: flex; gap: 18px; align-items: center; flex-wrap: wrap; margin: 6px 0 12px; }
 .subtitle-submit-row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-top: 12px; }
 .subtitle-submit-row .muted { font-size: 12px; }
-.subtitle-batch-progress { height: 10px; border-radius: 999px; background: #e7edf5; overflow: hidden; margin: 8px 0; }
-.subtitle-batch-bar { height: 100%; width: 0; background: var(--primary, #2f6fed); transition: width .3s ease; }
 .subtitle-batch-list { display: flex; flex-direction: column; gap: 2px; margin: 10px 0; max-height: 360px; overflow: auto; }
 .subtitle-batch-row { padding: 5px 8px; border-radius: 8px; }
 .subtitle-batch-row:hover { background: var(--card-soft); }
@@ -2178,4 +2176,25 @@ input[type="checkbox"]:disabled { cursor: not-allowed; }
 .subtitle-batch-rejected { margin-top: 8px; }
 .subtitle-batch-rejected-list { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; }
 .subtitle-batch-rejected-list .mono { font-size: 12px; overflow-wrap: anywhere; }
+
+/* v0028 subtitle job write-back result */
+.subtitle-job-note { display: flex; gap: 8px; align-items: center; font-size: 12px; color: var(--muted); margin-top: 6px; flex-wrap: wrap; }
+.subtitle-job-warning {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  font-size: 12px;
+  color: var(--warning);
+  background: var(--warning-soft);
+  border: 1px solid #efdba4;
+  border-radius: var(--radius-sm);
+  padding: 6px 9px;
+  margin-top: 6px;
+}
+.subtitle-job-warning .icon { flex: 0 0 auto; margin-top: 1px; }
+.subtitle-outputs { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; }
+.subtitle-outputs.is-compact { margin-top: 4px; }
+.subtitle-output-item { display: flex; gap: 8px; align-items: center; font-size: 12px; flex-wrap: wrap; }
+.subtitle-output-path { font-family: var(--mono); overflow-wrap: anywhere; min-width: 0; flex: 1 1 auto; }
+.subtitle-output-size { color: var(--muted); flex: 0 0 auto; }
 

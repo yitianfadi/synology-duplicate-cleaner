@@ -25,6 +25,9 @@ import {
   ERROR_FALLBACK, JOB_STATUS_LABEL, KEEP_LABEL, KEEP_MODE_LABEL,
   MTIME_FALLBACK_LABEL, MTIME_FALLBACK_REASONS, POLL_MS,
   SIZE_UNITS, SOURCE_INFO, STAGE_LABEL, STATUS_BADGE, STATUS_LABEL,
+  SUBTITLE_ACTIVE_STATUS, SUBTITLE_LANGUAGES, SUBTITLE_OUTPUT_KIND_LABEL,
+  SUBTITLE_SOURCE_LABEL, SUBTITLE_STAGE_LABEL, SUBTITLE_STATUS_BADGE,
+  SUBTITLE_STATUS_LABEL, SUBTITLE_TARGET_LANGUAGES, SUBTITLE_WARNING_LABEL,
   TERMINAL_STATUS, VIDEO_HWACCEL_LABEL, VIDEO_HWACCEL_MODES, VIEWS, VIEW_HEADINGS
 } from './js/constants.js';
 import { els, IDS, state } from './js/state.js';
@@ -1992,7 +1995,7 @@ import {
       if (!sub.supported) {
         hint = '当前后端未提供云端字幕能力；该设置不可用，视频查重与视频相似功能不受影响。';
       } else if (!sub.enabled) {
-        hint = '云端字幕默认关闭；启用并配置 ASR API Key 后，视频结果行会出现“生成字幕”按钮。未启用不影响视频查重。';
+        hint = '云端字幕默认关闭；启用并配置 ASR API Key 后，视频结果行和「字幕」页都会出现批量生成入口。未启用不影响视频查重。';
       } else if (!sub.asrKeySet) {
         hint = '已启用但未配置 ASR API Key：生成按钮保持禁用。API Key 只写不读，保存后仅显示“已配置”状态。';
       } else if (!sub.llmKeySet) {
@@ -2041,6 +2044,14 @@ import {
     if (els.subtitleTranslateTarget) { els.subtitleTranslateTarget.value = s.subtitle_translate_target || 'zh'; }
     setVideoNumberValue(els.subtitleTranslateTimeout, s.subtitle_translate_timeout_sec, 120, 30, 900);
     setVideoNumberValue(els.subtitleTranslateBatchSize, s.subtitle_translate_batch_size, 20, 1, 40);
+    if (els.setSubtitleOutputMode) {
+      els.setSubtitleOutputMode.value = s.subtitle_output_mode === 'download_only'
+        ? 'download_only' : 'alongside_video';
+    }
+    if (els.setSubtitleSkipExisting) {
+      els.setSubtitleSkipExisting.checked = s.subtitle_skip_existing !== false;
+    }
+    setVideoNumberValue(els.setSubtitleJobLimit, s.subtitle_job_limit, 200, 20, 1000);
     if (els.subtitleAsrApiKey) { els.subtitleAsrApiKey.value = ''; }
     if (els.subtitleLlmApiKey) { els.subtitleLlmApiKey.value = ''; }
     if (els.subtitleClearAsrKey) { els.subtitleClearAsrKey.checked = false; }
@@ -2110,6 +2121,15 @@ import {
     if (translateTimeout !== null) { settings.subtitle_translate_timeout_sec = translateTimeout; }
     var batchSize = readSubtitleInt(els.subtitleTranslateBatchSize, 1, 40, '翻译批大小', errors, 'subtitleTranslateBatchSize');
     if (batchSize !== null) { settings.subtitle_translate_batch_size = batchSize; }
+    var jobLimit = readSubtitleInt(els.setSubtitleJobLimit, 20, 1000, '字幕任务保留上限', errors, 'setSubtitleJobLimit');
+    if (jobLimit !== null) { settings.subtitle_job_limit = jobLimit; }
+    if (els.setSubtitleOutputMode) {
+      settings.subtitle_output_mode = els.setSubtitleOutputMode.value === 'download_only'
+        ? 'download_only' : 'alongside_video';
+    }
+    if (els.setSubtitleSkipExisting) {
+      settings.subtitle_skip_existing = !!els.setSubtitleSkipExisting.checked;
+    }
     var asrKey = els.subtitleAsrApiKey ? els.subtitleAsrApiKey.value.trim() : '';
     if (els.subtitleClearAsrKey && els.subtitleClearAsrKey.checked) {
       settings.subtitle_clear_asr_api_key = true;
@@ -2372,7 +2392,11 @@ import {
     updateScanSummary();
   }
 
-  var BACKEND_VIDEO_FIELD_KEYS = { ffmpeg_path: 'videoFfmpegPath', video_hwaccel: 'videoHwaccel' };
+  var BACKEND_VIDEO_FIELD_KEYS = {
+    ffmpeg_path: 'videoFfmpegPath',
+    video_hwaccel: 'videoHwaccel',
+    subtitle_job_limit: 'setSubtitleJobLimit'
+  };
 
   /** 把后端 INVALID_ARGUMENT 的 details.key 映射到前端字段错误（中文文案用后端 message）。 */
   function videoFieldErrorsFromApi(err) {
@@ -4271,28 +4295,17 @@ import {
   }
 
   function subtitleStageLabel(stage) {
-    var labels = { audio: '提取音频', asr: '云端语音识别', translate: '翻译字幕', write: '写入字幕文件' };
-    return labels[stage] || stage || '处理中';
+    return SUBTITLE_STAGE_LABEL[stage] || stage || '处理中';
   }
 
-  var SUBTITLE_ACTIVE_STATUS = ['queued', 'running', 'translating'];
   var SUBTITLE_JOBS_POLL_MS = 1500;
 
   function subtitleJobStatusLabel(status) {
-    var labels = {
-      queued: '排队中', running: '识别中', translating: '翻译中', paused: '已暂停',
-      done: '已完成', failed: '失败', cancelled: '已取消'
-    };
-    return labels[status] || status || '未知';
+    return SUBTITLE_STATUS_LABEL[status] || status || '未知';
   }
 
   function subtitleJobStatusClass(status) {
-    if (status === 'done') { return 'badge-green'; }
-    if (status === 'failed') { return 'badge-red'; }
-    if (status === 'cancelled') { return 'badge-gray'; }
-    if (status === 'queued') { return 'badge-gray'; }
-    if (status === 'paused') { return 'badge-amber'; }
-    return 'badge-blue';
+    return SUBTITLE_STATUS_BADGE[status] || 'badge-blue';
   }
 
   function isTerminalSubtitleStatus(status) {
@@ -4305,6 +4318,67 @@ import {
     return /\.(srt|vtt)$/i.test(name);
   }
 
+  // ---------- v0028：写回结果（视频同目录 .srt）展示 ----------
+  function subtitleWarningText(job) {
+    if (!job || !job.warning) { return ''; }
+    return SUBTITLE_WARNING_LABEL[job.warning] || job.warning;
+  }
+
+  function subtitleOutputKindLabel(kind) {
+    return SUBTITLE_OUTPUT_KIND_LABEL[kind] || kind || '字幕';
+  }
+
+  function subtitleJobOutputs(job) {
+    var outputs = job && Array.isArray(job.outputs) ? job.outputs : [];
+    return outputs.filter(function (item) {
+      return item && typeof item.path === 'string' && item.path;
+    });
+  }
+
+  /** 已写回视频目录的字幕列表（compact 时最多 3 条）；无写回返回 null。 */
+  function renderSubtitleOutputs(job, compact) {
+    var outputs = subtitleJobOutputs(job);
+    if (!outputs.length) { return null; }
+    var limit = compact ? 3 : outputs.length;
+    var wrap = el('div', { className: compact ? 'subtitle-outputs is-compact' : 'subtitle-outputs' });
+    outputs.slice(0, limit).forEach(function (item) {
+      wrap.appendChild(el('div', { className: 'subtitle-output-item' }, [
+        el('span', { className: 'badge badge-green', text: subtitleOutputKindLabel(item.kind) }),
+        el('span', { className: 'subtitle-output-path', attrs: { title: item.path }, text: item.path }),
+        el('span', { className: 'subtitle-output-size', text: fmtBytes(item.size) })
+      ]));
+    });
+    if (outputs.length > limit) {
+      wrap.appendChild(el('p', { className: 'hint', text: '…共 ' + fmtInt(outputs.length) + ' 个写回文件（见任务详情）' }));
+    }
+    return wrap;
+  }
+
+  function subtitleSourceLabel(job) {
+    if (!job || !job.source) { return ''; }
+    return SUBTITLE_SOURCE_LABEL[job.source] || job.source;
+  }
+
+  function subtitleOutputModeLabel(mode) {
+    if (mode === 'download_only') { return '仅任务目录下载'; }
+    if (mode === 'alongside_video') { return '写入视频同目录'; }
+    return '—';
+  }
+
+  /** 语言下拉：SUBTITLE_LANGUAGES / SUBTITLE_TARGET_LANGUAGES 渲染。 */
+  function buildSubtitleLanguageSelect(options) {
+    options = options || {};
+    var source = options.includeAuto ? SUBTITLE_LANGUAGES : SUBTITLE_TARGET_LANGUAGES;
+    var attrs = { 'aria-label': options.ariaLabel || '语言' };
+    if (options.id) { attrs.id = options.id; }
+    var select = el('select', { attrs: attrs });
+    source.forEach(function (item) {
+      select.appendChild(el('option', { attrs: { value: item.value }, text: item.label }));
+    });
+    if (options.value) { select.value = options.value; }
+    return select;
+  }
+
   function openSubtitleCloudModal(file) {
     var sub = subtitleCapability();
     var cloud = {
@@ -4312,24 +4386,16 @@ import {
       running: false, cancelling: false, format: 'srt', modal: null, progressUi: null,
       openedJobs: false
     };
-    var languageSelect = el('select', { attrs: { id: 'subtitleLanguage', 'aria-label': '识别语言' } }, [
-      el('option', { attrs: { value: 'auto' }, text: '自动检测' }),
-      el('option', { attrs: { value: 'zh' }, text: '中文' }),
-      el('option', { attrs: { value: 'en' }, text: '英文' }),
-      el('option', { attrs: { value: 'ja' }, text: '日文' }),
-      el('option', { attrs: { value: 'ko' }, text: '韩文' })
-    ]);
-    languageSelect.value = sub.asrLanguage || 'auto';
+    var languageSelect = buildSubtitleLanguageSelect({
+      id: 'subtitleLanguage', includeAuto: true,
+      ariaLabel: '识别语言', value: sub.asrLanguage || 'auto'
+    });
     var translateCheck = el('input', { attrs: { type: 'checkbox' } });
     if (!sub.llmKeySet) { translateCheck.disabled = true; }
     if (sub.translateEnabled && sub.llmKeySet) { translateCheck.checked = true; }
-    var targetSelect = el('select', { attrs: { 'aria-label': '翻译目标语言' } }, [
-      el('option', { attrs: { value: 'zh' }, text: '中文' }),
-      el('option', { attrs: { value: 'en' }, text: '英文' }),
-      el('option', { attrs: { value: 'ja' }, text: '日文' }),
-      el('option', { attrs: { value: 'ko' }, text: '韩文' })
-    ]);
-    targetSelect.value = sub.targetLang || 'zh';
+    var targetSelect = buildSubtitleLanguageSelect({
+      ariaLabel: '翻译目标语言', value: sub.targetLang || 'zh'
+    });
     targetSelect.disabled = !translateCheck.checked;
     translateCheck.addEventListener('change', function () {
       targetSelect.disabled = !translateCheck.checked;
@@ -4460,7 +4526,7 @@ import {
         filesWrap,
         el('p', {
           className: 'hint',
-          text: '音频只临时存在于服务端；任务完成/失败/取消后自动清理。字幕文件仅保存在 NAS 任务目录，下载需要当前登录会话。'
+          text: '音频只临时存在于服务端；任务完成/失败/取消后自动清理。字幕会优先写入视频同目录，任务目录也保留副本供下载。'
         })
       ]);
       cloud.progressUi = {
@@ -4499,10 +4565,30 @@ import {
       }) : [];
       clear(ui.filesWrap);
       ui.filesWrap.hidden = false;
+      var warningText = subtitleWarningText(job);
+      if (warningText) {
+        ui.filesWrap.appendChild(el('div', { className: 'subtitle-job-warning' }, [
+          icon('warning'), el('span', { text: warningText })
+        ]));
+      }
+      if (job.skipped) {
+        ui.filesWrap.appendChild(el('div', { className: 'subtitle-job-note' }, [
+          el('span', { className: 'badge badge-gray', text: '已跳过' }),
+          el('span', { text: job.message || '视频旁已存在字幕，已跳过（不覆盖已有文件）。' })
+        ]));
+      }
+      var outputsEl = renderSubtitleOutputs(job, false);
+      if (outputsEl) {
+        ui.filesWrap.appendChild(el('h3', { text: '已写入视频目录' }));
+        ui.filesWrap.appendChild(outputsEl);
+      }
       if (!files.length) {
-        ui.filesWrap.appendChild(el('p', { className: 'subtitle-empty', text: '任务已完成，但没有可下载的字幕文件。' }));
+        if (!job.skipped && !outputsEl) {
+          ui.filesWrap.appendChild(el('p', { className: 'subtitle-empty', text: '任务已完成，但任务目录中没有可下载的字幕文件。' }));
+        }
         return;
       }
+      ui.filesWrap.appendChild(el('h3', { text: '任务目录文件（可下载）' }));
       var preferredExt = cloud.format === 'vtt' ? '.vtt' : '.srt';
       files.sort(function (a, b) {
         var aPref = a.name.toLowerCase().slice(-4) === preferredExt ? 0 : 1;
@@ -4598,7 +4684,15 @@ import {
         }
         setModalDismissible(true);
         if (status === 'done') {
-          toast('字幕生成完成，可下载 SRT/VTT 文件。', 'success', 5000);
+          if (job.skipped) {
+            toast('已存在字幕，已跳过；任务目录可查看。', 'info', 5000);
+          } else if (subtitleJobOutputs(job).length) {
+            toast('字幕生成完成，已写入视频同目录；任务目录副本也可下载。', 'success', 5000);
+          } else if (subtitleWarningText(job)) {
+            toast('字幕已生成，但未能写回视频目录；可在任务目录下载。', 'error', 7000);
+          } else {
+            toast('字幕生成完成，可下载 SRT/VTT 文件。', 'success', 5000);
+          }
         } else if (status === 'failed') {
           toast('字幕任务失败，请查看弹窗中的错误信息。', 'error', 6000);
         } else {
@@ -6274,6 +6368,8 @@ import {
     var metaBits = [subtitleStageLabel(job.stage)];
     var chunkText = subtitleJobChunkText(job);
     if (chunkText) { metaBits.push(chunkText); }
+    var sourceText = subtitleSourceLabel(job);
+    if (sourceText) { metaBits.push(sourceText); }
     if (job.translate) { metaBits.push('译文 ' + (job.target_lang || '—')); }
     metaBits.push('创建 ' + subtitleJobTimeText(job));
     var meta = el('div', { className: 'subtitle-job-meta' }, metaBits.map(function (text) {
@@ -6294,6 +6390,20 @@ import {
       else if (job.message) { errorText = job.message; }
       main.appendChild(el('div', { className: 'subtitle-job-error', text: errorText }));
     }
+    if (job.skipped) {
+      main.appendChild(el('div', { className: 'subtitle-job-note' }, [
+        el('span', { className: 'badge badge-gray', text: '已跳过' }),
+        el('span', { text: job.message || '已存在字幕，已跳过' })
+      ]));
+    }
+    var warningText = subtitleWarningText(job);
+    if (warningText) {
+      main.appendChild(el('div', { className: 'subtitle-job-warning' }, [
+        icon('warning'), el('span', { text: warningText })
+      ]));
+    }
+    var outputsEl = renderSubtitleOutputs(job, true);
+    if (outputsEl) { main.appendChild(outputsEl); }
     if (status === 'done') {
       var links = subtitleJobDownloadLinks(job, true);
       if (links) { main.appendChild(links); }
@@ -6429,6 +6539,19 @@ import {
     var status = job.status || 'queued';
     var pct = Math.round(clamp(Number(job.progress) || 0, 0, 100));
     var chunkText = subtitleJobChunkText(job);
+    var gridRows = [
+      el('div', {}, [el('dt', { text: '路径' }), el('dd', { className: 'mono', text: job.path || '—' })]),
+      el('div', {}, [el('dt', { text: '来源' }), el('dd', { text: subtitleSourceLabel(job) || '云端 ASR 生成' })]),
+      el('div', {}, [el('dt', { text: '阶段' }), el('dd', { text: subtitleStageLabel(job.stage) })]),
+      el('div', {}, [el('dt', { text: '分块进度' }), el('dd', { text: chunkText || '—' })]),
+      el('div', {}, [el('dt', { text: '翻译' }), el('dd', { text: job.translate ? ('开启 · 目标 ' + (job.target_lang || '—')) : '未开启' })]),
+      el('div', {}, [el('dt', { text: '写回' }), el('dd', { text: subtitleOutputModeLabel(job.output_mode) })])
+    ];
+    if (job.batch_id) {
+      gridRows.push(el('div', {}, [el('dt', { text: '批次' }), el('dd', { className: 'mono', text: job.batch_id })]));
+    }
+    gridRows.push(el('div', {}, [el('dt', { text: '任务编号' }), el('dd', { className: 'mono', text: job.job_id })]));
+    gridRows.push(el('div', {}, [el('dt', { text: '更新时间' }), el('dd', { text: subtitleJobTimeText(job) })]));
     var body = el('div', { className: 'subtitle-progress-card' }, [
       el('div', { className: 'subtitle-stage-row' }, [
         el('span', { className: 'badge ' + subtitleJobStatusClass(status), text: subtitleJobStatusLabel(status) }),
@@ -6438,14 +6561,7 @@ import {
         el('div', { className: 'progress-fill', style: 'width:' + pct + '%' })
       ]),
       el('p', { className: 'modal-note', text: job.message || (isTerminalSubtitleStatus(status) ? '任务已结束。' : '正在处理…') }),
-      el('dl', { className: 'subtitle-detail-grid' }, [
-        el('div', {}, [el('dt', { text: '路径' }), el('dd', { className: 'mono', text: job.path || '—' })]),
-        el('div', {}, [el('dt', { text: '阶段' }), el('dd', { text: subtitleStageLabel(job.stage) })]),
-        el('div', {}, [el('dt', { text: '分块进度' }), el('dd', { text: chunkText || '—' })]),
-        el('div', {}, [el('dt', { text: '翻译' }), el('dd', { text: job.translate ? ('开启 · 目标 ' + (job.target_lang || '—')) : '未开启' })]),
-        el('div', {}, [el('dt', { text: '任务编号' }), el('dd', { className: 'mono', text: job.job_id })]),
-        el('div', {}, [el('dt', { text: '更新时间' }), el('dd', { text: subtitleJobTimeText(job) })])
-      ])
+      el('dl', { className: 'subtitle-detail-grid' }, gridRows)
     ]);
     if (status === 'failed') {
       var errorText = '字幕任务失败。';
@@ -6454,10 +6570,27 @@ import {
       else if (job.message) { errorText = job.message; }
       body.appendChild(el('div', { className: 'modal-error', attrs: { role: 'alert' }, text: errorText }));
     }
+    if (job.skipped) {
+      body.appendChild(el('div', { className: 'modal-warning' }, [
+        icon('warning'),
+        el('p', { text: job.message || '已存在字幕，已跳过（不会覆盖已有文件）。' })
+      ]));
+    }
+    var warningText = subtitleWarningText(job);
+    if (warningText) {
+      body.appendChild(el('div', { className: 'modal-warning' }, [
+        icon('warning'), el('p', { text: warningText })
+      ]));
+    }
+    var outputsEl = renderSubtitleOutputs(job, false);
+    if (outputsEl) {
+      body.appendChild(el('h3', { text: '已写入视频目录' }));
+      body.appendChild(outputsEl);
+    }
     if (status === 'done' || (job.files && job.files.length)) {
       var files = subtitleJobSafeFiles(job);
       if (files.length) {
-        body.appendChild(el('h3', { text: '字幕文件' }));
+        body.appendChild(el('h3', { text: '字幕文件（任务目录，可下载）' }));
         var wrap = el('div', { className: 'subtitle-file-list' });
         files.forEach(function (item) {
           wrap.appendChild(el('div', { className: 'subtitle-file-item' }, [
@@ -6476,13 +6609,13 @@ import {
           on: { click: function () { openSubtitlePreview(job); } }
         }, [icon('search'), '预览字幕']);
         body.appendChild(previewBtn);
-      } else if (status === 'done') {
-        body.appendChild(el('p', { className: 'subtitle-empty', text: '任务已完成，但没有可下载的字幕文件。' }));
+      } else if (status === 'done' && !job.skipped) {
+        body.appendChild(el('p', { className: 'subtitle-empty', text: '任务已完成，但任务目录中没有可下载的字幕文件。' }));
       }
     }
     body.appendChild(el('p', {
       className: 'hint',
-      text: '任务进度与字幕文件保存在 NAS 本地；下载需要当前登录会话。音频临时文件已在任务结束/取消后清理。'
+      text: '写回视频目录的 srt 不通过网页下载（直接在 NAS 文件管理器中查看）；任务目录副本可下载。音频临时文件已在任务结束/取消后清理。'
     }));
     return body;
   }
@@ -6663,23 +6796,15 @@ import {
     if (!subtitleReady()) { toast(subtitleUnavailableReason(), 'error'); return; }
     if (!paths || !paths.length) { toast('请先在视频结果中勾选要生成字幕的视频副本。', 'info'); return; }
     var sub = subtitleCapability();
-    var languageSelect = el('select', { attrs: { 'aria-label': '批量识别语言' } }, [
-      el('option', { attrs: { value: 'auto' }, text: '自动检测' }),
-      el('option', { attrs: { value: 'zh' }, text: '中文' }),
-      el('option', { attrs: { value: 'en' }, text: '英文' }),
-      el('option', { attrs: { value: 'ja' }, text: '日文' }),
-      el('option', { attrs: { value: 'ko' }, text: '韩文' })
-    ]);
-    languageSelect.value = sub.asrLanguage || 'auto';
+    var languageSelect = buildSubtitleLanguageSelect({
+      includeAuto: true, ariaLabel: '批量识别语言',
+      value: sub.asrLanguage || 'auto'
+    });
     var translateCheck = el('input', { attrs: { type: 'checkbox' } });
     if (!sub.llmKeySet) { translateCheck.disabled = true; }
-    var targetSelect = el('select', { attrs: { 'aria-label': '批量翻译目标语言' } }, [
-      el('option', { attrs: { value: 'zh' }, text: '中文' }),
-      el('option', { attrs: { value: 'en' }, text: '英文' }),
-      el('option', { attrs: { value: 'ja' }, text: '日文' }),
-      el('option', { attrs: { value: 'ko' }, text: '韩文' })
-    ]);
-    targetSelect.value = sub.targetLang || 'zh';
+    var targetSelect = buildSubtitleLanguageSelect({
+      ariaLabel: '批量翻译目标语言', value: sub.targetLang || 'zh'
+    });
     targetSelect.disabled = true;
     translateCheck.addEventListener('change', function () { targetSelect.disabled = !translateCheck.checked; });
     var confirmCheck = el('input', { attrs: { type: 'checkbox' } });
@@ -7450,7 +7575,8 @@ import {
     subtitleLlmBaseUrl: { input: 'subtitleLlmBaseUrl', error: 'subtitleLlmBaseUrlError' },
     subtitleLlmModel: { input: 'subtitleLlmModel', error: 'subtitleLlmModelError' },
     subtitleTranslateTimeout: { input: 'subtitleTranslateTimeout', error: 'subtitleTranslateTimeoutError' },
-    subtitleTranslateBatchSize: { input: 'subtitleTranslateBatchSize', error: 'subtitleTranslateBatchSizeError' }
+    subtitleTranslateBatchSize: { input: 'subtitleTranslateBatchSize', error: 'subtitleTranslateBatchSizeError' },
+    setSubtitleJobLimit: { input: 'setSubtitleJobLimit', error: 'setSubtitleJobLimitError' }
   };
 
   function bytesToMbValue(bytes) {

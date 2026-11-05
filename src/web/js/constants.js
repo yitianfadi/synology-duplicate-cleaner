@@ -106,8 +106,55 @@ export var ERROR_FALLBACK = {
   FILE_CHANGED: '文件在扫描后已被修改。',
   RECYCLE_UNAVAILABLE: '回收站不可用，请改用永久删除。',
   SIMILAR_REVIEW_REQUIRED: '相似组需要人工复核：请先逐组勾选“人工复核”，并逐条选择要删除的副本。',
+  // v0028 目录批量字幕
+  INVALID_DIRECTORY: '目录不存在或不是目录。',
+  ENUMERATE_LIMIT: '枚举数量超出允许范围。',
+  BATCH_EMPTY: '没有可提交的字幕任务。',
+  BATCH_TOO_LARGE: '单批视频数超过上限，请分批提交。',
+  SOURCE_SRT_MISSING: '视频同目录未找到可翻译的字幕文件。',
+  OUTPUT_NOT_WRITABLE: '视频目录不可写，字幕未写回。',
   INTERNAL_ERROR: '服务内部错误，请稍后重试。'
 };
+
+// ---------------------------------------------------------------------------
+// v0028 字幕任务：状态 / 阶段 / 来源 / 写回警告 / 语言（前端共用一份，避免多套映射漂移）
+// ---------------------------------------------------------------------------
+export var SUBTITLE_ACTIVE_STATUS = ['queued', 'running', 'translating'];
+export var SUBTITLE_STATUS_LABEL = {
+  queued: '排队中', running: '识别中', translating: '翻译中',
+  paused: '已暂停', done: '已完成', failed: '失败', cancelled: '已取消'
+};
+export var SUBTITLE_STATUS_BADGE = {
+  queued: 'badge-gray', running: 'badge-blue', translating: 'badge-blue',
+  paused: 'badge-amber', done: 'badge-green', failed: 'badge-red',
+  cancelled: 'badge-gray'
+};
+export var SUBTITLE_STAGE_LABEL = {
+  audio: '提取音频', asr: '云端语音识别', translate: '翻译字幕', write: '写入字幕文件'
+};
+export var SUBTITLE_SOURCE_LABEL = {
+  asr: '云端 ASR 生成', existing_srt: '只翻译已有字幕'
+};
+export var SUBTITLE_WARNING_LABEL = {
+  OUTPUT_NOT_WRITABLE: '视频目录不可写，字幕未写回（任务目录可下载）',
+  OUTPUT_WRITE_PARTIAL: '部分字幕文件写回失败（任务目录可下载）'
+};
+export var SUBTITLE_OUTPUT_KIND_LABEL = {
+  original: '原文', translation: '译文', bilingual: '双语'
+};
+export var SUBTITLE_LANGUAGES = [
+  { value: 'auto', label: '自动检测' },
+  { value: 'zh', label: '中文' },
+  { value: 'en', label: '英文' },
+  { value: 'ja', label: '日文' },
+  { value: 'ko', label: '韩文' }
+];
+export var SUBTITLE_TARGET_LANGUAGES = [
+  { value: 'zh', label: '中文' },
+  { value: 'en', label: '英文' },
+  { value: 'ja', label: '日文' },
+  { value: 'ko', label: '韩文' }
+];
 export var DEFAULT_SETTINGS = {
   hash_algo: 'sha256', keep_mode: 'latest', pinned_path: '',
   skip_empty: true, skip_hidden: true, skip_symlinks: true,
@@ -139,6 +186,10 @@ export var DEFAULT_SETTINGS = {
   subtitle_llm_model: 'gpt-4.1-mini',
   subtitle_translate_target: 'zh',
   subtitle_translate_timeout_sec: 120,
-  subtitle_translate_batch_size: 20
+  subtitle_translate_batch_size: 20,
+  // v0028 目录批量字幕默认值（与后端 settings.DEFAULT_SETTINGS 对齐）
+  subtitle_output_mode: 'alongside_video',
+  subtitle_skip_existing: true,
+  subtitle_job_limit: 200
 };
 export var SIZE_UNITS = { kb: 1024, mb: 1048576, gb: 1073741824 };

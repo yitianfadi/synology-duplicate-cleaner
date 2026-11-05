@@ -791,6 +791,94 @@ def run():
               resp.status in (400, 403) and code in ("PATH_NOT_ALLOWED", "INVALID_ARGUMENT"),
               "status=%s code=%s" % (resp.status, code))
 
+        # ---------------- v0028 字幕：目录枚举 / 批量校验 ----------------
+        enumerate_path = os.path.normpath(roots[0])
+        resp = client.post_json("/api/subtitles/enumerate", {"path": enumerate_path})
+        data = jd(resp)
+        items = data.get("items") if isinstance(data.get("items"), list) else []
+        check("SUB-01", "POST /api/subtitles/enumerate 返回目录内视频枚举结构",
+              resp.status == 200 and data.get("ok") is True
+              and data.get("path") == enumerate_path
+              and isinstance(data.get("count"), int)
+              and data.get("count") == len(items)
+              and isinstance(data.get("skipped"), dict)
+              and isinstance(data.get("total_bytes"), int),
+              "status=%s data_keys=%s" % (resp.status, sorted(data.keys())))
+        evidence("subtitle_enumerate_count", data.get("count"))
+
+        resp = client.post_json("/api/subtitles/enumerate",
+                                {"path": os.path.join(roots[0], "missing-dir")})
+        code, _ = err_code(resp)
+        check("SUB-02", "枚举不存在的目录返回 400 INVALID_DIRECTORY",
+              resp.status == 400 and code == "INVALID_DIRECTORY",
+              "status=%s code=%s" % (resp.status, code))
+
+        resp = client.post_json("/api/subtitles/enumerate",
+                                {"path": os.path.dirname(fx["outside"])})
+        code, _ = err_code(resp)
+        check("SUB-03", "枚举共享根之外路径被拒绝",
+              resp.status in (400, 403) and code in ("PATH_NOT_ALLOWED", "INVALID_ARGUMENT"),
+              "status=%s code=%s" % (resp.status, code))
+
+        # 默认关闭：批量提交应先被总开关拒绝
+        resp = client.post_json("/api/subtitles/batch",
+                                {"paths": [fx["outside"]], "confirm_cloud": True})
+        code, _ = err_code(resp)
+        check("SUB-04", "字幕总开关未启用时批量提交返回 400 SUBTITLE_DISABLED",
+              resp.status == 400 and code == "SUBTITLE_DISABLED",
+              "status=%s code=%s" % (resp.status, code))
+
+        # 开启总开关后校验其余入参（不提交真实任务）
+        resp = client.put_json("/api/settings", {"settings": {
+            "subtitle_enabled": True,
+            "subtitle_asr_api_key": "e2e-dummy-asr-key",
+            "subtitle_output_mode": "alongside_video",
+            "subtitle_skip_existing": True,
+            "subtitle_job_limit": 200}})
+        check("SUB-05", "PUT /api/settings 可保存 v0028 目录批量字幕设置",
+              resp.status == 200 and jd(resp).get("settings", {}).get(
+                  "subtitle_output_mode") == "alongside_video",
+              "status=%s data=%s" % (resp.status, jd(resp)))
+
+        resp = client.post_json("/api/subtitles/batch",
+                                {"paths": [], "confirm_cloud": True})
+        code, _ = err_code(resp)
+        check("SUB-06", "批量提交空路径返回 400 INVALID_ARGUMENT",
+              resp.status == 400 and code == "INVALID_ARGUMENT",
+              "status=%s code=%s" % (resp.status, code))
+
+        resp = client.post_json("/api/subtitles/batch",
+                                {"paths": ["/volume1/no.mp4"] * 501,
+                                 "confirm_cloud": True})
+        code, _ = err_code(resp)
+        check("SUB-07", "批量超过 500 个视频返回 400 BATCH_TOO_LARGE",
+              resp.status == 400 and code == "BATCH_TOO_LARGE",
+              "status=%s code=%s" % (resp.status, code))
+
+        resp = client.post_json("/api/subtitles/batch",
+                                {"paths": [os.path.dirname(fx["outside"])],
+                                 "confirm_cloud": True})
+        code, _ = err_code(resp)
+        check("SUB-08", "批量全部无效路径返回 400 BATCH_EMPTY",
+              resp.status == 400 and code == "BATCH_EMPTY",
+              "status=%s code=%s" % (resp.status, code))
+
+        resp = client.get("/api/subtitles/batches/bat-20260101-000000-abcdef")
+        code, _ = err_code(resp)
+        check("SUB-09", "未知字幕批次返回 404 NOT_FOUND",
+              resp.status == 404 and code == "NOT_FOUND",
+              "status=%s code=%s" % (resp.status, code))
+
+        resp = client.get(q("/api/subtitles", batch_id="bat-20260101-000000-abcdef"))
+        data = jd(resp)
+        check("SUB-10", "字幕任务列表支持 batch_id 过滤",
+              resp.status == 200 and isinstance(data.get("jobs"), list),
+              "status=%s data=%s" % (resp.status, data))
+
+        # 恢复默认（关闭云端字幕），避免影响后续用例
+        client.put_json("/api/settings", {"settings": {
+            "subtitle_enabled": False, "subtitle_clear_asr_api_key": True}})
+
         # ---------------- 静态页面 / 风险提示 ----------------
         resp = client.get("/", csrf=False)
         html = resp.text()

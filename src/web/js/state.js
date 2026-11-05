@@ -56,7 +56,7 @@ export var state = {
 
 export var els = {};
 export var IDS = ('loginView loginForm loginUsername loginPassword loginOtp loginSubmit loginError app riskBanner envBadge userChip userName ' +
-  'logoutBtn main view-scan view-history view-logs view-settings scanHeading historyHeading logsHeading settingsHeading ' +
+  'logoutBtn main view-scan view-subtitles view-history view-logs view-settings scanHeading subtitlesHeading historyHeading logsHeading settingsHeading ' +
   'rootsList rootsCount rootsError pickRootsBtn clearRootsBtn excludeChips excludeCount pickExcludesBtn optionsForm resetOptionsBtn ' +
   'hashAlgo keepMode keepModeHint pinnedField pinnedValue pinnedError pickPinnedBtn clearPinnedBtn minSize minUnit minSizeError maxSize maxUnit ' +
   'maxSizeError includeExt includeExtError excludeExt excludeExtError ignoreCaseExt skipEmpty skipHidden recycleDefault ' +
@@ -108,6 +108,7 @@ export var IDS = ('loginView loginForm loginUsername loginPassword loginOtp logi
   'subtitleTranslateTimeoutError subtitleTranslateBatchSize subtitleTranslateBatchSizeError ' +
   'subtitleAsrModelsBtn subtitleAsrModelPicker subtitleAsrModelsHint subtitleAsrTestBtn subtitleAsrTestResult ' +
   'subtitleLlmModelsBtn subtitleLlmModelPicker subtitleLlmModelsHint subtitleLlmTestBtn subtitleLlmTestResult ' +
+  'setSubtitleOutputMode setSubtitleSkipExisting setSubtitleJobLimit setSubtitleJobLimitError ' +
   'taskTabHistory taskTabSubtitles taskTabDeletions taskTabStorage ' +
   'taskPanelHistory taskPanelSubtitles taskPanelDeletions taskPanelStorage ' +
   'deletionJobsPanel deletionJobsHeading deletionJobsStatus deletionJobsRefreshBtn ' +

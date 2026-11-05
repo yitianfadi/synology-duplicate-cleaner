@@ -240,3 +240,45 @@ python build/build_spk.py --no-icons --out-dir $env:TEMP\qa-build2
 - 已知风险：真实 DSM 安装与 ACL 授权流程未真机验证（环境限制，上线前必做）；相似度质量/性能未大规模评估；
   图片/PDF/DOCX 相似仅单测覆盖；CONTRACT §7 CSV 列已同步为 12 列；Windows symlink UNVERIFIED。
 - 结论：v1.1.0-0003 **PASS（可交付）**，详见 [qa/SIMILARITY_REPORT.md](SIMILARITY_REPORT.md)。
+
+---
+
+## 11. 附：v0028 目录批量字幕 + 写回结果可见性复验（2026-11-05）
+
+> 本节为 v0028 增量验收摘要；接口与行为契约见 [docs/SUBTITLE_BATCH_CONTRACT.md](../docs/SUBTITLE_BATCH_CONTRACT.md)。v1.0/v1.1 历史结论保留在上文。
+
+### 11.1 最终产物
+
+- `dist/DuplicateCleaner-1.1.0-0028.spk`
+  - SHA256 `a399cf2fcd36393495cd3c66a4e3f0bb0cc668c8c22ec5a5988bcca880d3a55a`
+  - package.tgz MD5 `3a646736b6892c42e76517b9ba0aa9a1`（= INFO.checksum）
+  - 大小 38,963,200 B
+- 版本 1.1.0-0028 同步 8 处；SQLite schema v6（新增 `subtitle_batches`，v5→v6 只建表）。
+
+### 11.2 结果总览
+
+| 套件 | 命令 | 结果 |
+|---|---|---|
+| 后端单测 | `cd src/backend && python -m unittest discover -s tests` | **372 tests OK（5 skipped）** |
+| 端到端 | `python qa/e2e_test.py` | **PASS=123 / FAIL=0 / UNVERIFIED=1**（Windows symlink 权限限制） |
+| 静态检查（含 unittest/前端/SPK） | `python qa/static_checks.py` | **PASS=126 / FAIL=0 / UNVERIFIED=0** |
+| 前端模块图 | `node qa/check_web_modules.mjs` | **22/22 PASS** |
+| 无头浏览器冒烟 | `python qa/web_smoke.py` | **8/8 PASS** |
+
+### 11.3 本轮新增能力与验收要点
+
+- 独立「字幕」页：目录枚举（递归/跳过系统与隐藏/符号链接）、筛选、勾选、批量提交、批次进度（暂停/继续/取消/重试失败项）；目录选择复用「扫描范围」选择器。
+- 字幕写回视频同目录：`.srt` 原子写、不覆盖已有文件；不可写回退为任务目录下载（`OUTPUT_NOT_WRITABLE` / `OUTPUT_WRITE_PARTIAL`）。
+- `source=existing_srt` 只翻译已有字幕：不启动 FFmpeg、不调用 ASR、不上传音频。
+- 历史任务列表/详情、视频结果行完成弹窗展示来源、写回路径、跳过原因与写回警告；设置页可配置输出方式/默认跳过/任务保留上限；前端限额取自 `/api/meta.subtitle`。
+- e2e 新增 SUB-01…SUB-10：枚举结构、非法目录/跨共享根拒绝、总开关关闭拒绝、设置保存、空/超限/全无效批量、未知批次、批次过滤。
+
+### 11.4 残余风险与未验证项
+
+- 真实 DSM 安装、ACL 授权与视频目录写回未真机验证（上线前必做）；只读目录应表现为警告 + 任务目录可下载。
+- `subtitle_job_limit` 修改需重启套件生效（已在设置项与契约注明）。
+- 写回视频目录的 srt 不提供网页下载（仅任务目录副本可下载），避免构造任意路径下载接口。
+- Windows 无 symlink 权限导致 SKIP-04 仍为 UNVERIFIED（与历史一致）。
+
+- 结论：v0028 **PASS（可交付）**。
+

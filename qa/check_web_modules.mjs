@@ -144,7 +144,10 @@ const EXPECTED = {
     'SCAN_MODE_LABEL', 'SCAN_MODE_BADGE', 'DEFAULT_SIMILARITY_EXTENSIONS',
     'SIMILARITY_OPTION_KEYS', 'DEFAULT_VIDEO_EXTENSIONS', 'DEFAULT_VIDEO_SETTINGS',
     'VIDEO_HWACCEL_LABEL', 'SOURCE_INFO', 'DELETE_STATUS_LABEL', 'DELETE_REASON_LABEL',
-    'JOB_STATUS_LABEL', 'AUDIT_LABEL', 'ERROR_FALLBACK', 'DEFAULT_SETTINGS', 'SIZE_UNITS'
+    'JOB_STATUS_LABEL', 'AUDIT_LABEL', 'ERROR_FALLBACK', 'DEFAULT_SETTINGS', 'SIZE_UNITS',
+    'SUBTITLE_ACTIVE_STATUS', 'SUBTITLE_STATUS_LABEL', 'SUBTITLE_STATUS_BADGE',
+    'SUBTITLE_STAGE_LABEL', 'SUBTITLE_SOURCE_LABEL', 'SUBTITLE_WARNING_LABEL',
+    'SUBTITLE_OUTPUT_KIND_LABEL', 'SUBTITLE_LANGUAGES', 'SUBTITLE_TARGET_LANGUAGES'
   ],
   'format.js': ['fmtBytes', 'fmtInt', 'fmtDateTime', 'fmtElapsed'],
   'util.js': ['clamp', 'debounce', 'clonePlain', 'normalizeExtList', 'extListToText',
@@ -312,6 +315,15 @@ async function main() {
         pageInitOk && constantsMod.VIEWS.indexOf('subtitles') !== -1
         && constantsMod.VIEW_HEADINGS.subtitles === 'subtitlesHeading',
         pageInitError);
+      const subtitleConstantsOk = constantsMod.SUBTITLE_STATUS_LABEL.done === '已完成'
+        && constantsMod.SUBTITLE_STATUS_BADGE.failed === 'badge-red'
+        && constantsMod.SUBTITLE_ACTIVE_STATUS.indexOf('translating') !== -1
+        && constantsMod.SUBTITLE_WARNING_LABEL.OUTPUT_NOT_WRITABLE.length > 0
+        && constantsMod.ERROR_FALLBACK.SOURCE_SRT_MISSING.length > 0
+        && constantsMod.DEFAULT_SETTINGS.subtitle_output_mode === 'alongside_video'
+        && constantsMod.DEFAULT_SETTINGS.subtitle_skip_existing === true
+        && constantsMod.DEFAULT_SETTINGS.subtitle_job_limit === 200;
+      record('WEB-MOD-SUBTITLE-CONST', '字幕状态/警告/错误码/默认设置常量完整', subtitleConstantsOk);
       let capturedRequests = [];
       const originalFetch = globalThis.fetch;
       try {

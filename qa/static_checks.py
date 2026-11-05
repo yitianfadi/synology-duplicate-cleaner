@@ -408,6 +408,32 @@ def check_frontend():
     check("FE-SUBTITLE-ENDPOINTS", "字幕页覆盖目录枚举/批次提交/批次控制接口",
           endpoints_ok, "subtitle batch endpoints missing")
 
+    subtitle_settings_ok = (
+        all(marker in html for marker in
+            ("setSubtitleOutputMode", "setSubtitleSkipExisting", "setSubtitleJobLimit"))
+        and all(marker in app for marker in
+                ("subtitle_output_mode", "subtitle_skip_existing", "subtitle_job_limit")))
+    check("FE-SUBTITLE-SETTINGS",
+          "设置页可配置目录批量字幕输出方式/默认跳过已有/任务保留上限",
+          subtitle_settings_ok, "subtitle batch settings UI missing")
+    writeback_ok = all(marker in app for marker in
+                       ("renderSubtitleOutputs", "subtitleWarningText",
+                        "已写入视频目录", "subtitle-job-warning"))
+    check("FE-SUBTITLE-WRITEBACK",
+          "字幕任务列表/详情/弹窗展示写回路径、跳过与写回警告",
+          writeback_ok, "subtitle write-back rendering missing")
+    meta_ok = ("metaLimits" in app and "batch_max_items" in app
+               and "enumerate_max_items" in app)
+    check("FE-SUBTITLE-META", "字幕页限额取自 /api/meta.subtitle，不再硬编码",
+          meta_ok, "meta subtitle limits not wired")
+    poll_ok = ("notifyBatchFinished" in app
+               and "state.taskTab = 'subtitles'" in app
+               and "restorePageUi" in app
+               and "lastSubtitleDir.v1" in app)
+    check("FE-SUBTITLE-POLL-RESUME",
+          "切换视图后批次轮询可恢复、跳转任务中心直达字幕任务、记住上次目录",
+          poll_ok, "subtitle batch polling/jump/memory wiring missing")
+
     check("FE-RISK-TEXT", "风险提示文案与契约逐字一致（index.html）",
           RISK_TEXT in html, "risk text not found verbatim")
     risk_region = ""
@@ -495,7 +521,10 @@ def check_frontend():
                     "similarity_exclude_extensions", "similarity_concurrency",
                     "similarity_cache", "similarity_max_file_mb",
                     "similarity_allow_binary",
-                    "ffmpeg_path", "video_hwaccel"]
+                    "ffmpeg_path", "video_hwaccel",
+                    # v0028 目录批量字幕
+                    "subtitle_output_mode", "subtitle_skip_existing",
+                    "subtitle_job_limit"]
     missing_settings = [key for key in setting_keys if key not in app]
     check("FE-SETTINGS-KEYS", "设置页覆盖契约全部设置键",
           not missing_settings, "missing=%s" % missing_settings)
