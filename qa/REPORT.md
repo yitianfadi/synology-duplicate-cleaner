@@ -245,15 +245,15 @@ python build/build_spk.py --no-icons --out-dir $env:TEMP\qa-build2
 
 ## 11. 附：v0028 目录批量字幕 + 写回结果可见性复验（2026-11-05）
 
-> 本节为 v0028 增量验收摘要；接口与行为契约见 [docs/SUBTITLE_BATCH_CONTRACT.md](../docs/SUBTITLE_BATCH_CONTRACT.md)。v1.0/v1.1 历史结论保留在上文。
+> 本节为 v0028/v0029 增量验收摘要；接口与行为契约见 [docs/SUBTITLE_BATCH_CONTRACT.md](../docs/SUBTITLE_BATCH_CONTRACT.md)。v1.0/v1.1 历史结论保留在上文。
 
 ### 11.1 最终产物
 
-- `dist/DuplicateCleaner-1.1.0-0028.spk`
-  - SHA256 `a399cf2fcd36393495cd3c66a4e3f0bb0cc668c8c22ec5a5988bcca880d3a55a`
-  - package.tgz MD5 `3a646736b6892c42e76517b9ba0aa9a1`（= INFO.checksum）
+- `dist/DuplicateCleaner-1.1.0-0029.spk`
+  - SHA256 `c2729457c18f8bbf2d7d9f7c870c42ee0a02afb9d205bd20fd3bf5af81373e87`
+  - package.tgz MD5 `538f9bb9ea5b6df7c4cb296427d9fbfc`（= INFO.checksum）
   - 大小 38,963,200 B
-- 版本 1.1.0-0028 同步 8 处；SQLite schema v6（新增 `subtitle_batches`，v5→v6 只建表）。
+- 版本 1.1.0-0029 同步 8 处；SQLite schema v6（新增 `subtitle_batches`，v5→v6 只建表）。
 
 ### 11.2 结果总览
 
