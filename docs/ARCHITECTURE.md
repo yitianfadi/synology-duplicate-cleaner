@@ -1,7 +1,7 @@
 # 整体方案架构
 
 > 项目：**重复文件清理与字幕（Duplicate Cleaner & Subtitles）** · 群晖 DSM 7.x SPK 套件
-> 版本：1.1.0-0039
+> 版本：1.1.0-0040
 > 原则：**先扫描、出报告、人工确认、二次确认、可回收、全程审计**。任何情况下都不自动静默删除。
 
 ## 1. 目标与边界
@@ -399,4 +399,11 @@ Linux 的 `st_ctime` 是 **inode 状态变更时间**，不是创建时间，复
 
 - 语言码：后端 `LANGUAGE_RE` 接受任意 2–3 位合法语言码；设置页下拉扩展为常见 19 种，非下拉合法码由前端保留（临时补 option），不再在保存设置时被重置为 `auto`/`zh`。
 - 译文输出：`subtitle_translate_outputs`（`both`/`target_only`/`bilingual_only`）在 `_write_outputs`/`_write_alongside` 统一裁剪译文文件；`original.srt` 始终保留（补翻译源文本），已有文件不覆盖、旧文件不删除。
+
+### 12.7 分片音频预取（v0040）
+
+- 单任务原本是「抽第 N 片音频（FFmpeg）→ 上传 → 识别 → 下一片」，FFmpeg 与网络互等；`subtitle_concurrency` 只解决任务间并行，不解决任务内互等。
+- `_run_chunked_asr` 现在通过 `_AudioPrefetch` 只预读 **1 片**：预取线程在主线程识别第 N 片时抽第 N+1 片，结果经内存/条件变量交接；`take(index)` 时已就绪则零等待。设置 `subtitle_audio_prefetch`（默认 `true`）关闭时退化为原地串行抽取。
+- 边界语义：仍按分片顺序 ASR（时间轴/内容不变）；暂停只在分片边界生效并丢弃预取；取消/任务收尾通过传入 FFmpeg 的 `stop_check` 让在跑抽取尽快退出；抽音频异常保存后在主线程 `take()` 原样抛出（错误码不变）；缓存里已完成的分片不预取；未消费的临时音频在 `close()` 中删除，任务临时目录整体 `rmtree`。
+- 观测：`timeline.asr_chunks[]` 的 `extract_sec`/`asr_sec` 记录各自真实时间窗（预取时两者重叠），仍是定位「慢在抽音频还是识别」的依据。
 

@@ -383,6 +383,8 @@ class SubtitleSettingsTest(unittest.TestCase):
         self.assertEqual(defaults["subtitle_translate_batch_size"], 20)
         self.assertFalse(defaults["subtitle_llm_disable_thinking"])
         self.assertFalse(defaults["subtitle_write_vtt"])
+        # v0040：分片音频预取默认开启（关闭需显式设置 false）
+        self.assertTrue(defaults["subtitle_audio_prefetch"])
         patch = settings_module.validate_patch({
             "subtitle_enabled": True,
             "subtitle_asr_base_url": "http://127.0.0.1:9000/v1/",
@@ -401,10 +403,12 @@ class SubtitleSettingsTest(unittest.TestCase):
             "subtitle_translate_batch_size": 40,
             "subtitle_llm_disable_thinking": True,
             "subtitle_write_vtt": True,
+            "subtitle_audio_prefetch": False,
         })
         self.assertTrue(patch["subtitle_enabled"])
         self.assertTrue(patch["subtitle_llm_disable_thinking"])
         self.assertTrue(patch["subtitle_write_vtt"])
+        self.assertFalse(patch["subtitle_audio_prefetch"])
         self.assertEqual(patch["subtitle_asr_base_url"],
                          "http://127.0.0.1:9000/v1")
         for item in [
@@ -422,6 +426,7 @@ class SubtitleSettingsTest(unittest.TestCase):
             {"subtitle_translate_batch_size": 41},
             {"subtitle_llm_disable_thinking": "yes"},
             {"subtitle_write_vtt": "yes"},
+            {"subtitle_audio_prefetch": "yes"},
             {"subtitle_asr_language": "auto-auto-auto"},
             {"subtitle_translate_target": "auto"},
             {"subtitle_asr_model": "bad model name"},
@@ -1225,6 +1230,109 @@ class SubtitleConcurrencyTest(SubtitleTestBase):
         self.assertEqual(service.apply_settings({"subtitle_concurrency": 2}), 2)
         self.assertEqual(len(service._workers), 2)
         self.assertTrue(all(worker.is_alive() for worker in service._workers))
+
+
+class SubtitleAudioPrefetchTest(SubtitleTestBase):
+    """v0040：分片音频预取（预读 1 片：抽音频与上一片 ASR 重叠；关闭后串行）。"""
+
+    def _run_chunks(self, prefetch, asr_delay=0.0, extract_sleep=0.0,
+                    duration=180.0, fail_from=None, cancel_after_asr=False):
+        """跑一个 3 分片任务，返回 (job, 结果, windows)；记录抽取/ASR 时间窗。"""
+        self._configure_settings(subtitle_asr_chunk_sec=60,
+                                 subtitle_audio_prefetch=prefetch)
+        self.cloud.httpd.asr_delay = asr_delay
+        service = self.service
+        windows = {"extract": [], "asr": []}
+        lock = threading.Lock()
+        real_extract = service._extract_chunk_audio
+        real_transcribe = service.client.transcribe
+
+        def wrapped_extract(job_ref, settings, start, length, *args, **kwargs):
+            if extract_sleep:
+                time.sleep(extract_sleep)
+            if fail_from is not None and start >= fail_from:
+                raise subtitles.SubtitleError("NO_AUDIO", u"模拟抽音频失败")
+            begin = time.time()
+            try:
+                return real_extract(job_ref, settings, start, length,
+                                    *args, **kwargs)
+            finally:
+                with lock:
+                    windows["extract"].append((start, begin, time.time()))
+
+        def wrapped_transcribe(*args, **kwargs):
+            begin = time.time()
+            try:
+                return real_transcribe(*args, **kwargs)
+            finally:
+                with lock:
+                    windows["asr"].append((begin, time.time()))
+
+        service._extract_chunk_audio = wrapped_extract
+        service.client.transcribe = wrapped_transcribe
+        video = self.make_video(name="prefetch.mp4", duration=duration)
+        job = self.submit(video, translate=False)
+        if cancel_after_asr:
+            deadline = time.time() + 20.0
+            while time.time() < deadline:
+                with lock:
+                    if windows["asr"]:
+                        break
+                time.sleep(0.01)
+            service.cancel(job["job_id"])
+        return job, self.wait_job(job["job_id"]), windows
+
+    @staticmethod
+    def _overlapped_starts(windows):
+        """抽取时间窗与任意 ASR 时间窗重叠的分片起点列表。"""
+        starts = []
+        for start, begin, end in windows["extract"]:
+            for asr_begin, asr_end in windows["asr"]:
+                if begin < asr_end and asr_begin < end:
+                    starts.append(start)
+                    break
+        return sorted(starts)
+
+    def test_prefetch_overlaps_extraction_with_asr(self):
+        _job, done, windows = self._run_chunks(
+            True, asr_delay=0.5, extract_sleep=0.2)
+        self.assertEqual(done["status"], "done", done.get("error"))
+        self.assertEqual(len(windows["extract"]), 3)
+        self.assertEqual(len(windows["asr"]), 3)
+        # 第 2/3 片的抽取必须与上一片的 ASR 重叠（FFmpeg 与网络并行）。
+        self.assertEqual(self._overlapped_starts(windows), [60.0, 120.0])
+        # 预取结果用完即删，任务临时目录不残留音频文件（Windows 目录删除有
+        # 延迟，允许短暂重试；只断言没有残留文件）。
+        tmp_root = os.path.join(self.harness.data_dir, "tmp")
+        leftover_files = []
+        deadline = time.time() + 2.0
+        while time.time() < deadline:
+            leftover_files = []
+            if os.path.isdir(tmp_root):
+                for root_dir, _dirs, names in os.walk(tmp_root):
+                    leftover_files.extend(names)
+            if not leftover_files:
+                break
+            time.sleep(0.05)
+        self.assertEqual(leftover_files, [])
+
+    def test_prefetch_disabled_is_strictly_sequential(self):
+        _job, done, windows = self._run_chunks(
+            False, asr_delay=0.4, extract_sleep=0.15)
+        self.assertEqual(done["status"], "done", done.get("error"))
+        self.assertEqual(len(windows["extract"]), 3)
+        self.assertEqual(len(windows["asr"]), 3)
+        self.assertEqual(self._overlapped_starts(windows), [])
+
+    def test_prefetch_extract_error_keeps_error_code(self):
+        _job, done, _windows = self._run_chunks(True, fail_from=60.0)
+        self.assertEqual(done["status"], "failed")
+        self.assertEqual(done["error"]["code"], "NO_AUDIO")
+
+    def test_prefetch_cancel_mid_job(self):
+        _job, done, _windows = self._run_chunks(
+            True, asr_delay=0.6, cancel_after_asr=True)
+        self.assertEqual(done["status"], "cancelled")
 
 
 class SubtitleListFilterTest(SubtitleTestBase):

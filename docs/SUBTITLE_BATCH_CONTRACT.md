@@ -28,6 +28,7 @@
 | subtitle_job_limit | 200 | 20..1000；已完成任务保留上限（LRU 只删任务目录，不删视频旁 srt）；**修改后需重启套件生效**（服务启动时读取） |
 | subtitle_concurrency | 1 | 1..4；同时执行的字幕任务数（默认 1 串行）；**保存设置后立即生效**（v0037 起动态调整 worker，无需重启套件） |
 | subtitle_translate_outputs | both | v0036：译文输出组合 `both`/`target_only`/`bilingual_only`；控制任务目录与视频旁写出的译文文件数量；`original.srt` 始终保留 |
+| subtitle_audio_prefetch | true | v0040：分片音频预取（布尔）。识别当前分片时后台先抽下一分片音频，FFmpeg 与 ASR 重叠；关闭后严格串行。保存后只影响新任务（任务开始时读取） |
 
 以下为常量（不做成设置项，避免配置面膨胀）：
 
@@ -325,7 +326,7 @@ CREATE TABLE IF NOT EXISTS subtitle_batches (
 
 ## 12. 版本与兼容
 
-- 版本 **1.1.0-0039**（v0039 起含任务队列视图与批次组总览），需同步 8 处：`README.md`、`build/build_spk.py`、`docs/ARCHITECTURE.md`、`docs/CONTRACT.md`、`docs/SPK_PACKAGING.md`、`spk/INFO`、`src/backend/dupcleaner/config.py`、`src/web/index.html`（含 `app.js?v=` 查询串）。
+- 版本 **1.1.0-0040**（v0039 起含任务队列视图与批次组总览，v0040 起含分片音频预取），需同步 8 处：`README.md`、`build/build_spk.py`、`docs/ARCHITECTURE.md`、`docs/CONTRACT.md`、`docs/SPK_PACKAGING.md`、`spk/INFO`、`src/backend/dupcleaner/config.py`、`src/web/index.html`（含 `app.js?v=` 查询串）。
 - 现有 `POST /api/subtitles` 行为不变（新字段均为可选）；旧任务记录可读；旧 SPK 升级后数据目录与包 ID 不变。
 - 文档同步：本文件、`docs/SUBTITLE_CONTRACT.md`（新增 §13 指向本文件）、`docs/ARCHITECTURE.md`（字幕页与批次服务）。
 
@@ -487,4 +488,12 @@ CREATE TABLE IF NOT EXISTS subtitle_batches (
 - **新增 `GET /api/subtitles/batch-groups?active_limit=10&completed_limit=3`**（与 POST 同路径不同方法）：返回进行中/暂停组（按组内最早队列位置 `next_queue_position` 升序）与最近完成组；`options.translate` 区分“只生成字幕 / 生成+翻译”；`single_active_count` 为非批次组任务数。
 - **字幕页「批次总览」**：进行中（含暂停）与最近完成批次组列表；点击切换当前组（保存 localStorage），新提交自动选中新组但旧组仍可切回并暂停/取消/查看。
 - 版本 1.1.0-0039；SQLite schema 不变（仍 v7），无数据迁移。
+
+## 20. v0040 分片音频预取
+
+- **设置**：新增 `subtitle_audio_prefetch`（布尔，默认 `true`）；保存设置后对**新开始执行**的任务生效（任务启动时读取，已在执行的任务不切换）。
+- **行为**：每个任务内只预读 **1 片**——主线程上传/识别第 N 片时，预取线程抽第 N+1 片音频；取用时已抽好则零等待。分片顺序、时间轴、字幕内容、写回文件与串行实现一致。
+- **语义不变**：暂停仍在分片边界生效（预取结果丢弃）；取消/任务结束让在跑 FFmpeg 尽快退出；抽音频异常原样抛回主线程（错误码不变）；已完成分片不重复抽取；临时音频最多多占 1 片，任务结束整目录删除。
+- **前端**：设置页「云端字幕」新增「分片音频预取（默认开启）」复选框；任务详情「ASR 分片明细」的「抽音频 / 识别」耗时改为记录真实时间窗（预取时两段重叠）。
+- 版本 1.1.0-0040；SQLite schema 不变（仍 v7），无数据迁移。
 

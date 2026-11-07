@@ -1088,12 +1088,36 @@ def run():
               and data.get("subtitle_translate_target") == "fr",
               "status=%s data=%s" % (resp.status, data))
 
+        # v0040：分片音频预取开关（默认开，可关闭；保存后只影响新任务）
+        resp = client.put_json("/api/settings", {"settings": {
+            "subtitle_audio_prefetch": False}})
+        data = jd(resp).get("settings", {})
+        check("SUB-33", "PUT /api/settings 可关闭分片音频预取",
+              resp.status == 200
+              and data.get("subtitle_audio_prefetch") is False,
+              "status=%s data=%s" % (resp.status, data))
+
+        resp = client.get("/api/settings")
+        data = jd(resp).get("settings", {})
+        check("SUB-34", "GET /api/settings 回读分片音频预取=关闭",
+              resp.status == 200
+              and data.get("subtitle_audio_prefetch") is False,
+              "status=%s data=%s" % (resp.status, data))
+
+        resp = client.put_json("/api/settings", {"settings": {
+            "subtitle_audio_prefetch": "yes"}})
+        code, _ = err_code(resp)
+        check("SUB-35", "非法分片音频预取取值返回 400 INVALID_ARGUMENT",
+              resp.status == 400 and code == "INVALID_ARGUMENT",
+              "status=%s code=%s" % (resp.status, code))
+
         # 恢复默认（关闭云端字幕），避免影响后续用例
         client.put_json("/api/settings", {"settings": {
             "subtitle_enabled": False, "subtitle_clear_asr_api_key": True,
             "subtitle_translate_enabled": False,
             "subtitle_concurrency": 1,
             "subtitle_translate_outputs": "both",
+            "subtitle_audio_prefetch": True,
             "subtitle_asr_language": "auto",
             "subtitle_translate_target": "zh",
             "subtitle_llm_disable_thinking": False,

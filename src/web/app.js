@@ -2070,6 +2070,10 @@ import {
     if (els.subtitleWriteVtt) {
       els.subtitleWriteVtt.checked = s.subtitle_write_vtt === true;
     }
+    // v0040：分片音频预取（默认开；显式 false 才关闭以兼容旧设置）
+    if (els.subtitleAudioPrefetch) {
+      els.subtitleAudioPrefetch.checked = s.subtitle_audio_prefetch !== false;
+    }
     setVideoNumberValue(els.subtitleAsrTimeout, s.subtitle_asr_timeout_sec, 300, 30, 1800);
     setVideoNumberValue(els.subtitleAsrChunk, s.subtitle_asr_chunk_sec, 600, 60, 1800);
     setVideoNumberValue(els.subtitleAsrMaxAudioMb, s.subtitle_asr_max_audio_mb, 24, 1, 100);
@@ -2154,6 +2158,7 @@ import {
       : '';
     settings.subtitle_audio_source = audioSource === 'server' ? 'server' : 'nas';
     settings.subtitle_write_vtt = !!(els.subtitleWriteVtt && els.subtitleWriteVtt.checked);
+    settings.subtitle_audio_prefetch = !!(els.subtitleAudioPrefetch && els.subtitleAudioPrefetch.checked);
     var asrTimeout = readSubtitleInt(els.subtitleAsrTimeout, 30, 1800, 'ASR 超时', errors, 'subtitleAsrTimeout');
     if (asrTimeout !== null) { settings.subtitle_asr_timeout_sec = asrTimeout; }
     var asrChunk = readSubtitleInt(els.subtitleAsrChunk, 60, 1800, '音频分块', errors, 'subtitleAsrChunk');

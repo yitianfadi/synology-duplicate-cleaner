@@ -1038,6 +1038,140 @@ def _clamp_concurrency(value):
     return max(1, min(concurrency, config.SUBTITLE_CONCURRENCY_MAX))
 
 
+class _AudioPrefetch(object):
+    """v0040：分片音频预取（只预读 1 片，让 NAS 的 FFmpeg 与云端 ASR 重叠）。
+
+    串行流程原本是「抽音频 → 上传 → 识别 → 下一片」，其中抽音频（FFmpeg）和
+    识别（网络/GPU）互等。开启预取后，主线程开始识别第 N 片时，后台线程已经
+    在抽第 N+1 片的音频，FFmpeg 与网络重叠，单任务吞吐提升。
+
+    语义约束（与串行实现保持一致）：
+    - 同时只保留 1 个未消费的预取结果，临时文件最多多占 1 片空间；
+    - 取消（cancel_event）与关闭（close）都会让在跑的 FFmpeg 尽快退出，
+      暂停只丢弃预取结果，不改变“分片边界才暂停”的既有语义；
+    - 抽音频异常原样保存，在主线程 take() 时抛出，错误码与串行时完全相同；
+    - 缓存里已完成的分片不预取（断点续传/重启恢复不重复抽音频）。
+    """
+
+    def __init__(self, service, job, settings, plan, cached, max_bytes,
+                 tempdir, counter, mode="nas", server_max_bytes=None,
+                 enabled=True):
+        self.service = service
+        self.job = job
+        self.settings = settings
+        self.plan = list(plan)
+        self.cached = cached or {}
+        self.max_bytes = max_bytes
+        self.tempdir = tempdir
+        self.counter = counter
+        self.mode = mode
+        self.server_max_bytes = server_max_bytes
+        self.enabled = bool(enabled)
+        self._cond = threading.Condition()
+        self._results = {}       # index -> 抽取结果（成功/异常）
+        self._pending = None     # 已产出但主线程还没消费的分片号
+        self._closed = False
+        self._thread = None
+        if self.enabled:
+            self._thread = threading.Thread(
+                target=self._run, name="subtitle-audio-prefetch", daemon=True)
+            self._thread.start()
+
+    def _should_stop(self):
+        """传给 FFmpeg 的停止条件：取消或预取关闭（暂停/任务收尾）都尽快退出。"""
+        return self._closed or self.job.cancel_event.is_set()
+
+    def _extract(self, index):
+        start, length = self.plan[index]
+        started = time.time()
+        try:
+            audio, fallback = self.service._extract_chunk_audio(
+                self.job, self.settings, start, length, self.max_bytes,
+                self.tempdir, self.counter, mode=self.mode,
+                server_max_bytes=self.server_max_bytes,
+                stop_check=self._should_stop)
+        except BaseException as exc:  # noqa: BLE001 - 原样抛回主线程
+            return {"error": exc, "started_epoch": started}
+        return {
+            "audio": audio,
+            "fallback": bool(fallback),
+            "extract_sec": round(time.time() - started, 3),
+            "started_epoch": started,
+        }
+
+    @staticmethod
+    def _unlink(result):
+        for entry in result.get("audio") or []:
+            try:
+                os.unlink(entry["path"])
+            except OSError:
+                pass
+
+    def _run(self):
+        try:
+            for index in range(len(self.plan)):
+                with self._cond:
+                    while self._pending is not None and not self._closed:
+                        self._cond.wait(timeout=0.2)
+                if self._closed:
+                    break
+                row = self.cached.get(index)
+                if row is not None and row.get("status") == CHUNK_DONE:
+                    continue
+                result = self._extract(index)
+                with self._cond:
+                    if self._closed:
+                        self._unlink(result)
+                        break
+                    self._results[index] = result
+                    self._pending = index
+                    self._cond.notify_all()
+        finally:
+            with self._cond:
+                self._cond.notify_all()
+
+    def take(self, index):
+        """取第 index 片音频；返回 {audio, fallback, extract_sec, started_epoch}。"""
+        if not self.enabled:
+            result = self._extract(index)
+            self._raise(result)
+            return result
+        with self._cond:
+            while index not in self._results:
+                if self._closed:
+                    break
+                if self.job.cancel_event.is_set():
+                    raise SubtitleCancelled()
+                self._cond.wait(timeout=0.2)
+            result = self._results.pop(index, None)
+            if result is not None or self._closed:
+                self._pending = None
+            self._cond.notify_all()
+        if result is None:
+            raise SubtitleCancelled()
+        self._raise(result)
+        return result
+
+    @staticmethod
+    def _raise(result):
+        error = result.get("error")
+        if error is not None:
+            raise error
+
+    def close(self):
+        """停止预取线程并清理未消费的临时音频（重复调用安全）。"""
+        with self._cond:
+            self._closed = True
+            leftovers = dict(self._results)
+            self._results = {}
+            self._pending = None
+            self._cond.notify_all()
+        if self._thread is not None:
+            self._thread.join(timeout=5.0)
+        for result in leftovers.values():
+            self._unlink(result)
+
+
 class SubtitleService(object):
     """异步字幕任务服务：默认同一时间跑 1 个任务，其余排队。
 
@@ -3713,19 +3847,21 @@ class SubtitleService(object):
 
     def _extract_chunk_audio(self, job, settings, start, length, max_bytes,
                              tempdir, counter, mode="nas",
-                             server_max_bytes=None):
+                             server_max_bytes=None, stop_check=None):
         """抽取单个逻辑分片的音频；超过上限时继续对半切。
 
         v0032：mode=server 时用 FFmpeg 流复制抽音轨（不解码），失败后回退
         到 NAS 解码（mp3）。返回 (entries, fallback_used)；entry 为 dict：
         {start, length, path, filename, content_type}。
+        v0040：stop_check 由分片音频预取传入（取消/预取关闭时尽快杀掉 FFmpeg）。
         """
         if mode == "server":
             try:
                 return (self._extract_chunk_remux(
                     job, settings, start, length,
                     server_max_bytes or config.SUBTITLE_SERVER_UPLOAD_MAX_MB
-                    * 1024 * 1024, tempdir, counter), False)
+                    * 1024 * 1024, tempdir, counter,
+                    stop_check=stop_check), False)
             except SubtitleError:
                 raise
             except video_similarity.VideoStopped:
@@ -3734,12 +3870,14 @@ class SubtitleService(object):
                 pass  # 容器/编码不支持流复制 → 回退 NAS 解码
         results, _ = self._extract_chunk_audio_nas(
             job, settings, start, length, max_bytes, tempdir, counter,
-            fallback=mode == "server")
+            fallback=mode == "server", stop_check=stop_check)
         return results, mode == "server"
 
     def _extract_chunk_audio_nas(self, job, settings, start, length, max_bytes,
-                                 tempdir, counter, fallback=False):
+                                 tempdir, counter, fallback=False,
+                                 stop_check=None):
         timeout = float(settings.get("subtitle_asr_timeout_sec") or 300)
+        check = stop_check or (lambda: self._stop_check(job))
         queue = [(float(start), float(length))]
         results = []
         while queue:
@@ -3749,8 +3887,7 @@ class SubtitleService(object):
             counter[0] += 1
             try:
                 self.ffmpeg.extract_audio_mp3(
-                    job.path, path, chunk_start, chunk_length, timeout,
-                    lambda: self._stop_check(job))
+                    job.path, path, chunk_start, chunk_length, timeout, check)
             except video_similarity.VideoStopped:
                 raise SubtitleCancelled()
             try:
@@ -3782,9 +3919,10 @@ class SubtitleService(object):
         return results, fallback
 
     def _extract_chunk_remux(self, job, settings, start, length, max_bytes,
-                             tempdir, counter):
+                             tempdir, counter, stop_check=None):
         """流复制抽音轨（v0032 “服务器解码”模式）：不解码，速度快。"""
         timeout = float(settings.get("subtitle_asr_timeout_sec") or 300)
+        check = stop_check or (lambda: self._stop_check(job))
         queue = [(float(start), float(length))]
         results = []
         while queue:
@@ -3794,8 +3932,7 @@ class SubtitleService(object):
             counter[0] += 1
             try:
                 self.ffmpeg.extract_audio_remux(
-                    job.path, path, chunk_start, chunk_length, timeout,
-                    lambda: self._stop_check(job))
+                    job.path, path, chunk_start, chunk_length, timeout, check)
             except video_similarity.VideoStopped:
                 raise SubtitleCancelled()
             try:
@@ -3845,66 +3982,76 @@ class SubtitleService(object):
         all_cues = []
         fallback_used = False
         counter = [0]
-        for index, (start, length) in enumerate(plan):
-            self._check_control(job)
-            done_row = cached.get(index)
-            if done_row is not None and done_row.get("status") == CHUNK_DONE:
-                all_cues.extend(done_row.get("cues") or [])
-                with job.lock:
-                    job.chunk_index = max(int(job.chunk_index or 0), index + 1)
-                continue
-            chunk_started = time.time()
-            audio, chunk_fallback = self._extract_chunk_audio(
-                job, settings, start, length, max_bytes, tempdir, counter,
-                mode=mode, server_max_bytes=server_max_bytes)
-            extract_sec = round(time.time() - chunk_started, 3)
-            fallback_used = fallback_used or chunk_fallback
-            chunk_cues = []
-            asr_started = time.time()
-            try:
-                for entry in audio:
-                    self._check_cancel(job)
-                    parsed = self.client.transcribe(
-                        base_url, api_key, model, language, entry["path"],
-                        timeout, job.cancel_event,
-                        filename=entry["filename"],
-                        content_type=entry["content_type"])
-                    sub_start = float(entry["start"])
-                    for cue in parsed:
-                        chunk_cues.append({
-                            "start": max(0.0, float(cue["start"]) + sub_start),
-                            "end": max(0.0, float(cue["end"]) + sub_start),
-                            "text": cue["text"],
-                        })
-            finally:
-                for entry in audio:
-                    try:
-                        os.unlink(entry["path"])
-                    except OSError:
-                        pass
-            chunk_cues = dedupe_cues(chunk_cues)
-            asr_sec = round(time.time() - asr_started, 3)
-            try:
-                self.store.save_subtitle_chunk(
-                    job.job_id, index, start, start + length,
-                    CHUNK_DONE, chunk_cues)
-            except Exception:
-                pass
-            all_cues.extend(chunk_cues)
-            job.add_asr_chunk({
-                "index": index, "status": "done",
-                "start_epoch": round(chunk_started, 3),
-                "end_epoch": round(time.time(), 3),
-                "extract_sec": extract_sec, "asr_sec": asr_sec,
-                "fallback": bool(chunk_fallback),
-            })
-            progress = 20 + int(50.0 * (index + 1) / total)
-            self._update(
-                job, stage="asr", progress=progress,
-                message=u"正在识别语音 %d/%d" % (index + 1, total),
-                chunk_index=index + 1, chunk_total=total)
-            # 暂停只在完整分片保存后生效
-            self._check_control(job)
+        # v0040：分片音频预取（设置 subtitle_audio_prefetch，默认开）。只预读
+        # 下一片：主线程识别第 N 片时后台已抽好第 N+1 片音频，FFmpeg 与网络
+        # 重叠。关闭时 take() 退化为原地串行抽取，与历史行为完全一致。
+        prefetch = _AudioPrefetch(
+            self, job, settings, plan, cached, max_bytes, tempdir, counter,
+            mode=mode, server_max_bytes=server_max_bytes,
+            enabled=bool(settings.get("subtitle_audio_prefetch", True)))
+        try:
+            for index, (start, length) in enumerate(plan):
+                self._check_control(job)
+                done_row = cached.get(index)
+                if done_row is not None and done_row.get("status") == CHUNK_DONE:
+                    all_cues.extend(done_row.get("cues") or [])
+                    with job.lock:
+                        job.chunk_index = max(int(job.chunk_index or 0), index + 1)
+                    continue
+                chunk = prefetch.take(index)
+                audio = chunk["audio"]
+                chunk_fallback = chunk["fallback"]
+                extract_sec = chunk["extract_sec"]
+                chunk_started = chunk["started_epoch"]
+                fallback_used = fallback_used or chunk_fallback
+                chunk_cues = []
+                asr_started = time.time()
+                try:
+                    for entry in audio:
+                        self._check_cancel(job)
+                        parsed = self.client.transcribe(
+                            base_url, api_key, model, language, entry["path"],
+                            timeout, job.cancel_event,
+                            filename=entry["filename"],
+                            content_type=entry["content_type"])
+                        sub_start = float(entry["start"])
+                        for cue in parsed:
+                            chunk_cues.append({
+                                "start": max(0.0, float(cue["start"]) + sub_start),
+                                "end": max(0.0, float(cue["end"]) + sub_start),
+                                "text": cue["text"],
+                            })
+                finally:
+                    for entry in audio:
+                        try:
+                            os.unlink(entry["path"])
+                        except OSError:
+                            pass
+                chunk_cues = dedupe_cues(chunk_cues)
+                asr_sec = round(time.time() - asr_started, 3)
+                try:
+                    self.store.save_subtitle_chunk(
+                        job.job_id, index, start, start + length,
+                        CHUNK_DONE, chunk_cues)
+                except Exception:
+                    pass
+                all_cues.extend(chunk_cues)
+                job.add_asr_chunk({
+                    "index": index, "status": "done",
+                    "start_epoch": round(chunk_started, 3),
+                    "end_epoch": round(time.time(), 3),
+                    "extract_sec": extract_sec, "asr_sec": asr_sec,
+                    "fallback": bool(chunk_fallback),
+                })
+                progress = 20 + int(50.0 * (index + 1) / total)
+                self._update(
+                    job, stage="asr", progress=progress,
+                    message=u"正在识别语音 %d/%d" % (index + 1, total),
+                    chunk_index=index + 1, chunk_total=total)
+                # 暂停只在完整分片保存后生效
+                self._check_control(job)
+        finally:
+            prefetch.close()
         return all_cues, fallback_used
 
     def _translate_cues(self, job, settings, cues):

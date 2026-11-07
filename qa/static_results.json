@@ -1,7 +1,7 @@
 {
-  "generated_at": "2026-11-07T20:47:28+0800",
+  "generated_at": "2026-11-07T21:54:55+0800",
   "summary": {
-    "PASS": 160,
+    "PASS": 162,
     "FAIL": 0,
     "UNVERIFIED": 0
   },
@@ -52,7 +52,7 @@
       "id": "BE-UNITTEST-LOG",
       "name": "unittest 结果",
       "status": "INFO",
-      "detail": "Ran 448 tests in 109.002s"
+      "detail": "Ran 452 tests in 135.065s"
     },
     {
       "id": "BE-NO-AUTODELETE",
@@ -277,6 +277,12 @@
       "detail": ""
     },
     {
+      "id": "BE-SUBTITLE-AUDIO-PREFETCH",
+      "name": "分片音频预取：1 片预读 + 暂停/取消/异常/缓存语义 + 设置开关（v0040）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
       "id": "FE-FILES",
       "name": "前端 index.html/app.js/styles.css 存在",
       "status": "PASS",
@@ -435,6 +441,12 @@
     {
       "id": "FE-SUBTITLE-TRANSLATE-OUTPUT",
       "name": "设置页提供译文输出组合（译文+双语/只写译文/只写双语，v0036）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "FE-SUBTITLE-AUDIO-PREFETCH",
+      "name": "设置页提供分片音频预取开关（默认开启，v0040）",
       "status": "PASS",
       "detail": ""
     },
@@ -872,7 +884,7 @@
     },
     {
       "id": "SPK-DIST",
-      "name": "构建产物存在（DuplicateCleaner-1.1.0-0039.spk）",
+      "name": "构建产物存在（DuplicateCleaner-1.1.0-0040.spk）",
       "status": "PASS",
       "detail": ""
     },
@@ -884,7 +896,7 @@
     },
     {
       "id": "SPK-VERSION",
-      "name": "SPK INFO.version 与当前源码 APP_VERSION（1.1.0-0039）一致",
+      "name": "SPK INFO.version 与当前源码 APP_VERSION（1.1.0-0040）一致",
       "status": "PASS",
       "detail": ""
     },

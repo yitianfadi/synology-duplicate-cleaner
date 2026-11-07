@@ -699,5 +699,37 @@ python build/build_spk.py --no-icons --out-dir $env:TEMP\qa-build2
 
 - NAS 安装 1.1.0-0039 后：先提交一个“只生成字幕”批次组 A（排队/执行中），再提交批次组 B：字幕页「批次总览」应同时列出 A/B，A 可切回并暂停/取消；任务中心「字幕任务」的「即将执行」应按真实队列顺序显示 A 队头任务（队列位置 #1、#2…），与后端 `GET /api/subtitles/queue` 一致。
 
+## 22. 附：v0040 分片音频预取（2026-11-07）
+
+### 22.1 需求与实现
+
+- **问题**：单任务内是「抽第 N 片音频（FFmpeg）→ 上传 → 识别 → 下一片」严格串行，FFmpeg 与云端 ASR 互等；`subtitle_concurrency` 只解决**任务之间**并行，所以在 NAS 上常见「并发设了 2、`top` 里 ffmpeg 却只有 1 个」——两个任务的抽取窗口短暂且互相错开，并不是并发没生效。
+- **实现**：新增 `subtitles._AudioPrefetch`。每个任务 1 个预取线程、**只预读 1 片**：主线程上传/识别第 N 片时后台线程抽第 N+1 片，`take(index)` 取用时已就绪则零等待；`_extract_chunk_audio/_extract_chunk_audio_nas/_extract_chunk_remux` 新增 `stop_check` 参数，取消或任务收尾时能让在跑的 FFmpeg 尽快退出。
+- **语义保持**：分片顺序、时间轴偏移、字幕内容、写回文件与串行实现一致；暂停仍在**分片边界**生效（丢弃预取结果）；抽音频异常原样抛回主线程（错误码不变）；缓存分片不重复抽取；未消费的临时音频在 `close()` 删除、任务临时目录整体 `rmtree`；最多多占 1 片临时空间。
+- **新设置** `subtitle_audio_prefetch`（布尔，默认 `true`）：设置页「云端字幕」新增「分片音频预取（默认开启）」，保存后对**新开始执行**的任务生效；关闭即回到严格串行。
+- 无 DB schema 变更（仍 v7），无数据迁移。
+
+### 22.2 测试证据
+
+- 后端单测 **452 tests OK（5 skipped）**：新增 `SubtitleAudioPrefetchTest` 4 例——预取时第 2/3 片抽取与上一片 ASR 时间窗重叠、关闭预取后严格串行无重叠、预取抽取异常仍返回 `NO_AUDIO`、运行中取消成功且临时目录无残留音频；设置默认值/布尔校验/非法值用例补入 `SubtitleSettingsTest`。
+- 静态检查 **PASS=162 / FAIL=0 / UNVERIFIED=0**：新增 `BE-SUBTITLE-AUDIO-PREFETCH`、`FE-SUBTITLE-AUDIO-PREFETCH`。
+- 端到端 **PASS=157 / FAIL=0 / UNVERIFIED=1**（Windows symlink）：新增 SUB-33/34/35（保存关闭 / 回读 / 非法值 400）。
+- 前端模块 **22/22**、web smoke **8/8**。
+
+### 22.3 最终产物
+
+- `dist/DuplicateCleaner-1.1.0-0040.spk`
+  - SHA256 `6611ee6513f1179efb3b94d2b733a3dff331fb8f7058c6cd9a69621289837fd2`
+  - package.tgz MD5 `4b02f6d0267734c2f41b46d2aa3b7cd2`（= INFO.checksum）
+  - 大小 39,014,400 B
+- 版本 1.1.0-0040 同步 8 处；SQLite schema 不变（仍 v7），无数据迁移。
+
+### 22.4 真机验证待办
+
+- 安装 1.1.0-0040 后跑一个 ≥2 片的字幕任务：任务详情 →「步骤耗时」→ 展开「ASR 分片明细」，第 2/3 片的「抽音频」开始时间应早于上一片「识别」结束（两段时间窗重叠）；同时在 NAS 上 `ps -eo args | grep -c '[f]fmpeg'` 连续采样，出现 2 个 ffmpeg 的比例应比升级前明显上升。
+- 关闭「分片音频预取」再跑一个同规格任务：抽音频与识别应恢复严格串行（无重叠），用于对比提速幅度。
+
+
+
 
 

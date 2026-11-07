@@ -217,6 +217,8 @@ export var DEFAULT_SETTINGS = {
   subtitle_asr_max_audio_mb: 24,
   // v0032：音频来源 nas=本机抽音（默认）/ server=上传视频段由 ASR 服务器抽音
   subtitle_audio_source: 'nas',
+  // v0040：分片音频预取（默认开）：识别当前片时先抽下一片，FFmpeg 与 ASR 重叠
+  subtitle_audio_prefetch: true,
   // v0033：默认只生成 SRT；开启后任务目录额外生成 VTT
   subtitle_write_vtt: false,
   subtitle_translate_enabled: false,

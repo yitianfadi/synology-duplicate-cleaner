@@ -71,6 +71,9 @@ DEFAULT_SETTINGS = {
     "subtitle_asr_max_audio_mb": 24,
     # v0032：音频来源 nas（本机抽音，默认）/ server（上传视频段由 ASR 服务器抽音）
     "subtitle_audio_source": config.SUBTITLE_DEFAULT_AUDIO_SOURCE,
+    # v0040：分片音频预取（默认开）。识别第 N 片时后台先抽第 N+1 片音频，
+    # 让 NAS 的 FFmpeg 与云端 ASR 重叠；关闭后恢复“抽音频→上传→识别”串行。
+    "subtitle_audio_prefetch": True,
     # v0033：默认只生成 SRT；开启后任务目录额外生成 VTT（写回视频目录始终只写 srt）
     "subtitle_write_vtt": False,
     "subtitle_translate_enabled": False,
@@ -350,6 +353,8 @@ def _normalize_value(key, value):
             _err(u"subtitle_audio_source 只能是 nas/server", {"key": key})
         return value
     if key == "subtitle_write_vtt":
+        return _check_bool(key, value)
+    if key == "subtitle_audio_prefetch":
         return _check_bool(key, value)
     if key == "subtitle_llm_model":
         return _check_model_name(key, value)

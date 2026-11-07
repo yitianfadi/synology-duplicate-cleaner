@@ -487,6 +487,21 @@ def check_backend():
           and os.path.isfile(outputs_test_path),
           "subtitle translate outputs markers missing")
 
+    # ---- v0040：分片音频预取（1 片预读，FFmpeg 与 ASR 重叠）----
+    prefetch_test_ok = (
+        "class SubtitleAudioPrefetchTest" in read(
+            os.path.join(backend, "tests", "test_subtitles.py")))
+    check("BE-SUBTITLE-AUDIO-PREFETCH",
+          "分片音频预取：1 片预读 + 暂停/取消/异常/缓存语义 + 设置开关（v0040）",
+          "class _AudioPrefetch" in subtitles_src
+          and "def _should_stop" in subtitles_src
+          and "subtitle_audio_prefetch" in settings_src
+          and 'enabled=bool(settings.get("subtitle_audio_prefetch", True))'
+          in subtitles_src
+          and "stop_check=self._should_stop" in subtitles_src
+          and prefetch_test_ok,
+          "subtitle audio prefetch markers missing")
+
 
 # ---------------------------------------------------------------------------
 # 前端
@@ -741,6 +756,16 @@ def check_frontend():
     check("FE-SUBTITLE-TRANSLATE-OUTPUT",
           "设置页提供译文输出组合（译文+双语/只写译文/只写双语，v0036）",
           translate_outputs_ok, "subtitle translate outputs setting missing")
+    prefetch_ui_ok = (
+        'id="subtitleAudioPrefetch"' in html
+        and "subtitleAudioPrefetch" in app
+        and "subtitle_audio_prefetch" in app
+        and "subtitle_audio_prefetch: true" in read(
+            os.path.join(js_dir, "constants.js"))
+        and "subtitleAudioPrefetch" in read(os.path.join(js_dir, "state.js")))
+    check("FE-SUBTITLE-AUDIO-PREFETCH",
+          "设置页提供分片音频预取开关（默认开启，v0040）",
+          prefetch_ui_ok, "subtitle audio prefetch setting missing")
     language_ui_ok = (
         "SUBTITLE_LANGUAGE_RE" in app
         and "fillLanguageSelect" in app
