@@ -325,7 +325,7 @@ CREATE TABLE IF NOT EXISTS subtitle_batches (
 
 ## 12. 版本与兼容
 
-- 版本 **1.1.0-0038**（v0038 起含任务步骤时间线、操作日志删除、任务中心菜单调整），需同步 8 处：`README.md`、`build/build_spk.py`、`docs/ARCHITECTURE.md`、`docs/CONTRACT.md`、`docs/SPK_PACKAGING.md`、`spk/INFO`、`src/backend/dupcleaner/config.py`、`src/web/index.html`（含 `app.js?v=` 查询串）。
+- 版本 **1.1.0-0039**（v0039 起含任务队列视图与批次组总览），需同步 8 处：`README.md`、`build/build_spk.py`、`docs/ARCHITECTURE.md`、`docs/CONTRACT.md`、`docs/SPK_PACKAGING.md`、`spk/INFO`、`src/backend/dupcleaner/config.py`、`src/web/index.html`（含 `app.js?v=` 查询串）。
 - 现有 `POST /api/subtitles` 行为不变（新字段均为可选）；旧任务记录可读；旧 SPK 升级后数据目录与包 ID 不变。
 - 文档同步：本文件、`docs/SUBTITLE_CONTRACT.md`（新增 §13 指向本文件）、`docs/ARCHITECTURE.md`（字幕页与批次服务）。
 
@@ -479,4 +479,12 @@ CREATE TABLE IF NOT EXISTS subtitle_batches (
 - **前端**：任务详情新增「步骤耗时」表与可展开的分片/批次明细；任务列表显示总耗时。
 - **菜单调整（方案 A）**：顶部导航改为「扫描 / 字幕 / 任务中心」+ 右上角设置入口；操作日志并入任务中心标签页（扫描历史 / 字幕任务 / 删除任务 / 操作日志）；「存储诊断」从任务中心移到设置页「系统 · 存储与运行诊断」；旧 `#/logs` 书签自动跳转到任务中心操作日志。
 - 版本 1.1.0-0038；SQLite schema 不变（仍 v7）。
+
+## 19. v0039 队列视图与批次总览
+
+- **任务中心「字幕任务」**改为四段：**进行中**（running/translating）、**即将执行**（queued，按内部 FIFO 队列顺序，最多 20 条，带 `queue_position` 与排队总数）、**已暂停**、**最近完成**（done/failed/cancelled，按 `finished_at` 倒序）；有排队任务时也会自动轮询（无运行中任务时降为 3s）。
+- **新增 `GET /api/subtitles/queue`**：`active/queued/paused/recent` + `active_total/queued_total/paused_total/recent_total` + `single_active_count`。队列顺序来自后端内部 `_queue` 的 FIFO 顺序——暂停继续、失败重试都会追加到队尾，因此不能按 `created_at` 排序。
+- **新增 `GET /api/subtitles/batch-groups?active_limit=10&completed_limit=3`**（与 POST 同路径不同方法）：返回进行中/暂停组（按组内最早队列位置 `next_queue_position` 升序）与最近完成组；`options.translate` 区分“只生成字幕 / 生成+翻译”；`single_active_count` 为非批次组任务数。
+- **字幕页「批次总览」**：进行中（含暂停）与最近完成批次组列表；点击切换当前组（保存 localStorage），新提交自动选中新组但旧组仍可切回并暂停/取消/查看。
+- 版本 1.1.0-0039；SQLite schema 不变（仍 v7），无数据迁移。
 

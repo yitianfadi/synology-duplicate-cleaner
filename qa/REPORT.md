@@ -671,5 +671,33 @@ python build/build_spk.py --no-icons --out-dir $env:TEMP\qa-build2
 
 - NAS 安装 1.1.0-0038 后：刷新页面确认导航为 扫描/字幕/任务中心 + 右上设置；任务中心 → 操作日志 勾选删除 / 保留最近 N 天；打开任意已完成字幕任务详情查看「步骤耗时」与分片/批次明细；设置页底部「系统 · 存储与运行诊断」可加载；旧 `#/logs` 链接可正常跳转。
 
+## 21. 附：v0039 队列视图与批次总览（2026-11-07）
+
+### 21.1 需求与实现
+
+- **批次进度被新提交覆盖**：字幕页批次进度只维护一个 `page.group`，提交新批次组后旧排队组不可见。新增 `GET /api/subtitles/batch-groups?active_limit=10&completed_limit=3`（与 POST 同路径不同方法）与批次总览：列出进行中（含暂停，按组内最早队列位置 `next_queue_position` 排序）与最近 3 个完成组；点击切换当前组，新提交自动选中新组但旧组保留；无 localStorage 可恢复组时自动选中总览第一组。
+- **「最近任务」不是即将执行**：原逻辑取创建时间倒序，而队列 FIFO 执行、重试/继续会追加到队尾。新增 `GET /api/subtitles/queue` 返回 `active/queued/paused/recent`：`queued` 严格按内部 `_queue` 顺序并带 `queue_position`，另有 `queued_total` 等总数与 `single_active_count`。任务中心字幕任务改为 进行中 / 即将执行（前 20 条 + 队列位置 + 总数）/ 已暂停 / 最近完成（按结束时间倒序）；有排队任务时自动轮询（无运行中时 3s）。
+- 无 DB schema 变更（仍 v7），无数据迁移；旧后端/旧数据兼容。
+
+### 21.2 测试证据
+
+- 后端单测 **448 tests OK（5 skipped）**：新增队列视图（FIFO 顺序/queue_position/限制与总数/暂停/最近完成排序）、批次总览（按下一队列位置排序/完成组/类型/single_active_count）、API 形状。
+- 静态检查 **PASS=160 / FAIL=0 / UNVERIFIED=0**：新增 `BE-QUEUE-VIEW`、`FE-QUEUE-VIEW`、`FE-GROUP-OVERVIEW`；端点清单补 queue / batch-groups 总览。
+- 端到端 **PASS=154 / FAIL=0 / UNVERIFIED=1**（Windows symlink）：新增 QUEUE-01、GROUPVIEW-01。
+- 前端模块 **22/22**、web smoke **8/8**。
+- 无头 Chromium UI 探针 **10/10**（真实 dev 后端 + 本地假 ASR，提交 6 个视频、并发 1）：任务中心可见「进行中（1）」「即将执行（5）」与「队列位置 #1」，API 队列首项与 UI 一致；字幕页批次总览显示「只生成字幕 / 队首位置 #1 / 当前查看」，自动选中并显示批次卡，无控制台错误。
+
+### 21.3 最终产物
+
+- `dist/DuplicateCleaner-1.1.0-0039.spk`
+  - SHA256 `fad950c577a81d5b8c17b76647456cf66f67cb6baeddc19a56f2a1a751f5226d`
+  - package.tgz MD5 `6c5aecfeb661f1889db5aa334128a901`（= INFO.checksum）
+  - 大小 39,004,160 B
+- 版本 1.1.0-0039 同步 8 处；SQLite schema 不变（仍 v7），无数据迁移。
+
+### 21.4 真机验证待办
+
+- NAS 安装 1.1.0-0039 后：先提交一个“只生成字幕”批次组 A（排队/执行中），再提交批次组 B：字幕页「批次总览」应同时列出 A/B，A 可切回并暂停/取消；任务中心「字幕任务」的「即将执行」应按真实队列顺序显示 A 队头任务（队列位置 #1、#2…），与后端 `GET /api/subtitles/queue` 一致。
+
 
 

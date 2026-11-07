@@ -1,7 +1,7 @@
 # 实现契约（前后端共享，版本 1.0）
 
 > 本文件是前后端并行开发的唯一接口约定。任何一方需要改动字段，先改本文件并在团队任务中说明。
-> 产品名：**DuplicateCleaner**；显示名：**重复文件清理与字幕**；SPK 版本：**1.1.0-0038**。
+> 产品名：**DuplicateCleaner**；显示名：**重复文件清理与字幕**；SPK 版本：**1.1.0-0039**。
 > v1.1 新增内容相似度模式；相似模式字段与行为见 [SIMILARITY_CONTRACT.md](SIMILARITY_CONTRACT.md)，**精准模式规则不变**。
 
 ## 1. 仓库与写入边界
@@ -105,6 +105,11 @@ v0038 增量（字幕步骤时间线 / 操作日志删除 / 菜单调整）：
 - 前端导航调整为「扫描 / 字幕 / 任务中心」+ 右上角设置；操作日志并入任务中心标签页；存储诊断移入设置页；旧 `#/logs` 自动跳转到任务中心操作日志。
 - SQLite schema 仍 v7（字幕时间线随任务 JSON payload 持久化）。
 
+v0039 增量（队列视图 / 批次总览）：
+- 新增 `GET /api/subtitles/queue?active_limit=10&queued_limit=20&paused_limit=10&recent_limit=10`：返回 `active/queued/paused/recent` 四组任务快照与各总数；`queued` 严格按内部 FIFO 队列顺序（重试/继续追加到队尾），每项带 `queue_position`。
+- 新增 `GET /api/subtitles/batch-groups?active_limit=10&completed_limit=3`（与 POST 同路径不同方法）：返回进行中批次组（按组内最早队列位置排序）与最近完成组，含 `next_queue_position` / `options.translate` / `single_active_count`。
+- 前端任务中心「字幕任务」改为 进行中 / 即将执行 / 已暂停 / 最近完成 四段；字幕页批次进度增加“批次总览”，新提交不再让旧批次消失。
+
 
 ## 4. 认证
 
@@ -131,7 +136,7 @@ v0038 增量（字幕步骤时间线 / 操作日志删除 / 菜单调整）：
 ### GET /api/meta
 ```json
 {
- "app_version": "1.1.0-0038",
+ "app_version": "1.1.0-0039",
  "dsm_version": "7.2.2-72806" | "dev",
  "python_version": "3.8.16",
  "creation_time_supported": true,
@@ -404,4 +409,4 @@ Content-Disposition: attachment; filename="duplicate-scan-<id>.csv"
 - 后端 unittest 覆盖：statx 时间读取降级、哈希分片/限速、重复分组与三种保留策略、
   路径黑名单、删除前重校验、回收站路径生成、CSV、API 鉴权。
 - 前端可用静态检查 + 本地 dev 后端联调；QA 用 dev 模式在临时目录生成重复文件跑完整 API 流程。
-- 打包产物 `dist/DuplicateCleaner-1.1.0-0038.spk` 必须能通过 `tar -tf` 检查，包含 INFO/package.tgz/scripts/conf/ui。
+- 打包产物 `dist/DuplicateCleaner-1.1.0-0039.spk` 必须能通过 `tar -tf` 检查，包含 INFO/package.tgz/scripts/conf/ui。

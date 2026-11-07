@@ -14,7 +14,7 @@ import { state } from './state.js';
 import {
   $$, byId, clear, el, setBusy, setHidden, setText, show
 } from './dom.js';
-import { fmtBytes, fmtInt } from './format.js';
+import { fmtBytes, fmtDateTime, fmtInt } from './format.js';
 import { toast } from './toast.js';
 import { confirmDialog } from './modal.js';
 import {
@@ -77,7 +77,12 @@ var page = {
   polling: false,
   restoring: false,
   notified: false,
-  batchesExpanded: false
+  batchesExpanded: false,
+  // v0039：批次总览（进行中/最近批次，可切换）
+  overview: null,
+  overviewLoading: false,
+  overviewTimer: null,
+  autoSelecting: false
 };
 
 function q(id) { return byId(id); }
@@ -595,6 +600,8 @@ async function submitGroup() {
     renderGroup();
     loadGroupJobs('reset');
     startPolling();
+    loadGroupOverview();
+    startOverviewPolling();
     var rejected = Array.isArray(page.group.rejected) ? page.group.rejected.length : 0;
     var duplicates = Array.isArray(page.group.duplicates) ? page.group.duplicates.length : 0;
     var total = Number(page.group.total) || eligible.length;
@@ -1194,6 +1201,159 @@ async function loadGroupJobs(mode) {
 }
 
 // ---------------------------------------------------------------------------
+// v0039：批次总览（进行中/最近完成，可切换；不受“新提交覆盖当前组”影响）
+// ---------------------------------------------------------------------------
+function renderGroupOverview() {
+  var box = q('subtitleGroupOverview');
+  if (!box) { return; }
+  var data = page.overview || {};
+  var active = Array.isArray(data.active) ? data.active : [];
+  var completed = Array.isArray(data.completed) ? data.completed : [];
+  var list = q('subtitleGroupOverviewList');
+  var empty = q('subtitleGroupOverviewEmpty');
+  var hint = q('subtitleGroupOverviewHint');
+  var single = q('subtitleGroupOverviewSingle');
+  if (!list) { return; }
+  clear(list);
+  var total = active.length + completed.length;
+  if (hint) {
+    setText(hint, total
+      ? ('进行中 ' + fmtInt(active.length) + ' · 最近完成 ' + fmtInt(completed.length))
+      : '');
+  }
+  active.concat(completed).forEach(function (group) {
+    list.appendChild(renderGroupOverviewItem(group));
+  });
+  setHidden(empty, total > 0);
+  if (!single) { return; }
+  clear(single);
+  var singleCount = Number(data.single_active_count) || 0;
+  setHidden(single, singleCount <= 0);
+  if (singleCount > 0) {
+    single.appendChild(el('span', {
+      text: '另有 ' + fmtInt(singleCount) + ' 个单视频字幕任务在排队/执行中。'
+    }));
+    var goBtn = el('button', {
+      className: 'btn btn-ghost btn-sm', attrs: { type: 'button' },
+      text: '去任务中心查看'
+    });
+    goBtn.addEventListener('click', function () {
+      if (typeof state.openSubtitleJobs === 'function') { state.openSubtitleJobs(); }
+    });
+    single.appendChild(goBtn);
+  }
+}
+
+function renderGroupOverviewItem(group) {
+  var current = !!(page.group && page.group.group_id === group.group_id);
+  var status = group.status || 'queued';
+  var total = Number(group.total) || 0;
+  var finished = Number(group.finished) || 0;
+  var pct = Number(group.progress);
+  if (!isFinite(pct)) { pct = total ? Math.round(100 * finished / total) : 0; }
+  var translate = !!(group.options && group.options.translate === true);
+  var parts = [
+    el('span', {
+      className: 'badge ' + (GROUP_STATUS_BADGE[status] || 'badge-gray'),
+      text: GROUP_STATUS_LABEL[status] || status
+    }),
+    el('span', {
+      className: 'group-meta',
+      text: fmtInt(finished) + '/' + fmtInt(total) + ' · ' + fmtInt(pct) + '%'
+    }),
+    el('span', {
+      className: 'group-meta',
+      text: translate ? '生成+翻译' : '只生成字幕'
+    })
+  ];
+  if (group.next_queue_position !== null
+      && group.next_queue_position !== undefined) {
+    parts.push(el('span', {
+      className: 'group-meta',
+      text: '队首位置 #' + (Number(group.next_queue_position) + 1)
+    }));
+  }
+  parts.push(el('span', { className: 'group-time', text: fmtDateTime(group.created_at) }));
+  if (current) {
+    parts.push(el('span', { className: 'badge badge-blue', text: '当前查看' }));
+  }
+  var button = el('button', {
+    className: 'subtitle-group-item' + (current ? ' is-current' : ''),
+    attrs: { type: 'button' }
+  }, parts);
+  button.addEventListener('click', function () {
+    selectGroup(group.group_id);
+  });
+  return button;
+}
+
+async function loadGroupOverview() {
+  if (!q('subtitleGroupOverview') || page.overviewLoading) { return; }
+  page.overviewLoading = true;
+  try {
+    var res = await api('/api/subtitles/batch-groups?active_limit=10&completed_limit=3',
+      { timeout: 15000 });
+    page.overview = res || {};
+  } catch (err) {
+    if (!page.overview) {
+      page.overview = { active: [], completed: [], single_active_count: 0 };
+    }
+  } finally {
+    page.overviewLoading = false;
+    renderGroupOverview();
+    // 首次进入且没有可恢复的批次组时，自动选中总览里“最先执行”的组，
+    // 让下方批次进度直接有内容（用户仍可在总览里切换）。
+    var active = (page.overview && page.overview.active) || [];
+    if (!page.group && !page.restoring && !page.autoSelecting && active.length) {
+      page.autoSelecting = true;
+      selectGroup(active[0].group_id).finally(function () {
+        page.autoSelecting = false;
+      });
+    }
+  }
+}
+
+function startOverviewPolling() {
+  stopOverviewPolling();
+  if (!q('subtitleGroupOverview')) { return; }
+  page.overviewTimer = setInterval(function () { loadGroupOverview(); }, 5000);
+}
+
+function stopOverviewPolling() {
+  if (page.overviewTimer) {
+    clearInterval(page.overviewTimer);
+    page.overviewTimer = null;
+  }
+}
+
+async function selectGroup(groupId) {
+  if (!groupId) { return; }
+  if (page.group && page.group.group_id === groupId) { return; }
+  try {
+    var res = await api('/api/subtitles/batch-groups/' + encodeURIComponent(groupId),
+      { timeout: 15000 });
+    var group = res && res.group ? res.group : null;
+    if (!group || !group.group_id) {
+      toast('该批次组不存在或已被清理。', 'error', 6000);
+      await loadGroupOverview();
+      return;
+    }
+    stopPolling();
+    page.group = group;
+    page.notified = isGroupTerminal(group.status);
+    page.batchesExpanded = false;
+    resetJobsView(groupSignature(group));
+    saveLastGroupId(group.group_id);
+    renderGroup();
+    renderGroupOverview();
+    loadGroupJobs('reset');
+    if (!isGroupTerminal(group.status)) { startPolling(); }
+  } catch (err) {
+    toast(errorMessage(err, '切换批次组失败，请稍后重试。'), 'error', 6000);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // 批次组：轮询 / 终态提醒
 // ---------------------------------------------------------------------------
 function startPolling() {
@@ -1449,6 +1609,7 @@ async function restoreLastGroup() {
     if (!isGroupTerminal(group.status)) {
       startPolling();
     }
+    renderGroupOverview();
   } catch (err) {
     if (err && err.status === 404) {
       clearLastGroupId();
@@ -1570,6 +1731,8 @@ export function initSubtitlePage() {
   if (confirm) { confirm.addEventListener('change', updateSubmitState); }
   var submit = q('subtitleSubmitBtn');
   if (submit) { submit.addEventListener('click', submitGroup); }
+  var overviewRefresh = q('subtitleGroupOverviewRefresh');
+  if (overviewRefresh) { overviewRefresh.addEventListener('click', loadGroupOverview); }
   var modeAsr = q('subtitleModeAsr');
   var modeSrt = q('subtitleModeSrt');
   function onModeChange() {
@@ -1593,6 +1756,8 @@ export function showSubtitlePage() {
   initSubtitlePage();
   updateCapabilityUi();
   updateSubmitState();
+  loadGroupOverview();
+  startOverviewPolling();
   if (!page.group) {
     // 首次进入 / 刷新页面后：按 localStorage 恢复最近一次批次组
     restoreLastGroup();
@@ -1611,4 +1776,5 @@ export function showSubtitlePage() {
 
 export function stopSubtitlePagePolling() {
   stopPolling();
+  stopOverviewPolling();
 }

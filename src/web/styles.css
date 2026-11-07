@@ -2322,3 +2322,38 @@ input[type="checkbox"]:disabled { cursor: not-allowed; }
   box-shadow: none;
   padding: 0;
 }
+
+/* ==========================================================================
+   v0039：字幕批次总览（进行中/最近批次可切换）
+   ========================================================================== */
+.subtitle-group-overview { display: flex; flex-direction: column; gap: 6px; }
+.subtitle-group-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  width: 100%;
+  text-align: left;
+  padding: 8px 10px;
+  border: 1px solid #dde5ea;
+  border-radius: 8px;
+  background: var(--card-soft);
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+}
+.subtitle-group-item:hover { border-color: var(--primary); background: #fff; }
+.subtitle-group-item.is-current {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+}
+.subtitle-group-item .group-time { font-size: 12px; color: var(--muted); }
+.subtitle-group-item .group-meta { font-size: 12px; color: var(--text-soft); }
+.subtitle-group-overview-single {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+  font-size: 13px;
+}

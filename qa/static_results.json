@@ -1,7 +1,7 @@
 {
-  "generated_at": "2026-11-07T19:55:47+0800",
+  "generated_at": "2026-11-07T20:47:28+0800",
   "summary": {
-    "PASS": 157,
+    "PASS": 160,
     "FAIL": 0,
     "UNVERIFIED": 0
   },
@@ -52,7 +52,7 @@
       "id": "BE-UNITTEST-LOG",
       "name": "unittest 结果",
       "status": "INFO",
-      "detail": "Ran 444 tests in 117.737s"
+      "detail": "Ran 448 tests in 109.002s"
     },
     {
       "id": "BE-NO-AUTODELETE",
@@ -247,6 +247,12 @@
       "detail": ""
     },
     {
+      "id": "BE-QUEUE-VIEW",
+      "name": "字幕队列视图：真实 FIFO 顺序 + queue_position + 进行中/暂停/最近完成（v0039）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
       "id": "BE-SUBTITLE-TRANSLATE-ONLY",
       "name": "补翻译：源文本解析（源任务目录→视频旁）+ 派生任务 + 单任务/组级接口（v0035）",
       "status": "PASS",
@@ -387,6 +393,18 @@
     {
       "id": "FE-NAV-V0038",
       "name": "菜单调整：扫描/字幕/任务中心 + 右上角设置，操作日志并入任务中心，存储诊断移入设置（v0038）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "FE-QUEUE-VIEW",
+      "name": "任务中心字幕任务按真实执行顺序显示 进行中/即将执行/已暂停/最近完成（v0039）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "FE-GROUP-OVERVIEW",
+      "name": "字幕页批次总览：进行中（含暂停）/最近完成可切换，新提交不覆盖旧批次（v0039）",
       "status": "PASS",
       "detail": ""
     },
@@ -854,7 +872,7 @@
     },
     {
       "id": "SPK-DIST",
-      "name": "构建产物存在（DuplicateCleaner-1.1.0-0038.spk）",
+      "name": "构建产物存在（DuplicateCleaner-1.1.0-0039.spk）",
       "status": "PASS",
       "detail": ""
     },
@@ -866,7 +884,7 @@
     },
     {
       "id": "SPK-VERSION",
-      "name": "SPK INFO.version 与当前源码 APP_VERSION（1.1.0-0038）一致",
+      "name": "SPK INFO.version 与当前源码 APP_VERSION（1.1.0-0039）一致",
       "status": "PASS",
       "detail": ""
     },

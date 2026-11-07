@@ -23,7 +23,7 @@ export var state = {
   similarity: { supported: true, extensions: DEFAULT_SIMILARITY_EXTENSIONS.slice(), defaultThreshold: 85, maxConcurrency: 4, binaryExtensions: [] },
   video: { supported: true, available: true, extensions: DEFAULT_VIDEO_EXTENSIONS.slice(), ffmpegPath: '', ffmpegVersion: '', hwaccels: [], gpuHint: '', cache: '' },
   subtitle: { supported: false, enabled: false, asrKeySet: false, llmKeySet: false, asrLanguage: 'auto', translateEnabled: false, targetLang: 'zh' },
-  subtitleJobs: { list: [], timer: null, loading: false, lastError: '', modal: null },
+  subtitleJobs: { list: [], timer: null, loading: false, lastError: '', modal: null, snapshot: null },
   // 当前扫描
   scan: { id: null, data: null, stats: null, timer: null, abort: null, polling: false, errors: 0, handled: false },
   // 结果
@@ -43,6 +43,8 @@ export var state = {
   // app.js 注入的目录选择器（供独立模块如字幕页复用同一个扫描范围选择器）
   // 签名：openSubtitleDirPicker({initial, onConfirm})
   openSubtitleDirPicker: null,
+  // v0039：字幕页批次总览里的“去任务中心”入口（由 app.js 注入）
+  openSubtitleJobs: null,
   preview: { urls: [], abort: null },
   historyCache: null,
   // 任务中心标签页：history / subtitles / deletions / logs（v0038：操作日志并入）

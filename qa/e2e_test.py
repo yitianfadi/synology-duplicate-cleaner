@@ -955,6 +955,30 @@ def run():
               resp.status == 400 and code == "INVALID_ARGUMENT",
               "status=%s code=%s" % (resp.status, code))
 
+        # ---------------- v0039：队列视图 / 批次组总览 ----------------
+        resp = client.get(q("/api/subtitles/queue", active_limit=5,
+                            queued_limit=5, paused_limit=5, recent_limit=5))
+        data = jd(resp)
+        check("QUEUE-01", "/api/subtitles/queue 返回进行中/即将执行/已暂停/最近完成视图",
+              resp.status == 200
+              and all(isinstance(data.get(key), list)
+                      for key in ("active", "queued", "paused", "recent"))
+              and isinstance(data.get("queued_total"), int)
+              and isinstance(data.get("active_total"), int)
+              and isinstance(data.get("single_active_count"), int),
+              "status=%s keys=%s" % (resp.status, sorted(data)))
+
+        resp = client.get(q("/api/subtitles/batch-groups",
+                            active_limit=5, completed_limit=2))
+        data = jd(resp)
+        check("GROUPVIEW-01", "/api/subtitles/batch-groups 返回进行中/最近完成批次总览",
+              resp.status == 200
+              and isinstance(data.get("active"), list)
+              and isinstance(data.get("completed"), list)
+              and isinstance(data.get("active_total"), int)
+              and isinstance(data.get("single_active_count"), int),
+              "status=%s keys=%s" % (resp.status, sorted(data)))
+
         resp = client.put_json("/api/settings",
                                {"settings": {"subtitle_concurrency": 2}})
         saved = jd(resp).get("settings", {})

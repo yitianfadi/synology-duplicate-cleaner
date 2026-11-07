@@ -216,6 +216,8 @@
 ### 2.7 任务中心（含操作日志）/ 设置
 
 - **任务中心**（v0038：操作日志从独立导航并入此处）：扫描历史 / 字幕任务 / 删除任务 / 操作日志四个标签页。
+- **字幕任务**（v0039）：进行中 / 即将执行（按真实队列顺序，带队列位置与总数）/ 已暂停 / 最近完成 四段；有排队任务时自动轮询。
+- **字幕页批次总览**（v0039）：批次进度上方列出进行中（含暂停）与最近完成的批次组，点击切换当前组；新提交自动选中新组，旧批次仍留在总览中可切回/暂停/取消。
 - **扫描历史**：扫描时间、范围、保留策略、状态、组数/副本数/可释放空间；操作“查看结果 / 导出 CSV”。
 - **操作日志**：审计事件（登录、扫描开始/结束、删除计划、逐文件删除、日志清理）时间线，支持勾选删除、只保留最近 N 天；日志文件列表、下载与删除；提示数据目录 `/var/packages/DuplicateCleaner/var`。
 - **设置**（v0038：右上角入口）：默认哈希、保留策略、过滤、并发/限速、回收站默认值；保存后只影响新扫描。永久删除不可设为默认。另有「云端字幕」分组（ASR/LLM、模型列表与连接测试、音频来源 nas/server、字幕并发任务数 1–4（默认 1，**保存后立即生效**）、任务目录 VTT 可选生成（默认关）、译文输出组合（译文+双语/只写译文/只写双语，默认译文+双语）、目录批量默认输出方式 / 跳过已有 / 任务保留上限；本地推理模型可勾选「禁用 LLM 思考」提速；ASR 识别语言/翻译目标语言下拉覆盖常见 19 种语言码）与「系统 · 存储与运行诊断」（v0038 从任务中心移入：数据库/表行数/缓存/媒体/密钥状态/备份与维护）。
@@ -311,6 +313,8 @@
 | 字幕：批量提交/查询/控制 | `POST /api/subtitles/batch`、`GET /api/subtitles/batches/{id}`、`POST …/{pause\|resume\|cancel\|retry}` |
 | 字幕：批次组提交/查询/控制 | `POST /api/subtitles/batch-groups`、`GET /api/subtitles/batch-groups/{id}`、`POST …/{pause\|resume\|cancel\|retry}` |
 | 字幕：任务列表/详情/下载 | `GET /api/subtitles?batch_id=&group_id=&offset=&limit=&status=`、`GET /api/subtitles/{id}`、`GET /api/subtitles/{id}/file/{name}` |
+| 字幕：队列视图（v0039） | `GET /api/subtitles/queue?active_limit=&queued_limit=&paused_limit=&recent_limit=` |
+| 字幕：批次组总览（v0039） | `GET /api/subtitles/batch-groups?active_limit=&completed_limit=` |
 | 字幕：单视频生成 | `POST /api/subtitles`（`source=asr\|existing_srt`，可选 `output_mode`/`skip_existing`） |
 | 字幕：补翻译（v0035） | `POST /api/subtitles/{id}/translate`、`POST /api/subtitles/batch-groups/{id}/translate`（`confirm_cloud=true`，可选 `target_lang`） |
 

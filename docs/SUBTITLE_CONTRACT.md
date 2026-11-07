@@ -328,3 +328,10 @@ v0028 在 v1.3 单文件任务之上新增**目录批量生成 / 翻译**：独�
 - **前端**：任务详情新增「步骤耗时」表，可展开 ASR 分片/翻译批次明细；任务列表显示总耗时。
 - 版本 1.1.0-0038；SQLite schema 不变（仍 v7），无数据迁移。
 
+## 19. v0039 队列视图（任务中心「即将执行」）
+
+- 新增 `GET /api/subtitles/queue?active_limit=10&queued_limit=20&paused_limit=10&recent_limit=10`：返回 `active`（running/translating，按开始时间升序）、`queued`（严格按内部 FIFO 队列顺序，每项带 `queue_position`，0 基）、`paused`（按更新时间倒序）、`recent`（done/failed/cancelled，按 `finished_at` 倒序）；同时返回各总数与 `single_active_count`。
+- **不要用 created_at 推断执行顺序**：暂停后继续、失败重试都会把任务追加到队尾，`queue_position` 才是真实顺序。
+- 任务中心「字幕任务」按 进行中 / 即将执行 / 已暂停 / 最近完成 四段展示；「即将执行」显示前 20 条与真实排队总数。
+- 版本 1.1.0-0039；SQLite schema 不变（仍 v7）。
+

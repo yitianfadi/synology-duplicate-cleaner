@@ -6,8 +6,8 @@
 <meta name="color-scheme" content="light">
 <meta name="referrer" content="same-origin">
 <title>重复文件清理与字幕 · Duplicate Cleaner &amp; Subtitles</title>
-<link rel="icon" href="./assets/favicon.svg?v=1.1.0-0038" type="image/svg+xml">
-<link rel="stylesheet" href="./styles.css?v=1.1.0-0038">
+<link rel="icon" href="./assets/favicon.svg?v=1.1.0-0039" type="image/svg+xml">
+<link rel="stylesheet" href="./styles.css?v=1.1.0-0039">
 </head>
 <body>
 <a class="skip-link" href="#main">跳到主要内容</a>
@@ -724,6 +724,20 @@
         </div>
       </section>
 
+      <section class="card" id="subtitleGroupOverview" aria-labelledby="subtitleGroupOverviewHeading">
+        <div class="card-head">
+          <h2 id="subtitleGroupOverviewHeading">批次总览</h2>
+          <span class="muted" id="subtitleGroupOverviewHint"></span>
+          <button type="button" class="btn btn-ghost btn-sm" id="subtitleGroupOverviewRefresh">
+            <svg class="icon" aria-hidden="true"><use href="#i-refresh"></use></svg>刷新
+          </button>
+        </div>
+        <p class="hint">这里列出进行中（含暂停）与最近完成的批次组；新提交不会覆盖旧批次，可点击切换查看/控制。</p>
+        <div class="state-box state-empty" id="subtitleGroupOverviewEmpty" hidden>暂无进行中或最近完成的批次组。</div>
+        <div id="subtitleGroupOverviewList" class="subtitle-group-overview"></div>
+        <div class="subtitle-group-overview-single" id="subtitleGroupOverviewSingle" hidden></div>
+      </section>
+
       <section class="card" id="subtitleGroupCard" aria-labelledby="subtitleGroupHeading" hidden>
         <div class="card-head">
           <h2 id="subtitleGroupHeading">批次进度</h2>
@@ -802,7 +816,7 @@
           <div class="state-box state-error" id="subtitleJobsError" role="alert" hidden></div>
           <div class="state-box state-empty" id="subtitleJobsEmpty" hidden>暂无字幕任务。可在视频结果行点击“生成字幕”，或到「字幕」页批量提交。</div>
           <div id="subtitleJobsList" class="subtitle-jobs-list"></div>
-          <p class="hint">任务进行中时本标签页会自动刷新；切换到其他标签后停止轮询，避免后台请求。</p>
+          <p class="hint">任务进行中或队列中有任务时会自动刷新；「即将执行」按真实队列顺序显示；切换到其他标签后停止轮询，避免后台请求。</p>
         </section>
       </div>
 
@@ -1464,6 +1478,6 @@
   <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.6" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M12 10.8v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="12" cy="7.6" r="1.05" fill="currentColor"/></symbol>
 </svg>
 
-<script type="module" src="./app.js?v=1.1.0-0038"></script>
+<script type="module" src="./app.js?v=1.1.0-0039"></script>
 </body>
 </html>

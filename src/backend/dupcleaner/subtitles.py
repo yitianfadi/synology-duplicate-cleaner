@@ -1411,6 +1411,79 @@ class SubtitleService(object):
             "limit": limit,
         }
 
+    # ------------------------------------------------------------------
+    # v0039：执行队列视图（任务中心「即将执行」/ 批次组总览共用）
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _queue_job_entry(job, position=None):
+        data = job.snapshot()
+        data["queue_position"] = position
+        return data
+
+    def queue_snapshot(self, active_limit=10, queued_limit=20,
+                       paused_limit=10, recent_limit=10):
+        """按真实执行顺序返回字幕任务视图。
+
+        - active：running/translating，按开始执行时间升序
+        - queued：按内部 FIFO 队列顺序（重试/继续会追加到队尾，不能用 created_at 排序）
+        - paused：已暂停（需人工继续）
+        - recent：done/failed/cancelled，按结束时间倒序
+        """
+        def clamp(value, default, maximum=200):
+            try:
+                value = int(value)
+            except (TypeError, ValueError):
+                value = default
+            return max(0, min(value, maximum))
+
+        active_limit = clamp(active_limit, 10)
+        queued_limit = clamp(queued_limit, 20)
+        paused_limit = clamp(paused_limit, 10)
+        recent_limit = clamp(recent_limit, 10)
+        with self._lock:
+            jobs = dict(self._jobs)
+            queue_ids = list(self._queue)
+        active = []
+        paused = []
+        recent = []
+        for job in jobs.values():
+            status = job.status
+            if status in ACTIVE_LIST_STATUSES:
+                active.append(job)
+            elif status == STATUS_PAUSED:
+                paused.append(job)
+            elif status in FINISHED_STATUSES:
+                recent.append(job)
+        active.sort(key=lambda item: (
+            float(item.started_epoch or item.created_epoch or 0),
+            float(item.created_epoch or 0)))
+        paused.sort(key=lambda item: float(
+            item.updated_epoch or item.created_epoch or 0), reverse=True)
+        recent.sort(key=lambda item: float(
+            item.finished_epoch or item.updated_epoch or item.created_epoch or 0),
+            reverse=True)
+        queued = []
+        for position, job_id in enumerate(queue_ids):
+            if len(queued) >= queued_limit:
+                break
+            job = jobs.get(job_id)
+            if job is None or job.status != STATUS_QUEUED:
+                continue
+            queued.append(self._queue_job_entry(job, position))
+        return {
+            "active": [self._queue_job_entry(item) for item in active[:active_limit]],
+            "queued": queued,
+            "paused": [self._queue_job_entry(item) for item in paused[:paused_limit]],
+            "recent": [self._queue_job_entry(item) for item in recent[:recent_limit]],
+            "active_total": len(active),
+            "queued_total": len(queue_ids),
+            "paused_total": len(paused),
+            "recent_total": len(recent),
+            # 单视频 / 非批次组任务（批次总览里的“单任务排队”入口）
+            "single_active_count": sum(1 for item in active
+                                       if not getattr(item, "group_id", None)),
+        }
+
     def counts(self):
         """任务状态计数（诊断用；不返回任务内容）。"""
         with self._lock:
@@ -2168,6 +2241,95 @@ class SubtitleService(object):
 
     def get_batch_group(self, group_id):
         return self._group_snapshot(self._load_group_record(group_id))
+
+    def batch_group_overview(self, active_limit=10, completed_limit=3):
+        """v0039：批次组总览（进行中优先按“下一任务队列位置”排序 + 最近完成）。
+
+        只基于内存任务按 group_id 聚合（近期组任务都在内存），不逐批读文件；
+        队列位置使用内部 _queue 顺序，重试/继续追加到队尾也能正确反映先后。
+        """
+        def clamp(value, default, maximum=50):
+            try:
+                value = int(value)
+            except (TypeError, ValueError):
+                value = default
+            return max(0, min(value, maximum))
+
+        active_limit = clamp(active_limit, 10)
+        completed_limit = clamp(completed_limit, 3)
+        with self._lock:
+            jobs = list(self._jobs.values())
+            queue_ids = list(self._queue)
+        positions = dict((job_id, index)
+                         for index, job_id in enumerate(queue_ids))
+        groups = {}
+        for job in jobs:
+            group_id = getattr(job, "group_id", None)
+            if not group_id:
+                continue
+            entry = groups.get(group_id)
+            if entry is None:
+                entry = {"counts": self._status_counts(), "total": 0,
+                         "next": None, "updated": 0.0}
+                groups[group_id] = entry
+            entry["counts"][job.status] = entry["counts"].get(job.status, 0) + 1
+            entry["total"] += 1
+            entry["updated"] = max(
+                entry["updated"],
+                float(job.updated_epoch or job.created_epoch or 0))
+            position = positions.get(job.job_id)
+            if position is not None and (entry["next"] is None
+                                         or position < entry["next"]):
+                entry["next"] = position
+        active = []
+        completed = []
+        for group_id, entry in groups.items():
+            try:
+                record = self._load_group_record(group_id)
+            except (ApiError, SubtitleError):
+                record = {"group_id": group_id}
+            counts = entry["counts"]
+            total = entry["total"]
+            status = self._derive_status(counts, total)
+            finished = sum(counts.get(item, 0) for item in FINISHED_STATUSES)
+            options = dict(record.get("options") or {})
+            summary = {
+                "group_id": group_id,
+                "status": status,
+                "total": total,
+                "finished": finished,
+                "progress": int(round(100.0 * finished / total)) if total else 0,
+                "counts": counts,
+                "options": {
+                    "translate": options.get("translate") is True,
+                    "source": options.get("source") or SOURCE_ASR,
+                },
+                "batch_count": len(record.get("batch_ids") or []),
+                "next_queue_position": entry["next"],
+                "created_at": timeutil.iso_local(
+                    float(record.get("created_epoch") or 0)),
+                "updated_at": timeutil.iso_local(entry["updated"]),
+            }
+            if status in FINISHED_STATUSES:
+                completed.append((entry["updated"], summary))
+            else:
+                active.append((entry["next"], entry["updated"], summary))
+        active.sort(key=lambda item: (
+            1 if item[0] is None else 0,
+            item[0] if item[0] is not None else 0,
+            -item[1]))
+        completed.sort(key=lambda item: -item[0])
+        return {
+            "active": [item[2] for item in active[:active_limit]],
+            "completed": [item[1] for item in completed[:completed_limit]],
+            "active_total": len(active),
+            "completed_total": len(completed),
+            # 单视频任务 / 非批次组任务（排队或执行中都算）
+            "single_active_count": sum(
+                1 for item in jobs
+                if not getattr(item, "group_id", None)
+                and item.status in ACTIVE_STATUSES),
+        }
 
     def create_batch_group(self, user, payload):
         """一次提交多批：<=20000 个路径，自动按 SUBTITLE_BATCH_MAX_ITEMS 拆批。"""

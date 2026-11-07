@@ -907,6 +907,114 @@ class SubtitleTimelineTest(SubtitleTestBase):
         self.assertIn("failed", statuses)
 
 
+class SubtitleQueueViewTest(SubtitleTestBase):
+    """v0039：任务中心队列视图 / 批次组总览（真实执行顺序）。"""
+
+    def _make_job(self, status="queued", group_id=None, created=None,
+                  finished=None, updated=None):
+        job = subtitles.SubtitleJob(
+            subtitles.make_job_id(), os.path.join(self.root, "v.mp4"),
+            "auto", False, "zh", "admin", group_id=group_id)
+        job.status = status
+        job.created_epoch = created if created is not None else time.time()
+        job.updated_epoch = updated if updated is not None else job.created_epoch
+        if finished is not None:
+            job.finished_epoch = finished
+        self.service._register_job(job, enqueue=False)
+        return job
+
+    def test_queue_snapshot_uses_real_queue_order(self):
+        base = time.time()
+        job_a = self._make_job(created=base + 1)
+        job_b = self._make_job(created=base + 2)
+        job_c = self._make_job(created=base + 3)
+        active = self._make_job(status="running", created=base + 0.5)
+        active.started_epoch = base + 0.6
+        paused = self._make_job(status="paused", created=base + 0.7)
+        done_old = self._make_job(status="done", created=base - 10,
+                                  finished=base - 5)
+        done_new = self._make_job(status="done", created=base - 9,
+                                  finished=base - 1)
+        # 模拟真实队列：暂停后继续 / 失败重试会把老任务追加到队尾，
+        # 因此顺序与 created_epoch 不同：c -> a -> b。
+        self.service._queue.clear()
+        for job in (job_c, job_a, job_b):
+            self.service._queue.append(job.job_id)
+        snapshot = self.service.queue_snapshot(
+            active_limit=5, queued_limit=10, paused_limit=5, recent_limit=5)
+        self.assertEqual([item["job_id"] for item in snapshot["queued"]],
+                         [job_c.job_id, job_a.job_id, job_b.job_id])
+        self.assertEqual([item["queue_position"] for item in snapshot["queued"]],
+                         [0, 1, 2])
+        self.assertEqual(snapshot["queued_total"], 3)
+        self.assertEqual([item["job_id"] for item in snapshot["active"]],
+                         [active.job_id])
+        self.assertEqual([item["job_id"] for item in snapshot["paused"]],
+                         [paused.job_id])
+        self.assertEqual([item["job_id"] for item in snapshot["recent"]],
+                         [done_new.job_id, done_old.job_id])
+        self.assertEqual(snapshot["single_active_count"], 1)
+
+    def test_queue_snapshot_limits_and_totals(self):
+        base = time.time()
+        jobs = [self._make_job(created=base + i) for i in range(5)]
+        self.service._queue.clear()
+        for job in jobs:
+            self.service._queue.append(job.job_id)
+        snapshot = self.service.queue_snapshot(
+            active_limit=1, queued_limit=2, paused_limit=1, recent_limit=1)
+        self.assertEqual(len(snapshot["queued"]), 2)
+        self.assertEqual(snapshot["queued_total"], 5)
+        self.assertEqual([item["queue_position"] for item in snapshot["queued"]],
+                         [0, 1])
+
+    def test_batch_group_overview_orders_by_next_queue_position(self):
+        group_1 = subtitles.make_group_id()
+        group_2 = subtitles.make_group_id()
+        group_done = subtitles.make_group_id()
+        base = time.time()
+        self.service._save_group_record({
+            "group_id": group_1, "created_epoch": base,
+            "options": {"translate": False, "source": "asr"},
+            "batch_ids": [],
+        })
+        self.service._save_group_record({
+            "group_id": group_2, "created_epoch": base + 1,
+            "options": {"translate": True, "source": "asr"},
+            "batch_ids": [],
+        })
+        self.service._save_group_record({
+            "group_id": group_done, "created_epoch": base - 10,
+            "options": {"translate": False, "source": "asr"},
+            "batch_ids": [],
+        })
+        queued_1 = self._make_job(group_id=group_1, created=base + 2)
+        running_1 = self._make_job(status="running", group_id=group_1,
+                                   created=base + 2.1)
+        running_1.started_epoch = base + 2.2
+        queued_2 = self._make_job(group_id=group_2, created=base + 3)
+        done = self._make_job(status="done", group_id=group_done,
+                              created=base - 9, finished=base - 1)
+        single = self._make_job(status="running", created=base + 4)
+        single.started_epoch = base + 4.1
+        # 队列顺序：group_2 的任务排在 group_1 的排队任务之后
+        self.service._queue.clear()
+        self.service._queue.append(queued_1.job_id)
+        self.service._queue.append(queued_2.job_id)
+        overview = self.service.batch_group_overview(active_limit=5,
+                                                     completed_limit=3)
+        self.assertEqual([item["group_id"] for item in overview["active"]],
+                         [group_1, group_2])
+        self.assertEqual(overview["active"][0]["next_queue_position"], 0)
+        self.assertEqual(overview["active"][1]["next_queue_position"], 1)
+        self.assertFalse(overview["active"][0]["options"]["translate"])
+        self.assertTrue(overview["active"][1]["options"]["translate"])
+        self.assertEqual([item["group_id"] for item in overview["completed"]],
+                         [group_done])
+        self.assertEqual(overview["single_active_count"], 1)
+        self.assertEqual(overview["active_total"], 2)
+
+
 class SubtitleConcurrencyTest(SubtitleTestBase):
     """v0034：subtitle_concurrency（默认 1 串行；2 时真并行；shutdown 全部退出）。"""
 
@@ -1746,6 +1854,24 @@ class SubtitleApiTest(SubtitleTestBase):
         self.assertEqual(status, 200, payload)
         self.assertEqual(self.service.concurrency, 1)
         self.assertFalse(self.service._stopping)
+
+    def test_queue_and_group_overview_api(self):
+        """v0039：/api/subtitles/queue 与批次组总览接口形状。"""
+        status, _headers, payload = self.client.json(
+            "GET", "/api/subtitles/queue?active_limit=5&queued_limit=5"
+                   "&paused_limit=5&recent_limit=5")
+        self.assertEqual(status, 200, payload)
+        for key in ("active", "queued", "paused", "recent"):
+            self.assertIsInstance(payload.get(key), list)
+        self.assertIsInstance(payload.get("queued_total"), int)
+        self.assertIsInstance(payload.get("active_total"), int)
+        status, _headers, payload = self.client.json(
+            "GET", "/api/subtitles/batch-groups?active_limit=5&completed_limit=2")
+        self.assertEqual(status, 200, payload)
+        self.assertIsInstance(payload.get("active"), list)
+        self.assertIsInstance(payload.get("completed"), list)
+        self.assertIsInstance(payload.get("active_total"), int)
+        self.assertIsInstance(payload.get("single_active_count"), int)
 
     def test_submit_and_download_flow(self):
         video = self.make_video(duration=60)

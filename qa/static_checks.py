@@ -200,7 +200,8 @@ def check_backend():
                        "/api/settings", "/api/scans", "groups", "stats", "csv",
                        "delete-plan", "delete", "/api/preview", "/api/logs",
                        "/api/logs/download", "/api/logs/audit/delete",
-                       "/api/logs/files/delete"]
+                       "/api/logs/files/delete", "/api/subtitles/queue",
+                       "/api/subtitles/batch-groups"]
     missing = []
     for marker in expected_routes:
         if marker.startswith("/api/"):
@@ -426,6 +427,17 @@ def check_backend():
           and "def _delete_audit" in http_src
           and "def _delete_log_files" in http_src,
           "logs delete markers missing")
+    check("BE-QUEUE-VIEW",
+          "字幕队列视图：真实 FIFO 顺序 + queue_position + 进行中/暂停/最近完成（v0039）",
+          "def queue_snapshot" in subtitles_src
+          and "queue_position" in subtitles_src
+          and "def batch_group_overview" in subtitles_src
+          and "next_queue_position" in subtitles_src
+          and "single_active_count" in subtitles_src
+          and "/api/subtitles/queue" in http_src
+          and "def _subtitle_queue" in http_src
+          and "def _subtitle_group_overview" in http_src,
+          "queue view markers missing")
 
     # ---- v0035 补翻译：已完成仅 ASR 任务派生“仅翻译”任务 ----
     translate_test_path = os.path.join(backend, "tests",
@@ -662,6 +674,26 @@ def check_frontend():
           "菜单调整：扫描/字幕/任务中心 + 右上角设置，操作日志并入任务中心，存储诊断移入设置（v0038）",
           nav_v0038_ok, "v0038 navigation markers missing")
     subtitle_page_src = read(os.path.join(js_dir, "subtitle-page.js"))
+    queue_ui_ok = (
+        "/api/subtitles/queue" in app
+        and "renderSubtitleJobsSnapshot" in app
+        and u"即将执行" in app
+        and "queue_position" in app
+        and u"已暂停（" in app)
+    check("FE-QUEUE-VIEW",
+          "任务中心字幕任务按真实执行顺序显示 进行中/即将执行/已暂停/最近完成（v0039）",
+          queue_ui_ok, "queue view UI markers missing")
+    group_overview_ok = (
+        all(marker in html for marker in
+            ('id="subtitleGroupOverview"', 'id="subtitleGroupOverviewList"',
+             'id="subtitleGroupOverviewEmpty"'))
+        and "loadGroupOverview" in subtitle_page_src
+        and "subtitle-group-item" in subtitle_page_src
+        and "selectGroup" in subtitle_page_src
+        and "next_queue_position" in subtitle_page_src)
+    check("FE-GROUP-OVERVIEW",
+          "字幕页批次总览：进行中（含暂停）/最近完成可切换，新提交不覆盖旧批次（v0039）",
+          group_overview_ok, "batch group overview UI markers missing")
     visible_ui_ok = (
         all(marker in html for marker in
             ('id="subtitleGroupCurrent"', 'id="subtitleJobsFilter"',
@@ -779,6 +811,8 @@ def check_frontend():
         ("/api/logs/files/delete", "日志文件删除"),
         ("/api/subtitles/models", "字幕模型列表"),
         ("/api/subtitles/test", "字幕连接测试"),
+        ("/api/subtitles/queue", "字幕队列视图"),
+        ("/api/subtitles/batch-groups", "字幕批次组总览"),
     ]
     missing = [name for marker, name in endpoints if marker not in app]
     check("FE-ENDPOINTS", "前端覆盖契约全部 API 端点",

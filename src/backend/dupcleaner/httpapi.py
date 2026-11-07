@@ -202,6 +202,12 @@ class Api(object):
              self._create_subtitle, False),
             ("GET", re.compile(r"^/api/subtitles$"),
              self._list_subtitles, False),
+            # v0039：任务中心「即将执行」队列视图 / 批次组总览
+            # （必须放在 /api/subtitles/{job_id} 通用路由之前）
+            ("GET", re.compile(r"^/api/subtitles/queue$"),
+             self._subtitle_queue, False),
+            ("GET", re.compile(r"^/api/subtitles/batch-groups$"),
+             self._subtitle_group_overview, False),
             ("GET", re.compile(r"^/api/subtitles/(?P<job_id>[^/]+)$"),
              self._get_subtitle, False),
             ("POST", re.compile(
@@ -670,6 +676,29 @@ class Api(object):
                               "jobs": service.list(limit=limit,
                                                    batch_id=batch_id,
                                                    status=status)})
+
+    # ------------------------------------------------------------------
+    # v0039：任务中心队列视图 / 批次组总览（只读；管理员）
+    # ------------------------------------------------------------------
+    def _subtitle_queue(self, request, session, params):
+        service = self._require_subtitle_admin(session)
+        snapshot = service.queue_snapshot(
+            active_limit=_query_int(request, "active_limit", 10),
+            queued_limit=_query_int(request, "queued_limit", 20),
+            paused_limit=_query_int(request, "paused_limit", 10),
+            recent_limit=_query_int(request, "recent_limit", 10))
+        payload = {"ok": True}
+        payload.update(snapshot)
+        return json_response(payload)
+
+    def _subtitle_group_overview(self, request, session, params):
+        service = self._require_subtitle_admin(session)
+        snapshot = service.batch_group_overview(
+            active_limit=_query_int(request, "active_limit", 10),
+            completed_limit=_query_int(request, "completed_limit", 3))
+        payload = {"ok": True}
+        payload.update(snapshot)
+        return json_response(payload)
 
     def _subtitle_control(self, request, session, params):
         service = self._require_subtitle_admin(session)
