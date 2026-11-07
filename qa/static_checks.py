@@ -335,6 +335,35 @@ def check_backend():
           and "disable_thinking=disable_thinking" in subtitles_src,
           "disable-thinking markers missing")
 
+    db_src = read(os.path.join(backend, "dupcleaner", "db.py"))
+    store_src = read(os.path.join(backend, "dupcleaner", "store.py"))
+    deletion_src = read(os.path.join(backend, "dupcleaner", "deletion.py"))
+    video_src = read(os.path.join(backend, "dupcleaner", "video_similarity.py"))
+    check("BE-SUBTITLE-GROUP",
+          "批次组：自动拆批/聚合快照/组控制/保留（schema v7 + batch-groups 路由）",
+          "create_batch_group" in subtitles_src
+          and "SUBTITLE_BATCH_GROUP_MAX_ITEMS" in conf_src
+          and "SUBTITLE_BATCH_GROUP_LIMIT" in conf_src
+          and "subtitle_batch_groups" in db_src
+          and "batch-groups" in http_src
+          and "batch_group_max_items" in http_src,
+          "subtitle group markers missing")
+    check("BE-SCANDEL-FILTER",
+          "删除成功后扫描结果读取过滤已删除文件（scan_file_deletions）",
+          "scan_file_deletions" in db_src
+          and "mark_scan_files_deleted" in store_src
+          and "filter_group_payload" in store_src
+          and "mark_scan_files_deleted" in deletion_src,
+          "scan deletion filter markers missing")
+    check("BE-SUBTITLE-AUDIO",
+          "音频来源设置 + 服务器解码（流复制抽音轨 + 回退）",
+          "SUBTITLE_AUDIO_SOURCES" in conf_src
+          and "subtitle_audio_source" in settings_src
+          and "extract_audio_remux" in video_src
+          and "_extract_chunk_remux" in subtitles_src
+          and "SERVER_AUDIO_FALLBACK" in subtitles_src,
+          "server audio markers missing")
+
 
 # ---------------------------------------------------------------------------
 # 前端
@@ -415,10 +444,10 @@ def check_frontend():
           "字幕页复用扫描范围目录选择器（共享文件夹树/面包屑/搜索/当前目录/完成选择）",
           picker_ok, "subtitle picker wiring missing")
     endpoints_ok = all(token in app for token in (
-        "/api/subtitles/enumerate", "/api/subtitles/batch",
-        "/api/subtitles/batches/"))
-    check("FE-SUBTITLE-ENDPOINTS", "字幕页覆盖目录枚举/批次提交/批次控制接口",
-          endpoints_ok, "subtitle batch endpoints missing")
+        "/api/subtitles/enumerate", "/api/subtitles/batch-groups",
+        "/api/subtitles?group_id="))
+    check("FE-SUBTITLE-ENDPOINTS", "字幕页覆盖目录枚举/批次组提交/组控制/任务分页接口",
+          endpoints_ok, "subtitle batch group endpoints missing")
 
     subtitle_settings_ok = (
         all(marker in html for marker in
@@ -429,8 +458,9 @@ def check_frontend():
           "设置页可配置目录批量字幕输出方式/默认跳过已有/任务保留上限",
           subtitle_settings_ok, "subtitle batch settings UI missing")
     writeback_ok = all(marker in app for marker in
-                       ("renderSubtitleOutputs", "subtitleWarningText",
-                        "已写入视频目录", "subtitle-job-warning"))
+                       ("job.outputs", "SUBTITLE_WARNING_LABEL",
+                        "已写回 ", "translation_partial",
+                        "OUTPUT_NOT_WRITABLE"))
     check("FE-SUBTITLE-WRITEBACK",
           "字幕任务列表/详情/弹窗展示写回路径、跳过与写回警告",
           writeback_ok, "subtitle write-back rendering missing")
@@ -438,13 +468,24 @@ def check_frontend():
                and "enumerate_max_items" in app)
     check("FE-SUBTITLE-META", "字幕页限额取自 /api/meta.subtitle，不再硬编码",
           meta_ok, "meta subtitle limits not wired")
-    poll_ok = ("notifyBatchFinished" in app
-               and "state.taskTab = 'subtitles'" in app
-               and "restorePageUi" in app
-               and "lastSubtitleDir.v1" in app)
+    poll_ok = ("lastSubtitleGroup.v1" in app
+               and "startPolling" in app
+               and "page.group" in app
+               and "stopSubtitlePagePolling" in app
+               and "state.taskTab = 'subtitles'" in app)
     check("FE-SUBTITLE-POLL-RESUME",
-          "切换视图后批次轮询可恢复、跳转任务中心直达字幕任务、记住上次目录",
+          "切换视图后批次组轮询可恢复、跳转任务中心直达字幕任务、记住上次目录",
           poll_ok, "subtitle batch polling/jump/memory wiring missing")
+    group_ok = (
+        all(marker in app for marker in (
+            "/api/subtitles/batch-groups", "page.group", "batches",
+            "startPolling", "lastSubtitleGroup.v1"))
+        and all(marker in html for marker in (
+            'id="subtitleGroupCard"', 'id="subtitleGroupJobs"',
+            'id="subtitleGroupActions"', 'id="subtitleGroupBatches"')))
+    check("FE-SUBTITLE-GROUP",
+          "字幕页批次组：全选不截断、自动拆批提交、聚合进度、任务分页、组控制",
+          group_ok, "subtitle batch group UI missing")
     thinking_ui_ok = (
         all(marker in html for marker in
             ("subtitleLlmDisableThinking", "enable_thinking=false"))
@@ -453,6 +494,21 @@ def check_frontend():
     check("FE-SUBTITLE-THINKING",
           "设置页提供“禁用 LLM 思考”开关（本地推理模型建议开启）",
           thinking_ui_ok, "disable-thinking setting UI missing")
+    audio_ui_ok = (
+        'id="subtitleAudioSource"' in html
+        and "subtitle_audio_source" in app
+        and "subtitleAudioSource" in app
+        and "'server'" in app)
+    check("FE-SUBTITLE-AUDIO",
+          "设置页提供音频来源（NAS 解码 / 服务器解码）",
+          audio_ui_ok, "subtitle audio source setting UI missing")
+    delete_refresh_ok = (
+        "resetResultsViewAfterDelete" in app
+        and "recoverEmptyResultsPageAfterDelete" in app
+        and "已从结果列表移除" in app)
+    check("FE-DELETE-REFRESH",
+          "删除完成后结果页重置并重拉（已删除文件不再显示，空页回退）",
+          delete_refresh_ok, "delete refresh wiring missing")
     partial_ok = ("translation_partial" in app
                   and "translation_partial" in read(
                       os.path.join(js_dir, "subtitle-page.js")))
@@ -463,12 +519,12 @@ def check_frontend():
         'id="subtitleSubmitReason"' in html
         and "subtitleSubmitReason" in app
         and "请勾选下方「我了解" in app
-        and "超过单批上限" in app
-        and "全选" in html
-        and "filtered.slice(0, batchMax)" in app)
+        and "将分为 " in app
+        and "batch_group_max_items" in app
+        and "groupMax" in app)
     check("FE-SUBTITLE-SUBMIT-REASON",
-          "提交按钮禁用原因常显；「全选」自动截断到单批上限（v0031）",
-          submit_reason_ok, "submit reason / select-all cap markers missing")
+          "提交按钮禁用原因常显；全选不截断并提示拆分批次（v0031/v0032）",
+          submit_reason_ok, "submit reason / group-limit markers missing")
 
     check("FE-RISK-TEXT", "风险提示文案与契约逐字一致（index.html）",
           RISK_TEXT in html, "risk text not found verbatim")
@@ -562,7 +618,9 @@ def check_frontend():
                     "subtitle_output_mode", "subtitle_skip_existing",
                     "subtitle_job_limit",
                     # v0030 本地推理模型禁用思考
-                    "subtitle_llm_disable_thinking"]
+                    "subtitle_llm_disable_thinking",
+                    # v0032 音频来源（NAS 解码 / 服务器解码）
+                    "subtitle_audio_source"]
     missing_settings = [key for key in setting_keys if key not in app]
     check("FE-SETTINGS-KEYS", "设置页覆盖契约全部设置键",
           not missing_settings, "missing=%s" % missing_settings)

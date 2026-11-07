@@ -4,6 +4,7 @@
 import http.server
 import json
 import os
+import re
 import sys
 import threading
 import time
@@ -124,6 +125,14 @@ class FakeCloudHandler(http.server.BaseHTTPRequestHandler):
             server.asr_calls += 1
             server.audio_sizes.append(len(body))
             server.authorizations.append(self.headers.get("Authorization") or "")
+            filename_match = re.search(rb'filename="([^"]*)"', body[:4000])
+            server.upload_filenames.append(
+                filename_match.group(1).decode("utf-8", "replace")
+                if filename_match else "")
+            type_match = re.search(rb"Content-Type:\s*([^\r\n]+)", body[:4000])
+            server.upload_content_types.append(
+                type_match.group(1).decode("utf-8", "replace").strip()
+                if type_match else "")
             mode = server.asr_mode
             if mode == "401":
                 self._send(401, {"error": {"message": "invalid key"}})
@@ -222,6 +231,8 @@ class FakeCloudServer(object):
         self.httpd.llm_calls = 0
         self.httpd.audio_sizes = []
         self.httpd.authorizations = []
+        self.httpd.upload_filenames = []
+        self.httpd.upload_content_types = []
         self.httpd.llm_payloads = []
         self.httpd.asr_text_prefix = "chunk-cue"
         # v0026 模型列表 / 连接测试
@@ -655,6 +666,50 @@ class SubtitleServiceTest(SubtitleTestBase):
         self.assertNotIn("SECRET_LLM_KEY_XYZ",
                          json.dumps(self.cloud.httpd.llm_payloads[-1]))
 
+    def test_server_audio_mode_remux(self):
+        # v0032：server 模式用流复制抽音轨（.mka），NAS 不解码
+        self._configure_settings(subtitle_audio_source="server")
+        video = self.make_video(duration=120)
+        job = self.submit(video)
+        self.assertEqual(job["audio_source"], "server")
+        done = self.wait_job(job["job_id"])
+        self.assertEqual(done["status"], "done", done.get("error"))
+        self.assertTrue(self.cloud.httpd.upload_filenames)
+        for name in self.cloud.httpd.upload_filenames:
+            self.assertTrue(name.endswith(".mka"), name)
+        for content_type in self.cloud.httpd.upload_content_types:
+            self.assertIn("matroska", content_type)
+        self.assertIsNone(done["warning"])
+
+    def test_server_audio_mode_fallback(self):
+        # v0032：流复制失败回退 NAS 抽音频，任务仍 done 并带 warning
+        self._configure_settings(subtitle_audio_source="server")
+        with mock.patch.dict(os.environ, {"FAKE_REMUX_FAIL": "1"}):
+            video = self.make_video(duration=60)
+            job = self.submit(video)
+            done = self.wait_job(job["job_id"])
+        self.assertEqual(done["status"], "done", done.get("error"))
+        self.assertEqual(done["warning"], "SERVER_AUDIO_FALLBACK")
+        for name in self.cloud.httpd.upload_filenames:
+            self.assertTrue(name.endswith(".mp3"), name)
+
+    def test_server_audio_mode_size_split(self):
+        from dupcleaner import config as config_module
+        self._configure_settings(subtitle_audio_source="server",
+                                 subtitle_asr_chunk_sec=600)
+        with mock.patch.object(config_module,
+                               "SUBTITLE_SERVER_UPLOAD_MAX_MB", 1):
+            with mock.patch.dict(os.environ,
+                                 {"FAKE_REMUX_BYTES_PER_SEC": "30000"}):
+                video = self.make_video(duration=600)
+                job = self.submit(video)
+                done = self.wait_job(job["job_id"], timeout=30)
+        self.assertEqual(done["status"], "done", done.get("error"))
+        self.assertGreater(self.cloud.httpd.asr_calls, 1)
+        limit = 1024 * 1024 + 4096
+        for size in self.cloud.httpd.audio_sizes:
+            self.assertLessEqual(size, limit)
+
     def test_llm_fenced_and_retry(self):
         for mode in ("fenced", "wrong_then_ok"):
             self.cloud.httpd.llm_mode = mode
@@ -735,6 +790,99 @@ class SubtitleServiceTest(SubtitleTestBase):
                     "original.exe", "/etc/passwd"):
             with self.assertRaises(ApiError, msg=bad):
                 self.service.get_file(job["job_id"], bad)
+
+
+class SubtitleBatchGroupTest(SubtitleTestBase):
+    """v0032：批次组（一次提交自动拆批、聚合进度、控制与保留策略）。"""
+
+    def make_group(self, paths, **overrides):
+        payload = {
+            "paths": list(paths),
+            "language": "auto",
+            "translate": False,
+            "confirm_cloud": True,
+        }
+        payload.update(overrides)
+        return self.service.create_batch_group("admin", payload)
+
+    def wait_group(self, group_id, timeout=30.0):
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            snapshot = self.service.get_batch_group(group_id)
+            if snapshot["status"] in ("done", "failed", "cancelled"):
+                return snapshot
+            time.sleep(0.02)
+        raise AssertionError("subtitle group did not finish")
+
+    def test_create_group_splits_batches(self):
+        from dupcleaner import config as config_module
+        videos = [self.make_video("g%d.mp4" % index, duration=60)
+                  for index in range(3)]
+        with mock.patch.object(config_module, "SUBTITLE_BATCH_MAX_ITEMS", 2):
+            group = self.make_group(videos)
+        self.assertEqual(group["total"], 3)
+        self.assertEqual(group["batch_count"], 2)
+        self.assertEqual([item["total"] for item in group["batches"]],
+                         [2, 1])
+        self.assertEqual(group["options"]["source"], "asr")
+        done = self.wait_group(group["group_id"])
+        self.assertEqual(done["status"], "done")
+        self.assertEqual(done["counts"]["done"], 3)
+        self.assertEqual(done["progress"], 100)
+        # 任务分页可按 group_id 过滤
+        page = self.service.list_page(group_id=group["group_id"], limit=2)
+        self.assertEqual(page["total"], 3)
+        self.assertEqual(len(page["jobs"]), 2)
+        self.assertEqual(page["limit"], 2)
+        self.assertTrue(all(item["group_id"] == group["group_id"]
+                            for item in page["jobs"]))
+        page2 = self.service.list_page(group_id=group["group_id"], limit=2,
+                                       offset=2)
+        self.assertEqual(len(page2["jobs"]), 1)
+
+    def test_group_too_large_and_empty(self):
+        from dupcleaner import config as config_module
+        with mock.patch.object(config_module,
+                               "SUBTITLE_BATCH_GROUP_MAX_ITEMS", 2):
+            with self.assertRaises(ApiError) as ctx:
+                self.make_group(["a.mp4", "b.mp4", "c.mp4"])
+        self.assertEqual(ctx.exception.code, "BATCH_TOO_LARGE")
+        with self.assertRaises(ApiError) as ctx:
+            self.make_group([os.path.join(self.root, "missing.mp4")])
+        self.assertEqual(ctx.exception.code, "BATCH_EMPTY")
+
+    def test_group_unknown_404(self):
+        with self.assertRaises(ApiError) as ctx:
+            self.service.get_batch_group("grp-20260101-000000-abcdef")
+        self.assertEqual(ctx.exception.code, "NOT_FOUND")
+
+    def test_group_control_after_done(self):
+        video = self.make_video("ctl.mp4", duration=60)
+        group = self.make_group([video])
+        self.wait_group(group["group_id"])
+        paused = self.service.pause_batch_group(group["group_id"])
+        self.assertEqual(paused["status"], "done")
+        cancelled = self.service.cancel_batch_group(group["group_id"])
+        self.assertEqual(cancelled["status"], "done")
+        retried = self.service.retry_batch_group(group["group_id"])
+        self.assertEqual(retried["status"], "done")
+        resumed = self.service.resume_batch_group(group["group_id"])
+        self.assertEqual(resumed["status"], "done")
+
+    def test_group_retention_limit(self):
+        from dupcleaner import config as config_module
+        first_video = self.make_video("r1.mp4", duration=60)
+        first = self.make_group([first_video])
+        self.wait_group(first["group_id"])
+        with mock.patch.object(config_module, "SUBTITLE_BATCH_GROUP_LIMIT", 1):
+            second_video = self.make_video("r2.mp4", duration=60)
+            second = self.make_group([second_video])
+            self.wait_group(second["group_id"])
+        with self.assertRaises(ApiError) as ctx:
+            self.service.get_batch_group(first["group_id"])
+        self.assertEqual(ctx.exception.code, "NOT_FOUND")
+        self.assertEqual(self.service.get_batch_group(
+            second["group_id"])["status"], "done")
 
 
 class SubtitleProbeTest(SubtitleTestBase):

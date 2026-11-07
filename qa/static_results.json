@@ -1,7 +1,7 @@
 {
-  "generated_at": "2026-11-07T08:57:21+0800",
+  "generated_at": "2026-11-07T09:36:36+0800",
   "summary": {
-    "PASS": 130,
+    "PASS": 136,
     "FAIL": 0,
     "UNVERIFIED": 0
   },
@@ -52,7 +52,7 @@
       "id": "BE-UNITTEST-LOG",
       "name": "unittest 结果",
       "status": "INFO",
-      "detail": "Ran 373 tests in 88.154s"
+      "detail": "Ran 382 tests in 96.300s"
     },
     {
       "id": "BE-NO-AUTODELETE",
@@ -193,6 +193,24 @@
       "detail": ""
     },
     {
+      "id": "BE-SUBTITLE-GROUP",
+      "name": "批次组：自动拆批/聚合快照/组控制/保留（schema v7 + batch-groups 路由）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "BE-SCANDEL-FILTER",
+      "name": "删除成功后扫描结果读取过滤已删除文件（scan_file_deletions）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "BE-SUBTITLE-AUDIO",
+      "name": "音频来源设置 + 服务器解码（流复制抽音轨 + 回退）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
       "id": "FE-FILES",
       "name": "前端 index.html/app.js/styles.css 存在",
       "status": "PASS",
@@ -236,7 +254,7 @@
     },
     {
       "id": "FE-SUBTITLE-ENDPOINTS",
-      "name": "字幕页覆盖目录枚举/批次提交/批次控制接口",
+      "name": "字幕页覆盖目录枚举/批次组提交/组控制/任务分页接口",
       "status": "PASS",
       "detail": ""
     },
@@ -260,13 +278,31 @@
     },
     {
       "id": "FE-SUBTITLE-POLL-RESUME",
-      "name": "切换视图后批次轮询可恢复、跳转任务中心直达字幕任务、记住上次目录",
+      "name": "切换视图后批次组轮询可恢复、跳转任务中心直达字幕任务、记住上次目录",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "FE-SUBTITLE-GROUP",
+      "name": "字幕页批次组：全选不截断、自动拆批提交、聚合进度、任务分页、组控制",
       "status": "PASS",
       "detail": ""
     },
     {
       "id": "FE-SUBTITLE-THINKING",
       "name": "设置页提供“禁用 LLM 思考”开关（本地推理模型建议开启）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "FE-SUBTITLE-AUDIO",
+      "name": "设置页提供音频来源（NAS 解码 / 服务器解码）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "FE-DELETE-REFRESH",
+      "name": "删除完成后结果页重置并重拉（已删除文件不再显示，空页回退）",
       "status": "PASS",
       "detail": ""
     },
@@ -278,7 +314,7 @@
     },
     {
       "id": "FE-SUBTITLE-SUBMIT-REASON",
-      "name": "提交按钮禁用原因常显；「全选」自动截断到单批上限（v0031）",
+      "name": "提交按钮禁用原因常显；全选不截断并提示拆分批次（v0031/v0032）",
       "status": "PASS",
       "detail": ""
     },
@@ -692,7 +728,7 @@
     },
     {
       "id": "SPK-DIST",
-      "name": "构建产物存在（DuplicateCleaner-1.1.0-0031.spk）",
+      "name": "构建产物存在（DuplicateCleaner-1.1.0-0032.spk）",
       "status": "PASS",
       "detail": ""
     },
@@ -704,7 +740,7 @@
     },
     {
       "id": "SPK-VERSION",
-      "name": "SPK INFO.version 与当前源码 APP_VERSION（1.1.0-0031）一致",
+      "name": "SPK INFO.version 与当前源码 APP_VERSION（1.1.0-0032）一致",
       "status": "PASS",
       "detail": ""
     },

@@ -69,6 +69,8 @@ DEFAULT_SETTINGS = {
     "subtitle_asr_timeout_sec": 300,
     "subtitle_asr_chunk_sec": 600,
     "subtitle_asr_max_audio_mb": 24,
+    # v0032：音频来源 nas（本机抽音，默认）/ server（上传视频段由 ASR 服务器抽音）
+    "subtitle_audio_source": config.SUBTITLE_DEFAULT_AUDIO_SOURCE,
     "subtitle_translate_enabled": False,
     "subtitle_llm_base_url": "https://api.openai.com/v1",
     "subtitle_llm_api_key": "",
@@ -336,6 +338,10 @@ def _normalize_value(key, value):
         return _check_int(key, value, 60, 1800)
     if key == "subtitle_asr_max_audio_mb":
         return _check_int(key, value, 1, 100)
+    if key == "subtitle_audio_source":
+        if value not in config.SUBTITLE_AUDIO_SOURCES:
+            _err(u"subtitle_audio_source 只能是 nas/server", {"key": key})
+        return value
     if key == "subtitle_llm_model":
         return _check_model_name(key, value)
     if key == "subtitle_translate_target":

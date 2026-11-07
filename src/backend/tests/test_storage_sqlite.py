@@ -180,11 +180,13 @@ class SchemaTest(StoreTestCase):
             "SELECT name FROM sqlite_master WHERE type='table'")}
         for table in ("schema_meta", "scans", "scan_groups", "deletion_jobs",
                       "deletion_results", "feature_cache", "scan_checkpoints",
-                      "subtitle_chunks", "subtitle_jobs", "subtitle_batches"):
+                      "subtitle_chunks", "subtitle_jobs", "subtitle_batches",
+                      "subtitle_batch_groups", "scan_file_deletions"):
             self.assertIn(table, names)
         # v5：scan_files 不再冗余保存 payload_json（group payload 才是真源）
         # v6（v0028）：新增 subtitle_batches 批次表
-        self.assertEqual(db_module.CURRENT_SCHEMA_VERSION, 6)
+        # v7（v0032）：新增 subtitle_batch_groups + scan_file_deletions
+        self.assertEqual(db_module.CURRENT_SCHEMA_VERSION, 7)
         scan_files_columns = {row[1] for row in store.db.query(
             "PRAGMA table_info(scan_files)")}
         self.assertNotIn("payload_json", scan_files_columns)
@@ -202,6 +204,37 @@ class SchemaTest(StoreTestCase):
         else:
             self.assertFalse(
                 set(db_module.FTS_TRIGGER_NAMES) & triggers)
+
+    def test_scan_file_deletions_filter_reads(self):
+        """v0032：删除成功后，分组/统计/迭代读取都不再返回已删除文件。"""
+        groups = _v5_groups()
+        _make_v4_db(os.path.join(self.tmpdir, "dupcleaner.sqlite3"),
+                    SCAN_A, groups)
+        store = Store(self.tmpdir)
+        try:
+            self.assertEqual(store.count_scan_files(SCAN_A), 3)
+            delete_path = "/share/Docs/Alpha-01.txt"
+            self.assertEqual(store.mark_scan_files_deleted(
+                SCAN_A, [{"path": delete_path, "job_id": "del-test-1",
+                          "mode": "recycled"}]), 1)
+            self.assertEqual(store.count_scan_file_deletions(SCAN_A), 1)
+            self.assertEqual(store.load_deleted_paths(SCAN_A), {delete_path})
+            self.assertEqual(store.count_scan_files(SCAN_A), 2)
+            # 组内只剩 1 个文件 → 该组从分组结果中消失
+            self.assertEqual(store.count_scan_groups(SCAN_A), 0)
+            page = store.query_scan_groups_page(SCAN_A, limit=10)
+            self.assertIsNotNone(page)
+            self.assertEqual(page["groups"], [])
+            self.assertEqual(page["total"], 0)
+            self.assertEqual(list(store.iter_scan_groups(SCAN_A)), [])
+            stats_paths = [path for path, _size in store.scan_file_stats(SCAN_A)]
+            self.assertNotIn(delete_path, stats_paths)
+            self.assertEqual(stats_paths, [])
+            # 幂等：重复标记不报错、行数不变
+            store.mark_scan_files_deleted(SCAN_A, [delete_path])
+            self.assertEqual(store.count_scan_file_deletions(SCAN_A), 1)
+        finally:
+            store.close()
 
     def test_v4_to_v5_migration_drops_payload_and_preserves_rows(self):
         groups = _v5_groups()

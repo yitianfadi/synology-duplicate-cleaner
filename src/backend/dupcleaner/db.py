@@ -36,7 +36,7 @@ DB_FILENAME = "dupcleaner.sqlite3"
 # + 触发器同步，trigram 不可用时自动回退 LIKE 子串搜索。
 # v6（v0028 目录批量字幕）：新增 subtitle_batches 批次表
 # （docs/SUBTITLE_BATCH_CONTRACT.md §7.3）。
-CURRENT_SCHEMA_VERSION = 6
+CURRENT_SCHEMA_VERSION = 7
 FTS_TABLE = "scan_files_fts"
 FTS_TRIGGER_NAMES = (
     "scan_files_fts_ai",
@@ -199,6 +199,28 @@ _SCHEMA_STATEMENTS = (
         updated_epoch REAL NOT NULL
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS subtitle_batch_groups (
+        group_id TEXT PRIMARY KEY,
+        payload_json TEXT NOT NULL,
+        created_epoch REAL NOT NULL,
+        updated_epoch REAL NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS scan_file_deletions (
+        scan_id TEXT NOT NULL,
+        path TEXT NOT NULL,
+        job_id TEXT,
+        mode TEXT,
+        deleted_epoch REAL NOT NULL,
+        PRIMARY KEY (scan_id, path)
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_scan_file_deletions_scan
+        ON scan_file_deletions(scan_id)
+    """,
 )
 
 # v4：plan C 字幕 ASR 分片缓存表（v3 升级时只建表；chunk 行由任务运行时写入）。
@@ -226,6 +248,35 @@ _V6_MIGRATION_STATEMENTS = (
         created_epoch REAL NOT NULL,
         updated_epoch REAL NOT NULL
     )
+    """,
+)
+
+# v7（v0032）：字幕批次组 + 扫描删除标记（幂等；行由运行期写入）。
+# - subtitle_batch_groups：一次提交可拆成多批，组记录聚合展示/恢复（docs/SUBTITLE_BATCH_CONTRACT.md）。
+# - scan_file_deletions：删除成功后的文件标记，分组/统计/CSV 读取时排除，
+#   解决“删除完成后结果页仍显示已删除文件”（docs/STORAGE_CONTRACT.md）。
+_V7_MIGRATION_STATEMENTS = (
+    """
+    CREATE TABLE IF NOT EXISTS subtitle_batch_groups (
+        group_id TEXT PRIMARY KEY,
+        payload_json TEXT NOT NULL,
+        created_epoch REAL NOT NULL,
+        updated_epoch REAL NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS scan_file_deletions (
+        scan_id TEXT NOT NULL,
+        path TEXT NOT NULL,
+        job_id TEXT,
+        mode TEXT,
+        deleted_epoch REAL NOT NULL,
+        PRIMARY KEY (scan_id, path)
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_scan_file_deletions_scan
+        ON scan_file_deletions(scan_id)
     """,
 )
 
@@ -559,6 +610,8 @@ class Database(object):
                 self._migrate_v5()
             elif next_version == 6:
                 self._migrate_v6()
+            elif next_version == 7:
+                self._migrate_v7()
             version = next_version
             self._conn.execute(
                 "INSERT OR REPLACE INTO schema_meta(key, value) "
@@ -649,6 +702,14 @@ class Database(object):
         for statement in _V6_MIGRATION_STATEMENTS:
             conn.execute(statement)
         logger.info(u"SQLite schema 迁移到 v6 完成：已创建 subtitle_batches 表")
+
+    def _migrate_v7(self):
+        """v6→v7：新建 subtitle_batch_groups 与 scan_file_deletions（幂等）。"""
+        conn = self._conn
+        for statement in _V7_MIGRATION_STATEMENTS:
+            conn.execute(statement)
+        logger.info(u"SQLite schema 迁移到 v7 完成：已创建 subtitle_batch_groups /"
+                    u" scan_file_deletions 表")
 
     def _backfill_scan_group_columns(self):
         """按 rowid 分批回填 scan_groups 索引列与 scan_files（不整表载入）。"""

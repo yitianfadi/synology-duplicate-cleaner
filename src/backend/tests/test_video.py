@@ -107,6 +107,25 @@ if "-f" in args and "mp3" in args:
     except OSError:
         fail("cannot write mp3")
     sys.exit(0)
+if "-f" in args and "matroska" in args:
+    # v0032 server 音频模式：流复制抽音轨（不解码）输出 .mka
+    if os.environ.get("FAKE_REMUX_FAIL") == "1":
+        fail("remux failed")
+    chunk_seconds = 0.0
+    if "-t" in args:
+        try:
+            chunk_seconds = float(args[args.index("-t") + 1])
+        except (IndexError, ValueError):
+            chunk_seconds = 0.0
+    per_sec = float(os.environ.get("FAKE_REMUX_BYTES_PER_SEC", "2000") or 2000)
+    size = max(16, int(chunk_seconds * per_sec))
+    target = args[-1]
+    try:
+        with open(target, "wb") as handle:
+            handle.write(b"\x1aE\xdf\xa3" + b"\x00" * (size - 4))
+    except OSError:
+        fail("cannot write mka")
+    sys.exit(0)
 rawvideo = ("-f" in args and "rawvideo" in args)
 # v0018 批处理抽帧：单进程多个 "-y <frame.raw>" 输出文件。
 outputs = []

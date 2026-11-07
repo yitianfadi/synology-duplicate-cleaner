@@ -149,7 +149,8 @@
 
 ### 4.4 任务列表过滤
 
-`GET /api/subtitles?limit=&batch_id=` 支持按批次过滤；不传保持 v1.3 行为。
+`GET /api/subtitles?limit=&offset=&batch_id=&group_id=` 支持按批次/批次组过滤并分页；
+带 `group_id` 或 `offset` 时返回 `{"ok":true,"jobs":[...],"total":N,"offset":N,"limit":N}`。
 
 ## 5. 单任务扩展（向后兼容）
 
@@ -209,6 +210,8 @@
 {
   "source": "asr",
   "batch_id": "bat-...",
+  "group_id": "grp-...",
+  "audio_source": "nas",
   "output_mode": "alongside_video",
   "skipped": false,
   "warning": null,
@@ -216,6 +219,9 @@
   "output_errors": []
 }
 ```
+
+- `group_id`：v0032 批次组 ID（单批提交/单任务为 null）。
+- `audio_source`：提交时的音频来源快照（`nas` | `server`），运行期不随设置变化。
 
 旧 job JSON 缺这些字段时按默认值读取（`_load_jobs` 容错），保证升级后可读。
 
@@ -257,7 +263,9 @@ CREATE TABLE IF NOT EXISTS subtitle_batches (
 
 - 执行模型不变：**单 worker 串行**，同一时间 1 个字幕任务；批次内按提交顺序执行。
 - `subtitle_job_limit` 默认 20 → **200**；LRU 只删除已完成任务的任务目录、DB 记录与 job json；**视频旁 srt 永不删除**。
-- 重启恢复：`queued/running` → `paused`（沿用 v1.3）；批次状态由子任务实时聚合，不存独立状态机。
+- v0032 批次组：组内任务**不参与**单任务 LRU；组按 `SUBTITLE_BATCH_GROUP_LIMIT`（默认 20）整体保留，
+  超出时只清理已终态（done/failed/cancelled）的最老组，暂停/运行中的组不清理。
+- 重启恢复：`queued/running` → `paused`（沿用 v1.3）；批次/批次组状态由子任务实时聚合，不存独立状态机。
 - 任务与批次 ID：`sub-<时间戳>-<随机>` / `bat-<时间戳>-<随机>`，字符集 `[A-Za-z0-9._-]`。
 
 ## 9. 前端
@@ -271,7 +279,9 @@ CREATE TABLE IF NOT EXISTS subtitle_batches (
 - 独立 ES module `src/web/js/subtitle-page.js`，由 `app.js` 导入；不新增第三方依赖、不用 `innerHTML`、符合 ES2019。
 - 设置页「云端字幕」分组提供 `subtitle_output_mode`（下拉）、`subtitle_skip_existing`（勾选）、`subtitle_job_limit`（数字，20–1000）；页面进度/批次状态/错误码在 `src/web/js/constants.js` 统一维护。
 - 原「视频结果行 → 生成字幕」入口保留，行为统一走 `POST /api/subtitles`（默认 `output_mode` 取自设置）。
-- 任务中心「历史记录 → 字幕任务」列表与详情展示来源、写回路径、跳过原因、`OUTPUT_NOT_WRITABLE/OUTPUT_WRITE_PARTIAL` 警告；任务目录下载入口保留。视频结果行完成弹窗同样展示写回/跳过/警告。
+- 任务中心「历史记录 → 字幕任务」列表与详情展示来源、写回路径、跳过原因、`OUTPUT_NOT_WRITABLE/OUTPUT_WRITE_PARTIAL` 警告、`translation_partial`（部分译文回退原文）与 `SERVER_AUDIO_FALLBACK`（服务器解码回退 NAS）；任务目录下载入口保留。
+- v0032 批次组：一次提交可含 1..20000 个视频，前端**全选不截断**；提交后显示“将分为 M 批（每批 ≤500）”，进度卡展示组聚合进度、批次列表（前 50 可展开）与任务明细分页（每页 100，加载更多）；暂停/继续/取消/重试作用于整组；组 ID 存 `localStorage['dupcleaner.lastSubtitleGroup.v1']` 以便切页/刷新恢复。
+- 设置页新增「音频来源」（`nas` 本地解码 / `server` NAS 只流复制音轨、服务器解码；默认 nas）。
 - 批次完成提醒、切换视图后轮询恢复、「在任务中心查看」直达字幕任务标签；目录/递归/模式沿用浏览器本地记忆。
 
 ## 10. 错误码
@@ -283,7 +293,7 @@ CREATE TABLE IF NOT EXISTS subtitle_batches (
 | INVALID_DIRECTORY | 400 | 枚举路径不是目录 |
 | ENUMERATE_LIMIT | 400 | `max_items` 超上限 |
 | BATCH_EMPTY | 400 | 批次没有任何有效任务 |
-| BATCH_TOO_LARGE | 400 | 路径数超 `SUBTITLE_BATCH_MAX_ITEMS` |
+| BATCH_TOO_LARGE | 400 | 路径数超 `SUBTITLE_BATCH_GROUP_MAX_ITEMS`（v0032：默认 20000；批次内自动拆成 ≤500） |
 | SOURCE_SRT_MISSING | 400 | 只翻译但视频旁无 `<stem>.srt` |
 | OUTPUT_NOT_WRITABLE | 400 | 视频旁目录不可写（任务级 warning，不作为接口错误抛出） |
 
@@ -300,6 +310,55 @@ CREATE TABLE IF NOT EXISTS subtitle_batches (
 
 ## 12. 版本与兼容
 
-- 版本 **1.1.0-0031**，需同步 8 处：`README.md`、`build/build_spk.py`、`docs/ARCHITECTURE.md`、`docs/CONTRACT.md`、`docs/SPK_PACKAGING.md`、`spk/INFO`、`src/backend/dupcleaner/config.py`、`src/web/index.html`（含 `app.js?v=` 查询串）。
+- 版本 **1.1.0-0032**，需同步 8 处：`README.md`、`build/build_spk.py`、`docs/ARCHITECTURE.md`、`docs/CONTRACT.md`、`docs/SPK_PACKAGING.md`、`spk/INFO`、`src/backend/dupcleaner/config.py`、`src/web/index.html`（含 `app.js?v=` 查询串）。
 - 现有 `POST /api/subtitles` 行为不变（新字段均为可选）；旧任务记录可读；旧 SPK 升级后数据目录与包 ID 不变。
 - 文档同步：本文件、`docs/SUBTITLE_CONTRACT.md`（新增 §13 指向本文件）、`docs/ARCHITECTURE.md`（字幕页与批次服务）。
+
+## 13. 批次组（v0032：全选与自动拆批）
+
+### 13.1 目标
+
+「全选」选中当前枚举结果的全部视频（不再限制 500），提交时后端自动拆成每批 ≤`SUBTITLE_BATCH_MAX_ITEMS`（500）的多个批次，
+共享一个 `group_id` 顺序执行；前端/后端都以“组”为进度与控制单位。
+
+### 13.2 API
+
+- `POST /api/subtitles/batch-groups`（管理员 + CSRF）：请求体同 §4.1（`paths` 改为 1..20000）。
+  - 202：`{"ok":true,"group":{...}}`；`BATCH_TOO_LARGE`（>20000）、`BATCH_EMPTY`、`INVALID_ARGUMENT`。
+- `GET /api/subtitles/batch-groups/{group_id}` → 组快照；未知/已清理 → 404 `NOT_FOUND`。
+- `POST /api/subtitles/batch-groups/{group_id}/{pause|resume|cancel|retry}`：作用于组内所有批次，返回组快照；终态组为幂等空操作。
+- `GET /api/subtitles?group_id=&offset=&limit=`：任务明细分页（limit 1..500），返回 `total/offset/limit`。
+- `/api/meta.subtitle` 新增 `batch_group_max_items`（20000）与 `audio_sources`（["nas","server"]）。
+
+组快照：
+
+```json
+{
+  "group_id": "grp-20261107-091500-abc123",
+  "status": "queued|running|paused|done|failed|cancelled",
+  "total": 5000, "batch_count": 10, "finished": 1200, "progress": 24,
+  "counts": {"queued": 0, "running": 1, "translating": 0, "paused": 0,
+              "done": 1199, "failed": 0, "cancelled": 0},
+  "missing": 0,
+  "created_at": "...", "updated_at": "...",
+  "options": {"source": "asr", "language": "auto", "translate": false,
+               "target_lang": "zh", "output_mode": "alongside_video",
+               "skip_existing": true, "audio_source": "nas",
+               "recursive": true, "root": "/volume2/video"},
+  "rejected": [], "duplicates": [],
+  "batches": [{"batch_id": "bat-...", "index": 0, "total": 500,
+                "status": "done", "counts": {"...": 0}}]
+}
+```
+
+- `counts` 为 7 个状态键求和；`finished` = done+failed+cancelled；`progress` = round(100×finished/total)。
+- 状态推导与批次一致：全部终态时 failed 优先，其次 cancelled（且无 done），否则 done；未全部终态时 running/translating > paused > queued。
+- 组记录持久化到 SQLite `subtitle_batch_groups`（schema v7），并镜像 JSON 到 `<var>/subtitles/groups/`。
+- 保留：`SUBTITLE_BATCH_GROUP_LIMIT`（默认 20）个组；只清理已终态最老组及其批次/任务；组内任务不参与单任务 LRU。
+
+### 13.3 前端
+
+- 全选 = 当前筛选结果全部（≤20000），提示“已选择 N 个视频（将分为 M 批，每批最多 500 个）”。
+- 进度卡：组状态/聚合进度条/计数/剩余/批次数；批次列表默认前 50 可展开；任务明细分页加载。
+- 提交按钮禁用原因常显（未选视频/超 20000/未勾确认项/字幕未启用或缺凭据）。
+- 恢复：`localStorage['dupcleaner.lastSubtitleGroup.v1']` 保存 `{group_id,saved_at}`；进入字幕视图时恢复组快照与轮询，404 清 key。

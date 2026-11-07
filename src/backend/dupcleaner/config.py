@@ -7,9 +7,9 @@ import os
 import re
 
 APP_NAME = "DuplicateCleaner"
-APP_VERSION = "1.1.0-0031"
+APP_VERSION = "1.1.0-0032"
 DISPLAY_NAME = "重复文件清理与字幕"
-SPK_VERSION = "1.1.0-0031"
+SPK_VERSION = "1.1.0-0032"
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8787
@@ -126,14 +126,25 @@ SHORT_VIDEO_RATIO_MAX = 2.0
 # 已完成任务保留上限（设置 subtitle_job_limit 的缺省值）；LRU 只删任务目录，
 # 绝不删除写回视频旁的字幕文件。
 SUBTITLE_JOB_LIMIT_DEFAULT = 200
-# 单次批量提交路径上限；超出拒绝并提示分批。
+# 单次批量提交路径上限；超出拒绝并提示分批（组内每批仍按此上限拆分）。
 SUBTITLE_BATCH_MAX_ITEMS = 500
+# 单次“批次组”提交路径上限（v0032：一次提交自动拆成多个 <=500 的批次）。
+SUBTITLE_BATCH_GROUP_MAX_ITEMS = 20000
 # 单次目录枚举返回上限；超出截断并置 truncated=true。
-SUBTITLE_ENUMERATE_MAX_ITEMS = 5000
+SUBTITLE_ENUMERATE_MAX_ITEMS = 20000
+# 已完成批次组保留数量（v0032：组内任务不参与单任务 LRU，按组整体清理）。
+SUBTITLE_BATCH_GROUP_LIMIT = 20
 # 允许写回视频同目录的字幕后缀（只写 srt，vtt 仅留在任务目录供下载）。
 SUBTITLE_ALONGSIDE_EXT = ".srt"
 SUBTITLE_OUTPUT_MODES = ("alongside_video", "download_only")
 SUBTITLE_DEFAULT_OUTPUT_MODE = "alongside_video"
+# 音频来源（v0032）：nas=本机解码抽 16k 单声道 mp3（默认，只上传音频）；
+# server=NAS 只做流复制抽音轨（不解码，速度快），由 ASR 服务器解码转音频，
+# 仍然只上传音频（不上传视频），体积取决于原音轨码率。
+SUBTITLE_AUDIO_SOURCES = ("nas", "server")
+SUBTITLE_DEFAULT_AUDIO_SOURCE = "nas"
+# server 模式单段上传上限（ASR 服务 800MB 限制留余量）；超限继续对半切。
+SUBTITLE_SERVER_UPLOAD_MAX_MB = 780
 
 # 系统 / 隐藏目录名：任何一层路径出现都必须拒绝（回收站目标除外）。
 SYSTEM_DIR_NAMES = frozenset([
@@ -174,6 +185,7 @@ SCAN_ID_RE = re.compile(r"^[0-9]{8}-[0-9]{6}-[0-9a-f]{6}$")
 PLAN_ID_RE = re.compile(r"^plan-[A-Za-z0-9._-]{6,80}$")
 JOB_ID_RE = re.compile(r"^del-[A-Za-z0-9._-]{6,80}$")
 SUBTITLE_BATCH_ID_RE = re.compile(r"^bat-[A-Za-z0-9._-]{6,80}$")
+SUBTITLE_BATCH_GROUP_ID_RE = re.compile(r"^grp-[A-Za-z0-9._-]{6,80}$")
 
 
 def secure_permissions(path, mode=SECURE_FILE_MODE):

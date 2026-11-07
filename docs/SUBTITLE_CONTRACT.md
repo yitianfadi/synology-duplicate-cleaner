@@ -14,6 +14,7 @@
 | subtitle_asr_timeout_sec | 300 | 30..1800 |
 | subtitle_asr_chunk_sec | 600 | 60..1800 |
 | subtitle_asr_max_audio_mb | 24 | 1..100；超过则强制分块 |
+| subtitle_audio_source | nas | v0032：`nas`=本机解码抽 16k mp3（只上传音频）；`server`=本机仅流复制抽音轨（不解码），由 ASR 服务器解码（仍只上传音频） |
 | subtitle_translate_enabled | false | 是否生成译文 |
 | subtitle_llm_base_url | https://api.openai.com/v1 | http/https |
 | subtitle_llm_api_key | "" | GET 不回传明文 |
@@ -58,7 +59,12 @@ job schema：
 - 使用 SPK 内置 FFmpeg（`DUP_FFMPEG_PATH`）。
 - 读视频时长；按 `subtitle_asr_chunk_sec` 切块，块起点/终点准确；输出 16kHz 单声道 MP3，32kbps，临时文件。
 - 每块必须小于 `subtitle_asr_max_audio_mb`；超出时继续按时长对半切。
-- 音频文件只存在临时目录，完成/失败/取消后删除；不得保存在结果目录。
+- v0032 音频来源 `subtitle_audio_source`：
+  - `nas`（默认）：上述本机解码抽出 16k mp3 后上传（只上传音频）。
+  - `server`：本机只用 FFmpeg **流复制**抽音轨（`-map 0:a:0 -c copy`，不解码，速度快），按块上传音频容器（.mka），由 ASR 服务器解码转音频；仍只上传音频、不上传视频。单块超过 `SUBTITLE_SERVER_UPLOAD_MAX_MB`（780MB）继续对半切。
+  - 流复制失败（容器/编码不支持、无音轨）→ 该分块回退 NAS 解码（mp3），任务仍 `done` 并置 `warning=SERVER_AUDIO_FALLBACK`。
+  - 音频来源在提交时快照到 job（`audio_source`），运行期不随设置变化。
+- 音频/音轨片段只存在临时目录，完成/失败/取消后删除；不得保存在结果目录。
 - 每块 ASR 返回的时间戳加块偏移；块边界重叠/重复 cue 去重（相同 start/end/text 或首尾重叠）。
 - 不处理无音轨视频：报 `no_audio`，不生成空字幕。
 
@@ -250,3 +256,9 @@ wlk --host 0.0.0.0 --port 8000 --model base --language zh --api-token “<自定
 v0028 在 v1.3 单文件任务之上新增**目录批量生成 / 翻译**：独立「字幕」页、`POST /api/subtitles/enumerate`、`POST /api/subtitles/batch`、批次控制与 `GET /api/subtitles?batch_id=`；字幕以 `.srt` 写回视频同目录（已有文件跳过、不覆盖），并支持 `source=existing_srt` 只翻译已有字幕（不跑 ASR、不上传音频）。
 
 本节只是索引；**字段、错误码、落盘规则、测试与验收以 [SUBTITLE_BATCH_CONTRACT.md](SUBTITLE_BATCH_CONTRACT.md) 为准**。v1.3 的 `POST /api/subtitles` 保持兼容：新增字段均为可选，缺省行为不变。
+
+## 12. v0032 批次组与服务器解码
+
+- 一次提交最多 20000 个视频，自动拆成每批 ≤500 的批次组（详见 `SUBTITLE_BATCH_CONTRACT.md` §13）。
+- `subtitle_audio_source=server`：NAS 只流复制抽音轨，ASR 服务器解码（详见 §3）；失败回退 NAS 解码并置 `warning=SERVER_AUDIO_FALLBACK`。
+- 删除任务成功后，扫描分组/统计/CSV 读取自动排除已删除文件（`scan_file_deletions`，schema v7；详见 `docs/STORAGE_CONTRACT.md`）。

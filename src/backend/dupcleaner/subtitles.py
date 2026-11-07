@@ -35,6 +35,7 @@ LANGUAGE_RE = re.compile(r"^(?:auto|[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})?)$")
 # 已完成任务保留上限（可被设置 subtitle_job_limit 覆盖；docs/SUBTITLE_BATCH_CONTRACT.md §2）
 MAX_JOBS = config.SUBTITLE_JOB_LIMIT_DEFAULT
 BATCH_ID_RE = config.SUBTITLE_BATCH_ID_RE
+BATCH_GROUP_ID_RE = config.SUBTITLE_BATCH_GROUP_ID_RE
 
 # 来源：asr=云端语音识别生成；existing_srt=对视频同目录已有 .srt 只翻译
 SOURCE_ASR = "asr"
@@ -43,6 +44,8 @@ SOURCES = (SOURCE_ASR, SOURCE_EXISTING_SRT)
 # 写回失败的 warning（任务仍 done，可下载）
 WARNING_OUTPUT_NOT_WRITABLE = "OUTPUT_NOT_WRITABLE"
 WARNING_OUTPUT_PARTIAL = "OUTPUT_WRITE_PARTIAL"
+# v0032：server 音频模式流复制失败时回退 NAS 抽音频（任务仍 done）
+WARNING_SERVER_AUDIO_FALLBACK = "SERVER_AUDIO_FALLBACK"
 
 STATUS_QUEUED = "queued"
 STATUS_RUNNING = "running"
@@ -415,7 +418,8 @@ def atomic_write_text(path, content):
 # OpenAI 兼容 HTTP 客户端
 # ---------------------------------------------------------------------------
 
-def encode_multipart(fields, file_field, file_path, filename):
+def encode_multipart(fields, file_field, file_path, filename,
+                     content_type="audio/mpeg"):
     boundary = "----dcsub" + uuid.uuid4().hex
     parts = []
     for key, value in fields.items():
@@ -424,8 +428,8 @@ def encode_multipart(fields, file_field, file_path, filename):
     with open(file_path, "rb") as handle:
         audio = handle.read()
     parts.append(("--%s\r\nContent-Disposition: form-data; name=\"%s\"; filename=\"%s\"\r\n"
-                  "Content-Type: audio/mpeg\r\n\r\n"
-                  % (boundary, file_field, filename)).encode("utf-8"))
+                  "Content-Type: %s\r\n\r\n"
+                  % (boundary, file_field, filename, content_type)).encode("utf-8"))
     parts.append(audio)
     parts.append(("\r\n--%s--\r\n" % boundary).encode("utf-8"))
     return b"".join(parts), "multipart/form-data; boundary=%s" % boundary
@@ -539,7 +543,8 @@ class OpenAIClient(object):
             raise SubtitleError("NETWORK_ERROR", u"无法连接云端服务")
 
     def transcribe(self, base_url, api_key, model, language, audio_path,
-                   timeout, cancel_event):
+                   timeout, cancel_event, filename="audio.mp3",
+                   content_type="audio/mpeg"):
         url = (base_url or "").rstrip("/") + "/audio/transcriptions"
         fields = {
             "model": model,
@@ -548,10 +553,10 @@ class OpenAIClient(object):
         }
         if language and language != "auto":
             fields["language"] = language
-        data, content_type = encode_multipart(fields, "file", audio_path,
-                                              "audio.mp3")
+        data, multipart_type = encode_multipart(
+            fields, "file", audio_path, filename, content_type=content_type)
         body = self._post_with_retry(
-            url, api_key, data, content_type,
+            url, api_key, data, multipart_type,
             self._effective_timeout(timeout), cancel_event)
         return parse_asr_body(body.decode("utf-8", "replace"))
 
@@ -695,7 +700,7 @@ class OpenAIClient(object):
 class SubtitleJob(object):
     def __init__(self, job_id, path, language, translate, target_lang, user,
                  source=SOURCE_ASR, output_mode=None, skip_existing=True,
-                 batch_id=None):
+                 batch_id=None, group_id=None, audio_source=None):
         self.job_id = job_id
         self.path = path
         self.language = language
@@ -708,6 +713,11 @@ class SubtitleJob(object):
                             else config.SUBTITLE_DEFAULT_OUTPUT_MODE)
         self.skip_existing = bool(skip_existing)
         self.batch_id = batch_id
+        self.group_id = group_id
+        # v0032：音频来源快照（提交时确定，运行期不随设置变化）
+        self.audio_source = (audio_source
+                             if audio_source in config.SUBTITLE_AUDIO_SOURCES
+                             else config.SUBTITLE_DEFAULT_AUDIO_SOURCE)
         self.status = STATUS_QUEUED
         self.stage = "audio"
         self.progress = 0
@@ -746,6 +756,8 @@ class SubtitleJob(object):
                 "output_mode": self.output_mode,
                 "skip_existing": bool(self.skip_existing),
                 "batch_id": self.batch_id,
+                "group_id": self.group_id,
+                "audio_source": self.audio_source,
                 "created_at": timeutil.iso_local(self.created_epoch),
                 "updated_at": timeutil.iso_local(self.updated_epoch),
                 "error": dict(self.error) if isinstance(self.error, dict) else None,
@@ -777,6 +789,8 @@ class SubtitleJob(object):
             "output_mode": self.output_mode,
             "skip_existing": bool(self.skip_existing),
             "batch_id": self.batch_id,
+            "group_id": self.group_id,
+            "audio_source": self.audio_source,
             "created_epoch": self.created_epoch,
             "updated_epoch": self.updated_epoch,
             "error": self.error,
@@ -801,7 +815,9 @@ class SubtitleJob(object):
                   source=record.get("source") or SOURCE_ASR,
                   output_mode=record.get("output_mode"),
                   skip_existing=record.get("skip_existing") is not False,
-                  batch_id=record.get("batch_id"))
+                  batch_id=record.get("batch_id"),
+                  group_id=record.get("group_id"),
+                  audio_source=record.get("audio_source"))
         job.status = record.get("status") or STATUS_FAILED
         job.stage = record.get("stage") or "audio"
         job.progress = int(record.get("progress") or 0)
@@ -827,6 +843,10 @@ def make_job_id():
 
 def make_batch_id():
     return "bat-" + time.strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:6]
+
+
+def make_group_id():
+    return "grp-" + time.strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:6]
 
 
 class SubtitleService(object):
@@ -861,8 +881,10 @@ class SubtitleService(object):
         self._root = os.path.join(runtime_config.data_dir, "subtitles")
         self._jobs_dir = os.path.join(self._root, "jobs")
         self._batches_dir = os.path.join(self._root, "batches")
+        self._groups_dir = os.path.join(self._root, "groups")
         os.makedirs(self._jobs_dir, exist_ok=True)
         os.makedirs(self._batches_dir, exist_ok=True)
+        os.makedirs(self._groups_dir, exist_ok=True)
         self._lock = threading.RLock()
         self._cond = threading.Condition(self._lock)
         # v0026：同一时间只允许一个“模型列表/连接测试”探测（占线返回 PROBE_BUSY）。
@@ -872,7 +894,16 @@ class SubtitleService(object):
         self._active_id = None
         self._worker = None
         self._stopping = False
+        # v0032：单任务 LRU 的惰性开关（大批次组注册时避免 O(n²) 扫描）。
+        self._trim_needed = False
         self._load_jobs()
+        try:
+            with self._lock:
+                if len(self._jobs) > self.job_limit:
+                    self._trim_needed = True
+                self._trim_groups_locked()
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------
     # 持久化 / 查询
@@ -889,7 +920,8 @@ class SubtitleService(object):
         """DB 优先加载；字幕 JSON 文件保留为任务目录事实源/兜底。"""
         records = {}
         try:
-            for record in self.store.load_subtitle_jobs(limit=1000):
+            # v0032：批次组可达 20000 个任务，启动时需全部恢复（组快照依赖完整 job 集合）
+            for record in self.store.load_subtitle_jobs(limit=20000):
                 job_id = record.get("job_id")
                 if isinstance(job_id, str) and JOB_ID_RE.match(job_id):
                     records[job_id] = record
@@ -1009,6 +1041,31 @@ class SubtitleService(object):
         jobs.sort(key=lambda item: item.created_epoch, reverse=True)
         return [item.snapshot() for item in jobs[:max(1, int(limit or 50))]]
 
+    def list_page(self, limit=50, batch_id=None, group_id=None, offset=0):
+        """任务分页（v0032：批次组任务明细按 group_id 过滤）。"""
+        with self._lock:
+            jobs = list(self._jobs.values())
+        if batch_id is not None:
+            jobs = [item for item in jobs if item.batch_id == batch_id]
+        if group_id is not None:
+            jobs = [item for item in jobs if item.group_id == group_id]
+        jobs.sort(key=lambda item: item.created_epoch, reverse=True)
+        try:
+            offset = max(0, int(offset or 0))
+        except (TypeError, ValueError):
+            offset = 0
+        try:
+            limit = max(1, min(int(limit or 50), 500))
+        except (TypeError, ValueError):
+            limit = 50
+        total = len(jobs)
+        return {
+            "jobs": [item.snapshot() for item in jobs[offset:offset + limit]],
+            "total": total,
+            "offset": offset,
+            "limit": limit,
+        }
+
     def counts(self):
         """任务状态计数（诊断用；不返回任务内容）。"""
         with self._lock:
@@ -1117,6 +1174,7 @@ class SubtitleService(object):
             status = STATUS_QUEUED
         return {
             "batch_id": record.get("batch_id"),
+            "group_id": record.get("group_id"),
             "status": status,
             "total": total,
             "counts": counts,
@@ -1325,7 +1383,8 @@ class SubtitleService(object):
         return SubtitleJob(job_id, os.path.normpath(path), language, translate,
                            target_lang, user, source=source,
                            output_mode=output_mode,
-                           skip_existing=skip_existing, batch_id=batch_id)
+                           skip_existing=skip_existing, batch_id=batch_id,
+                           audio_source=settings.get("subtitle_audio_source"))
 
     def _skip_message(self, job):
         """已有目标 srt 且 skip_existing 时返回提示文案；否则 None。"""
@@ -1546,6 +1605,376 @@ class SubtitleService(object):
             self._ensure_worker()
         self._save_batch_record(record)
         return self._batch_snapshot(record)
+
+    # ------------------------------------------------------------------
+    # v0032 批次组：一次提交自动拆成多个 <=SUBTITLE_BATCH_MAX_ITEMS 的批次
+    # （docs/SUBTITLE_BATCH_CONTRACT.md §13）
+    # ------------------------------------------------------------------
+    def _group_json(self, group_id):
+        return os.path.join(self._groups_dir, group_id + ".json")
+
+    def _load_group_record(self, group_id):
+        if not isinstance(group_id, str) or not BATCH_GROUP_ID_RE.match(group_id):
+            raise not_found(u"字幕批次组不存在")
+        record = None
+        try:
+            record = self.store.load_subtitle_batch_group(group_id)
+        except Exception:
+            record = None
+        if record is None:
+            path = self._group_json(group_id)
+            try:
+                with open(path, "r", encoding="utf-8") as handle:
+                    candidate = json.load(handle)
+            except (OSError, ValueError, UnicodeError):
+                candidate = None
+            if isinstance(candidate, dict):
+                record = candidate
+                record.setdefault("group_id", group_id)
+                try:
+                    self.store.save_subtitle_batch_group(group_id, record)
+                except Exception:
+                    pass
+        if record is None:
+            raise not_found(u"字幕批次组不存在")
+        return record
+
+    def _save_group_record(self, record):
+        group_id = record.get("group_id")
+        if not isinstance(group_id, str) or not BATCH_GROUP_ID_RE.match(group_id):
+            raise invalid(u"字幕批次组 ID 非法")
+        record["updated_epoch"] = time.time()
+        temporary = os.path.join(self._groups_dir, "." + group_id + ".tmp")
+        try:
+            with open(temporary, "w", encoding="utf-8") as handle:
+                json.dump(record, handle, ensure_ascii=False)
+                handle.flush()
+            os.replace(temporary, self._group_json(group_id))
+        except OSError:
+            pass
+        try:
+            self.store.save_subtitle_batch_group(group_id, record)
+        except Exception:
+            pass
+
+    @staticmethod
+    def _status_counts():
+        return dict((status, 0) for status in (
+            STATUS_QUEUED, STATUS_RUNNING, STATUS_TRANSLATING,
+            STATUS_PAUSED, STATUS_DONE, STATUS_FAILED, STATUS_CANCELLED))
+
+    @staticmethod
+    def _derive_status(counts, total):
+        """按批次/组的任务计数推导聚合状态（与 v0028 批次语义一致）。"""
+        finished = (counts.get(STATUS_DONE, 0) + counts.get(STATUS_FAILED, 0)
+                    + counts.get(STATUS_CANCELLED, 0))
+        if total and finished >= total:
+            if counts.get(STATUS_FAILED):
+                return STATUS_FAILED
+            if counts.get(STATUS_CANCELLED) and not counts.get(STATUS_DONE):
+                return STATUS_CANCELLED
+            return STATUS_DONE
+        if counts.get(STATUS_RUNNING) or counts.get(STATUS_TRANSLATING):
+            return STATUS_RUNNING
+        if counts.get(STATUS_PAUSED):
+            return STATUS_PAUSED
+        return STATUS_QUEUED
+
+    def _group_snapshot(self, record):
+        batch_ids = list(record.get("batch_ids") or [])
+        counts = self._status_counts()
+        batches = []
+        total = 0
+        missing = 0
+        with self._lock:
+            jobs_by_id = dict(self._jobs)
+        for batch_id in batch_ids:
+            try:
+                batch_record = self._load_batch_record(batch_id)
+            except (ApiError, SubtitleError):
+                continue
+            job_ids = list(batch_record.get("job_ids") or [])
+            batch_counts = self._status_counts()
+            for job_id in job_ids:
+                job = jobs_by_id.get(job_id)
+                if job is None:
+                    missing += 1
+                    continue
+                status = job.status
+                batch_counts[status] = batch_counts.get(status, 0) + 1
+                counts[status] = counts.get(status, 0) + 1
+            batch_total = len(job_ids)
+            total += batch_total
+            batches.append({
+                "batch_id": batch_id,
+                "index": len(batches),
+                "total": batch_total,
+                "status": self._derive_status(batch_counts, batch_total),
+                "counts": batch_counts,
+            })
+        finished = sum(counts.get(status, 0) for status in FINISHED_STATUSES)
+        status = self._derive_status(counts, total)
+        if batch_ids and not batches:
+            status = STATUS_FAILED
+        return {
+            "group_id": record.get("group_id"),
+            "status": status,
+            "total": total,
+            "batch_count": len(batches),
+            "finished": finished,
+            "progress": int(round(100.0 * finished / total)) if total else 0,
+            "counts": counts,
+            "missing": missing,
+            "created_at": timeutil.iso_local(
+                float(record.get("created_epoch") or 0)),
+            "updated_at": timeutil.iso_local(
+                float(record.get("updated_epoch") or 0)),
+            "options": dict(record.get("options") or {}),
+            "rejected": list(record.get("rejected") or []),
+            "duplicates": list(record.get("duplicates") or []),
+            "batches": batches,
+        }
+
+    def get_batch_group(self, group_id):
+        return self._group_snapshot(self._load_group_record(group_id))
+
+    def create_batch_group(self, user, payload):
+        """一次提交多批：<=20000 个路径，自动按 SUBTITLE_BATCH_MAX_ITEMS 拆批。"""
+        if not isinstance(payload, dict):
+            raise invalid(u"请求体必须是 JSON 对象")
+        settings = self._settings() or {}
+        if not settings.get("subtitle_enabled"):
+            raise SubtitleError("SUBTITLE_DISABLED", u"云端字幕功能未启用")
+        if payload.get("confirm_cloud") is not True:
+            raise SubtitleError("CLOUD_CONFIRM_REQUIRED",
+                                u"请先确认音频/字幕文本将上传到所配置的第三方服务")
+        paths = payload.get("paths")
+        if not isinstance(paths, list) or not paths:
+            raise invalid(u"paths 必须是非空数组")
+        group_max = config.SUBTITLE_BATCH_GROUP_MAX_ITEMS
+        if len(paths) > group_max:
+            raise ApiError(
+                "BATCH_TOO_LARGE",
+                u"一次最多提交 %d 个视频，请分批提交" % group_max)
+        unique = []
+        seen = set()
+        for item in paths:
+            if not isinstance(item, str) or not item.strip():
+                raise invalid(u"paths 元素必须是路径字符串")
+            key = fsutil.path_key(item)
+            if key in seen:
+                continue
+            seen.add(key)
+            unique.append(item)
+
+        base = {}
+        for key in ("language", "translate", "target_lang", "source",
+                    "output_mode", "skip_existing"):
+            if key in payload:
+                base[key] = payload[key]
+        active_keys = self._active_path_keys()
+        duplicates = []
+        rejected = []
+        prepared = []
+        for path in unique:
+            key = fsutil.path_key(path)
+            if key in active_keys:
+                duplicates.append(path)
+                continue
+            item_payload = dict(base)
+            item_payload["path"] = path
+            item_payload["confirm_cloud"] = True
+            try:
+                prepared.append(self._prepare_job(user, item_payload, settings))
+            except (ApiError, SubtitleError) as exc:
+                rejected.append({
+                    "path": path,
+                    "code": getattr(exc, "code", "INVALID_ARGUMENT"),
+                    "message": getattr(exc, "message", u"提交失败"),
+                })
+        if not prepared:
+            raise ApiError("BATCH_EMPTY", u"没有可提交的字幕任务",
+                           details={"rejected": rejected,
+                                    "duplicates": duplicates})
+
+        group_id = make_group_id()
+        batch_ids = []
+        per_batch = max(1, int(config.SUBTITLE_BATCH_MAX_ITEMS))
+        options = {
+            "source": prepared[0].source,
+            "language": prepared[0].language,
+            "translate": bool(prepared[0].translate),
+            "target_lang": prepared[0].target_lang,
+            "output_mode": prepared[0].output_mode,
+            "skip_existing": bool(prepared[0].skip_existing),
+            "audio_source": prepared[0].audio_source,
+            "recursive": payload.get("recursive") is True,
+            "root": payload.get("root") if isinstance(
+                payload.get("root"), str) else "",
+        }
+        now = time.time()
+        for start in range(0, len(prepared), per_batch):
+            chunk = prepared[start:start + per_batch]
+            batch_id = make_batch_id()
+            batch_ids.append(batch_id)
+            for job in chunk:
+                job.batch_id = batch_id
+                job.group_id = group_id
+            self._save_batch_record({
+                "batch_id": batch_id,
+                "group_id": group_id,
+                "created_epoch": now,
+                "updated_epoch": now,
+                "user": user,
+                "options": dict(options),
+                "job_ids": [job.job_id for job in chunk],
+                "rejected": [],
+                "duplicates": [],
+            })
+        group_record = {
+            "group_id": group_id,
+            "created_epoch": now,
+            "updated_epoch": now,
+            "user": user,
+            "options": options,
+            "batch_ids": batch_ids,
+            "rejected": rejected,
+            "duplicates": duplicates,
+        }
+        self._save_group_record(group_record)
+        for job in prepared:
+            skip_message = self._skip_message(job)
+            if skip_message:
+                job.status = STATUS_DONE
+                job.stage = "write"
+                job.progress = 100
+                job.message = skip_message
+                job.skipped = True
+                self._register_job(job, enqueue=False)
+                self.store.audit("subtitle_skip", user, {
+                    "job_id": job.job_id,
+                    "batch_id": job.batch_id,
+                    "group_id": group_id,
+                    "path": job.path,
+                    "reason": skip_message,
+                })
+                continue
+            self._register_job(job, enqueue=True)
+            self.store.audit("subtitle_start", user, {
+                "job_id": job.job_id,
+                "batch_id": job.batch_id,
+                "group_id": group_id,
+                "path": job.path,
+                "source": job.source,
+                "language": job.language,
+                "translate": bool(job.translate),
+                "target_lang": job.target_lang,
+                "output_mode": job.output_mode,
+                "audio_source": job.audio_source,
+            })
+        if any(job.status == STATUS_QUEUED for job in prepared):
+            self._ensure_worker()
+        self._save_group_record(group_record)
+        with self._lock:
+            self._trim_groups_locked()
+        return self._group_snapshot(group_record)
+
+    def _group_batch_ids(self, group_id):
+        record = self._load_group_record(group_id)
+        return record, list(record.get("batch_ids") or [])
+
+    def pause_batch_group(self, group_id):
+        record, batch_ids = self._group_batch_ids(group_id)
+        for batch_id in batch_ids:
+            try:
+                self.pause_batch(batch_id)
+            except (ApiError, SubtitleError):
+                continue
+        self._save_group_record(record)
+        return self._group_snapshot(record)
+
+    def resume_batch_group(self, group_id):
+        record, batch_ids = self._group_batch_ids(group_id)
+        for batch_id in batch_ids:
+            try:
+                self.resume_batch(batch_id)
+            except (ApiError, SubtitleError):
+                continue
+        self._save_group_record(record)
+        return self._group_snapshot(record)
+
+    def cancel_batch_group(self, group_id):
+        record, batch_ids = self._group_batch_ids(group_id)
+        for batch_id in batch_ids:
+            try:
+                self.cancel_batch(batch_id)
+            except (ApiError, SubtitleError):
+                continue
+        self._save_group_record(record)
+        return self._group_snapshot(record)
+
+    def retry_batch_group(self, group_id):
+        record, batch_ids = self._group_batch_ids(group_id)
+        for batch_id in batch_ids:
+            try:
+                self.retry_batch(batch_id)
+            except (ApiError, SubtitleError):
+                continue
+        self._save_group_record(record)
+        return self._group_snapshot(record)
+
+    def _trim_groups_locked(self):
+        """批次组保留上限：只清理已终态的老组（组内任务不参与单任务 LRU）。"""
+        try:
+            records = self.store.load_subtitle_batch_groups(limit=500)
+        except Exception:
+            return
+        limit = max(1, int(config.SUBTITLE_BATCH_GROUP_LIMIT))
+        for record in records[limit:]:
+            try:
+                snapshot = self._group_snapshot(record)
+            except Exception:
+                continue
+            if snapshot.get("status") in ACTIVE_STATUSES:
+                continue
+            if snapshot.get("status") == STATUS_PAUSED:
+                continue
+            self._remove_group_locked(record)
+
+    def _remove_group_locked(self, record):
+        group_id = record.get("group_id")
+        for batch_id in record.get("batch_ids") or []:
+            try:
+                batch_record = self._load_batch_record(batch_id)
+            except (ApiError, SubtitleError):
+                batch_record = None
+            for job_id in (batch_record or {}).get("job_ids") or []:
+                self._jobs.pop(job_id, None)
+                self._remove_job_files(job_id)
+                try:
+                    os.unlink(self._job_json(job_id))
+                except OSError:
+                    pass
+                try:
+                    self.store.delete_subtitle_job(job_id)
+                except Exception:
+                    pass
+            try:
+                os.unlink(self._batch_json(batch_id))
+            except OSError:
+                pass
+            try:
+                self.store.delete_subtitle_batch(batch_id)
+            except Exception:
+                pass
+        try:
+            os.unlink(self._group_json(group_id))
+        except OSError:
+            pass
+        try:
+            self.store.delete_subtitle_batch_group(group_id)
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------
     # v0026 云端探测：模型列表 / 连接测试（管理员；单次请求、不重试）
@@ -2059,6 +2488,11 @@ class SubtitleService(object):
             for key, value in changes.items():
                 setattr(job, key, value)
             job.updated_epoch = time.time()
+            # v0032：只有“非组任务”完成时才需要做单任务 LRU，避免组注册时
+            # 每次登记都全量扫描（20000 任务会退化为 O(n²)）。
+            if (job.status in FINISHED_STATUSES
+                    and not getattr(job, "group_id", None)):
+                self._trim_needed = True
             # 在释放 job.lock 前完成持久化，避免其它线程读到新状态时
             # JSON/SQLite 里还是旧状态（重载会把 done 误判为 SERVICE_RESTART）。
             self._persist(job)
@@ -2193,6 +2627,8 @@ class SubtitleService(object):
         chunk_sec = int(settings.get("subtitle_asr_chunk_sec") or 600)
         max_audio_mb = int(settings.get("subtitle_asr_max_audio_mb") or 24)
         max_bytes = max_audio_mb * 1024 * 1024
+        mode = job.audio_source or config.SUBTITLE_DEFAULT_AUDIO_SOURCE
+        server_max_bytes = config.SUBTITLE_SERVER_UPLOAD_MAX_MB * 1024 * 1024
         temp_root = os.path.join(self.config.data_dir, "tmp")
         try:
             os.makedirs(temp_root, exist_ok=True)
@@ -2209,8 +2645,9 @@ class SubtitleService(object):
                 stage="asr" if resuming else "audio",
                 progress=20 if resuming else 2,
                 message=u"正在识别语音" if resuming else u"正在提取音频")
-            cues = self._run_chunked_asr(job, settings, plan, max_bytes,
-                                         tempdir)
+            cues, fallback_used = self._run_chunked_asr(
+                job, settings, plan, max_bytes, tempdir, mode=mode,
+                server_max_bytes=server_max_bytes)
             cues = dedupe_cues(cues)
             if not cues:
                 raise SubtitleError("NO_SPEECH", u"未识别到可用字幕内容")
@@ -2229,6 +2666,8 @@ class SubtitleService(object):
                          message=u"正在写入字幕文件")
             files, outputs, output_errors, warning = self._write_outputs(
                 job, cues, translations, partial)
+            if fallback_used and not warning:
+                warning = WARNING_SERVER_AUDIO_FALLBACK
             self._finish_done(job, files, outputs, output_errors, warning,
                               partial, u"字幕生成完成")
         finally:
@@ -2301,8 +2740,33 @@ class SubtitleService(object):
         return plan
 
     def _extract_chunk_audio(self, job, settings, start, length, max_bytes,
-                             tempdir, counter):
-        """抽取单个逻辑分片的音频；超过 max_audio_mb 时继续对半切。"""
+                             tempdir, counter, mode="nas",
+                             server_max_bytes=None):
+        """抽取单个逻辑分片的音频；超过上限时继续对半切。
+
+        v0032：mode=server 时用 FFmpeg 流复制抽音轨（不解码），失败后回退
+        到 NAS 解码（mp3）。返回 (entries, fallback_used)；entry 为 dict：
+        {start, length, path, filename, content_type}。
+        """
+        if mode == "server":
+            try:
+                return (self._extract_chunk_remux(
+                    job, settings, start, length,
+                    server_max_bytes or config.SUBTITLE_SERVER_UPLOAD_MAX_MB
+                    * 1024 * 1024, tempdir, counter), False)
+            except SubtitleError:
+                raise
+            except video_similarity.VideoStopped:
+                raise SubtitleCancelled()
+            except (video_similarity.VideoSkip, OSError):
+                pass  # 容器/编码不支持流复制 → 回退 NAS 解码
+        results, _ = self._extract_chunk_audio_nas(
+            job, settings, start, length, max_bytes, tempdir, counter,
+            fallback=mode == "server")
+        return results, mode == "server"
+
+    def _extract_chunk_audio_nas(self, job, settings, start, length, max_bytes,
+                                 tempdir, counter, fallback=False):
         timeout = float(settings.get("subtitle_asr_timeout_sec") or 300)
         queue = [(float(start), float(length))]
         results = []
@@ -2322,7 +2786,13 @@ class SubtitleService(object):
             except OSError:
                 raise SubtitleError("NO_AUDIO", u"无法生成音频分片")
             if size <= max_bytes or chunk_length <= 0.5:
-                results.append((chunk_start, chunk_length, path))
+                results.append({
+                    "start": chunk_start,
+                    "length": chunk_length,
+                    "path": path,
+                    "filename": "audio-%05d.mp3" % counter[0],
+                    "content_type": "audio/mpeg",
+                })
                 continue
             try:
                 os.unlink(path)
@@ -2336,11 +2806,62 @@ class SubtitleService(object):
             queue.insert(0, (chunk_start, half))
             if len(queue) + len(results) > 500:
                 raise SubtitleError("AUDIO_TOO_LARGE", u"音频分块数量过多")
-        results.sort(key=lambda item: item[0])
+        results.sort(key=lambda item: item["start"])
+        return results, fallback
+
+    def _extract_chunk_remux(self, job, settings, start, length, max_bytes,
+                             tempdir, counter):
+        """流复制抽音轨（v0032 “服务器解码”模式）：不解码，速度快。"""
+        timeout = float(settings.get("subtitle_asr_timeout_sec") or 300)
+        queue = [(float(start), float(length))]
+        results = []
+        while queue:
+            self._check_cancel(job)
+            chunk_start, chunk_length = queue.pop(0)
+            path = os.path.join(tempdir, "segment-%05d.mka" % counter[0])
+            counter[0] += 1
+            try:
+                self.ffmpeg.extract_audio_remux(
+                    job.path, path, chunk_start, chunk_length, timeout,
+                    lambda: self._stop_check(job))
+            except video_similarity.VideoStopped:
+                raise SubtitleCancelled()
+            try:
+                size = os.path.getsize(path)
+            except OSError:
+                raise video_similarity.VideoSkip(
+                    "decode", "remuxed segment missing")
+            if size <= max_bytes or chunk_length <= 1.0:
+                results.append({
+                    "start": chunk_start,
+                    "length": chunk_length,
+                    "path": path,
+                    "filename": "segment-%05d.mka" % counter[0],
+                    "content_type": "audio/x-matroska",
+                })
+                continue
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+            half = chunk_length / 2.0
+            if half <= 0.5:
+                raise SubtitleError("AUDIO_TOO_LARGE",
+                                    u"音频分块后仍超过大小上限")
+            queue.insert(0, (chunk_start + half, chunk_length - half))
+            queue.insert(0, (chunk_start, half))
+            if len(queue) + len(results) > 500:
+                raise SubtitleError("AUDIO_TOO_LARGE", u"音频分块数量过多")
+        results.sort(key=lambda item: item["start"])
         return results
 
-    def _run_chunked_asr(self, job, settings, plan, max_bytes, tempdir):
-        """按分片顺序 ASR；已完成分片直接读 DB 缓存，不重复上传音频。"""
+    def _run_chunked_asr(self, job, settings, plan, max_bytes, tempdir,
+                         mode="nas", server_max_bytes=None):
+        """按分片顺序 ASR；已完成分片直接读 DB 缓存，不重复上传音频。
+
+        返回 (cues, fallback_used)：fallback_used 表示 server 音频模式因
+        流复制失败回退到 NAS 解码（任务 warning=SERVER_AUDIO_FALLBACK）。
+        """
         base_url = settings.get("subtitle_asr_base_url") or ""
         api_key = settings.get("subtitle_asr_api_key") or ""
         model = settings.get("subtitle_asr_model") or "whisper-1"
@@ -2350,6 +2871,7 @@ class SubtitleService(object):
                   for item in self.store.load_subtitle_chunks(job.job_id)}
         total = max(1, len(plan))
         all_cues = []
+        fallback_used = False
         counter = [0]
         for index, (start, length) in enumerate(plan):
             self._check_control(job)
@@ -2359,15 +2881,20 @@ class SubtitleService(object):
                 with job.lock:
                     job.chunk_index = max(int(job.chunk_index or 0), index + 1)
                 continue
-            audio = self._extract_chunk_audio(
-                job, settings, start, length, max_bytes, tempdir, counter)
+            audio, chunk_fallback = self._extract_chunk_audio(
+                job, settings, start, length, max_bytes, tempdir, counter,
+                mode=mode, server_max_bytes=server_max_bytes)
+            fallback_used = fallback_used or chunk_fallback
             chunk_cues = []
             try:
-                for sub_start, _sub_length, path in audio:
+                for entry in audio:
                     self._check_cancel(job)
                     parsed = self.client.transcribe(
-                        base_url, api_key, model, language, path, timeout,
-                        job.cancel_event)
+                        base_url, api_key, model, language, entry["path"],
+                        timeout, job.cancel_event,
+                        filename=entry["filename"],
+                        content_type=entry["content_type"])
+                    sub_start = float(entry["start"])
                     for cue in parsed:
                         chunk_cues.append({
                             "start": max(0.0, float(cue["start"]) + sub_start),
@@ -2375,9 +2902,9 @@ class SubtitleService(object):
                             "text": cue["text"],
                         })
             finally:
-                for _sub_start, _sub_length, path in audio:
+                for entry in audio:
                     try:
-                        os.unlink(path)
+                        os.unlink(entry["path"])
                     except OSError:
                         pass
             chunk_cues = dedupe_cues(chunk_cues)
@@ -2395,7 +2922,7 @@ class SubtitleService(object):
                 chunk_index=index + 1, chunk_total=total)
             # 暂停只在完整分片保存后生效
             self._check_control(job)
-        return all_cues
+        return all_cues, fallback_used
 
     def _translate_cues(self, job, settings, cues):
         base_url = settings.get("subtitle_llm_base_url") or ""
@@ -2509,10 +3036,14 @@ class SubtitleService(object):
     # LRU 清理
     # ------------------------------------------------------------------
     def _trim_jobs_locked(self):
+        if not getattr(self, "_trim_needed", False):
+            return
         if len(self._jobs) <= self.job_limit:
+            self._trim_needed = False
             return
         finished = [job for job in self._jobs.values()
-                    if job.status in FINISHED_STATUSES]
+                    if job.status in FINISHED_STATUSES
+                    and not getattr(job, "group_id", None)]
         finished.sort(key=lambda item: item.created_epoch)
         while len(self._jobs) > self.job_limit and finished:
             job = finished.pop(0)
@@ -2528,6 +3059,7 @@ class SubtitleService(object):
             except Exception:
                 pass
             self._trim_batch_locked(job.batch_id)
+        self._trim_needed = False
 
     def _trim_batch_locked(self, batch_id):
         """批次不再有任何任务时删除批次记录（JSON + DB）。"""

@@ -6,8 +6,8 @@
 <meta name="color-scheme" content="light">
 <meta name="referrer" content="same-origin">
 <title>重复文件清理与字幕 · Duplicate Cleaner &amp; Subtitles</title>
-<link rel="icon" href="./assets/favicon.svg?v=1.1.0-0031" type="image/svg+xml">
-<link rel="stylesheet" href="./styles.css?v=1.1.0-0031">
+<link rel="icon" href="./assets/favicon.svg?v=1.1.0-0032" type="image/svg+xml">
+<link rel="stylesheet" href="./styles.css?v=1.1.0-0032">
 </head>
 <body>
 <a class="skip-link" href="#main">跳到主要内容</a>
@@ -689,17 +689,33 @@
         </div>
       </section>
 
-      <section class="card" id="subtitleBatchCard" aria-labelledby="subtitleBatchHeading" hidden>
+      <section class="card" id="subtitleGroupCard" aria-labelledby="subtitleGroupHeading" hidden>
         <div class="card-head">
-          <h2 id="subtitleBatchHeading">批次进度</h2>
-          <span class="badge badge-blue" id="subtitleBatchStatus"></span>
+          <h2 id="subtitleGroupHeading">批次进度</h2>
+          <span class="badge badge-blue" id="subtitleGroupStatus"></span>
         </div>
-        <div class="progress-bar" id="subtitleBatchBar" role="progressbar" aria-label="批次进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
-          <div class="progress-fill" id="subtitleBatchFill"></div>
+        <div class="progress-bar" id="subtitleGroupBar" role="progressbar" aria-label="批次组总进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+          <div class="progress-fill" id="subtitleGroupFill"></div>
         </div>
-        <p class="muted" id="subtitleBatchCounts"></p>
-        <div id="subtitleBatchList" class="subtitle-batch-list"></div>
-        <div class="subtitle-batch-actions" id="subtitleBatchActions"></div>
+        <p class="muted" id="subtitleGroupCounts"></p>
+        <div class="card-head">
+          <h3>批次</h3>
+          <span class="muted" id="subtitleGroupBatchesHint"></span>
+        </div>
+        <div id="subtitleGroupBatches" class="subtitle-batch-list"></div>
+        <div class="load-more-row">
+          <button type="button" class="btn btn-ghost" id="subtitleGroupBatchesToggle" hidden>展开全部批次</button>
+        </div>
+        <div class="card-head">
+          <h3>任务明细</h3>
+          <span class="muted" id="subtitleGroupJobsHint"></span>
+        </div>
+        <div id="subtitleGroupJobs" class="subtitle-batch-list"></div>
+        <div class="load-more-row">
+          <button type="button" class="btn btn-ghost" id="subtitleGroupJobsMoreBtn" hidden>加载更多任务</button>
+          <span class="muted" id="subtitleGroupJobsMoreStatus"></span>
+        </div>
+        <div class="subtitle-batch-actions" id="subtitleGroupActions"></div>
       </section>
     </section>
 
@@ -1179,6 +1195,14 @@
                 <p class="hint">超过上限会自动继续切块。</p>
                 <p class="field-error" id="subtitleAsrMaxAudioMbError" role="alert" hidden></p>
               </div>
+              <div class="field">
+                <label for="subtitleAudioSource">音频来源</label>
+                <select id="subtitleAudioSource">
+                  <option value="nas">NAS 本地解码抽音频（默认）</option>
+                  <option value="server">服务器解码（NAS 只流复制音轨，更快）</option>
+                </select>
+                <p class="hint">“服务器”模式：NAS 用 FFmpeg 流复制抽取音轨（不解码，大视频也很快），由 ASR 服务器解码转音频；仍只上传音频，不上传视频。</p>
+              </div>
               <div class="field field-wide">
                 <label class="check"><input id="subtitleTranslateEnabled" type="checkbox">生成译文（需要配置 LLM API Key）</label>
                 <p class="hint">翻译只处理字幕文本，不改时间轴；部分批次失败会回退原文并标记。</p>
@@ -1317,6 +1341,6 @@
   <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.6" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M12 10.8v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="12" cy="7.6" r="1.05" fill="currentColor"/></symbol>
 </svg>
 
-<script type="module" src="./app.js?v=1.1.0-0031"></script>
+<script type="module" src="./app.js?v=1.1.0-0032"></script>
 </body>
 </html>

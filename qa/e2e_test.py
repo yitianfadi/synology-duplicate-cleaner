@@ -878,6 +878,56 @@ def run():
               resp.status == 200 and isinstance(data.get("jobs"), list),
               "status=%s data=%s" % (resp.status, data))
 
+        # ---------------- v0032 批次组 ----------------
+        resp = client.get("/api/meta")
+        sub_meta = (jd(resp).get("subtitle") or {})
+        check("SUB-11", "meta.subtitle 暴露批次组上限/枚举上限/音频来源",
+              resp.status == 200
+              and sub_meta.get("batch_max_items") == 500
+              and sub_meta.get("batch_group_max_items") == 20000
+              and sub_meta.get("enumerate_max_items") == 20000
+              and "nas" in (sub_meta.get("audio_sources") or [])
+              and "server" in (sub_meta.get("audio_sources") or []),
+              "subtitle=%s" % sub_meta)
+
+        resp = client.post_json("/api/subtitles/batch-groups",
+                                {"paths": ["/volume1/no.mp4"],
+                                 "confirm_cloud": True})
+        code, _ = err_code(resp)
+        check("SUB-12", "批次组无有效路径返回 400 BATCH_EMPTY",
+              resp.status == 400 and code == "BATCH_EMPTY",
+              "status=%s code=%s" % (resp.status, code))
+
+        resp = client.post_json("/api/subtitles/batch-groups",
+                                {"paths": [], "confirm_cloud": True})
+        code, _ = err_code(resp)
+        check("SUB-13", "批次组空路径返回 400 INVALID_ARGUMENT",
+              resp.status == 400 and code == "INVALID_ARGUMENT",
+              "status=%s code=%s" % (resp.status, code))
+
+        resp = client.post_json("/api/subtitles/batch-groups",
+                                {"paths": ["/volume1/no.mp4"] * 20001,
+                                 "confirm_cloud": True})
+        code, _ = err_code(resp)
+        check("SUB-14", "批次组超过 20000 个路径返回 400 BATCH_TOO_LARGE",
+              resp.status == 400 and code == "BATCH_TOO_LARGE",
+              "status=%s code=%s" % (resp.status, code))
+
+        resp = client.get("/api/subtitles/batch-groups/grp-20260101-000000-abcdef")
+        code, _ = err_code(resp)
+        check("SUB-15", "未知字幕批次组返回 404 NOT_FOUND",
+              resp.status == 404 and code == "NOT_FOUND",
+              "status=%s code=%s" % (resp.status, code))
+
+        resp = client.get(q("/api/subtitles",
+                            group_id="grp-20260101-000000-abcdef"))
+        data = jd(resp)
+        check("SUB-16", "字幕任务列表支持 group_id 过滤分页",
+              resp.status == 200 and isinstance(data.get("jobs"), list)
+              and isinstance(data.get("total"), int)
+              and data.get("offset") == 0,
+              "status=%s data=%s" % (resp.status, data))
+
         # 恢复默认（关闭云端字幕），避免影响后续用例
         client.put_json("/api/settings", {"settings": {
             "subtitle_enabled": False, "subtitle_clear_asr_api_key": True,
@@ -1433,6 +1483,17 @@ def run():
         check("DEL-11", "删除计划一次性：重放已消费的 plan 被拒绝",
               resp.status in (400, 410) and code in ("PLAN_INVALID", "PLAN_EXPIRED"),
               "status=%s code=%s" % (resp.status, code))
+
+        # v0032：删除成功后 groups/统计读取自动排除已删除文件（整组消失）
+        refreshed_groups, refreshed_total, _first = fetch_groups(client, main_id)
+        remaining_paths = {norm(f.get("path") or "")
+                           for g in refreshed_groups for f in group_files(g)}
+        deleted_paths = {norm(fx["photo"][i]) for i in (0, 1)}
+        check("DEL-20", "删除成功后 groups 不再返回已删除文件且整组消失",
+              not (deleted_paths & remaining_paths)
+              and group_with_path(refreshed_groups, fx["photo"][2]) is None,
+              "deleted_hits=%s refreshed_total=%s"
+              % (sorted(deleted_paths & remaining_paths)[:5], refreshed_total))
 
         # ---------------- 回收站不可用 / 永久删除 ----------------
         resp = client.post_json("/api/scans/%s/delete-plan" % quote(main_id),

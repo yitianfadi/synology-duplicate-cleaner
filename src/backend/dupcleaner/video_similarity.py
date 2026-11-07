@@ -669,6 +669,25 @@ class FFmpegTool(object):
             detail = stderr.decode("utf-8", "replace").strip()[-300:]
             raise VideoSkip("decode", detail or "audio chunk extract failed")
 
+    def extract_audio_remux(self, path, out_path, start, duration, timeout,
+                            stop_check=None):
+        """只解封装、不解码：流复制抽取音轨（v0032 “服务器解码”模式）。
+
+        NAS 侧只做 demux + copy，CPU 占用远低于解码转码；输出的 mka 交给
+        ASR 服务器（自带 ffmpeg）解码。音轨缺失/容器不支持时抛 VideoSkip。
+        """
+        args = ["-nostdin", "-hide_banner", "-loglevel", "error",
+                "-ss", "%.3f" % float(start), "-i", path,
+                "-t", "%.3f" % float(duration),
+                "-map", "0:a:0?", "-vn", "-c", "copy",
+                "-avoid_negative_ts", "make_zero",
+                "-f", "matroska", "-y", out_path]
+        code, _stdout, stderr = self._run(args, timeout, stop_check)
+        if (code != 0 or not os.path.isfile(out_path)
+                or os.path.getsize(out_path) <= 0):
+            detail = stderr.decode("utf-8", "replace").strip()[-300:]
+            raise VideoSkip("decode", detail or "audio remux failed")
+
     def extract_silence_mp3(self, out_path, seconds=1.0, timeout=15.0):
         """用 lavfi anullsrc 生成指定秒数的 16kHz 单声道静音 MP3。
 

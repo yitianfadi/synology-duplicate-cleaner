@@ -1,8 +1,10 @@
 /* ==========================================================================
-   重复文件清理 · DuplicateCleaner —— 目录批量字幕页（ES module，v0028）
+   重复文件清理 · DuplicateCleaner —— 目录批量字幕页（ES module，v0032）
    --------------------------------------------------------------------------
    与查重解耦的独立入口：选择目录 → 枚举视频 → 勾选 → 批量生成/翻译字幕。
    字幕写回视频同目录（只写 .srt）；写回失败仍可在任务中心下载。
+   v0032：一次提交最多 20000 个视频，后端自动按每批 500 个拆成「批次组」顺序执行；
+          前端从单批次页改为批次组页（提交 / 进度 / 暂停 / 继续 / 取消 / 重试 / 分页任务行）。
    规范：ES2019、无第三方依赖、不使用 innerHTML、只做安全文本渲染。
    契约：docs/SUBTITLE_BATCH_CONTRACT.md
    ========================================================================== */
@@ -19,15 +21,32 @@ import {
   SUBTITLE_STATUS_BADGE, SUBTITLE_STATUS_LABEL, SUBTITLE_WARNING_LABEL
 } from './constants.js';
 
-var PAGE_LIMIT = 200;
+var PAGE_LIMIT = 200;          // 视频枚举列表每页
+var JOB_PAGE_LIMIT = 100;      // 批次组任务行每页（后端 /api/subtitles?limit=）
+var JOB_REFRESH_MAX = 500;     // 轮询自动刷新时最多重载的任务行数
+var BATCHES_SHOWN = 50;        // 批次列表默认最多展示条数
+var CONFIRM_THRESHOLD = 20;    // 超过该数量提交前二次确认
 var POLL_MS = 1500;
 // 后端 /api/meta.subtitle 缺失时的兜底（与 backend config 默认值一致）
 var FALLBACK_BATCH_MAX = 500;
-var FALLBACK_ENUM_MAX = 5000;
+var FALLBACK_GROUP_MAX = 20000;
+var FALLBACK_ENUM_MAX = 20000;
 var LAST_CONFIG_KEY = 'dupcleaner.lastSubtitleDir.v1';
+var LAST_GROUP_KEY = 'dupcleaner.lastSubtitleGroup.v1';
+
+// 批次组状态（与单任务状态的文案区分：running 是“执行中”而不是“识别中”）
+var GROUP_STATUS_LABEL = {
+  queued: '排队中', running: '执行中', paused: '已暂停',
+  done: '已完成', failed: '失败', cancelled: '已取消'
+};
+var GROUP_STATUS_BADGE = {
+  queued: 'badge-gray', running: 'badge-blue', paused: 'badge-amber',
+  done: 'badge-green', failed: 'badge-red', cancelled: 'badge-gray'
+};
 
 var page = {
   initialized: false,
+  // 目录 / 枚举 / 筛选
   dir: '',
   recursive: true,
   items: [],
@@ -36,12 +55,20 @@ var page = {
   selected: new Set(),
   filter: 'all',
   shown: PAGE_LIMIT,
-  batch: null,
-  timer: null,
-  busy: false,
   enumerated: false,
+  skipTouched: false,
+  busy: false,
+  // 批次组
+  group: null,
+  jobs: {
+    items: [], total: 0, offset: 0, limit: JOB_PAGE_LIMIT,
+    loading: false, error: '', seq: 0, refreshKey: ''
+  },
+  timer: null,
+  polling: false,
+  restoring: false,
   notified: false,
-  skipTouched: false
+  batchesExpanded: false
 };
 
 function q(id) { return byId(id); }
@@ -49,9 +76,11 @@ function q(id) { return byId(id); }
 function metaLimits() {
   var sub = state.meta && state.meta.subtitle ? state.meta.subtitle : null;
   var batchMax = sub && Number(sub.batch_max_items);
+  var groupMax = sub && Number(sub.batch_group_max_items);
   var enumMax = sub && Number(sub.enumerate_max_items);
   return {
     batchMax: isFinite(batchMax) && batchMax > 0 ? batchMax : FALLBACK_BATCH_MAX,
+    groupMax: isFinite(groupMax) && groupMax > 0 ? groupMax : FALLBACK_GROUP_MAX,
     enumMax: isFinite(enumMax) && enumMax > 0 ? enumMax : FALLBACK_ENUM_MAX
   };
 }
@@ -80,6 +109,46 @@ function savePageConfig() {
       saved_at: Date.now()
     }));
   } catch (e) { /* 隐私模式/配额错误忽略 */ }
+}
+
+// ---------------------------------------------------------------------------
+// 最近一次批次组（localStorage 会话恢复）
+// 键值兼容两种历史形态：{"group_id":"grp-…"} 或裸 group_id 字符串
+// ---------------------------------------------------------------------------
+function loadLastGroupId() {
+  try {
+    if (!window.localStorage) { return ''; }
+    var raw = window.localStorage.getItem(LAST_GROUP_KEY);
+    if (!raw) { return ''; }
+    var text = String(raw);
+    try {
+      var data = JSON.parse(text);
+      if (data && typeof data === 'object' && data.group_id) {
+        return String(data.group_id);
+      }
+    } catch (e) { /* 不是 JSON，按裸字符串处理 */ }
+    if (text.charAt(0) !== '{') { return text; }
+    return '';
+  } catch (e) {
+    return '';
+  }
+}
+
+function saveLastGroupId(groupId) {
+  if (!groupId) { return; }
+  try {
+    if (!window.localStorage) { return; }
+    window.localStorage.setItem(LAST_GROUP_KEY, JSON.stringify({
+      group_id: String(groupId),
+      saved_at: Date.now()
+    }));
+  } catch (e) { /* 忽略配额/隐私模式错误 */ }
+}
+
+function clearLastGroupId() {
+  try {
+    if (window.localStorage) { window.localStorage.removeItem(LAST_GROUP_KEY); }
+  } catch (e) { /* 忽略 */ }
 }
 
 function capability() {
@@ -188,30 +257,37 @@ function modeRequirement() {
   return { ok: true, message: '' };
 }
 
+function selectedBatchCount(count, limits) {
+  if (!count) { return 0; }
+  return Math.ceil(count / limits.batchMax);
+}
+
 function updateSubmitState() {
   var confirm = q('subtitleBatchConfirm');
   var submit = q('subtitleSubmitBtn');
   var hint = q('subtitleSelectionHint');
   var reasonEl = q('subtitleSubmitReason');
+  var limits = metaLimits();
   var count = page.selected.size;
-  var batchMax = metaLimits().batchMax;
-  var requirement = modeRequirement();
+  var batches = selectedBatchCount(count, limits);
   if (hint) {
+    // v0032：不再受单批上限限制，按批次组提交（后端自动拆批，每批最多 batchMax 个）
     setText(hint, count
-      ? '已选择 ' + fmtInt(count) + ' 个视频'
-        + (count > batchMax ? '（超过单批上限 ' + fmtInt(batchMax) + '，请分批提交）' : '')
+      ? '已选择 ' + fmtInt(count) + ' 个视频（将分为 ' + fmtInt(batches)
+        + ' 批，每批最多 ' + fmtInt(limits.batchMax) + ' 个）'
       : '尚未选择视频');
   }
   if (!submit) { return; }
   // 按钮禁用原因常显（v0031）：只靠 title 提示用户看不到，容易误以为按钮坏了
+  var requirement = modeRequirement();
   var reason = '';
   if (!requirement.ok) {
     reason = requirement.message || '当前配置不可提交';
   } else if (!count) {
     reason = '请先在上方视频列表中勾选要处理的视频';
-  } else if (count > batchMax) {
-    reason = '已选 ' + fmtInt(count) + ' 个，超过单批上限 ' + fmtInt(batchMax)
-      + ' 个：请点「清空」后分批提交，或用筛选条件缩小范围';
+  } else if (count > limits.groupMax) {
+    reason = '已选 ' + fmtInt(count) + ' 个，超过单次提交上限 ' + fmtInt(limits.groupMax)
+      + ' 个：请点「清空」后分多次提交，或用筛选条件缩小范围';
   } else if (!confirm || !confirm.checked) {
     reason = '请勾选下方「我了解音频/字幕文本将上传到所配置的第三方服务」确认项';
   } else if (page.busy) {
@@ -400,14 +476,15 @@ async function enumerateNow() {
 }
 
 // ---------------------------------------------------------------------------
-// 提交批次
+// 提交批次组（v0032：一次提交由后端拆成多个批次，前端不再有单批路径）
 // ---------------------------------------------------------------------------
-async function submitBatch() {
+async function submitGroup() {
   if (page.busy) { return; }
   var cap = capability();
   var confirm = q('subtitleBatchConfirm');
   if (!confirm || !confirm.checked) { return; }
   var mode = modeValue();
+  var limits = metaLimits();
   var selected = Array.from(page.selected);
   var eligible = selected.filter(function (path) {
     var item = itemByPath(path);
@@ -418,10 +495,18 @@ async function submitBatch() {
     toast('没有可提交的视频。', 'info');
     return;
   }
-  if (eligible.length > 20) {
+  if (eligible.length > limits.groupMax) {
+    toast('已选 ' + fmtInt(eligible.length) + ' 个视频，超过单次提交上限 '
+      + fmtInt(limits.groupMax) + ' 个，请分多次提交。', 'error', 7000);
+    return;
+  }
+  var batchCount = selectedBatchCount(eligible.length, limits);
+  if (eligible.length > CONFIRM_THRESHOLD) {
     var ok = await confirmDialog({
       title: '确认批量生成字幕',
-      message: '将提交 ' + eligible.length + ' 个视频的字幕任务，音频/字幕文本会上传到第三方服务，可能产生费用。确定继续？',
+      message: '将提交 ' + fmtInt(eligible.length) + ' 个视频的字幕任务（分为 '
+        + fmtInt(batchCount) + ' 批，每批最多 ' + fmtInt(limits.batchMax)
+        + ' 个）。音频/字幕文本会上传到第三方服务，可能产生费用。确定继续？',
       confirmText: '开始处理',
       danger: false
     });
@@ -438,7 +523,7 @@ async function submitBatch() {
   page.busy = true;
   setBusy(q('subtitleSubmitBtn'), true, '正在提交…');
   try {
-    var result = await api('/api/subtitles/batch', {
+    var result = await api('/api/subtitles/batch-groups', {
       method: 'POST',
       body: {
         paths: eligible,
@@ -447,21 +532,37 @@ async function submitBatch() {
         translate: translate,
         target_lang: (q('subtitleTargetLang') || {}).value || 'zh',
         skip_existing: !!(q('subtitleSkipExisting') && q('subtitleSkipExisting').checked),
+        output_mode: cap.outputMode || 'alongside_video',
         confirm_cloud: true
       },
       timeout: 120000
     });
-    page.batch = result.batch || null;
+    stopPolling();
+    page.group = result.group || null;
     page.notified = false;
+    page.batchesExpanded = false;
+    page.jobs = {
+      items: [], total: 0, offset: 0, limit: JOB_PAGE_LIMIT,
+      loading: false, error: '', seq: page.jobs.seq + 1, refreshKey: ''
+    };
     page.selected = new Set();
     renderVideos();
-    renderBatch();
+    if (!page.group || !page.group.group_id) {
+      toast('提交已受理，但后端未返回批次组信息，请到任务中心查看。', 'info', 7000);
+      return;
+    }
+    saveLastGroupId(page.group.group_id);
+    page.jobs.refreshKey = groupSignature(page.group);
+    renderGroup();
+    loadGroupJobs('reset');
     startPolling();
-    var rejected = page.batch && page.batch.rejected ? page.batch.rejected.length : 0;
-    var duplicates = page.batch && Array.isArray(page.batch.duplicates) ? page.batch.duplicates.length : 0;
-    toast('已提交 ' + (page.batch ? page.batch.total : 0) + ' 个字幕任务'
-      + (rejected ? '，' + rejected + ' 个被拒绝' : '')
-      + (duplicates ? '，' + duplicates + ' 个已在队列中跳过' : '') + '。',
+    var rejected = Array.isArray(page.group.rejected) ? page.group.rejected.length : 0;
+    var duplicates = Array.isArray(page.group.duplicates) ? page.group.duplicates.length : 0;
+    var total = Number(page.group.total) || eligible.length;
+    var groups = Number(page.group.batch_count) || batchCount;
+    toast('已提交 ' + fmtInt(total) + ' 个视频（' + fmtInt(groups) + ' 批）'
+      + (rejected ? '，' + fmtInt(rejected) + ' 个被拒绝' : '')
+      + (duplicates ? '，' + fmtInt(duplicates) + ' 个已在队列中跳过' : '') + '。',
       rejected ? 'error' : 'success', 6000);
   } catch (err) {
     toast(errorMessage(err, '提交字幕任务失败。'), 'error', 7000);
@@ -473,94 +574,233 @@ async function submitBatch() {
 }
 
 // ---------------------------------------------------------------------------
-// 批次进度
+// 批次组：进度 / 批次 / 任务明细渲染
 // ---------------------------------------------------------------------------
-function startPolling() {
-  stopPolling();
-  page.timer = setTimeout(pollBatch, POLL_MS);
-}
-
-function stopPolling() {
-  if (page.timer) { clearTimeout(page.timer); page.timer = null; }
-}
-
-function isTerminal(status) {
+function isGroupTerminal(status) {
   return status === 'done' || status === 'failed' || status === 'cancelled';
 }
 
-async function pollBatch() {
-  page.timer = null;
-  if (!page.batch || !page.batch.batch_id) { return; }
-  try {
-    var result = await api('/api/subtitles/batches/' + encodeURIComponent(page.batch.batch_id),
-      { timeout: 15000 });
-    page.batch = result.batch || page.batch;
-    renderBatch();
-  } catch (err) {
-    setText(q('subtitleBatchStatus'), '刷新批次失败，稍后重试');
+function groupFinished(group) {
+  if (!group) { return 0; }
+  var finished = Number(group.finished);
+  if (isFinite(finished) && finished >= 0 && group.finished !== undefined && group.finished !== null) {
+    return finished;
   }
-  if (page.batch && !isTerminal(page.batch.status)) {
-    page.timer = setTimeout(pollBatch, POLL_MS);
-  } else {
-    notifyBatchFinished();
-  }
+  var counts = group.counts || {};
+  return (Number(counts.done) || 0) + (Number(counts.failed) || 0) + (Number(counts.cancelled) || 0);
 }
 
-/** 批次进入终态时提醒一次（切换视图后返回也补提醒）。 */
-function notifyBatchFinished() {
-  if (!page.batch || !isTerminal(page.batch.status) || page.notified) { return; }
-  page.notified = true;
-  var counts = page.batch.counts || {};
-  if (page.batch.status === 'done') {
-    toast('批次已完成：成功 ' + (counts.done || 0) + ' 个'
-      + ((counts.failed || 0) ? '，失败 ' + counts.failed + ' 个' : '') + '。', 'success', 6000);
-  } else if (page.batch.status === 'failed') {
-    toast('批次结束：失败 ' + (counts.failed || 0) + ' 个，可重试失败项。', 'error', 7000);
-  } else {
-    toast('批次已取消。', 'info', 5000);
-  }
+function groupBatchCount(group) {
+  if (!group) { return 0; }
+  var count = Number(group.batch_count);
+  if (isFinite(count) && count > 0) { return count; }
+  return Array.isArray(group.batches) ? group.batches.length : 0;
 }
 
-function renderBatch() {
-  var card = q('subtitleBatchCard');
+function groupSignature(group) {
+  if (!group) { return ''; }
+  return String(group.status || '') + '|' + groupFinished(group) + '|'
+    + (Number(group.total) || 0) + '|' + groupBatchCount(group);
+}
+
+function groupPercent(group) {
+  if (!group) { return 0; }
+  var progress = Number(group.progress);
+  if (isFinite(progress) && progress >= 0) {
+    return Math.max(0, Math.min(100, Math.round(progress)));
+  }
+  var total = Number(group.total) || 0;
+  return total ? Math.round(100 * groupFinished(group) / total) : 0;
+}
+
+function renderGroup() {
+  var card = q('subtitleGroupCard');
   if (!card) { return; }
-  var batch = page.batch;
-  if (!batch) { setHidden(card, true); return; }
+  var group = page.group;
+  if (!group) { setHidden(card, true); return; }
   setHidden(card, false);
-  var counts = batch.counts || {};
-  var total = Number(batch.total) || 0;
-  var finished = (counts.done || 0) + (counts.failed || 0) + (counts.cancelled || 0);
-  var pct = total ? Math.round(100 * finished / total) : 0;
-  setText(q('subtitleBatchStatus'),
-    (SUBTITLE_STATUS_LABEL[batch.status] || batch.status || '处理中') + ' · ' + finished + '/' + total);
-  var fill = q('subtitleBatchFill');
+  renderGroupHead();
+  renderBatches();
+  renderGroupJobs();
+  renderGroupActions();
+}
+
+function renderGroupHead() {
+  var group = page.group;
+  if (!group) { return; }
+  var counts = group.counts || {};
+  var total = Number(group.total) || 0;
+  var finished = groupFinished(group);
+  var pct = groupPercent(group);
+  var batchCount = groupBatchCount(group);
+  var statusEl = q('subtitleGroupStatus');
+  if (statusEl) {
+    setText(statusEl, (GROUP_STATUS_LABEL[group.status] || group.status || '处理中')
+      + ' · ' + fmtInt(finished) + '/' + fmtInt(total));
+    statusEl.className = 'badge ' + (GROUP_STATUS_BADGE[group.status] || 'badge-blue');
+  }
+  var fill = q('subtitleGroupFill');
   if (fill) { fill.style.width = pct + '%'; }
-  var bar = q('subtitleBatchBar');
+  var bar = q('subtitleGroupBar');
   if (bar) { bar.setAttribute('aria-valuenow', String(pct)); }
-  setText(q('subtitleBatchCounts'),
-    '完成 ' + (counts.done || 0) + ' · 失败 ' + (counts.failed || 0)
-    + ' · 取消 ' + (counts.cancelled || 0) + ' · 暂停 ' + (counts.paused || 0)
-    + ' · 排队 ' + (counts.queued || 0));
-  var list = q('subtitleBatchList');
-  if (list) {
-    clear(list);
-    (batch.jobs || []).forEach(function (job) {
-      list.appendChild(renderBatchJobRow(job));
-    });
-    if (batch.rejected && batch.rejected.length) {
-      list.appendChild(el('div', { className: 'subtitle-batch-rejected' }, [
-        el('p', { className: 'hint', text: '以下路径被拒绝（共 ' + batch.rejected.length + ' 个）：' }),
-        el('div', { className: 'subtitle-batch-rejected-list' },
-          batch.rejected.slice(0, 10).map(function (item) {
-            return el('div', { className: 'mono', text: item.path + ' — ' + item.message });
-          }))
-      ]));
+  var running = (Number(counts.running) || 0) + (Number(counts.translating) || 0);
+  var remaining = Math.max(0, total - finished);
+  var missing = Number(group.missing) || 0;
+  setText(q('subtitleGroupCounts'),
+    '完成 ' + fmtInt(counts.done) + ' · 失败 ' + fmtInt(counts.failed)
+    + ' · 取消 ' + fmtInt(counts.cancelled) + ' · 暂停 ' + fmtInt(counts.paused)
+    + ' · 排队 ' + fmtInt(counts.queued) + ' · 运行 ' + fmtInt(running)
+    + ' · 剩余 ' + fmtInt(remaining) + ' · 批次 ' + fmtInt(batchCount)
+    + (missing > 0 ? ' · 缺失 ' + fmtInt(missing) : ''));
+}
+
+function renderBatches() {
+  var list = q('subtitleGroupBatches');
+  var hint = q('subtitleGroupBatchesHint');
+  var toggle = q('subtitleGroupBatchesToggle');
+  if (!list) { return; }
+  clear(list);
+  var group = page.group;
+  if (!group) {
+    setText(hint, '');
+    setHidden(toggle, true);
+    return;
+  }
+  var batches = Array.isArray(group.batches) ? group.batches : [];
+  var batchCount = groupBatchCount(group);
+  if (hint) {
+    if (batches.length) {
+      var shownCount = page.batchesExpanded ? batches.length : Math.min(batches.length, BATCHES_SHOWN);
+      setText(hint, '共 ' + fmtInt(batchCount) + ' 批，当前显示 ' + fmtInt(shownCount) + ' 批'
+        + (batches.length > shownCount ? '（更多批次可展开）' : ''));
+    } else if (batchCount) {
+      setText(hint, '共 ' + fmtInt(batchCount) + ' 批，批次明细加载中…');
+    } else {
+      setText(hint, '暂无批次信息。');
     }
   }
-  renderBatchActions(batch);
+  var shown = page.batchesExpanded ? batches : batches.slice(0, BATCHES_SHOWN);
+  shown.forEach(function (batch) {
+    list.appendChild(renderBatchRow(batch));
+  });
+  if (toggle) {
+    setHidden(toggle, batches.length <= BATCHES_SHOWN);
+    setText(toggle, page.batchesExpanded
+      ? '折叠批次列表'
+      : '展开全部 ' + fmtInt(batches.length) + ' 批');
+  }
+  var rejected = Array.isArray(group.rejected) ? group.rejected : [];
+  var duplicates = Array.isArray(group.duplicates) ? group.duplicates : [];
+  if (rejected.length || duplicates.length) {
+    var block = el('div', { className: 'subtitle-batch-rejected' });
+    if (rejected.length) {
+      block.appendChild(el('p', {
+        className: 'hint',
+        text: '以下路径被拒绝（共 ' + fmtInt(rejected.length) + ' 个'
+          + (rejected.length > 10 ? '，仅显示前 10 个' : '') + '）：'
+      }));
+      var rejectedList = el('div', { className: 'subtitle-batch-rejected-list' });
+      rejected.slice(0, 10).forEach(function (item) {
+        rejectedList.appendChild(el('div', {
+          className: 'mono',
+          text: String(item.path || '') + ' — ' + String(item.message || item.code || '')
+        }));
+      });
+      block.appendChild(rejectedList);
+    }
+    if (duplicates.length) {
+      block.appendChild(el('p', {
+        className: 'hint',
+        text: '另有 ' + fmtInt(duplicates.length) + ' 个视频已在任务队列中，本次自动跳过。'
+      }));
+    }
+    list.appendChild(block);
+  }
 }
 
-function renderBatchJobRow(job) {
+function renderBatchRow(batch) {
+  var counts = batch.counts || {};
+  var index = Number(batch.index);
+  var label = isFinite(index) && index >= 0 ? '第 ' + fmtInt(index + 1) + ' 批' : '批次';
+  var total = Number(batch.total) || 0;
+  var finished = (Number(counts.done) || 0) + (Number(counts.failed) || 0)
+    + (Number(counts.cancelled) || 0);
+  var badges = [
+    el('span', {
+      className: 'badge ' + (GROUP_STATUS_BADGE[batch.status] || 'badge-gray'),
+      text: GROUP_STATUS_LABEL[batch.status] || batch.status || '未知'
+    }),
+    el('span', {
+      className: 'muted',
+      text: '完成 ' + fmtInt(finished) + (total ? ' / ' + fmtInt(total) : '')
+    })
+  ];
+  if (Number(counts.failed)) {
+    badges.push(el('span', { className: 'badge badge-red', text: '失败 ' + fmtInt(counts.failed) }));
+  }
+  if (Number(counts.paused)) {
+    badges.push(el('span', { className: 'badge badge-amber', text: '暂停 ' + fmtInt(counts.paused) }));
+  }
+  return el('div', { className: 'subtitle-batch-row' }, [
+    el('div', { className: 'subtitle-batch-main' }, [
+      el('span', { className: 'subtitle-batch-path', text: label }),
+      el('span', { className: 'subtitle-batch-meta' }, badges)
+    ])
+  ]);
+}
+
+function jobsTotal() {
+  var jobs = page.jobs;
+  var total = Number(jobs.total);
+  if (!isFinite(total) || total < 0) { total = 0; }
+  if (!total && page.group) {
+    total = Number(page.group.total) || 0;
+  }
+  return total;
+}
+
+function renderGroupJobs() {
+  var list = q('subtitleGroupJobs');
+  if (!list) { return; }
+  var jobs = page.jobs;
+  var hint = q('subtitleGroupJobsHint');
+  var moreBtn = q('subtitleGroupJobsMoreBtn');
+  var moreStatus = q('subtitleGroupJobsMoreStatus');
+  clear(list);
+  var total = jobsTotal();
+  if (hint) {
+    setText(hint, page.group
+      ? '任务明细：共 ' + fmtInt(total) + ' 个任务，已显示 ' + fmtInt(jobs.items.length) + ' 个'
+      : '');
+  }
+  if (jobs.loading && !jobs.items.length) {
+    list.appendChild(el('div', { className: 'state-box', text: '正在加载任务明细…' }));
+  } else if (jobs.error && !jobs.items.length) {
+    list.appendChild(el('p', {
+      className: 'field-error', attrs: { role: 'alert' }, text: jobs.error
+    }));
+  } else if (!jobs.items.length) {
+    list.appendChild(el('div', { className: 'state-box', text: '暂无任务明细。' }));
+  }
+  jobs.items.forEach(function (job) {
+    list.appendChild(renderJobRow(job));
+  });
+  if (jobs.error && jobs.items.length) {
+    list.appendChild(el('p', { className: 'field-error', attrs: { role: 'alert' }, text: jobs.error }));
+  }
+  if (moreBtn) {
+    setHidden(moreBtn, jobs.items.length >= total);
+  }
+  if (moreStatus) {
+    setText(moreStatus, jobs.loading
+      ? '正在加载任务明细…'
+      : (jobs.items.length
+        ? '已显示 ' + fmtInt(jobs.items.length) + ' / ' + fmtInt(total) + ' 个任务'
+        : ''));
+  }
+}
+
+function renderJobRow(job) {
   var name = String(job.path || '').split(/[\\/]/).pop();
   var pct = Math.max(0, Math.min(100, Math.round(Number(job.progress) || 0)));
   var badges = [
@@ -597,7 +837,7 @@ function renderBatchJobRow(job) {
       text: '已写回 ' + outputs.length + ' 个 srt'
     }));
   }
-  if (!isTerminal(job.status)) {
+  if (!isGroupTerminal(job.status) && !job.skipped) {
     badges.push(el('span', { className: 'subtitle-pct', text: pct + '%' }));
   }
   return el('div', { className: 'subtitle-batch-row' }, [
@@ -608,30 +848,34 @@ function renderBatchJobRow(job) {
   ]);
 }
 
-function renderBatchActions(batch) {
-  var box = q('subtitleBatchActions');
+function renderGroupActions() {
+  var box = q('subtitleGroupActions');
   if (!box) { return; }
   clear(box);
-  var counts = batch.counts || {};
-  var active = (counts.queued || 0) + (counts.running || 0) + (counts.translating || 0);
+  var group = page.group;
+  if (!group) { return; }
+  var counts = group.counts || {};
+  var terminal = isGroupTerminal(group.status);
+  var active = (Number(counts.queued) || 0) + (Number(counts.running) || 0)
+    + (Number(counts.translating) || 0);
   function actionBtn(label, action, primary) {
     var btn = el('button', {
       className: 'btn ' + (primary ? 'btn-primary' : 'btn-ghost') + ' btn-sm',
       attrs: { type: 'button' }, text: label
     });
-    btn.addEventListener('click', function () { batchAction(action, btn); });
+    btn.addEventListener('click', function () { groupAction(action, btn); });
     box.appendChild(btn);
   }
-  if (active > 0) {
+  if (!terminal && active > 0) {
     actionBtn('暂停', 'pause', false);
   }
-  if ((counts.paused || 0) > 0) {
+  if (!terminal && ((Number(counts.paused) || 0) > 0 || group.status === 'paused')) {
     actionBtn('继续', 'resume', true);
   }
-  if (!isTerminal(batch.status)) {
+  if (!terminal) {
     actionBtn('取消剩余', 'cancel', false);
   }
-  if ((counts.failed || 0) + (counts.cancelled || 0) > 0) {
+  if ((Number(counts.failed) || 0) + (Number(counts.cancelled) || 0) > 0) {
     actionBtn('重试失败项', 'retry', false);
   }
   var link = el('button', {
@@ -645,20 +889,211 @@ function renderBatchActions(batch) {
   box.appendChild(link);
 }
 
-async function batchAction(action, button) {
-  if (!page.batch || !page.batch.batch_id) { return; }
+// ---------------------------------------------------------------------------
+// 批次组：任务明细分页加载（GET /api/subtitles?group_id=&offset=&limit=）
+// mode: 'reset' 从头加载 / 'more' 追加下一页 / 'refresh' 刷新已加载区间
+// ---------------------------------------------------------------------------
+async function loadGroupJobs(mode) {
+  var group = page.group;
+  if (!group || !group.group_id) { return; }
+  var jobs = page.jobs;
+  if (jobs.loading) { return; }
+  var offset = jobs.items.length;
+  var limit = JOB_PAGE_LIMIT;
+  var replace = false;
+  if (mode === 'reset') {
+    offset = 0;
+    replace = true;
+  } else if (mode === 'more') {
+    if (jobs.items.length >= jobsTotal()) { return; }
+    offset = jobs.items.length;
+  } else if (mode === 'refresh') {
+    if (!jobs.items.length) {
+      offset = 0;
+      replace = true;
+    } else if (jobs.items.length <= JOB_REFRESH_MAX) {
+      offset = 0;
+      limit = jobs.items.length;
+      replace = true;
+    } else {
+      return;
+    }
+  }
+  jobs.loading = true;
+  jobs.error = '';
+  var seq = jobs.seq + 1;
+  jobs.seq = seq;
+  renderGroupJobs();
+  try {
+    var result = await api('/api/subtitles?group_id=' + encodeURIComponent(group.group_id)
+      + '&offset=' + offset + '&limit=' + limit, { timeout: 30000 });
+    if (page.jobs !== jobs || jobs.seq !== seq) { return; }
+    var list = result && Array.isArray(result.jobs) ? result.jobs : [];
+    var total = result && Number(result.total);
+    jobs.total = isFinite(total) && total >= 0 ? total : 0;
+    jobs.offset = offset + list.length;
+    var pageLimit = result && Number(result.limit);
+    if (isFinite(pageLimit) && pageLimit > 0) { jobs.limit = pageLimit; }
+    if (replace) { jobs.items = list; }
+    else { jobs.items = jobs.items.concat(list); }
+  } catch (err) {
+    if (page.jobs !== jobs || jobs.seq !== seq) { return; }
+    jobs.error = errorMessage(err, '加载任务明细失败。');
+  } finally {
+    if (page.jobs === jobs && jobs.seq === seq) {
+      jobs.loading = false;
+      renderGroupJobs();
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 批次组：轮询 / 终态提醒
+// ---------------------------------------------------------------------------
+function startPolling() {
+  stopPolling();
+  var status = page.group ? page.group.status : '';
+  if (!page.group || !page.group.group_id || isGroupTerminal(status)) { return; }
+  page.polling = true;
+  page.timer = setTimeout(pollGroup, POLL_MS);
+}
+
+function stopPolling() {
+  page.polling = false;
+  if (page.timer) { clearTimeout(page.timer); page.timer = null; }
+}
+
+/** 批次组处于非终态（queued/running/paused）时持续轮询；终态只提醒一次。 */
+async function pollGroup() {
+  page.timer = null;
+  var group = page.group;
+  if (!group || !group.group_id) { return; }
+  try {
+    var result = await api('/api/subtitles/batch-groups/' + encodeURIComponent(group.group_id),
+      { timeout: 15000 });
+    if (page.group !== group) { return; }
+    if (result && result.group) {
+      page.group = result.group;
+      saveLastGroupId(result.group.group_id);
+      renderGroup();
+      var sig = groupSignature(result.group);
+      if (page.jobs.refreshKey !== sig && !page.jobs.loading) {
+        page.jobs.refreshKey = sig;
+        loadGroupJobs('refresh');
+      }
+    }
+  } catch (err) {
+    if (page.group !== group) { return; }
+    if (err && err.status === 404) {
+      // 批次组已被清理：清掉恢复锚点并收起进度卡，避免每次进视图反复 404
+      clearLastGroupId();
+      stopPolling();
+      page.group = null;
+      page.notified = true;
+      renderGroup();
+      toast('批次组不存在或已过期（可能已被清理）。', 'info', 6000);
+      return;
+    }
+    setText(q('subtitleGroupStatus'), '刷新批次组进度失败，稍后重试');
+  }
+  // 视图切换后 stopSubtitlePagePolling 会置 polling=false：本轮响应仍更新界面，但不再续期
+  if (!page.polling) { return; }
+  if (page.group && !isGroupTerminal(page.group.status)) {
+    if (!page.timer) { page.timer = setTimeout(pollGroup, POLL_MS); }
+  } else {
+    notifyGroupFinished();
+  }
+}
+
+/** 批次组进入终态时提醒一次（切换视图后返回也补提醒）。 */
+function notifyGroupFinished() {
+  var group = page.group;
+  if (!group || !isGroupTerminal(group.status) || page.notified) { return; }
+  page.notified = true;
+  var counts = group.counts || {};
+  var done = Number(counts.done) || 0;
+  var failed = Number(counts.failed) || 0;
+  var cancelled = Number(counts.cancelled) || 0;
+  if (group.status === 'done') {
+    toast('批次组已完成：成功 ' + fmtInt(done) + ' 个'
+      + (failed ? '，失败 ' + fmtInt(failed) + ' 个' : '')
+      + (cancelled ? '，取消 ' + fmtInt(cancelled) + ' 个' : '') + '。',
+      failed ? 'error' : 'success', 7000);
+  } else if (group.status === 'failed') {
+    toast('批次组结束：失败 ' + fmtInt(failed) + ' 个'
+      + (done ? '，成功 ' + fmtInt(done) + ' 个' : '')
+      + (cancelled ? '，取消 ' + fmtInt(cancelled) + ' 个' : '')
+      + '，可重试失败项。', 'error', 8000);
+  } else {
+    toast('批次组已取消：完成 ' + fmtInt(done) + ' 个'
+      + (failed ? '，失败 ' + fmtInt(failed) + ' 个' : '') + '。', 'info', 6000);
+  }
+}
+
+async function groupAction(action, button) {
+  var group = page.group;
+  if (!group || !group.group_id) { return; }
   setBusy(button, true, '处理中…');
   try {
-    var result = await api('/api/subtitles/batches/'
-      + encodeURIComponent(page.batch.batch_id) + '/' + action,
+    var result = await api('/api/subtitles/batch-groups/'
+      + encodeURIComponent(group.group_id) + '/' + action,
       { method: 'POST', timeout: 20000 });
-    page.batch = result.batch || page.batch;
-    renderBatch();
-    startPolling();
+    if (result && result.group) {
+      page.notified = false;
+      page.group = result.group;
+      saveLastGroupId(result.group.group_id);
+      page.jobs.refreshKey = '';
+      renderGroup();
+      if (!isGroupTerminal(result.group.status)) {
+        startPolling();
+      }
+      loadGroupJobs('reset');
+    }
   } catch (err) {
-    toast(errorMessage(err, '批次操作失败。'), 'error');
+    toast(errorMessage(err, '批次组操作失败。'), 'error');
   } finally {
     setBusy(button, false);
+    renderGroupActions();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 会话恢复：最近一次批次组（group_id 存 localStorage）
+// ---------------------------------------------------------------------------
+async function restoreLastGroup() {
+  if (page.restoring || page.group) { return; }
+  var groupId = loadLastGroupId();
+  if (!groupId) { return; }
+  page.restoring = true;
+  try {
+    var result = await api('/api/subtitles/batch-groups/' + encodeURIComponent(groupId),
+      { timeout: 15000 });
+    var group = result && result.group ? result.group : null;
+    if (!group || !group.group_id) {
+      clearLastGroupId();
+      return;
+    }
+    if (page.group) { return; } // 恢复期间用户已提交了新批次组，不覆盖
+    page.group = group;
+    page.batchesExpanded = false;
+    // 恢复出来的终态不再重复提醒；非终态恢复轮询并刷新任务明细
+    page.notified = isGroupTerminal(group.status);
+    page.jobs = {
+      items: [], total: 0, offset: 0, limit: JOB_PAGE_LIMIT,
+      loading: false, error: '', seq: page.jobs.seq + 1, refreshKey: groupSignature(group)
+    };
+    renderGroup();
+    loadGroupJobs('reset');
+    if (!isGroupTerminal(group.status)) {
+      startPolling();
+    }
+  } catch (err) {
+    if (err && err.status === 404) {
+      clearLastGroupId();
+    }
+    // 网络等其它错误保留 key，下次进入视图再尝试
+  } finally {
+    page.restoring = false;
   }
 }
 
@@ -706,16 +1141,14 @@ export function initSubtitlePage() {
   var selectAll = q('subtitleSelectAllBtn');
   if (selectAll) {
     selectAll.addEventListener('click', function () {
-      // v0031：全选只在单批上限内生效，避免“全选 5000 个 → 按钮直接禁用”
+      // v0032：全选 = 当前筛选结果全部（不再按单批上限截断，超出单次提交上限由禁用原因提示）
       var filtered = filteredItems();
-      var batchMax = metaLimits().batchMax;
-      var limited = filtered.slice(0, batchMax);
-      limited.forEach(function (item) { page.selected.add(item.path); });
+      var limits = metaLimits();
+      filtered.forEach(function (item) { page.selected.add(item.path); });
       renderVideos();
-      if (filtered.length > batchMax) {
-        toast('当前筛选结果共 ' + fmtInt(filtered.length) + ' 个，已选择前 '
-          + fmtInt(batchMax) + ' 个（单批上限）；其余请分批提交或用筛选缩小范围。',
-          'info', 7000);
+      if (filtered.length > limits.groupMax) {
+        toast('当前筛选结果共 ' + fmtInt(filtered.length) + ' 个，超过单次提交上限 '
+          + fmtInt(limits.groupMax) + ' 个；请分多次提交或用筛选缩小范围。', 'info', 8000);
       }
     });
   }
@@ -731,6 +1164,17 @@ export function initSubtitlePage() {
     moreBtn.addEventListener('click', function () {
       page.shown += PAGE_LIMIT;
       renderVideos();
+    });
+  }
+  var jobsMoreBtn = q('subtitleGroupJobsMoreBtn');
+  if (jobsMoreBtn) {
+    jobsMoreBtn.addEventListener('click', function () { loadGroupJobs('more'); });
+  }
+  var batchesToggle = q('subtitleGroupBatchesToggle');
+  if (batchesToggle) {
+    batchesToggle.addEventListener('click', function () {
+      page.batchesExpanded = !page.batchesExpanded;
+      renderBatches();
     });
   }
   var skip = q('subtitleSkipExisting');
@@ -756,7 +1200,7 @@ export function initSubtitlePage() {
   var confirm = q('subtitleBatchConfirm');
   if (confirm) { confirm.addEventListener('change', updateSubmitState); }
   var submit = q('subtitleSubmitBtn');
-  if (submit) { submit.addEventListener('click', submitBatch); }
+  if (submit) { submit.addEventListener('click', submitGroup); }
   var modeAsr = q('subtitleModeAsr');
   var modeSrt = q('subtitleModeSrt');
   function onModeChange() {
@@ -780,10 +1224,19 @@ export function showSubtitlePage() {
   initSubtitlePage();
   updateCapabilityUi();
   updateSubmitState();
-  if (page.batch && !isTerminal(page.batch.status)) {
+  if (!page.group) {
+    // 首次进入 / 刷新页面后：按 localStorage 恢复最近一次批次组
+    restoreLastGroup();
+    return;
+  }
+  renderGroup();
+  if (!page.jobs.items.length && !page.jobs.loading) {
+    loadGroupJobs('reset');
+  }
+  if (!isGroupTerminal(page.group.status)) {
     if (!page.timer) { startPolling(); }
   } else {
-    notifyBatchFinished();
+    notifyGroupFinished();
   }
 }
 

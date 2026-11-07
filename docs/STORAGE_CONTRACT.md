@@ -113,6 +113,24 @@ subtitle_jobs(
   updated_epoch REAL NOT NULL,
   status TEXT
 );
+
+-- v7（v0032）
+subtitle_batch_groups(
+  group_id TEXT PRIMARY KEY,
+  payload_json TEXT NOT NULL,
+  created_epoch REAL NOT NULL,
+  updated_epoch REAL NOT NULL
+);
+
+scan_file_deletions(
+  scan_id TEXT NOT NULL,
+  path TEXT NOT NULL,
+  job_id TEXT,
+  mode TEXT,
+  deleted_epoch REAL NOT NULL,
+  PRIMARY KEY (scan_id, path)
+);
+CREATE INDEX idx_scan_file_deletions_scan ON scan_file_deletions(scan_id);
 ```
 
 ## 2. Store 兼容 API
@@ -130,6 +148,11 @@ subtitle_jobs(
 - v3 起暂停断点 FileRecord 拆到 scan_checkpoint_records，scan_checkpoints 只存 stage/progress/stats；旧 payload records 仍可回退读取。
 - v4 起字幕任务 ASR 分片缓存落 subtitle_chunks，支持暂停/续跑。
 - v5 起 scan_files 去掉 payload_json；v4→v5 用“建新表→INSERT SELECT→DROP→RENAME→重建索引”迁移（兼容旧 SQLite，不依赖 DROP COLUMN），行数/路径/分组数据不变。
+- v6（v0028）新增 subtitle_batches；v7（v0032）新增 subtitle_batch_groups 与 scan_file_deletions（只建表/索引，幂等）。
+- **删除标记过滤（v7）**：删除任务成功（`recycled`/`deleted`）或发现文件已不存在（`NOT_FOUND`）时写入 `scan_file_deletions`；
+  `iter_scan_groups` / `query_scan_groups_page` / `scan_file_stats` / CSV / XLSX 读取时剔除这些文件，组内剩余文件 <2 的组不再返回，
+  keeper 被删时按剩余文件重算保留项与 `wasted_bytes`。无删除标记时保持旧行为（不做剩余数过滤）。
+- 删除扫描时一并删除 `scan_file_deletions` 行。
 - 启动时 `scans/*/meta.json`、`groups.jsonl`、`deletions/*.meta.json`、`*.jsonl`、`feature_cache.json`，导入 SQLite；v1→v2 从 payload 回填。
 - 导入使用 INSERT OR IGNORE，幂等；不删除源文件；写 `schema_meta('migrated_v1')=1`。
 - 读取时 DB 优先；空则回退旧 JSON。

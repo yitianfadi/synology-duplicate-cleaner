@@ -1,9 +1,9 @@
 {
-  "generated_at": "2026-11-07T08:57:31+0800",
+  "generated_at": "2026-11-07T09:36:48+0800",
   "python": "3.12.9 | packaged by Anaconda, Inc. | (main, Feb  6 2025, 18:49:16) [MSC v.1929 64 bit (AMD64)]",
   "repo": "D:\\code\\zhouyi\\qunhui\\synology-duplicate-cleaner",
   "summary": {
-    "PASS": 123,
+    "PASS": 130,
     "FAIL": 0,
     "UNVERIFIED": 1
   },
@@ -11,11 +11,11 @@
     "fixture_files": 46,
     "python": "3.12.9",
     "birthtime_supported": true,
-    "backend_port": 2966,
+    "backend_port": 14487,
     "csrf_token_len": 43,
     "meta": {
       "ok": true,
-      "app_version": "1.1.0-0031",
+      "app_version": "1.1.0-0032",
       "dsm_version": "dev",
       "python_version": "3.12.9",
       "creation_time_supported": true,
@@ -102,6 +102,7 @@
         "subtitle_asr_timeout_sec": 300,
         "subtitle_asr_chunk_sec": 600,
         "subtitle_asr_max_audio_mb": 24,
+        "subtitle_audio_source": "nas",
         "subtitle_translate_enabled": false,
         "subtitle_llm_base_url": "https://api.openai.com/v1",
         "subtitle_llm_api_key": "",
@@ -294,15 +295,20 @@
       "subtitle": {
         "supported": true,
         "batch_max_items": 500,
-        "enumerate_max_items": 5000,
+        "batch_group_max_items": 20000,
+        "enumerate_max_items": 20000,
         "output_modes": [
           "alongside_video",
           "download_only"
+        ],
+        "audio_sources": [
+          "nas",
+          "server"
         ]
       }
     },
     "subtitle_enumerate_count": 0,
-    "main_scan_id": "20261107-085725-474768",
+    "main_scan_id": "20261107-093641-58c4e8",
     "main_scan_final": "completed",
     "main_stats": {
       "files_seen": 38,
@@ -316,7 +322,7 @@
       "selectable_duplicate_files": 15,
       "selectable_reclaimable_bytes": 4403200,
       "bytes_hashed": 8753152,
-      "bytes_per_sec": 390750781,
+      "bytes_per_sec": 388526048,
       "errors": 0,
       "skipped": {
         "symlink": 0,
@@ -376,13 +382,13 @@
     },
     "main_groups_total": 12,
     "recycle_plan": {
-      "plan_id": "plan-593cc622a54bd258",
+      "plan_id": "plan-dabdb75ffe257719",
       "count": 2,
       "bytes": 40960,
       "groups_affected": 1
     },
     "recycle_job": {
-      "job_id": "del-20261107-085726-8b3070",
+      "job_id": "del-20261107-093641-024be3",
       "status": "completed",
       "done": 2,
       "failed": 0,
@@ -519,6 +525,42 @@
     {
       "id": "SUB-10",
       "name": "字幕任务列表支持 batch_id 过滤",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SUB-11",
+      "name": "meta.subtitle 暴露批次组上限/枚举上限/音频来源",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SUB-12",
+      "name": "批次组无有效路径返回 400 BATCH_EMPTY",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SUB-13",
+      "name": "批次组空路径返回 400 INVALID_ARGUMENT",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SUB-14",
+      "name": "批次组超过 20000 个路径返回 400 BATCH_TOO_LARGE",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SUB-15",
+      "name": "未知字幕批次组返回 404 NOT_FOUND",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SUB-16",
+      "name": "字幕任务列表支持 group_id 过滤分页",
       "status": "PASS",
       "detail": ""
     },
@@ -736,7 +778,7 @@
       "id": "SKIP-04",
       "name": "符号链接跳过（当前环境无法创建 symlink）",
       "status": "UNVERIFIED",
-      "detail": "os.symlink failed: [WinError 1314] 客户端没有所需的特权。: 'C:\\\\Users\\\\zhouyi\\\\AppData\\\\Local\\\\Temp\\\\dupqa-t36ttzdm\\\\qa-share-a\\\\dup' -> 'C:\\\\Users\\\\zhouyi\\\\AppData\\\\Local\\\\Temp\\\\dupqa-t36ttzdm\\\\qa-share-a\\\\link_to_dup'"
+      "detail": "os.symlink failed: [WinError 1314] 客户端没有所需的特权。: 'C:\\\\Users\\\\zhouyi\\\\AppData\\\\Local\\\\Temp\\\\dupqa-ts33l5zk\\\\qa-share-a\\\\dup' -> 'C:\\\\Users\\\\zhouyi\\\\AppData\\\\Local\\\\Temp\\\\dupqa-ts33l5zk\\\\qa-share-a\\\\link_to_dup'"
     },
     {
       "id": "HARDLINK-01",
@@ -951,6 +993,12 @@
     {
       "id": "DEL-11",
       "name": "删除计划一次性：重放已消费的 plan 被拒绝",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "DEL-20",
+      "name": "删除成功后 groups 不再返回已删除文件且整组消失",
       "status": "PASS",
       "detail": ""
     },

@@ -2035,6 +2035,10 @@ import {
     if (els.subtitleAsrBaseUrl) { els.subtitleAsrBaseUrl.value = s.subtitle_asr_base_url || ''; }
     if (els.subtitleAsrModel) { els.subtitleAsrModel.value = s.subtitle_asr_model || ''; }
     if (els.subtitleAsrLanguage) { els.subtitleAsrLanguage.value = s.subtitle_asr_language || 'auto'; }
+    // v0032：音频来源 nas（默认，由 NAS 转音频后上传）| server（按段上传原视频给 ASR 服务端转音频）
+    if (els.subtitleAudioSource) {
+      els.subtitleAudioSource.value = s.subtitle_audio_source === 'server' ? 'server' : 'nas';
+    }
     setVideoNumberValue(els.subtitleAsrTimeout, s.subtitle_asr_timeout_sec, 300, 30, 1800);
     setVideoNumberValue(els.subtitleAsrChunk, s.subtitle_asr_chunk_sec, 600, 60, 1800);
     setVideoNumberValue(els.subtitleAsrMaxAudioMb, s.subtitle_asr_max_audio_mb, 24, 1, 100);
@@ -2102,6 +2106,12 @@ import {
       settings.subtitle_asr_language = ['auto', 'zh', 'en', 'ja', 'ko'].indexOf(els.subtitleAsrLanguage.value) !== -1
         ? els.subtitleAsrLanguage.value : 'auto';
     }
+    // v0032：音频来源只接受 nas / server，缺失或非法值一律回落到 nas（默认）；
+    // server 表示把原视频按段上传给 ASR 服务器转音频（更快，但会上传原视频）。
+    var audioSource = els.subtitleAudioSource
+      ? String(els.subtitleAudioSource.value || '').trim()
+      : '';
+    settings.subtitle_audio_source = audioSource === 'server' ? 'server' : 'nas';
     var asrTimeout = readSubtitleInt(els.subtitleAsrTimeout, 30, 1800, 'ASR 超时', errors, 'subtitleAsrTimeout');
     if (asrTimeout !== null) { settings.subtitle_asr_timeout_sec = asrTimeout; }
     var asrChunk = readSubtitleInt(els.subtitleAsrChunk, 60, 1800, '音频分块', errors, 'subtitleAsrChunk');
@@ -2400,7 +2410,9 @@ import {
   var BACKEND_VIDEO_FIELD_KEYS = {
     ffmpeg_path: 'videoFfmpegPath',
     video_hwaccel: 'videoHwaccel',
-    subtitle_job_limit: 'setSubtitleJobLimit'
+    subtitle_job_limit: 'setSubtitleJobLimit',
+    // v0032：音频来源无独立错误元素，映射到设置页字段名后由通用错误摘要展示
+    subtitle_audio_source: 'subtitleAudioSource'
   };
 
   /** 把后端 INVALID_ARGUMENT 的 details.key 映射到前端字段错误（中文文案用后端 message）。 */
@@ -3106,7 +3118,7 @@ import {
     await Promise.all(tasks);
   }
 
-  async function loadExactPartition(reset) {
+  async function loadExactPartition(reset, offsetOverride) {
     var results = state.results;
     if (!state.scan.id) { return; }
     if (results.loading && !reset) { return; }
@@ -3118,6 +3130,9 @@ import {
     setHidden(els.resultsError, true);
     setHidden(els.resultsEmpty, true);
     var offset = reset ? 0 : results.groups.length;
+    if (typeof offsetOverride === 'number' && isFinite(offsetOverride) && offsetOverride >= 0) {
+      offset = Math.floor(offsetOverride);
+    }
     var query = '?offset=' + offset + '&limit=' + results.limit +
       '&q=' + encodeURIComponent(results.q) + '&sort=' + encodeURIComponent(results.sort);
     if (results.scanMode === 'similar' || videoScanEnabledForResults()) { query += '&match_type=exact'; }
@@ -3133,7 +3148,7 @@ import {
       results.loaded = true;
       results.loading = false;
       renderResults();
-      if (reset) { loadScanStats(); }
+      if (reset) { await loadScanStats(); }
     } catch (err) {
       if (seq !== results.seq) { return; }
       results.loading = false;
@@ -3144,7 +3159,7 @@ import {
     }
   }
 
-  async function loadSimilarPartition(reset) {
+  async function loadSimilarPartition(reset, offsetOverride) {
     var results = state.results;
     if (!state.scan.id) { return; }
     if (results.similarLoading && !reset) { return; }
@@ -3156,6 +3171,9 @@ import {
     setHidden(els.similarError, true);
     setHidden(els.similarEmpty, true);
     var offset = reset ? 0 : results.similarGroups.length;
+    if (typeof offsetOverride === 'number' && isFinite(offsetOverride) && offsetOverride >= 0) {
+      offset = Math.floor(offsetOverride);
+    }
     var query = '?offset=' + offset + '&limit=' + results.limit + '&match_type=similar&sort=similarity_desc' +
       '&q=' + encodeURIComponent(results.q);
     try {
@@ -3181,7 +3199,7 @@ import {
     }
   }
 
-  async function loadVideoPartition(reset) {
+  async function loadVideoPartition(reset, offsetOverride) {
     var results = state.results;
     if (!state.scan.id) { return; }
     if (results.videoLoading && !reset) { return; }
@@ -3193,6 +3211,9 @@ import {
     setHidden(els.videoError, true);
     setHidden(els.videoEmpty, true);
     var offset = reset ? 0 : results.videoGroups.length;
+    if (typeof offsetOverride === 'number' && isFinite(offsetOverride) && offsetOverride >= 0) {
+      offset = Math.floor(offsetOverride);
+    }
     var query = '?offset=' + offset + '&limit=' + results.limit + '&match_type=video&sort=similarity_desc' +
       '&q=' + encodeURIComponent(results.q);
     try {
@@ -5961,13 +5982,13 @@ import {
     var message;
     if (status === 'completed') {
       message = '删除完成：成功处理 ' + fmtInt(done) + ' 个文件' + (failed ? '，失败 ' + fmtInt(failed) + ' 个' : '') + '。';
-      toast(message, 'success', 6000);
+      toast(withRemovedHint(message, done), 'success', 6000);
     } else if (status === 'partial') {
       message = '删除部分完成：成功 ' + fmtInt(done) + ' 个，失败 ' + fmtInt(failed) + ' 个。请查看逐文件结果。';
-      toast(message, 'error', 7000);
+      toast(withRemovedHint(message, done), 'error', 7000);
     } else if (status === 'stopped') {
       message = '删除任务已停止：成功 ' + fmtInt(done) + ' 个，失败 ' + fmtInt(failed) + ' 个。';
-      toast(message, 'info', 6000);
+      toast(withRemovedHint(message, done), 'info', 6000);
     } else {
       message = '删除任务失败：成功 ' + fmtInt(done) + ' 个，失败 ' + fmtInt(failed) + ' 个。请查看操作日志。';
       toast(message, 'error', 7000);
@@ -5993,9 +6014,27 @@ import {
     await refreshScanAfterDelete();
   }
 
+  /** 删除成功的 toast 附加“已从结果列表移除”语义（保持原有完成提示为前提）。 */
+  function withRemovedHint(message, done) {
+    return done > 0 ? message + '成功删除的文件已从结果列表移除。' : message;
+  }
+
+  /**
+   * 删除结束后刷新结果页（v0032）：后端在删除成功时会写入数据库标记，
+   * groups / stats 接口会自动排除已删除文件；前端只在删除结束后强制刷新一次：
+   * 1) 重置分页游标与已加载列表到第一页，清空全部选择状态与“删除选中”按钮状态；
+   * 2) 重新拉取扫描详情（模式/进度）、分组列表、统计摘要与各分区计数；
+   * 3) 当前页删空时回退到上一页（删除前 offset > 0 时），否则由空状态提示兜底，避免停留在空白页。
+   */
   async function refreshScanAfterDelete() {
     if (!state.scan.id) { return; }
     var scanId = state.scan.id;
+    var loadedBefore = {
+      exactOffset: state.results.offset,
+      similarOffset: state.results.similarOffset,
+      videoOffset: state.results.videoOffset
+    };
+    resetResultsViewAfterDelete();
     try {
       var res = await api('/api/scans/' + encodePath(scanId), { timeout: 15000 });
       if (state.scan.id !== scanId) { return; }
@@ -6004,10 +6043,97 @@ import {
         state.results.scanMode = detectScanMode(res.scan);
         renderScanProgress(res.scan);
       }
-      loadResults(true);
     } catch (e) {
-      loadResults(true);
+      /* 扫描详情刷新失败不阻塞结果列表刷新（分组/统计仍会重新拉取）。 */
     }
+    if (state.scan.id !== scanId) { return; }
+    await loadResults(true);
+    if (state.scan.id !== scanId) { return; }
+    await recoverEmptyResultsPageAfterDelete(loadedBefore);
+  }
+
+  /** 删除后强制把结果视图重置到第一页：清空已加载分组、分页游标与全部选择状态。 */
+  function resetResultsViewAfterDelete() {
+    var results = state.results;
+    results.groups = [];
+    results.total = 0;
+    results.offset = 0;
+    results.loaded = false;
+    results.loading = false;
+    results.seq += 1;
+    results.similarGroups = [];
+    results.similarTotal = 0;
+    results.similarOffset = 0;
+    results.similarLoaded = false;
+    results.similarLoading = false;
+    results.similarSeq += 1;
+    results.videoGroups = [];
+    results.videoTotal = 0;
+    results.videoOffset = 0;
+    results.videoLoaded = false;
+    results.videoLoading = false;
+    results.videoSeq += 1;
+    results.exactTotal = 0;
+    results.videoSelectAllMode = false;
+    clearSelectionState();
+    updateSelectionSummary();
+    if (els.groupsList) { clear(els.groupsList); }
+    if (els.similarGroupsList) { clear(els.similarGroupsList); }
+    if (els.videoGroupsList) { clear(els.videoGroupsList); }
+    setHidden(els.resultsEmpty, true);
+    setHidden(els.resultsError, true);
+  }
+
+  /**
+   * 兜底：删除后已重置到第一页；若第一页仍为空但总数大于 0（游标/服务端异常），
+   * 回退到删除前当前页的上一页（offset - limit，仅当 offset > 0）重新加载；
+   * 仍无数据时显示空状态提示，避免停留在空白页。
+   */
+  async function recoverEmptyResultsPageAfterDelete(loadedBefore) {
+    var results = state.results;
+    if (!state.scan.id) { return; }
+    // 搜索态下分区总数是未按搜索词过滤的全量值，不能据此判断“页面为空”，跳过兜底。
+    if (results.q) { return; }
+    var before = loadedBefore || {};
+    if (results.loaded && !results.loading && !results.groups.length && results.total > 0) {
+      var exactOffset = previousResultsPageOffset(before.exactOffset, results.limit);
+      if (exactOffset > 0) { await loadExactPartition(false, exactOffset); }
+    }
+    if (results.similarLoaded && !results.similarLoading && !results.similarGroups.length &&
+        results.similarTotal > 0) {
+      var similarOffset = previousResultsPageOffset(before.similarOffset, results.limit);
+      if (similarOffset > 0) { await loadSimilarPartition(false, similarOffset); }
+    }
+    if (results.videoLoaded && !results.videoLoading && !results.videoGroups.length &&
+        results.videoTotal > 0) {
+      var videoOffset = previousResultsPageOffset(before.videoOffset, results.limit);
+      if (videoOffset > 0) { await loadVideoPartition(false, videoOffset); }
+    }
+    // 回退后仍为空：显式展示空状态，避免结果区只剩空白列表（已显示错误框时不覆盖）。
+    if (results.loaded && !results.loading && !results.groups.length && results.total > 0 &&
+        !(els.resultsError && els.resultsError.hidden === false)) {
+      setText(els.resultsEmpty, '结果页已刷新，但未返回可展示的分组。请点击“刷新结果”重新加载。');
+      setHidden(els.resultsEmpty, false);
+    }
+    if (results.similarLoaded && !results.similarLoading && !results.similarGroups.length &&
+        results.similarTotal > 0 && !(els.similarError && els.similarError.hidden === false)) {
+      setText(els.similarEmpty, '结果页已刷新，但未返回可展示的内容相似组。请点击“刷新结果”重新加载。');
+      setHidden(els.similarEmpty, false);
+    }
+    if (results.videoLoaded && !results.videoLoading && !results.videoGroups.length &&
+        results.videoTotal > 0 && !(els.videoError && els.videoError.hidden === false)) {
+      setText(els.videoEmpty, '结果页已刷新，但未返回可展示的视频相似组。请点击“刷新结果”重新加载。');
+      setHidden(els.videoEmpty, false);
+    }
+  }
+
+  /** 删除前的当前页 offset 回退一页得到的 offset；offset 无效或已在第一页时返回 0。 */
+  function previousResultsPageOffset(lastOffset, limit) {
+    var offset = Number(lastOffset);
+    var pageSize = Number(limit);
+    if (!isFinite(offset) || offset <= 0) { return 0; }
+    if (!isFinite(pageSize) || pageSize <= 0) { pageSize = 1; }
+    return Math.max(0, Math.floor(offset) - Math.floor(pageSize));
   }
 
   // ==================== 15. 历史记录 ====================

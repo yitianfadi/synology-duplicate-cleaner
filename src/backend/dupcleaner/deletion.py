@@ -790,6 +790,20 @@ class DeletionManager(object):
     def _run_job(self, job):
         stamp = time.strftime("%Y%m%d-%H%M%S")
         hash_cache = {}
+        # v0032：删除成功的文件写入 scan_file_deletions，结果页/统计/CSV 读取时剔除；
+        # 每 200 条刷一次，避免任务中断时丢失全部标记。
+        deleted_entries = []
+
+        def flush_deleted():
+            if not deleted_entries:
+                return
+            chunk = deleted_entries[:]
+            del deleted_entries[:]
+            try:
+                self.store.mark_scan_files_deleted(job.scan_id, chunk)
+            except Exception:
+                pass
+
         try:
             try:
                 handle = open(job.plan_path, "rb")
@@ -808,8 +822,26 @@ class DeletionManager(object):
                         job.skipped += 1
                         continue
                     result = self._delete_one(job, entry, stamp, hash_cache)
+                    status = result.get("status")
+                    if status in (STATUS_RECYCLED, STATUS_DELETED):
+                        deleted_entries.append({
+                            "path": result.get("path"),
+                            "job_id": job.job_id,
+                            "mode": status,
+                        })
+                    elif (status == STATUS_SKIPPED
+                          and result.get("reason") == REASON_NOT_FOUND):
+                        # 文件已经不存在：同样从结果集中剔除，避免继续显示
+                        deleted_entries.append({
+                            "path": result.get("path"),
+                            "job_id": job.job_id,
+                            "mode": "missing",
+                        })
+                    if len(deleted_entries) >= 200:
+                        flush_deleted()
                     self._record_result(job, result)
                     self._persist_job(job)
+            flush_deleted()
             with job.lock:
                 if job.failed == 0 and job.skipped == 0:
                     final_status = "completed"
@@ -836,6 +868,7 @@ class DeletionManager(object):
                 job.status = final_status
             self._persist_job(job, force=True)
         except Exception as exc:  # pragma: no cover
+            flush_deleted()
             with job.lock:
                 job.status = "failed"
                 job.finished_epoch = time.time()

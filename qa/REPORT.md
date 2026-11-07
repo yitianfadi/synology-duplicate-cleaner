@@ -372,3 +372,55 @@ python build/build_spk.py --no-icons --out-dir $env:TEMP\qa-build2
 
 - 结论：v0031 **PASS（可交付）**。
 
+---
+
+## 14. 附：v0032 批次组 / 删除后刷新 / 服务器解码（2026-11-07）
+
+> 现场反馈三项：①「全选」只能选 500 不合理；② 删除文件后结果页仍显示已删除；③ 希望用服务器算力转音频。本节为 v0032 增量验收；契约见 `docs/SUBTITLE_BATCH_CONTRACT.md` §13、`docs/SUBTITLE_CONTRACT.md` §3/§12、`docs/STORAGE_CONTRACT.md` §2。
+
+### 14.1 能力与设计
+
+- **批次组**：`POST /api/subtitles/batch-groups` 一次最多 20000 个视频，后端按每批 ≤500 自动拆批并共享 `group_id`；组快照聚合进度/计数/批次列表，`/pause|resume|cancel|retry` 作用于整组；任务明细分页 `GET /api/subtitles?group_id=&offset=&limit=`。组按 `SUBTITLE_BATCH_GROUP_LIMIT=20` 保留，组内任务不参与单任务 LRU。枚举上限提升到 20000，前端「全选」不再截断。
+- **删除后刷新**：schema v7 新增 `scan_file_deletions`；删除成功（recycled/deleted）或文件已不存在（NOT_FOUND）时写入标记，`iter_scan_groups` / `query_scan_groups_page` / `scan_file_stats` / CSV / XLSX 读取时剔除；组内剩余 <2 个文件整组消失；keeper 被删时重算保留项与 `wasted_bytes`。前端删除结束后重置分页/选择并重拉，空页自动回退上一页。
+- **服务器解码**：新设置 `subtitle_audio_source`（`nas` 默认 / `server`）。server 模式下 NAS 只用 FFmpeg **流复制**抽音轨（`-map 0:a:0 -c copy`，不解码），上传 `.mka` 音频容器给 ASR 服务器解码转音频（仍只上传音频、不上传视频）；单段超 780MB 继续对半切；流复制失败回退 NAS 解码并置 `warning=SERVER_AUDIO_FALLBACK`。音频来源在提交时快照到 job。
+
+### 14.2 最终产物
+
+- `dist/DuplicateCleaner-1.1.0-0032.spk`
+  - SHA256 `cf8fcef316b4613aac38a6c51c24fdc30170f4b22bb21900ff79bca723f4c305`
+  - package.tgz MD5 `4ff5e5fdef2a7f844402480e6629db6c`（= INFO.checksum）
+  - 大小 38,973,440 B
+- 版本 1.1.0-0032 同步 8 处；SQLite schema v7（新增 `subtitle_batch_groups`、`scan_file_deletions`，只建表/索引）。
+
+### 14.3 结果总览
+
+| 套件 | 命令 | 结果 |
+|---|---|---|
+| 后端单测 | `cd src/backend && python -m unittest discover -s tests` | **382 tests OK（5 skipped）** |
+| 端到端 | `python qa/e2e_test.py` | **PASS=130 / FAIL=0 / UNVERIFIED=1**（Windows symlink 权限限制） |
+| 静态检查（含 unittest/前端/SPK） | `python qa/static_checks.py` | **PASS=136 / FAIL=0 / UNVERIFIED=0** |
+| 前端模块图 | `node qa/check_web_modules.mjs` | **22/22 PASS** |
+| 无头浏览器冒烟 | `python qa/web_smoke.py` | **8/8 PASS** |
+
+### 14.4 新增/更新测试
+
+- 单测：批次组拆批/聚合快照/任务分页/组控制/保留清理（5 例）；server 音频模式 remux、流复制失败回退、超大分块对半切（3 例）；`scan_file_deletions` 过滤分组/统计/迭代（1 例）；schema v7。
+- e2e：SUB-11..SUB-16（meta 上限/批次组空路径/无有效路径/>20000/未知组 404/group_id 分页）、DEL-20（删除成功后 groups 不再返回已删除文件且整组消失）。
+- 静态：新增 `BE-SUBTITLE-GROUP`、`BE-SCANDEL-FILTER`、`BE-SUBTITLE-AUDIO`、`FE-SUBTITLE-GROUP`、`FE-SUBTITLE-AUDIO`、`FE-DELETE-REFRESH`；更新字幕页端点/写回/轮询/提交原因断言为批次组语义。
+
+### 14.5 真实服务联调（开发模式套件 → 局域网 ASR）
+
+| 场景 | 结果 |
+|---|---|
+| 3 个 30s 视频批次组（nas） | 组 done 3/3、8.1s；任务分页 3 条、SRT 写回 OK；组控制终态幂等 |
+| 3 个 30s 视频批次组（server） | 组 done 3/3；NAS 流复制 `.mka` → 服务器解码 + ASR，`warning=null`、SRT 写回 OK |
+| 无头浏览器（字幕页） | 全选 2 个 → 提示“将分为 1 批”、禁用原因常显；勾选确认项后可提交；组卡 排队中→已完成 2/2，任务行 2、localStorage 保存 group_id、无控制台错误 |
+
+### 14.6 残余风险与未验证项
+
+- 真实 DSM 上的 5000 级全选（串行处理时长/磁盘增长）与删除后刷新仍未真机验证；建议先在 NAS 用 50–200 个视频验证。
+- server 音频模式依赖原音轨可被流复制（AAC/AC3/DTS/PCM 等容器内常见编码均可）；少数编码需回退 NAS 解码（已有 warning）。
+- 升级前已删除的旧数据没有标记记录，仍会显示；如需清理请重新扫描。
+
+- 结论：v0032 **PASS（可交付）**。
+

@@ -216,6 +216,16 @@ class Api(object):
              self._subtitle_enumerate, False),
             ("POST", re.compile(r"^/api/subtitles/batch$"),
              self._subtitle_batch_create, False),
+            # v0032：批次组（一次提交自动拆成多批）
+            ("POST", re.compile(r"^/api/subtitles/batch-groups$"),
+             self._subtitle_group_create, False),
+            ("GET", re.compile(
+                r"^/api/subtitles/batch-groups/(?P<group_id>[^/]+)$"),
+             self._subtitle_group_get, False),
+            ("POST", re.compile(
+                r"^/api/subtitles/batch-groups/(?P<group_id>[^/]+)/"
+                r"(?P<action>pause|resume|cancel|retry)$"),
+             self._subtitle_group_control, False),
             ("GET", re.compile(
                 r"^/api/subtitles/batches/(?P<batch_id>[^/]+)$"),
              self._subtitle_batch_get, False),
@@ -344,8 +354,10 @@ class Api(object):
             "subtitle": {
                 "supported": self.services.subtitles is not None,
                 "batch_max_items": config.SUBTITLE_BATCH_MAX_ITEMS,
+                "batch_group_max_items": config.SUBTITLE_BATCH_GROUP_MAX_ITEMS,
                 "enumerate_max_items": config.SUBTITLE_ENUMERATE_MAX_ITEMS,
                 "output_modes": list(config.SUBTITLE_OUTPUT_MODES),
+                "audio_sources": list(config.SUBTITLE_AUDIO_SOURCES),
             },
         })
 
@@ -616,7 +628,15 @@ class Api(object):
     def _list_subtitles(self, request, session, params):
         service = self._require_subtitle_admin(session)
         limit = _query_int(request, "limit", 50)
+        offset = _query_int(request, "offset", 0)
         batch_id = request.query_last("batch_id") or None
+        group_id = request.query_last("group_id") or None
+        if group_id is not None or offset:
+            page = service.list_page(limit=limit, batch_id=batch_id,
+                                     group_id=group_id, offset=offset)
+            payload = {"ok": True}
+            payload.update(page)
+            return json_response(payload)
         return json_response({"ok": True,
                               "jobs": service.list(limit=limit,
                                                    batch_id=batch_id)})
@@ -715,6 +735,39 @@ class Api(object):
             raise invalid(u"未知的批次操作")
         return json_response({"ok": True,
                               "batch": handler(params["batch_id"])})
+
+    # ------------------------------------------------------------------
+    # v0032：字幕批次组（一次提交自动拆批；docs/SUBTITLE_BATCH_CONTRACT.md §13）
+    # ------------------------------------------------------------------
+    def _subtitle_group_create(self, request, session, params):
+        service = self._require_subtitle_admin(session)
+        body = _json_body(request)
+        try:
+            group = service.create_batch_group(session.user, body)
+        except SubtitleError as exc:
+            raise ApiError(exc.code, exc.message, status=400)
+        return json_response({"ok": True, "group": group}, status=202)
+
+    def _subtitle_group_get(self, request, session, params):
+        service = self._require_subtitle_admin(session)
+        return json_response({"ok": True,
+                              "group": service.get_batch_group(
+                                  params["group_id"])})
+
+    def _subtitle_group_control(self, request, session, params):
+        service = self._require_subtitle_admin(session)
+        action = params["action"]
+        handlers = {
+            "pause": service.pause_batch_group,
+            "resume": service.resume_batch_group,
+            "cancel": service.cancel_batch_group,
+            "retry": service.retry_batch_group,
+        }
+        handler = handlers.get(action)
+        if handler is None:
+            raise invalid(u"未知的批次组操作")
+        return json_response({"ok": True,
+                              "group": handler(params["group_id"])})
 
     # ------------------------------------------------------------------
     # 扫描

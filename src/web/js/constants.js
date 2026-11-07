@@ -137,7 +137,8 @@ export var SUBTITLE_SOURCE_LABEL = {
 };
 export var SUBTITLE_WARNING_LABEL = {
   OUTPUT_NOT_WRITABLE: '视频目录不可写，字幕未写回（任务目录可下载）',
-  OUTPUT_WRITE_PARTIAL: '部分字幕文件写回失败（任务目录可下载）'
+  OUTPUT_WRITE_PARTIAL: '部分字幕文件写回失败（任务目录可下载）',
+  SERVER_AUDIO_FALLBACK: '服务器解码失败，已回退 NAS 抽取音频'
 };
 export var SUBTITLE_OUTPUT_KIND_LABEL = {
   original: '原文', translation: '译文', bilingual: '双语'
@@ -180,6 +181,8 @@ export var DEFAULT_SETTINGS = {
   subtitle_asr_timeout_sec: 300,
   subtitle_asr_chunk_sec: 600,
   subtitle_asr_max_audio_mb: 24,
+  // v0032：音频来源 nas=本机抽音（默认）/ server=上传视频段由 ASR 服务器抽音
+  subtitle_audio_source: 'nas',
   subtitle_translate_enabled: false,
   subtitle_llm_base_url: 'https://api.openai.com/v1',
   subtitle_llm_api_key: '',

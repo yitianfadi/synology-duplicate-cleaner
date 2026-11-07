@@ -605,6 +605,8 @@ class Store(object):
         with self.db.transaction():
             self.db.execute("DELETE FROM scan_groups WHERE scan_id=?", (scan_id,))
             self.db.execute("DELETE FROM scan_files WHERE scan_id=?", (scan_id,))
+            self.db.execute(
+                "DELETE FROM scan_file_deletions WHERE scan_id=?", (scan_id,))
             self.db.execute("DELETE FROM scan_checkpoints WHERE scan_id=?", (scan_id,))
             self.db.execute(
                 "DELETE FROM scan_checkpoint_records WHERE scan_id=?",
@@ -721,14 +723,18 @@ class Store(object):
             return count
 
     def iter_scan_groups(self, scan_id):
-        """按 ordinal 升序流式迭代；DB 为空时回退旧 groups.jsonl。"""
+        """按 ordinal 升序流式迭代；DB 为空时回退旧 groups.jsonl。
+
+        v0032：删除成功标记过的文件会从组内剔除；剩余文件 <2 的组跳过。
+        """
         scan_id = self._check_scan_id(scan_id)
+        deleted = self.load_deleted_paths(scan_id)
         first = self.db.query(
             "SELECT ordinal, payload_json FROM scan_groups"
             " WHERE scan_id=? ORDER BY ordinal ASC LIMIT ?",
             (scan_id, _GROUP_BATCH))
         if not first:
-            for group in self._iter_legacy_scan_groups(scan_id):
+            for group in self._iter_legacy_scan_groups(scan_id, deleted):
                 yield group
             return
         rows = first
@@ -738,6 +744,10 @@ class Store(object):
                 payload = self._loads(row["payload_json"], None)
                 last = int(row["ordinal"])
                 if isinstance(payload, dict):
+                    if deleted:
+                        payload = self.filter_group_payload(payload, deleted)
+                        if payload is None:
+                            continue
                     yield payload
             if len(rows) < _GROUP_BATCH:
                 return
@@ -746,7 +756,7 @@ class Store(object):
                 " WHERE scan_id=? AND ordinal>? ORDER BY ordinal ASC LIMIT ?",
                 (scan_id, last, _GROUP_BATCH))
 
-    def _iter_legacy_scan_groups(self, scan_id):
+    def _iter_legacy_scan_groups(self, scan_id, deleted=None):
         path = self._scan_groups_path(scan_id)
         try:
             handle = open(path, "rb")
@@ -759,19 +769,136 @@ class Store(object):
                     continue
                 payload = self._loads(raw, None)
                 if isinstance(payload, dict):
+                    if deleted:
+                        payload = self.filter_group_payload(payload, deleted)
+                        if payload is None:
+                            continue
                     yield payload
         finally:
             handle.close()
 
-    def count_scan_groups(self, scan_id):
+    @staticmethod
+    def filter_group_payload(payload, deleted_paths):
+        """剔除已删除文件并重算保留项/浪费字节；剩余 <2 个文件返回 None。
+
+        payload 是本次加载的独立 dict（调用方不复用），文件 dict 可原地更新。
+        """
+        if not isinstance(payload, dict):
+            return None
+        files = []
+        for info in payload.get("files") or []:
+            if not isinstance(info, dict):
+                continue
+            path = info.get("path")
+            if isinstance(path, str) and path in deleted_paths:
+                continue
+            files.append(info)
+        if len(files) < 2:
+            return None
+        group = dict(payload)
+        group["files"] = files
+        keeper = None
+        for info in files:
+            if info.get("is_keep") is True:
+                keeper = info
+                break
+        if keeper is None:
+            # 保留文件被删 → 从剩余文件中重新指定保留项（不默认勾选删除）
+            keeper = files[0]
+            for info in files:
+                info["is_keep"] = info is keeper
+                if info is keeper:
+                    info["default_selected"] = False
+        group["keep_file_id"] = keeper.get("file_id")
+        group["count"] = len(files)
+        sizes = []
+        for info in files:
+            try:
+                sizes.append(int(info.get("size") or 0))
+            except (TypeError, ValueError):
+                sizes.append(0)
+        wasted = 0
+        for info, size in zip(files, sizes):
+            if info is keeper:
+                continue
+            wasted += size
+        group["size"] = max(sizes) if sizes else 0
+        group["wasted_bytes"] = wasted
+        return group
+
+    @staticmethod
+    def _remaining_files_sql(alias="g"):
+        """组内剩余文件数（排除删除标记）；用于过滤只剩 <2 个文件的组。"""
+        return ("(SELECT COUNT(*) FROM scan_files f2"
+                " WHERE f2.scan_id = " + alias + ".scan_id"
+                " AND f2.group_id = " + alias + ".group_id"
+                " AND NOT EXISTS (SELECT 1 FROM scan_file_deletions d"
+                " WHERE d.scan_id = f2.scan_id AND d.path = f2.path))")
+
+    def load_deleted_paths(self, scan_id):
+        """已删除文件路径集合（v0032：删除成功后写入，读取时剔除）。"""
+        scan_id = self._check_scan_id(scan_id)
+        rows = self.db.query(
+            "SELECT path FROM scan_file_deletions WHERE scan_id=?", (scan_id,))
+        return {str(row["path"]) for row in rows if row["path"]}
+
+    def count_scan_file_deletions(self, scan_id):
         scan_id = self._check_scan_id(scan_id)
         return int(self.db.scalar(
-            "SELECT COUNT(*) FROM scan_groups WHERE scan_id=?", (scan_id,), 0) or 0)
+            "SELECT COUNT(*) FROM scan_file_deletions WHERE scan_id=?",
+            (scan_id,), 0) or 0)
+
+    def mark_scan_files_deleted(self, scan_id, entries):
+        """记录删除成功（或已不存在）的文件，供分组/统计/导出读取时剔除。
+
+        entries: dict/{path, job_id?, mode?} 或 (path, job_id, mode) 序列。
+        """
+        scan_id = self._check_scan_id(scan_id)
+        now = time.time()
+        rows = []
+        for entry in entries or []:
+            job_id = mode = None
+            if isinstance(entry, dict):
+                path = entry.get("path")
+                job_id = entry.get("job_id")
+                mode = entry.get("mode")
+            elif isinstance(entry, (tuple, list)) and entry:
+                path = entry[0]
+                if len(entry) > 1:
+                    job_id = entry[1]
+                if len(entry) > 2:
+                    mode = entry[2]
+            else:
+                continue
+            if not isinstance(path, str) or not path:
+                continue
+            rows.append((scan_id, path, job_id, mode, now))
+        if not rows:
+            return 0
+        with self.db.transaction():
+            self.db.executemany(
+                "INSERT OR REPLACE INTO scan_file_deletions"
+                "(scan_id, path, job_id, mode, deleted_epoch)"
+                " VALUES(?, ?, ?, ?, ?)", rows)
+        return len(rows)
+
+    def count_scan_groups(self, scan_id):
+        scan_id = self._check_scan_id(scan_id)
+        if not self.load_deleted_paths(scan_id):
+            return int(self.db.scalar(
+                "SELECT COUNT(*) FROM scan_groups WHERE scan_id=?",
+                (scan_id,), 0) or 0)
+        return int(self.db.scalar(
+            "SELECT COUNT(*) FROM scan_groups g WHERE g.scan_id=? AND "
+            + self._remaining_files_sql("g") + " >= 2", (scan_id,), 0) or 0)
 
     def count_scan_files(self, scan_id):
         scan_id = self._check_scan_id(scan_id)
         return int(self.db.scalar(
-            "SELECT COUNT(*) FROM scan_files WHERE scan_id=?", (scan_id,), 0) or 0)
+            "SELECT COUNT(*) FROM scan_files f WHERE f.scan_id=?"
+            " AND NOT EXISTS (SELECT 1 FROM scan_file_deletions d"
+            " WHERE d.scan_id = f.scan_id AND d.path = f.path)",
+            (scan_id,), 0) or 0)
 
     @staticmethod
     def _escape_like(value):
@@ -795,18 +922,25 @@ class Store(object):
         """
         scan_id = self._check_scan_id(scan_id)
         groups_total = self.count_scan_groups(scan_id)
-        if groups_total == 0 or self.count_scan_files(scan_id) == 0:
+        raw_files = int(self.db.scalar(
+            "SELECT COUNT(*) FROM scan_files WHERE scan_id=?", (scan_id,), 0) or 0)
+        if groups_total == 0 and raw_files == 0:
             return None
         try:
             offset = max(0, int(offset or 0))
             limit = max(0, int(limit if limit is not None else 100))
         except (TypeError, ValueError):
             return None
+        deleted = self.load_deleted_paths(scan_id)
+        remaining_sql = self._remaining_files_sql("g")
+        # 仅在有删除标记时按“剩余文件 >=2”过滤组，保持旧扫描结果语义不变。
+        group_filter = (" AND " + remaining_sql + " >= 2") if deleted else ""
         type_expr = "COALESCE(NULLIF(g.match_type, ''), 'exact')"
         counts = {}
         for row in self.db.query(
                 "SELECT " + type_expr + " AS mt, COUNT(*) AS count"
-                " FROM scan_groups g WHERE g.scan_id=? GROUP BY mt", (scan_id,)):
+                " FROM scan_groups g WHERE g.scan_id=?"
+                + group_filter + " GROUP BY mt", (scan_id,)):
             counts[str(row["mt"] or "exact")] = int(row["count"])
         similar_total = int(counts.get("similar", 0))
         video_total = int(counts.get("video", 0))
@@ -822,6 +956,8 @@ class Store(object):
 
         def build_where(with_fts):
             where = ["g.scan_id = ?"]
+            if deleted:
+                where.append(remaining_sql + " >= 2")
             params = [scan_id]
             if match_type == "exact":
                 where.append(type_expr + " NOT IN ('similar', 'video')")
@@ -881,6 +1017,10 @@ class Store(object):
         for row in rows:
             payload = self._loads(row["payload_json"], None)
             if isinstance(payload, dict):
+                if deleted:
+                    payload = self.filter_group_payload(payload, deleted)
+                    if payload is None:
+                        continue
                 groups.append(payload)
         return {
             "total": total,
@@ -913,17 +1053,31 @@ class Store(object):
                 " SELECT f.group_id FROM scan_files f"
                 " WHERE f.scan_id = ? AND f.rowid IN ("
                 "  SELECT rowid FROM scan_files_fts"
-                "  WHERE scan_files_fts MATCH ?)", (scan_id, phrase))
+                "  WHERE scan_files_fts MATCH ?)"
+                " AND NOT EXISTS (SELECT 1 FROM scan_file_deletions d"
+                "  WHERE d.scan_id = f.scan_id AND d.path = f.path)",
+                (scan_id, phrase))
         return int(self.db.scalar(
             "SELECT COUNT(*) FROM dc_fts_matches", (), 0) or 0)
 
     def scan_file_stats(self, scan_id):
         """扩展名/目录统计用明细（不加载 group payload；group size 语义同旧版）。"""
         scan_id = self._check_scan_id(scan_id)
-        rows = self.db.query(
-            "SELECT f.path AS path, g.size AS group_size FROM scan_files f"
-            " JOIN scan_groups g ON g.scan_id = f.scan_id"
-            " AND g.group_id = f.group_id WHERE f.scan_id = ?", (scan_id,))
+        base = ("SELECT f.path AS path, g.size AS group_size FROM scan_files f"
+                " JOIN scan_groups g ON g.scan_id = f.scan_id"
+                " AND g.group_id = f.group_id WHERE f.scan_id = ?")
+        if not self.load_deleted_paths(scan_id):
+            rows = self.db.query(base, (scan_id,))
+        else:
+            rows = self.db.query(
+                base
+                + " AND NOT EXISTS (SELECT 1 FROM scan_file_deletions d"
+                " WHERE d.scan_id = f.scan_id AND d.path = f.path)"
+                + " AND (SELECT COUNT(*) FROM scan_files f2"
+                " WHERE f2.scan_id = f.scan_id AND f2.group_id = f.group_id"
+                " AND NOT EXISTS (SELECT 1 FROM scan_file_deletions d2"
+                "  WHERE d2.scan_id = f2.scan_id AND d2.path = f2.path)) >= 2",
+                (scan_id,))
         return [(row["path"], int(row["group_size"] or 0)) for row in rows]
 
     # ------------------------------------------------------------------
@@ -1567,6 +1721,67 @@ class Store(object):
         batch_id = self._check_batch_id(batch_id)
         self.db.execute(
             "DELETE FROM subtitle_batches WHERE batch_id=?", (batch_id,))
+
+    # ------------------------------------------------------------------
+    # 字幕批次组（schema v7 / docs/SUBTITLE_BATCH_CONTRACT.md §7.4）
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _check_batch_group_id(group_id):
+        if (not isinstance(group_id, str)
+                or not config.SUBTITLE_BATCH_GROUP_ID_RE.match(group_id)):
+            raise invalid(u"字幕批次组 ID 非法")
+        return group_id
+
+    def save_subtitle_batch_group(self, group_id, record):
+        group_id = self._check_batch_group_id(group_id)
+        if not isinstance(record, dict):
+            return False
+        try:
+            created = float(record.get("created_epoch") or time.time())
+        except (TypeError, ValueError):
+            created = time.time()
+        try:
+            updated = float(record.get("updated_epoch") or created)
+        except (TypeError, ValueError):
+            updated = created
+        self.db.execute(
+            "INSERT OR REPLACE INTO subtitle_batch_groups"
+            "(group_id, payload_json, created_epoch, updated_epoch)"
+            " VALUES(?, ?, ?, ?)",
+            (group_id, json.dumps(record, ensure_ascii=False), created, updated))
+        return True
+
+    def load_subtitle_batch_group(self, group_id):
+        group_id = self._check_batch_group_id(group_id)
+        row = self.db.query_one(
+            "SELECT payload_json FROM subtitle_batch_groups WHERE group_id=?",
+            (group_id,))
+        if row is None:
+            return None
+        record = self._loads(row["payload_json"], None)
+        if not isinstance(record, dict):
+            return None
+        record.setdefault("group_id", group_id)
+        return record
+
+    def load_subtitle_batch_groups(self, limit=50):
+        rows = self.db.query(
+            "SELECT group_id, payload_json FROM subtitle_batch_groups"
+            " ORDER BY created_epoch DESC, group_id DESC LIMIT ?",
+            (max(1, int(limit or 50)),))
+        result = []
+        for row in rows:
+            record = self._loads(row["payload_json"], None)
+            if not isinstance(record, dict):
+                continue
+            record.setdefault("group_id", row["group_id"])
+            result.append(record)
+        return result
+
+    def delete_subtitle_batch_group(self, group_id):
+        group_id = self._check_batch_group_id(group_id)
+        self.db.execute(
+            "DELETE FROM subtitle_batch_groups WHERE group_id=?", (group_id,))
 
     # ------------------------------------------------------------------
     # 字幕 ASR 分片缓存（schema v4 / plan C）
