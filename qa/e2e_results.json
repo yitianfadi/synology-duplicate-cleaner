@@ -1,9 +1,9 @@
 {
-  "generated_at": "2026-11-07T09:44:01+0800",
+  "generated_at": "2026-11-07T11:11:40+0800",
   "python": "3.12.9 | packaged by Anaconda, Inc. | (main, Feb  6 2025, 18:49:16) [MSC v.1929 64 bit (AMD64)]",
   "repo": "D:\\code\\zhouyi\\qunhui\\synology-duplicate-cleaner",
   "summary": {
-    "PASS": 130,
+    "PASS": 135,
     "FAIL": 0,
     "UNVERIFIED": 1
   },
@@ -11,11 +11,11 @@
     "fixture_files": 46,
     "python": "3.12.9",
     "birthtime_supported": true,
-    "backend_port": 7995,
+    "backend_port": 2084,
     "csrf_token_len": 43,
     "meta": {
       "ok": true,
-      "app_version": "1.1.0-0033",
+      "app_version": "1.1.0-0034",
       "dsm_version": "dev",
       "python_version": "3.12.9",
       "creation_time_supported": true,
@@ -115,6 +115,7 @@
         "subtitle_output_mode": "alongside_video",
         "subtitle_skip_existing": true,
         "subtitle_job_limit": 200,
+        "subtitle_concurrency": 1,
         "subtitle_asr_api_key_set": false,
         "subtitle_llm_api_key_set": false
       },
@@ -305,11 +306,13 @@
         "audio_sources": [
           "nas",
           "server"
-        ]
+        ],
+        "concurrency_max": 4,
+        "default_concurrency": 1
       }
     },
     "subtitle_enumerate_count": 0,
-    "main_scan_id": "20261107-094354-191a96",
+    "main_scan_id": "20261107-111134-a76364",
     "main_scan_final": "completed",
     "main_stats": {
       "files_seen": 38,
@@ -323,7 +326,7 @@
       "selectable_duplicate_files": 15,
       "selectable_reclaimable_bytes": 4403200,
       "bytes_hashed": 8753152,
-      "bytes_per_sec": 311740614,
+      "bytes_per_sec": 407148343,
       "errors": 0,
       "skipped": {
         "symlink": 0,
@@ -383,13 +386,13 @@
     },
     "main_groups_total": 12,
     "recycle_plan": {
-      "plan_id": "plan-264402a5e3332fba",
+      "plan_id": "plan-0398749992a6b866",
       "count": 2,
       "bytes": 40960,
       "groups_affected": 1
     },
     "recycle_job": {
-      "job_id": "del-20261107-094355-dd9b78",
+      "job_id": "del-20261107-111134-7f9a9c",
       "status": "completed",
       "done": 2,
       "failed": 0,
@@ -531,7 +534,7 @@
     },
     {
       "id": "SUB-11",
-      "name": "meta.subtitle 暴露批次组上限/枚举上限/音频来源",
+      "name": "meta.subtitle 暴露批次组上限/枚举上限/音频来源/并发上限",
       "status": "PASS",
       "detail": ""
     },
@@ -562,6 +565,36 @@
     {
       "id": "SUB-16",
       "name": "字幕任务列表支持 group_id 过滤分页",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SUB-17",
+      "name": "任务列表支持 status=active 过滤（只返回执行中任务）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SUB-18",
+      "name": "任务列表 status 支持逗号组合（failed,cancelled）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SUB-19",
+      "name": "非法 status 返回 400 INVALID_ARGUMENT",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SUB-20",
+      "name": "PUT /api/settings 可保存 subtitle_concurrency=2",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SUB-21",
+      "name": "subtitle_concurrency 超出 1..4 返回 400 INVALID_ARGUMENT",
       "status": "PASS",
       "detail": ""
     },
@@ -779,7 +812,7 @@
       "id": "SKIP-04",
       "name": "符号链接跳过（当前环境无法创建 symlink）",
       "status": "UNVERIFIED",
-      "detail": "os.symlink failed: [WinError 1314] 客户端没有所需的特权。: 'C:\\\\Users\\\\zhouyi\\\\AppData\\\\Local\\\\Temp\\\\dupqa-cos6kyc5\\\\qa-share-a\\\\dup' -> 'C:\\\\Users\\\\zhouyi\\\\AppData\\\\Local\\\\Temp\\\\dupqa-cos6kyc5\\\\qa-share-a\\\\link_to_dup'"
+      "detail": "os.symlink failed: [WinError 1314] 客户端没有所需的特权。: 'C:\\\\Users\\\\zhouyi\\\\AppData\\\\Local\\\\Temp\\\\dupqa-l5wrohbi\\\\qa-share-a\\\\dup' -> 'C:\\\\Users\\\\zhouyi\\\\AppData\\\\Local\\\\Temp\\\\dupqa-l5wrohbi\\\\qa-share-a\\\\link_to_dup'"
     },
     {
       "id": "HARDLINK-01",

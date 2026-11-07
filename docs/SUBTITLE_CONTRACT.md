@@ -16,6 +16,7 @@
 | subtitle_asr_max_audio_mb | 24 | 1..100；超过则强制分块 |
 | subtitle_audio_source | nas | v0032：`nas`=本机解码抽 16k mp3（只上传音频）；`server`=本机仅流复制抽音轨（不解码），由 ASR 服务器解码（仍只上传音频） |
 | subtitle_write_vtt | false | v0033：默认只生成 SRT；`true` 时任务目录额外生成 `.vtt`（写回视频目录始终只写 `.srt`） |
+| subtitle_concurrency | 1 | v0034：同时执行的字幕任务数 1..4，默认 1（串行，最稳）；服务启动时读取，**修改后需重启套件生效** |
 | subtitle_translate_enabled | false | 是否生成译文 |
 | subtitle_llm_base_url | https://api.openai.com/v1 | http/https |
 | subtitle_llm_api_key | "" | GET 不回传明文 |
@@ -37,14 +38,14 @@
   - 校验：文件存在、常规文件、非 symlink、位于共享文件夹、视频后缀、`confirm_cloud=true`、总开关开启。
   - 返回 202 `{"ok":true,"job":{...}}`。
 - `GET /api/subtitles/{job_id}`：status/stage/progress/message/error/files。
-- `GET /api/subtitles?limit=`：字幕任务历史列表。
+- `GET /api/subtitles?limit=&offset=&batch_id=&group_id=&status=`：字幕任务历史列表；v0034 新增 `status` 过滤：`all`（默认）/`active`（= running+translating）/`queued`/`running`/`translating`/`paused`/`done`/`failed`/`cancelled`，多个状态可用逗号组合（如 `failed,cancelled`；`active` 也可参与组合），非法值 400 `INVALID_ARGUMENT`；带 `offset`/`group_id` 时返回分页对象 `{jobs,total,offset,limit}`（`total` 为过滤后数量）。
 - `POST /api/subtitles/{job_id}/pause`：在 chunk 边界暂停；
 - `POST /api/subtitles/{job_id}/resume`：从已完成 chunk 后继续，不重复调用 ASR。
 - `POST /api/subtitles/{job_id}/cancel`：取消；运行中的 HTTP/ffmpeg 子进程应尽快终止。
 - `GET /api/subtitles/{job_id}/file/{name}`：下载 `original.srt`、`original.vtt`、`<lang>.srt`、`<lang>.vtt`、`bilingual.<lang>.srt`。
 - job 持久化到 `<var>/subtitles/jobs/<job_id>.json`；文件在 `<var>/subtitles/<job_id>/`；最多保留 20 个任务，LRU 清理。
-- v0019 起 ASR chunk 结果持久化到 `subtitle_chunks`（schema v4）；重启后 queued/running 任务转为 paused，可手动继续，不自动续跑，不重复上传已完成 chunk。
-- 同一时间只跑 1 个云端字幕任务；不同任务排队。
+- v0019 起 ASR chunk 结果持久化到 `subtitle_chunks`（schema v4）。v0034 重启语义：`queued` 任务保留并**自动重新入队继续**（从未执行过，不会重复上传）；`running/translating` 有分片 → 转 `paused` 可手动继续，无分片 → `SERVICE_RESTART` failed；`paused` 保持不变；已完成分片不重复上传。
+- 默认并发 1（`subtitle_concurrency` 可配置 1..4）；不同任务排队。
 
 job schema：
 ```json
@@ -270,3 +271,10 @@ v0028 在 v1.3 单文件任务之上新增**目录批量生成 / 翻译**：独�
 - 默认**只生成 SRT**（任务目录不再产生 `.vtt`，避免无谓的重复文件/写盘）。
 - 设置 `subtitle_write_vtt=true` 后，任务目录额外生成 `original.vtt` 与（翻译时）`<target>.vtt`；视频同目录仍只写 `.srt`。
 - 单个视频弹窗的“首选下载格式”仅在开启 VTT 时提供 VTT 选项；历史任务（已含 VTT）仍可下载。
+
+## 14. v0034 队列恢复、并发与任务可见性
+
+- **重启/升级恢复**：`queued` 任务在服务启动时自动重新入队并开始执行，不再判 `SERVICE_RESTART` 失败——数千任务的批次组升级套件后不会丢队列；`running/translating` 有分片的转 `paused` 可继续，无分片的仍失败并给出 `SERVICE_RESTART`。
+- **并发**：`subtitle_concurrency`（1..4，默认 1）控制同时执行的任务数；服务启动时读取，修改后需重启套件生效；`/api/meta.subtitle.concurrency_max` 给出上限。
+- **可见性**：`GET /api/subtitles` 支持 `status` 过滤（见 §2）；批次组快照新增 `active_jobs`（执行中任务明细，≤10 条）、`eta_seconds`（按已完成任务平均耗时估算的剩余秒数，样本不足为 `null`）与 `concurrency`（当前生效并发）。
+- **前端**：批次组卡片显示“当前执行：<文件名> · <阶段> · <进度>%”与预计剩余；任务明细顶部固定“执行中”区块并支持状态筛选（全部/执行中/排队/已完成/失败）；任务中心「字幕任务」把执行中任务置顶（先取 `status=active`，再取最近任务）。

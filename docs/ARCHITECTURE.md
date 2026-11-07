@@ -1,7 +1,7 @@
 # 整体方案架构
 
 > 项目：**重复文件清理与字幕（Duplicate Cleaner & Subtitles）** · 群晖 DSM 7.x SPK 套件
-> 版本：1.1.0-0033
+> 版本：1.1.0-0034
 > 原则：**先扫描、出报告、人工确认、二次确认、可回收、全程审计**。任何情况下都不自动静默删除。
 
 ## 1. 目标与边界
@@ -382,7 +382,8 @@ Linux 的 `st_ctime` 是 **inode 状态变更时间**，不是创建时间，复
 
 ### 12.4 容量与恢复
 
-- 单 worker 串行执行（沿用 v1.3）；批次内按提交顺序。
+- 默认单 worker 串行执行；v0034 起 `subtitle_concurrency`（1..4，默认 1，服务启动时读取）可并行执行多个任务，批次内仍按提交顺序取队。
 - 已完成任务保留上限 `subtitle_job_limit`（默认 200）；LRU 清理只删任务目录与 DB 记录，**不删视频旁 srt**。
-- SQLite schema v6 新增 `subtitle_batches`；重启后 queued/running 任务转 paused 可继续（沿用分片缓存）。
+- SQLite schema v6 新增 `subtitle_batches`；v0034 起服务启动时 `queued` 任务自动重新入队继续（不再全判 `SERVICE_RESTART`），`running/translating` 有分片转 `paused` 可继续（沿用分片缓存）。
+- v0034 可见性：组快照带 `active_jobs`/`eta_seconds`/`concurrency`，任务列表支持 `status` 过滤；前端任务明细与任务中心把执行中任务置顶。
 - 批次状态由子任务实时聚合，不单独持久化状态机。

@@ -883,11 +883,12 @@ def run():
         # ---------------- v0032 批次组 ----------------
         resp = client.get("/api/meta")
         sub_meta = (jd(resp).get("subtitle") or {})
-        check("SUB-11", "meta.subtitle 暴露批次组上限/枚举上限/音频来源",
+        check("SUB-11", "meta.subtitle 暴露批次组上限/枚举上限/音频来源/并发上限",
               resp.status == 200
               and sub_meta.get("batch_max_items") == 500
               and sub_meta.get("batch_group_max_items") == 20000
               and sub_meta.get("enumerate_max_items") == 20000
+              and sub_meta.get("concurrency_max") == 4
               and "nas" in (sub_meta.get("audio_sources") or [])
               and "server" in (sub_meta.get("audio_sources") or []),
               "subtitle=%s" % sub_meta)
@@ -930,9 +931,48 @@ def run():
               and data.get("offset") == 0,
               "status=%s data=%s" % (resp.status, data))
 
+        # ---------------- v0034 队列恢复 / 并发 / 任务可见性 ----------------
+        resp = client.get(q("/api/subtitles", status="active", limit=5))
+        data = jd(resp)
+        active_statuses = ("running", "translating")
+        check("SUB-17", "任务列表支持 status=active 过滤（只返回执行中任务）",
+              resp.status == 200 and isinstance(data.get("jobs"), list)
+              and all(item.get("status") in active_statuses
+                      for item in (data.get("jobs") or [])),
+              "status=%s data=%s" % (resp.status, data))
+
+        resp = client.get(q("/api/subtitles", status="failed,cancelled", limit=5))
+        data = jd(resp)
+        check("SUB-18", "任务列表 status 支持逗号组合（failed,cancelled）",
+              resp.status == 200 and isinstance(data.get("jobs"), list)
+              and all(item.get("status") in ("failed", "cancelled")
+                      for item in (data.get("jobs") or [])),
+              "status=%s data=%s" % (resp.status, data))
+
+        resp = client.get(q("/api/subtitles", status="not-a-status"))
+        code, _ = err_code(resp)
+        check("SUB-19", "非法 status 返回 400 INVALID_ARGUMENT",
+              resp.status == 400 and code == "INVALID_ARGUMENT",
+              "status=%s code=%s" % (resp.status, code))
+
+        resp = client.put_json("/api/settings",
+                               {"settings": {"subtitle_concurrency": 2}})
+        saved = jd(resp).get("settings", {})
+        check("SUB-20", "PUT /api/settings 可保存 subtitle_concurrency=2",
+              resp.status == 200 and saved.get("subtitle_concurrency") == 2,
+              "status=%s data=%s" % (resp.status, jd(resp)))
+
+        resp = client.put_json("/api/settings",
+                               {"settings": {"subtitle_concurrency": 5}})
+        code, _ = err_code(resp)
+        check("SUB-21", "subtitle_concurrency 超出 1..4 返回 400 INVALID_ARGUMENT",
+              resp.status == 400 and code == "INVALID_ARGUMENT",
+              "status=%s code=%s" % (resp.status, code))
+
         # 恢复默认（关闭云端字幕），避免影响后续用例
         client.put_json("/api/settings", {"settings": {
             "subtitle_enabled": False, "subtitle_clear_asr_api_key": True,
+            "subtitle_concurrency": 1,
             "subtitle_llm_disable_thinking": False,
             "subtitle_write_vtt": False}})
 

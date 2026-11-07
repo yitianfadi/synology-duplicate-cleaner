@@ -26,8 +26,9 @@ import {
   MTIME_FALLBACK_LABEL, MTIME_FALLBACK_REASONS, POLL_MS,
   SIZE_UNITS, SOURCE_INFO, STAGE_LABEL, STATUS_BADGE, STATUS_LABEL,
   SUBTITLE_ACTIVE_STATUS, SUBTITLE_LANGUAGES, SUBTITLE_OUTPUT_KIND_LABEL,
-  SUBTITLE_SOURCE_LABEL, SUBTITLE_STAGE_LABEL, SUBTITLE_STATUS_BADGE,
-  SUBTITLE_STATUS_LABEL, SUBTITLE_TARGET_LANGUAGES, SUBTITLE_WARNING_LABEL,
+  SUBTITLE_RUNNING_STATUS, SUBTITLE_SOURCE_LABEL, SUBTITLE_STAGE_LABEL,
+  SUBTITLE_STATUS_BADGE, SUBTITLE_STATUS_LABEL, SUBTITLE_TARGET_LANGUAGES,
+  SUBTITLE_WARNING_LABEL,
   TERMINAL_STATUS, VIDEO_HWACCEL_LABEL, VIDEO_HWACCEL_MODES, VIEWS, VIEW_HEADINGS
 } from './js/constants.js';
 import { els, IDS, state } from './js/state.js';
@@ -2064,6 +2065,8 @@ import {
       els.setSubtitleSkipExisting.checked = s.subtitle_skip_existing !== false;
     }
     setVideoNumberValue(els.setSubtitleJobLimit, s.subtitle_job_limit, 200, 20, 1000);
+    // v0034：同时执行的字幕任务数（1..4，默认 1 串行；重启套件后生效）
+    setVideoNumberValue(els.setSubtitleConcurrency, s.subtitle_concurrency, 1, 1, 4);
     if (els.subtitleAsrApiKey) { els.subtitleAsrApiKey.value = ''; }
     if (els.subtitleLlmApiKey) { els.subtitleLlmApiKey.value = ''; }
     if (els.subtitleClearAsrKey) { els.subtitleClearAsrKey.checked = false; }
@@ -2144,6 +2147,9 @@ import {
     settings.subtitle_llm_disable_thinking = !!(els.subtitleLlmDisableThinking && els.subtitleLlmDisableThinking.checked);
     var jobLimit = readSubtitleInt(els.setSubtitleJobLimit, 20, 1000, '字幕任务保留上限', errors, 'setSubtitleJobLimit');
     if (jobLimit !== null) { settings.subtitle_job_limit = jobLimit; }
+    // v0034：字幕并发任务数（1..4，默认 1；服务启动时读取，修改后需重启生效）
+    var subtitleConcurrency = readSubtitleInt(els.setSubtitleConcurrency, 1, 4, '字幕并发任务数', errors, 'setSubtitleConcurrency');
+    if (subtitleConcurrency !== null) { settings.subtitle_concurrency = subtitleConcurrency; }
     if (els.setSubtitleOutputMode) {
       settings.subtitle_output_mode = els.setSubtitleOutputMode.value === 'download_only'
         ? 'download_only' : 'alongside_video';
@@ -2417,6 +2423,7 @@ import {
     ffmpeg_path: 'videoFfmpegPath',
     video_hwaccel: 'videoHwaccel',
     subtitle_job_limit: 'setSubtitleJobLimit',
+    subtitle_concurrency: 'setSubtitleConcurrency',
     // v0032：音频来源无独立错误元素，映射到设置页字段名后由通用错误摘要展示
     subtitle_audio_source: 'subtitleAudioSource'
   };
@@ -6395,6 +6402,25 @@ import {
     });
   }
 
+  /**
+   * v0034：合并「执行中」与「最近任务」列表（去重；active 在前）。
+   * 后端按创建时间倒序分页时执行中任务可能沉在最后一页，这里单独取 active 置顶。
+   */
+  function mergeSubtitleJobs(activeJobs, recentJobs) {
+    var seen = Object.create(null);
+    var merged = [];
+    function push(job) {
+      if (!job || !job.job_id || seen[job.job_id]) { return; }
+      seen[job.job_id] = true;
+      merged.push(job);
+    }
+    (Array.isArray(activeJobs) ? activeJobs : []).forEach(function (job) {
+      if (job && SUBTITLE_RUNNING_STATUS.indexOf(job.status) !== -1) { push(job); }
+    });
+    (Array.isArray(recentJobs) ? recentJobs : []).forEach(push);
+    return merged;
+  }
+
   function stopSubtitleJobsPolling() {
     var jobsState = state.subtitleJobs;
     if (!jobsState) { return; }
@@ -6424,8 +6450,17 @@ import {
       setHidden(els.subtitleJobsEmpty, true);
     }
     try {
+      // v0034：先取执行中任务（置顶），失败静默忽略以兼容旧后端；再取最近任务。
+      var activeJobs = [];
+      try {
+        var activeRes = await api('/api/subtitles?status=active&limit=10', { timeout: 15000 });
+        activeJobs = normalizeSubtitleJobsResponse(activeRes);
+      } catch (activeErr) {
+        activeJobs = [];
+      }
       var res = await api('/api/subtitles?limit=20', { timeout: 15000 });
-      var jobs = normalizeSubtitleJobsResponse(res);
+      var recentJobs = normalizeSubtitleJobsResponse(res);
+      var jobs = mergeSubtitleJobs(activeJobs, recentJobs);
       state.subtitleJobs.list = jobs;
       state.subtitleJobs.lastError = '';
       renderSubtitleJobs(jobs);
@@ -6600,18 +6635,49 @@ import {
 
   function renderSubtitleJobs(jobs) {
     clear(els.subtitleJobsList);
-    var active = jobs.filter(function (job) { return SUBTITLE_ACTIVE_STATUS.indexOf(job.status) !== -1; }).length;
-    setText(els.subtitleJobsStatus, jobs.length
-      ? '共 ' + fmtInt(jobs.length) + ' 个任务' + (active ? ' · 进行中 ' + fmtInt(active) + ' 个' : '')
-      : '');
-    if (!jobs.length) {
+    var list = Array.isArray(jobs) ? jobs : [];
+    var activeJobs = [];
+    var recentJobs = [];
+    var seen = Object.create(null);
+    list.forEach(function (job) {
+      if (!job || !job.job_id || seen[job.job_id]) { return; }
+      seen[job.job_id] = true;
+      // v0034：只有 running/translating 才算“进行中”；排队中的任务归入“最近任务”，
+      // 否则数千个排队任务会把分区填满，仍然看不到真正执行的那一条。
+      if (SUBTITLE_RUNNING_STATUS.indexOf(job.status) !== -1) { activeJobs.push(job); }
+      else { recentJobs.push(job); }
+    });
+    var statusBits = [];
+    if (activeJobs.length) { statusBits.push('进行中 ' + fmtInt(activeJobs.length)); }
+    if (recentJobs.length) { statusBits.push('最近任务 ' + fmtInt(recentJobs.length)); }
+    setText(els.subtitleJobsStatus, statusBits.join(' · '));
+    if (!list.length) {
       setHidden(els.subtitleJobsEmpty, false);
       return;
     }
     setHidden(els.subtitleJobsEmpty, true);
-    jobs.forEach(function (job) {
-      els.subtitleJobsList.appendChild(renderSubtitleJobItem(job));
-    });
+    // v0034：执行中任务置顶为独立分区（最近任务按创建时间倒序）
+    if (activeJobs.length) {
+      var activeSection = el('section', { className: 'subtitle-jobs-section' }, [
+        el('h3', {
+          className: 'subtitle-jobs-section-title',
+          text: '进行中（' + fmtInt(activeJobs.length) + '）'
+        })
+      ]);
+      activeJobs.forEach(function (job) {
+        activeSection.appendChild(renderSubtitleJobItem(job));
+      });
+      els.subtitleJobsList.appendChild(activeSection);
+    }
+    if (recentJobs.length) {
+      var recentSection = el('section', { className: 'subtitle-jobs-section' }, [
+        el('h3', { className: 'subtitle-jobs-section-title', text: '最近任务' })
+      ]);
+      recentJobs.forEach(function (job) {
+        recentSection.appendChild(renderSubtitleJobItem(job));
+      });
+      els.subtitleJobsList.appendChild(recentSection);
+    }
   }
 
   async function subtitleJobAction(job, action, button) {
@@ -7727,7 +7793,8 @@ import {
     subtitleLlmModel: { input: 'subtitleLlmModel', error: 'subtitleLlmModelError' },
     subtitleTranslateTimeout: { input: 'subtitleTranslateTimeout', error: 'subtitleTranslateTimeoutError' },
     subtitleTranslateBatchSize: { input: 'subtitleTranslateBatchSize', error: 'subtitleTranslateBatchSizeError' },
-    setSubtitleJobLimit: { input: 'setSubtitleJobLimit', error: 'setSubtitleJobLimitError' }
+    setSubtitleJobLimit: { input: 'setSubtitleJobLimit', error: 'setSubtitleJobLimitError' },
+    setSubtitleConcurrency: { input: 'setSubtitleConcurrency', error: 'setSubtitleConcurrencyError' }
   };
 
   function bytesToMbValue(bytes) {

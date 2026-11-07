@@ -12,6 +12,7 @@ import json
 import os
 import time
 import unittest
+from unittest import mock
 
 from tests.helpers import Harness, WebServer, write_text
 from tests.test_subtitles import FAKE_FFMPEG, SubtitleTestBase
@@ -70,7 +71,7 @@ class SubtitleResumeTest(SubtitleTestBase):
         self.assertEqual(paused["status"], "paused")
         _wait_status(self.service, job_id, ("paused",), timeout=30.0)
         self.assertTrue(_wait_until(
-            lambda: self.service._active_id is None, 20.0),
+            lambda: not self.service._active_ids, 20.0),
             "worker still active after pause")
         # 暂停边界落盘后再取一次快照（chunk_index 已包含刚完成的分片）
         return self.service.get(job_id)
@@ -182,6 +183,77 @@ class SubtitleResumeTest(SubtitleTestBase):
             reloaded.resume(job_id)
         self.assertEqual(getattr(ctx.exception, "code", None),
                          "INVALID_ARGUMENT")
+
+    def _reloaded_service(self):
+        reloaded = subtitles.SubtitleService(
+            self.harness.config, self.harness.services.store,
+            self.harness.services.shares,
+            self.harness.services.settings.get,
+            client=subtitles.OpenAIClient(retry_delay=0.01),
+            ffmpeg=video_similarity.FFmpegTool(cmd=self.ffmpeg_cmd))
+        self.addCleanup(reloaded.shutdown, 2)
+        return reloaded
+
+    def _save_queued_job(self, job_id, video):
+        now = time.time()
+        record = {
+            "job_id": job_id,
+            "status": "queued",
+            "stage": "audio",
+            "progress": 0,
+            "message": u"排队等待",
+            "path": video,
+            "language": "auto",
+            "translate": False,
+            "target_lang": "",
+            "user": "admin",
+            "created_epoch": now,
+            "updated_epoch": now,
+            "error": None,
+            "files": [],
+            "translation_partial": False,
+            "chunk_index": 0,
+            "chunk_total": 0,
+            "resumable": False,
+        }
+        self.harness.services.store.save_subtitle_job(job_id, record)
+        return record
+
+    def test_restart_keeps_queued_job_and_auto_starts_worker(self):
+        """v0034 P0：重启时 queued 不判失败，保留状态并自动拉起 worker。"""
+        video = self.make_video(name="queued-mock.mp4", duration=60.0)
+        job_id = "sub-20260101-000000-abcdef"
+        self._save_queued_job(job_id, video)
+        seen = []
+
+        def fake_process(service_self, job):
+            seen.append(job.job_id)
+
+        with mock.patch.object(subtitles.SubtitleService, "_process",
+                               fake_process):
+            reloaded = self._reloaded_service()
+            self.assertTrue(_wait_until(lambda: seen, 5.0),
+                            "queued job was not auto-enqueued/started")
+        job = reloaded.get(job_id)
+        self.assertEqual(job["status"], "queued")
+        self.assertIsNone(job["error"])
+        stored = self.harness.services.store.load_subtitle_job(job_id)
+        self.assertEqual(stored["status"], "queued")
+        self.assertNotEqual((stored.get("error") or {}).get("code"),
+                            "SERVICE_RESTART")
+
+    def test_restart_queued_job_runs_to_done(self):
+        """v0034 P0：重启后排队任务自动续跑并产出字幕文件。"""
+        video = self.make_video(name="queued-run.mp4", duration=60.0)
+        job_id = "sub-20260101-000001-abcdef"
+        self._save_queued_job(job_id, video)
+        reloaded = self._reloaded_service()
+        final = _wait_status(reloaded, job_id, ("done", "failed", "cancelled"),
+                             60.0)
+        self.assertEqual(final["status"], "done", final.get("error"))
+        self.assertIsNone(final["error"])
+        self.assertTrue(reloaded.get_file(job_id, "original.srt"))
+        self.assertEqual(list(reloaded._queue), [])
 
     def test_pause_during_translation_keeps_asr_chunks(self):
         self._configure_settings(subtitle_translate_batch_size=1)
@@ -328,7 +400,7 @@ class SubtitleApiTest(SubtitleTestBase):
             "POST", "/api/subtitles/%s/pause" % job_id, {}, csrf=csrf)
         self.assertEqual(status, 200)
         self.assertEqual(body["job"]["status"], "paused")
-        _wait_until(lambda: self.service._active_id is None, 20.0)
+        _wait_until(lambda: not self.service._active_ids, 20.0)
         status, _headers, body = web.client.json(
             "GET", "/api/subtitles?limit=10")
         self.assertEqual(status, 200)

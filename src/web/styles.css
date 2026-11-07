@@ -2200,3 +2200,69 @@ input[type="checkbox"]:disabled { cursor: not-allowed; }
 .subtitle-output-path { font-family: var(--mono); overflow-wrap: anywhere; min-width: 0; flex: 1 1 auto; }
 .subtitle-output-size { color: var(--muted); flex: 0 0 auto; }
 
+/* ==========================================================================
+   v0034 subtitle execution visibility（当前执行 / 预计剩余 / 状态筛选 / 置顶）
+   ========================================================================== */
+.subtitle-group-current {
+  margin: 8px 0 0;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--card-soft);
+  color: var(--text-soft);
+  font-size: 12.5px;
+  overflow-wrap: anywhere;
+}
+.subtitle-group-current::before {
+  content: "";
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 7px;
+  border-radius: 50%;
+  background: var(--primary);
+  vertical-align: 1px;
+}
+.subtitle-jobs-filter {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin: 10px 0 2px;
+}
+.subtitle-jobs-filter .btn { min-height: 28px; }
+.subtitle-jobs-filter .btn.is-active,
+.subtitle-jobs-filter .btn[aria-pressed="true"] {
+  background: var(--primary-soft);
+  border-color: #bcd2fb;
+  color: var(--primary);
+  font-weight: 600;
+}
+.subtitle-jobs-filter-count {
+  margin-left: 6px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.subtitle-jobs-filter .btn.is-active .subtitle-jobs-filter-count,
+.subtitle-jobs-filter .btn[aria-pressed="true"] .subtitle-jobs-filter-count { color: var(--primary); }
+.subtitle-jobs-active {
+  margin: 10px 0 4px;
+  padding: 8px 10px 6px;
+  border: 1px solid #bcd2fb;
+  border-radius: var(--radius-sm);
+  background: var(--primary-soft);
+}
+.subtitle-jobs-active-title {
+  margin: 0 0 4px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--primary);
+}
+.subtitle-jobs-section { display: flex; flex-direction: column; gap: 8px; margin-bottom: 4px; }
+.subtitle-jobs-section-title {
+  margin: 10px 0 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-soft);
+}
+.subtitle-jobs-list > .subtitle-jobs-section:first-child .subtitle-jobs-section-title { margin-top: 2px; }

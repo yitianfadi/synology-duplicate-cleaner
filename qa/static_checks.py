@@ -370,6 +370,32 @@ def check_backend():
           in subtitles_src
           and "if write_vtt:" in subtitles_src,
           "optional vtt markers missing")
+    check("BE-SUBTITLE-CONCURRENCY",
+          "字幕并发池：subtitle_concurrency 1..4（默认 1，启动读取），多 worker 共享队列",
+          "SUBTITLE_CONCURRENCY_MAX" in conf_src
+          and "SUBTITLE_DEFAULT_CONCURRENCY" in conf_src
+          and "subtitle_concurrency" in settings_src
+          and "self.concurrency" in subtitles_src
+          and "self._active_ids" in subtitles_src
+          and "self._workers" in subtitles_src,
+          "subtitle concurrency markers missing")
+    check("BE-SUBTITLE-VISIBILITY",
+          "任务列表 status 过滤 + 组快照 active_jobs/eta_seconds/concurrency（v0034）",
+          "LIST_STATUS_FILTERS" in subtitles_src
+          and "def _status_set" in subtitles_src
+          and '"active_jobs"' in subtitles_src
+          and '"eta_seconds"' in subtitles_src
+          and '"concurrency"' in subtitles_src
+          and "concurrency_max" in http_src,
+          "task visibility markers missing")
+    check("BE-SUBTITLE-RESTART-QUEUE",
+          "重启后 queued 任务重新入队并自动拉起 worker（不判 SERVICE_RESTART 丢失队列）",
+          "queued_jobs" in subtitles_src
+          and "for job in sorted(queued_jobs" in subtitles_src
+          and "self._queue.append(job.job_id)" in subtitles_src
+          and "if self._queue:" in subtitles_src
+          and "self._ensure_worker()" in subtitles_src,
+          "restart queue resume markers missing")
 
 
 # ---------------------------------------------------------------------------
@@ -516,6 +542,28 @@ def check_frontend():
     check("FE-SUBTITLE-VTT",
           "默认只生成 SRT，VTT 为可选设置（设置页勾选后才生成）",
           vtt_ui_ok, "subtitle vtt optional setting missing")
+    concurrency_ui_ok = (
+        'id="setSubtitleConcurrency"' in html
+        and "subtitle_concurrency" in app
+        and "setSubtitleConcurrency" in app)
+    check("FE-SUBTITLE-CONCURRENCY",
+          "设置页提供字幕并发任务数（1–4，默认 1，重启生效）",
+          concurrency_ui_ok, "subtitle concurrency setting UI missing")
+    subtitle_page_src = read(os.path.join(js_dir, "subtitle-page.js"))
+    visible_ui_ok = (
+        all(marker in html for marker in
+            ('id="subtitleGroupCurrent"', 'id="subtitleJobsFilter"',
+             'id="subtitleJobsActive"'))
+        and all(marker in subtitle_page_src for marker in
+                ("active_jobs", "eta_seconds", "subtitleJobsFilter",
+                 "subtitleJobsActive")))
+    check("FE-SUBTITLE-VISIBILITY",
+          "执行中任务置顶：当前执行行、置顶区块、状态筛选与预计剩余（v0034）",
+          visible_ui_ok, "subtitle visibility UI missing")
+    center_active_ok = ("status=active" in app and "进行中" in app)
+    check("FE-SUBTITLE-CENTER-ACTIVE",
+          "任务中心字幕任务把执行中任务置顶（先取 status=active）",
+          center_active_ok, "task center active-first wiring missing")
     delete_refresh_ok = (
         "resetResultsViewAfterDelete" in app
         and "recoverEmptyResultsPageAfterDelete" in app

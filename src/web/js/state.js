@@ -111,6 +111,8 @@ export var IDS = ('loginView loginForm loginUsername loginPassword loginOtp logi
   'subtitleAsrModelsBtn subtitleAsrModelPicker subtitleAsrModelsHint subtitleAsrTestBtn subtitleAsrTestResult ' +
   'subtitleLlmModelsBtn subtitleLlmModelPicker subtitleLlmModelsHint subtitleLlmTestBtn subtitleLlmTestResult ' +
   'setSubtitleOutputMode setSubtitleSkipExisting setSubtitleJobLimit setSubtitleJobLimitError ' +
+  'setSubtitleConcurrency setSubtitleConcurrencyError ' +
+  'subtitleGroupCurrent subtitleJobsFilter subtitleJobsActive ' +
   'taskTabHistory taskTabSubtitles taskTabDeletions taskTabStorage ' +
   'taskPanelHistory taskPanelSubtitles taskPanelDeletions taskPanelStorage ' +
   'deletionJobsPanel deletionJobsHeading deletionJobsStatus deletionJobsRefreshBtn ' +

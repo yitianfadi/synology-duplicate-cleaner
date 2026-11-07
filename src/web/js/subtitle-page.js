@@ -12,13 +12,14 @@
 import { api, errorMessage } from './api.js';
 import { state } from './state.js';
 import {
-  byId, clear, el, setBusy, setHidden, setText, show
+  $$, byId, clear, el, setBusy, setHidden, setText, show
 } from './dom.js';
 import { fmtBytes, fmtInt } from './format.js';
 import { toast } from './toast.js';
 import { confirmDialog } from './modal.js';
 import {
-  SUBTITLE_STATUS_BADGE, SUBTITLE_STATUS_LABEL, SUBTITLE_WARNING_LABEL
+  SUBTITLE_STAGE_LABEL, SUBTITLE_STATUS_BADGE, SUBTITLE_STATUS_LABEL,
+  SUBTITLE_WARNING_LABEL
 } from './constants.js';
 
 var PAGE_LIMIT = 200;          // 视频枚举列表每页
@@ -44,6 +45,12 @@ var GROUP_STATUS_BADGE = {
   done: 'badge-green', failed: 'badge-red', cancelled: 'badge-gray'
 };
 
+// v0034：任务明细状态筛选（'active' 由后端映射为 running+translating）
+var JOB_FILTERS = ['all', 'active', 'queued', 'done', 'failed'];
+var JOB_FILTER_LABEL = {
+  all: '全部', active: '执行中', queued: '排队', done: '已完成', failed: '失败'
+};
+
 var page = {
   initialized: false,
   // 目录 / 枚举 / 筛选
@@ -62,8 +69,10 @@ var page = {
   group: null,
   jobs: {
     items: [], total: 0, offset: 0, limit: JOB_PAGE_LIMIT,
-    loading: false, error: '', seq: 0, refreshKey: ''
+    loading: false, error: '', seq: 0, refreshKey: '', totalKnown: false
   },
+  // v0034：任务明细状态筛选（all/active/queued/done/failed）
+  jobsFilter: 'all',
   timer: null,
   polling: false,
   restoring: false,
@@ -541,10 +550,7 @@ async function submitGroup() {
     page.group = result.group || null;
     page.notified = false;
     page.batchesExpanded = false;
-    page.jobs = {
-      items: [], total: 0, offset: 0, limit: JOB_PAGE_LIMIT,
-      loading: false, error: '', seq: page.jobs.seq + 1, refreshKey: ''
-    };
+    resetJobsView('');
     page.selected = new Set();
     renderVideos();
     if (!page.group || !page.group.group_id) {
@@ -613,6 +619,57 @@ function groupPercent(group) {
   return total ? Math.round(100 * groupFinished(group) / total) : 0;
 }
 
+/** 任务显示名：优先 name 字段，缺失时从 path 取文件名。 */
+function jobDisplayName(job) {
+  if (!job) { return '—'; }
+  var name = String(job.name || '').trim();
+  if (!name && job.path) {
+    name = String(job.path).split(/[\\/]/).pop() || '';
+  }
+  return name || '—';
+}
+
+/** 预估剩余时间文案：<60s 不到 1 分钟 / <3600 约 N 分钟 / <86400 约 N 小时 / 约 N 天 M 小时。 */
+function fmtEtaSeconds(seconds) {
+  var sec = Number(seconds);
+  if (!isFinite(sec) || sec < 0) { return ''; }
+  if (sec < 60) { return '不到 1 分钟'; }
+  if (sec < 3600) { return '约 ' + Math.max(1, Math.round(sec / 60)) + ' 分钟'; }
+  if (sec < 86400) { return '约 ' + Math.max(1, Math.round(sec / 3600)) + ' 小时'; }
+  var days = Math.floor(sec / 86400);
+  var hours = Math.round((sec % 86400) / 3600);
+  if (hours >= 24) { days += 1; hours = 0; }
+  return '约 ' + days + ' 天' + (hours > 0 ? ' ' + hours + ' 小时' : '');
+}
+
+/** 组内任务计数（与筛选按钮一一对应；全部取组总数，失败含已取消）。 */
+function groupJobFilterCounts(group) {
+  var counts = group && group.counts ? group.counts : {};
+  var running = (Number(counts.running) || 0) + (Number(counts.translating) || 0);
+  return {
+    all: Number(group && group.total) || 0,
+    active: running,
+    queued: Number(counts.queued) || 0,
+    done: Number(counts.done) || 0,
+    failed: (Number(counts.failed) || 0) + (Number(counts.cancelled) || 0)
+  };
+}
+
+/** 组内正在执行的任务（后端快照 active_jobs，≤10 条）。 */
+function groupActiveJobs(group) {
+  return group && Array.isArray(group.active_jobs) ? group.active_jobs : [];
+}
+
+/** v0034：提交新组/恢复组时重置任务明细与状态筛选（回到「全部」第一页）。 */
+function resetJobsView(refreshKey) {
+  page.jobsFilter = 'all';
+  page.jobs = {
+    items: [], total: 0, offset: 0, limit: JOB_PAGE_LIMIT,
+    loading: false, error: '', seq: page.jobs.seq + 1, refreshKey: refreshKey || '',
+    totalKnown: false
+  };
+}
+
 function renderGroup() {
   var card = q('subtitleGroupCard');
   if (!card) { return; }
@@ -621,6 +678,8 @@ function renderGroup() {
   setHidden(card, false);
   renderGroupHead();
   renderBatches();
+  renderJobsFilter();
+  renderJobsActive();
   renderGroupJobs();
   renderGroupActions();
 }
@@ -646,12 +705,44 @@ function renderGroupHead() {
   var running = (Number(counts.running) || 0) + (Number(counts.translating) || 0);
   var remaining = Math.max(0, total - finished);
   var missing = Number(group.missing) || 0;
-  setText(q('subtitleGroupCounts'),
-    '完成 ' + fmtInt(counts.done) + ' · 失败 ' + fmtInt(counts.failed)
+  var countsText = '完成 ' + fmtInt(counts.done) + ' · 失败 ' + fmtInt(counts.failed)
     + ' · 取消 ' + fmtInt(counts.cancelled) + ' · 暂停 ' + fmtInt(counts.paused)
     + ' · 排队 ' + fmtInt(counts.queued) + ' · 运行 ' + fmtInt(running)
     + ' · 剩余 ' + fmtInt(remaining) + ' · 批次 ' + fmtInt(batchCount)
-    + (missing > 0 ? ' · 缺失 ' + fmtInt(missing) : ''));
+    + (missing > 0 ? ' · 缺失 ' + fmtInt(missing) : '');
+  // v0034：非终态组展示预计剩余（后端 eta_seconds，样本不足为 null）
+  if (!isGroupTerminal(group.status) && typeof group.eta_seconds === 'number') {
+    var etaText = fmtEtaSeconds(group.eta_seconds);
+    if (etaText) { countsText += ' · 预计剩余 ' + etaText; }
+  }
+  setText(q('subtitleGroupCounts'), countsText);
+  renderGroupCurrent();
+}
+
+/** v0034：组卡片“当前执行”：取 active_jobs 的第一条；无执行中任务时提示等待调度。 */
+function renderGroupCurrent() {
+  var currentEl = q('subtitleGroupCurrent');
+  if (!currentEl) { return; }
+  var group = page.group;
+  if (!group) { setHidden(currentEl, true); return; }
+  var activeJobs = groupActiveJobs(group);
+  if (activeJobs.length) {
+    var job = activeJobs[0];
+    var stageLabel = SUBTITLE_STAGE_LABEL[job.stage]
+      || SUBTITLE_STATUS_LABEL[job.status] || job.status || '处理中';
+    var jobPct = Math.max(0, Math.min(100, Math.round(Number(job.progress) || 0)));
+    setText(currentEl, '当前执行：' + jobDisplayName(job) + ' · ' + stageLabel
+      + ' · ' + jobPct + '%'
+      + (activeJobs.length > 1 ? '（另有 ' + fmtInt(activeJobs.length - 1) + ' 个并行执行）' : ''));
+    setHidden(currentEl, false);
+    return;
+  }
+  if (!isGroupTerminal(group.status) && group.status !== 'paused') {
+    setText(currentEl, '等待调度：队列中的任务会自动开始执行。');
+    setHidden(currentEl, false);
+    return;
+  }
+  setHidden(currentEl, true);
 }
 
 function renderBatches() {
@@ -753,10 +844,70 @@ function jobsTotal() {
   var jobs = page.jobs;
   var total = Number(jobs.total);
   if (!isFinite(total) || total < 0) { total = 0; }
-  if (!total && page.group) {
+  // 旧后端不带 total：只有「全部」筛选才回落到组总数；筛选后的数量无法可靠推断
+  if (!total && !jobs.totalKnown && page.jobsFilter === 'all' && page.group) {
     total = Number(page.group.total) || 0;
   }
   return total;
+}
+
+/** v0034：渲染状态筛选页签（计数来自组快照 counts，切换时重置分页并重新加载）。 */
+function renderJobsFilter() {
+  var box = q('subtitleJobsFilter');
+  if (!box) { return; }
+  var counts = groupJobFilterCounts(page.group);
+  var buttons = $$('button[data-jobs-filter]', box);
+  buttons.forEach(function (btn) {
+    var key = btn.dataset.jobsFilter;
+    if (JOB_FILTERS.indexOf(key) === -1) { return; }
+    var active = page.jobsFilter === key;
+    clear(btn);
+    btn.appendChild(document.createTextNode(JOB_FILTER_LABEL[key]));
+    if (page.group) {
+      btn.appendChild(el('span', {
+        className: 'subtitle-jobs-filter-count', text: fmtInt(counts[key])
+      }));
+    }
+    btn.classList.toggle('is-active', active);
+    btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+  });
+}
+
+/** v0034：固定置顶「执行中」区块（来自 group.active_jobs，不受筛选/分页影响）。 */
+function renderJobsActive() {
+  var box = q('subtitleJobsActive');
+  if (!box) { return; }
+  clear(box);
+  var activeJobs = groupActiveJobs(page.group);
+  if (!activeJobs.length) { setHidden(box, true); return; }
+  setHidden(box, false);
+  box.appendChild(el('p', {
+    className: 'subtitle-jobs-active-title',
+    text: '执行中（' + fmtInt(activeJobs.length) + '） · 不受筛选影响'
+  }));
+  activeJobs.forEach(function (job) {
+    box.appendChild(renderJobRow(job));
+  });
+}
+
+/** 切换状态筛选：作废进行中的旧请求，清空当前行并从第一页重新加载。 */
+function selectJobsFilter(key) {
+  if (JOB_FILTERS.indexOf(key) === -1 || page.jobsFilter === key) { return; }
+  page.jobsFilter = key;
+  var jobs = page.jobs;
+  jobs.items = [];
+  jobs.total = 0;
+  jobs.offset = 0;
+  jobs.error = '';
+  jobs.totalKnown = false;
+  jobs.loading = false;
+  jobs.seq += 1;
+  renderJobsFilter();
+  if (page.group && page.group.group_id) {
+    loadGroupJobs('reset');
+  } else {
+    renderGroupJobs();
+  }
 }
 
 function renderGroupJobs() {
@@ -766,11 +917,14 @@ function renderGroupJobs() {
   var hint = q('subtitleGroupJobsHint');
   var moreBtn = q('subtitleGroupJobsMoreBtn');
   var moreStatus = q('subtitleGroupJobsMoreStatus');
+  var filterKey = page.jobsFilter;
+  var filterLabel = JOB_FILTER_LABEL[filterKey] || JOB_FILTER_LABEL.all;
   clear(list);
   var total = jobsTotal();
   if (hint) {
     setText(hint, page.group
-      ? '任务明细：共 ' + fmtInt(total) + ' 个任务，已显示 ' + fmtInt(jobs.items.length) + ' 个'
+      ? '任务明细：' + filterLabel + ' · 共 ' + fmtInt(total) + ' 个任务，已显示 '
+        + fmtInt(jobs.items.length) + ' 个'
       : '');
   }
   if (jobs.loading && !jobs.items.length) {
@@ -780,7 +934,12 @@ function renderGroupJobs() {
       className: 'field-error', attrs: { role: 'alert' }, text: jobs.error
     }));
   } else if (!jobs.items.length) {
-    list.appendChild(el('div', { className: 'state-box', text: '暂无任务明细。' }));
+    list.appendChild(el('div', {
+      className: 'state-box',
+      text: filterKey === 'all'
+        ? '暂无任务明细。'
+        : '当前筛选（' + filterLabel + '）下没有任务。'
+    }));
   }
   jobs.items.forEach(function (job) {
     list.appendChild(renderJobRow(job));
@@ -801,7 +960,7 @@ function renderGroupJobs() {
 }
 
 function renderJobRow(job) {
-  var name = String(job.path || '').split(/[\\/]/).pop();
+  var name = jobDisplayName(job);
   var pct = Math.max(0, Math.min(100, Math.round(Number(job.progress) || 0)));
   var badges = [
     el('span', {
@@ -890,14 +1049,20 @@ function renderGroupActions() {
 }
 
 // ---------------------------------------------------------------------------
-// 批次组：任务明细分页加载（GET /api/subtitles?group_id=&offset=&limit=）
+// 批次组：任务明细分页加载（GET /api/subtitles?group_id=&offset=&limit=&status=）
 // mode: 'reset' 从头加载 / 'more' 追加下一页 / 'refresh' 刷新已加载区间
+// v0034：非「全部」筛选时附带 status 参数，total 为过滤后数量
 // ---------------------------------------------------------------------------
 async function loadGroupJobs(mode) {
   var group = page.group;
   if (!group || !group.group_id) { return; }
   var jobs = page.jobs;
-  if (jobs.loading) { return; }
+  if (jobs.loading) {
+    // 筛选切换/提交重置需要立即重载：作废进行中的旧请求（seq 变化后其结果会被丢弃）
+    if (mode !== 'reset') { return; }
+    jobs.loading = false;
+    jobs.seq += 1;
+  }
   var offset = jobs.items.length;
   var limit = JOB_PAGE_LIMIT;
   var replace = false;
@@ -923,14 +1088,20 @@ async function loadGroupJobs(mode) {
   jobs.error = '';
   var seq = jobs.seq + 1;
   jobs.seq = seq;
+  var filterKey = page.jobsFilter || 'all';
+  // v0034：失败页签包含已取消任务（后端支持逗号组合 status）；其余页签一一对应。
+  var statusParam = filterKey === 'failed' ? 'failed,cancelled' : filterKey;
   renderGroupJobs();
   try {
-    var result = await api('/api/subtitles?group_id=' + encodeURIComponent(group.group_id)
-      + '&offset=' + offset + '&limit=' + limit, { timeout: 30000 });
+    var url = '/api/subtitles?group_id=' + encodeURIComponent(group.group_id)
+      + '&offset=' + offset + '&limit=' + limit;
+    if (filterKey !== 'all') { url += '&status=' + encodeURIComponent(statusParam); }
+    var result = await api(url, { timeout: 30000 });
     if (page.jobs !== jobs || jobs.seq !== seq) { return; }
     var list = result && Array.isArray(result.jobs) ? result.jobs : [];
     var total = result && Number(result.total);
-    jobs.total = isFinite(total) && total >= 0 ? total : 0;
+    jobs.totalKnown = isFinite(total) && total >= 0;
+    jobs.total = jobs.totalKnown ? total : 0;
     jobs.offset = offset + list.length;
     var pageLimit = result && Number(result.limit);
     if (isFinite(pageLimit) && pageLimit > 0) { jobs.limit = pageLimit; }
@@ -1078,10 +1249,7 @@ async function restoreLastGroup() {
     page.batchesExpanded = false;
     // 恢复出来的终态不再重复提醒；非终态恢复轮询并刷新任务明细
     page.notified = isGroupTerminal(group.status);
-    page.jobs = {
-      items: [], total: 0, offset: 0, limit: JOB_PAGE_LIMIT,
-      loading: false, error: '', seq: page.jobs.seq + 1, refreshKey: groupSignature(group)
-    };
+    resetJobsView(groupSignature(group));
     renderGroup();
     loadGroupJobs('reset');
     if (!isGroupTerminal(group.status)) {
@@ -1169,6 +1337,13 @@ export function initSubtitlePage() {
   var jobsMoreBtn = q('subtitleGroupJobsMoreBtn');
   if (jobsMoreBtn) {
     jobsMoreBtn.addEventListener('click', function () { loadGroupJobs('more'); });
+  }
+  // v0034：任务明细状态筛选页签
+  var jobsFilterBox = q('subtitleJobsFilter');
+  if (jobsFilterBox) {
+    $$('button[data-jobs-filter]', jobsFilterBox).forEach(function (btn) {
+      btn.addEventListener('click', function () { selectJobsFilter(btn.dataset.jobsFilter); });
+    });
   }
   var batchesToggle = q('subtitleGroupBatchesToggle');
   if (batchesToggle) {

@@ -462,3 +462,51 @@ python build/build_spk.py --no-icons --out-dir $env:TEMP\qa-build2
 
 - 结论：v0033 **PASS（可交付）**。
 
+## 16. 附：v0034 队列恢复 / 并发 / 任务可见性（2026-11-07）
+
+### 16.1 现象与根因（NAS 实测，1.1.0-0033）
+
+用户反馈：“字幕任务明细看不到执行中任务，全部排队中；任务中心字幕任务也全是排队中。”
+
+只读探测（10.10.10.236:8787，批次组 `grp-20261107-100806-a40ce8`）：
+
+- 组共 7359 个任务；已完成 19、执行中 1、排队 7340；组状态 `running`（任务实际在跑，约 1–2 分钟/个）。
+- 任务列表接口按 `created_epoch` 倒序分页（100/页），而 worker 按 FIFO 从最早注册的任务开始执行：执行中任务是“最老”的任务，永远落在最后一页（74/74）。
+- 任务中心 `GET /api/subtitles?limit=20` 同样倒序，最新 20 个全是排队，进行中计数为 0。
+- 另发现：旧版启动时把 `queued`（无分片）任务判为 `SERVICE_RESTART` failed，升级套件会丢掉整个排队队列（7340 个）。
+
+### 16.2 修复内容
+
+- **P0 重启恢复**：`_load_jobs` 对 `queued` 不再判失败，保留状态并按创建时间重新入队；`__init__` 队列非空即自动拉起 worker。`running/translating` 有分片仍转 `paused` 可继续、无分片仍 `SERVICE_RESTART` failed；`paused` 不变。
+- **P1 可见性**：`GET /api/subtitles` 新增 `status` 过滤（all/active/queued/…/failed，支持逗号组合如 `failed,cancelled`；均非法→400）；批次组快照新增 `active_jobs`（≤10 条执行中任务明细）、`eta_seconds`、`concurrency`；前端组卡片显示“当前执行：文件 · 阶段 · 进度%”与“预计剩余”，任务明细固定“执行中”置顶区块 + 状态筛选页签（全部/执行中/排队/已完成/失败，失败含取消），任务中心字幕标签先取 `status=active` 置顶“进行中”分区再列最近任务。
+- **P2 预计剩余**：按墙钟吞吐估算（组内最早创建时间 → 平均每个已处理任务耗时 × 剩余 ÷ 并发），样本不足为 `null`，避免用含排队时间的 lifetime 放大 ETA。
+- **P3 并发**：新增设置 `subtitle_concurrency`（1..4，默认 1，服务启动时读取、重启生效），多 worker 共享 FIFO 队列；默认 1 与旧串行行为完全一致，`/api/meta.subtitle.concurrency_max=4`。
+- 无数据库迁移（SQLite schema 仍 v7）；文档同步 SUBTITLE_CONTRACT §1/§2/§14、SUBTITLE_BATCH_CONTRACT §2/§4.4/§13/§14、UI_PROTOTYPE、ARCHITECTURE §12.4、CONTRACT v0034 增量。
+
+### 16.3 最终产物
+
+- `dist/DuplicateCleaner-1.1.0-0034.spk`
+  - SHA256 `70730e2a8395a8dafa575d3bba570e5ff7be9b6588b4b066257eaf44577c45a1`
+  - package.tgz MD5 `5a3c3d3b1ac50e2b1c0c3d937a1593ce`（= INFO.checksum）
+  - 大小 38,983,680 B
+- 版本 1.1.0-0034 同步 8 处；`qa/static_checks.py` SPK-SYNC 通过。
+
+### 16.4 结果总览
+
+| 套件 | 命令 | 结果 |
+|---|---|---|
+| 后端单测 | `cd src/backend && python -m unittest discover -s tests` | **397 tests OK（5 skipped）** |
+| 端到端 | `python qa/e2e_test.py` | **PASS=135 / FAIL=0 / UNVERIFIED=1**（Windows symlink 权限限制） |
+| 静态检查（含 unittest/前端/SPK） | `python qa/static_checks.py` | **PASS=144 / FAIL=0 / UNVERIFIED=0** |
+| 前端模块图 | `node qa/check_web_modules.mjs` | **22/22 PASS** |
+| 无头浏览器冒烟 | `python qa/web_smoke.py` | **8/8 PASS** |
+
+### 16.5 验收要点
+
+- 后端新增：并发默认 1 串行（running 峰值 1）/ 设 2 时两任务同时 running（状态峰值与 fake ASR in-flight 峰值均 2）、`shutdown` 停全部 worker、`status` 过滤（active/queued/done/failed/逗号组合/非法 400）、组快照 `active_jobs`/`eta_seconds`（样本不足 null）、queued 重启自动续跑并产出 srt、旧 `{ok,jobs}` 形状兼容、meta `concurrency_max/default_concurrency`。
+- 设置：默认 1、范围 1..4，拒绝 bool/浮点/字符串；e2e SUB-19/SUB-20 覆盖保存与越界；恢复默认置回 1。
+- 前端：新增 `FE-SUBTITLE-CONCURRENCY`、`FE-SUBTITLE-VISIBILITY`、`FE-SUBTITLE-CENTER-ACTIVE` 静态检查；DOM-stub 实测 7359 任务单执行中场景：当前执行行、ETA、筛选计数、置顶区块、`&status=active` 请求、任务中心“进行中/最近任务”分区均正确。
+- e2e 新增 SUB-17（status=active 只返回执行中）、SUB-18（逗号组合）、SUB-19（非法 status 400）、SUB-20/21（并发设置保存/越界）。
+
+- 结论：v0034 **PASS（可交付）**；升级 1.1.0-0034 后 NAS 上 7340 个排队任务会保留并自动续跑。
+

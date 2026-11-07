@@ -56,6 +56,12 @@ STATUS_CANCELLED = "cancelled"
 STATUS_PAUSED = "paused"
 FINISHED_STATUSES = (STATUS_DONE, STATUS_FAILED, STATUS_CANCELLED)
 ACTIVE_STATUSES = (STATUS_QUEUED, STATUS_RUNNING, STATUS_TRANSLATING)
+# v0034：任务列表状态过滤。all/空=全部；active=running+translating（不含 queued，
+# 便于“执行中”视图把真正在跑的任务排在前面）。
+LIST_STATUS_FILTERS = ("all", "active", STATUS_QUEUED, STATUS_RUNNING,
+                       STATUS_TRANSLATING, STATUS_PAUSED, STATUS_DONE,
+                       STATUS_FAILED, STATUS_CANCELLED)
+ACTIVE_LIST_STATUSES = (STATUS_RUNNING, STATUS_TRANSLATING)
 
 # ASR 分片缓存状态（subtitle_chunks.status）
 CHUNK_PENDING = "pending"
@@ -850,7 +856,11 @@ def make_group_id():
 
 
 class SubtitleService(object):
-    """异步字幕任务服务：同一时间只跑 1 个任务，其余排队。"""
+    """异步字幕任务服务：默认同一时间跑 1 个任务，其余排队。
+
+    v0034：并发数由设置 subtitle_concurrency（1..4）在启动时读取；默认 1
+    保持历史串行行为。多个 worker 共享同一个任务队列，暂停/取消语义不变。
+    """
 
     def __init__(self, runtime_config, store, share_service, settings_provider,
                  client=None, ffmpeg=None, job_limit=None,
@@ -867,17 +877,29 @@ class SubtitleService(object):
             self.ffmpeg.resolve(runtime_config)
         except Exception:
             pass
+        current_settings = {}
+        try:
+            current_settings = settings_provider() or {}
+        except Exception:
+            current_settings = {}
+        if not isinstance(current_settings, dict):
+            current_settings = {}
         # 保留上限：显式参数 > 设置 subtitle_job_limit > 默认 200
         # （设置变更需重启服务生效，与其它设置保持一致）。
         if job_limit is None:
-            try:
-                job_limit = (settings_provider() or {}).get("subtitle_job_limit")
-            except Exception:
-                job_limit = None
+            job_limit = current_settings.get("subtitle_job_limit")
         try:
             self.job_limit = max(20, int(job_limit or MAX_JOBS))
         except (TypeError, ValueError):
             self.job_limit = MAX_JOBS
+        # v0034：并发数（1..MAX）在启动时读取，clamp 到合法范围；设置变更需重启生效。
+        try:
+            concurrency = int(current_settings.get("subtitle_concurrency")
+                              or config.SUBTITLE_DEFAULT_CONCURRENCY)
+        except (TypeError, ValueError):
+            concurrency = config.SUBTITLE_DEFAULT_CONCURRENCY
+        self.concurrency = max(1, min(concurrency,
+                                      config.SUBTITLE_CONCURRENCY_MAX))
         self._root = os.path.join(runtime_config.data_dir, "subtitles")
         self._jobs_dir = os.path.join(self._root, "jobs")
         self._batches_dir = os.path.join(self._root, "batches")
@@ -891,8 +913,8 @@ class SubtitleService(object):
         self._probe_lock = threading.Lock()
         self._jobs = {}
         self._queue = deque()
-        self._active_id = None
-        self._worker = None
+        self._active_ids = set()
+        self._workers = []
         self._stopping = False
         # v0032：单任务 LRU 的惰性开关（大批次组注册时避免 O(n²) 扫描）。
         self._trim_needed = False
@@ -904,6 +926,9 @@ class SubtitleService(object):
                 self._trim_groups_locked()
         except Exception:
             pass
+        # v0034：重启后只要还有排队任务就自动拉起 worker（升级/重启不丢队列）。
+        if self._queue:
+            self._ensure_worker()
 
     # ------------------------------------------------------------------
     # 持久化 / 查询
@@ -952,6 +977,7 @@ class SubtitleService(object):
                 self.store.save_subtitle_job(job_id, record)
             except Exception:
                 pass
+        queued_jobs = []
         for job_id, record in records.items():
             job = SubtitleJob.from_record(record)
             try:
@@ -963,7 +989,14 @@ class SubtitleService(object):
             if chunks:
                 job.chunk_total = max(int(job.chunk_total or 0), len(chunks))
                 job.chunk_index = max(int(job.chunk_index or 0), done_chunks)
-            if job.status in ACTIVE_STATUSES:
+            if job.status == STATUS_QUEUED:
+                # v0034 P0：排队任务重启后保留 queued 并重新入队（auto worker），
+                # 不再像旧版那样判成 SERVICE_RESTART failed 而丢掉整个队列。
+                # 不重复 persist：状态未变化，避免升级启动时产生大量写盘。
+                job.resumable = bool(chunks)
+                if job.job_id not in self._queue:
+                    queued_jobs.append(job)
+            elif job.status in (STATUS_RUNNING, STATUS_TRANSLATING):
                 if chunks:
                     # plan C：有分片缓存/计划 → 暂停可继续，而不是失败
                     job.status = STATUS_PAUSED
@@ -983,6 +1016,11 @@ class SubtitleService(object):
             else:
                 job.resumable = False
             self._jobs[job.job_id] = job
+        # 按创建时间升序恢复队列：与运行期 FIFO 一致，最早提交的任务先跑。
+        for job in sorted(queued_jobs, key=lambda item: item.created_epoch):
+            if job.job_id in self._queue:
+                continue
+            self._queue.append(job.job_id)
 
     def _persist(self, job):
         with job.lock:
@@ -1033,22 +1071,64 @@ class SubtitleService(object):
         snapshot["files"] = self._list_files(job.job_id)
         return snapshot
 
-    def list(self, limit=50, batch_id=None):
+    def _status_set(self, status):
+        """v0034：把 status 过滤参数规范成状态集合；None/空/all → None（不筛选）。
+
+        active 只包含真正执行中的 running+translating（不含 queued），供字幕页
+        “执行中任务”视图使用；其余必须是合法状态，多个状态可用逗号组合
+        （如 failed,cancelled，供“失败”筛选包含已取消任务）。
+        """
+        if status is None:
+            return None
+        if not isinstance(status, str):
+            raise invalid(u"status 参数非法", details={"key": "status"})
+        value = status.strip().lower()
+        if not value or value == "all":
+            return None
+        if "," in value:
+            statuses = set()
+            for part in value.split(","):
+                part = part.strip()
+                if not part:
+                    continue
+                if part == "active":
+                    statuses.update(ACTIVE_LIST_STATUSES)
+                elif part in LIST_STATUS_FILTERS and part != "all":
+                    statuses.add(part)
+                else:
+                    raise invalid(u"status 参数非法", details={"key": "status"})
+            if not statuses:
+                raise invalid(u"status 参数非法", details={"key": "status"})
+            return tuple(sorted(statuses))
+        if value == "active":
+            return ACTIVE_LIST_STATUSES
+        if value in LIST_STATUS_FILTERS:
+            return (value,)
+        raise invalid(u"status 参数非法", details={"key": "status"})
+
+    def list(self, limit=50, batch_id=None, status=None):
+        statuses = self._status_set(status)
         with self._lock:
             jobs = list(self._jobs.values())
         if batch_id is not None:
             jobs = [item for item in jobs if item.batch_id == batch_id]
+        if statuses is not None:
+            jobs = [item for item in jobs if item.status in statuses]
         jobs.sort(key=lambda item: item.created_epoch, reverse=True)
         return [item.snapshot() for item in jobs[:max(1, int(limit or 50))]]
 
-    def list_page(self, limit=50, batch_id=None, group_id=None, offset=0):
-        """任务分页（v0032：批次组任务明细按 group_id 过滤）。"""
+    def list_page(self, limit=50, batch_id=None, group_id=None, offset=0,
+                  status=None):
+        """任务分页（v0032：批次组任务明细按 group_id 过滤；v0034：status 过滤）。"""
+        statuses = self._status_set(status)
         with self._lock:
             jobs = list(self._jobs.values())
         if batch_id is not None:
             jobs = [item for item in jobs if item.batch_id == batch_id]
         if group_id is not None:
             jobs = [item for item in jobs if item.group_id == group_id]
+        if statuses is not None:
+            jobs = [item for item in jobs if item.status in statuses]
         jobs.sort(key=lambda item: item.created_epoch, reverse=True)
         try:
             offset = max(0, int(offset or 0))
@@ -1680,10 +1760,74 @@ class SubtitleService(object):
             return STATUS_PAUSED
         return STATUS_QUEUED
 
+    @staticmethod
+    def _active_job_entry(job):
+        """v0034：批次组“执行中任务”快照条目（只暴露安全字段）。"""
+        with job.lock:
+            return {
+                "job_id": job.job_id,
+                "name": os.path.basename(job.path or ""),
+                "path": job.path,
+                "status": job.status,
+                "stage": job.stage,
+                "progress": int(job.progress or 0),
+                "message": job.message,
+                "chunk_index": int(job.chunk_index or 0),
+                "chunk_total": int(job.chunk_total or 0),
+                "updated_at": timeutil.iso_local(
+                    float(job.updated_epoch or job.created_epoch or 0)),
+            }
+
+    def _eta_seconds(self, jobs, total):
+        """v0034：按墙钟吞吐估算剩余秒数（不能按单任务 lifetime 估算）。
+
+        任务在串行队列里会排队等待，lifetime 包含排队时间；n 个任务顺序完成时
+        平均 lifetime ≈ n/2 × 单任务耗时，会严重放大 ETA。因此以组内最早
+        created_epoch 为起点计算真实吞吐：
+
+            per_job = (now - earliest_created) / processed
+            eta = per_job * remaining / concurrency
+
+        processed 只统计“已终态且非 skipped”的任务（skipped 不消耗时间），
+        但起点用组内所有任务的最早 created_epoch。processed<3 或 elapsed<=0
+        或时间数据异常时返回 None，避免不可信 ETA。
+        """
+        try:
+            processed = 0
+            finished = 0
+            earliest = None
+            for job in jobs:
+                with job.lock:
+                    created = float(job.created_epoch or 0)
+                if created <= 0:
+                    return None
+                if earliest is None or created < earliest:
+                    earliest = created
+                if job.status not in FINISHED_STATUSES:
+                    continue
+                finished += 1
+                if getattr(job, "skipped", False):
+                    continue
+                processed += 1
+            if earliest is None or processed < 3:
+                return None
+            elapsed = time.time() - earliest
+            if elapsed <= 0:
+                return None
+            remaining = int(total) - finished
+            if remaining <= 0:
+                return 0
+            concurrency = max(1, int(self.concurrency or 1))
+            eta = int(round(elapsed / processed * remaining / concurrency))
+            return eta if eta >= 0 else None
+        except (TypeError, ValueError, OverflowError):
+            return None
+
     def _group_snapshot(self, record):
         batch_ids = list(record.get("batch_ids") or [])
         counts = self._status_counts()
         batches = []
+        group_jobs = []
         total = 0
         missing = 0
         with self._lock:
@@ -1700,6 +1844,7 @@ class SubtitleService(object):
                 if job is None:
                     missing += 1
                     continue
+                group_jobs.append(job)
                 status = job.status
                 batch_counts[status] = batch_counts.get(status, 0) + 1
                 counts[status] = counts.get(status, 0) + 1
@@ -1716,6 +1861,9 @@ class SubtitleService(object):
         status = self._derive_status(counts, total)
         if batch_ids and not batches:
             status = STATUS_FAILED
+        active_jobs = [item for item in group_jobs
+                       if item.status in ACTIVE_LIST_STATUSES]
+        active_jobs.sort(key=lambda item: item.created_epoch)
         return {
             "group_id": record.get("group_id"),
             "status": status,
@@ -1725,6 +1873,11 @@ class SubtitleService(object):
             "progress": int(round(100.0 * finished / total)) if total else 0,
             "counts": counts,
             "missing": missing,
+            # v0034：执行中任务明细（最多 10 条）+ 剩余时间估算 + 当前并发数。
+            "active_jobs": [self._active_job_entry(item)
+                            for item in active_jobs[:10]],
+            "eta_seconds": self._eta_seconds(group_jobs, total),
+            "concurrency": int(self.concurrency or 1),
             "created_at": timeutil.iso_local(
                 float(record.get("created_epoch") or 0)),
             "updated_at": timeutil.iso_local(
@@ -2415,7 +2568,7 @@ class SubtitleService(object):
             job.error = None
             job.resumable = True
             job.updated_epoch = time.time()
-            if self._active_id == job.job_id:
+            if job.job_id in self._active_ids:
                 job.status = STATUS_RUNNING
                 job.message = u"任务继续"
             else:
@@ -2434,7 +2587,11 @@ class SubtitleService(object):
         return job.snapshot()
 
     def shutdown(self, timeout=5.0):
-        """优雅退出：在分片边界暂停可继续任务（计划 C），而不是取消。"""
+        """优雅退出：在分片边界暂停可继续任务（计划 C），而不是取消。
+
+        v0034：queued 任务保持 queued（DB/JSON 中不置失败），重启后由
+        _load_jobs 重新入队；这里只需停止所有 worker 并等待分片边界。
+        """
         with self._lock:
             self._stopping = True
             jobs = list(self._jobs.values())
@@ -2442,25 +2599,31 @@ class SubtitleService(object):
                 if job.status in (STATUS_RUNNING, STATUS_TRANSLATING):
                     # 运行中任务在分片边界暂停；重启后有分片缓存 → 可继续
                     job.pause_event.set()
-                # queued 任务没有分片/计划：保持 queued，重启后按
-                # SERVICE_RESTART 失败（只有有计划的 queued 才可继续）
+                # queued 任务保持排队：重启后自动重新入队执行（不再判失败）
             self._cond.notify_all()
-        worker = self._worker
-        if worker is not None and worker.is_alive():
-            worker.join(timeout=max(0.1, float(timeout)))
+            workers = list(self._workers)
+        for worker in workers:
+            if worker is not None and worker.is_alive():
+                worker.join(timeout=max(0.1, float(timeout)))
+        with self._lock:
+            self._workers = [item for item in self._workers
+                             if item.is_alive()]
 
     # ------------------------------------------------------------------
     # 队列 worker
     # ------------------------------------------------------------------
     def _ensure_worker(self):
+        """把 worker 数补齐到 self.concurrency（剔除已退出的线程）。"""
         with self._lock:
-            if self._worker is not None and self._worker.is_alive():
-                return
             if self._stopping:
                 return
-            self._worker = threading.Thread(target=self._worker_loop,
-                                            name="subtitles", daemon=True)
-            self._worker.start()
+            self._workers = [item for item in self._workers
+                             if item is not None and item.is_alive()]
+            while len(self._workers) < self.concurrency:
+                worker = threading.Thread(target=self._worker_loop,
+                                          name="subtitles", daemon=True)
+                self._workers.append(worker)
+                worker.start()
 
     def _worker_loop(self):
         while True:
@@ -2470,14 +2633,14 @@ class SubtitleService(object):
                 if self._stopping:
                     return
                 job_id = self._queue.popleft()
-                self._active_id = job_id
+                self._active_ids.add(job_id)
             job = self._jobs.get(job_id)
             try:
                 if job is not None and job.status == STATUS_QUEUED:
                     self._process(job)
             finally:
                 with self._lock:
-                    self._active_id = None
+                    self._active_ids.discard(job_id)
                     self._cond.notify_all()
 
     # ------------------------------------------------------------------

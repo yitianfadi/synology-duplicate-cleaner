@@ -7,9 +7,9 @@ import os
 import re
 
 APP_NAME = "DuplicateCleaner"
-APP_VERSION = "1.1.0-0033"
+APP_VERSION = "1.1.0-0034"
 DISPLAY_NAME = "重复文件清理与字幕"
-SPK_VERSION = "1.1.0-0033"
+SPK_VERSION = "1.1.0-0034"
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8787
@@ -126,6 +126,10 @@ SHORT_VIDEO_RATIO_MAX = 2.0
 # 已完成任务保留上限（设置 subtitle_job_limit 的缺省值）；LRU 只删任务目录，
 # 绝不删除写回视频旁的字幕文件。
 SUBTITLE_JOB_LIMIT_DEFAULT = 200
+# v0034：字幕任务并发上限/缺省值。默认 1 = 保持历史串行行为；设置
+# subtitle_concurrency 可在 1..4 调整，修改后需重启套件生效（服务启动时读取）。
+SUBTITLE_CONCURRENCY_MAX = 4
+SUBTITLE_DEFAULT_CONCURRENCY = 1
 # 单次批量提交路径上限；超出拒绝并提示分批（组内每批仍按此上限拆分）。
 SUBTITLE_BATCH_MAX_ITEMS = 500
 # 单次“批次组”提交路径上限（v0032：一次提交自动拆成多个 <=500 的批次）。

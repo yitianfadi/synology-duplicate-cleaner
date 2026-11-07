@@ -120,6 +120,9 @@ export var ERROR_FALLBACK = {
 // v0028 字幕任务：状态 / 阶段 / 来源 / 写回警告 / 语言（前端共用一份，避免多套映射漂移）
 // ---------------------------------------------------------------------------
 export var SUBTITLE_ACTIVE_STATUS = ['queued', 'running', 'translating'];
+// v0034：真正的“执行中”（不含排队）。任务中心置顶分区/组卡片当前执行只用这个；
+// SUBTITLE_ACTIVE_STATUS 仍用于轮询判断（排队中的任务也要继续轮询）。
+export var SUBTITLE_RUNNING_STATUS = ['running', 'translating'];
 export var SUBTITLE_STATUS_LABEL = {
   queued: '排队中', running: '识别中', translating: '翻译中',
   paused: '已暂停', done: '已完成', failed: '失败', cancelled: '已取消'
@@ -197,6 +200,8 @@ export var DEFAULT_SETTINGS = {
   // v0028 目录批量字幕默认值（与后端 settings.DEFAULT_SETTINGS 对齐）
   subtitle_output_mode: 'alongside_video',
   subtitle_skip_existing: true,
-  subtitle_job_limit: 200
+  subtitle_job_limit: 200,
+  // v0034：同时执行的字幕任务数（1..4，默认 1 串行；服务启动时读取，修改后需重启生效）
+  subtitle_concurrency: 1
 };
 export var SIZE_UNITS = { kb: 1024, mb: 1048576, gb: 1073741824 };

@@ -88,6 +88,9 @@ DEFAULT_SETTINGS = {
     "subtitle_output_mode": config.SUBTITLE_DEFAULT_OUTPUT_MODE,
     "subtitle_skip_existing": True,
     "subtitle_job_limit": config.SUBTITLE_JOB_LIMIT_DEFAULT,
+    # v0034：同时执行的字幕任务数（默认 1 = 串行，与历史行为一致）；
+    # 服务启动时读取，修改后需重启套件生效（与 subtitle_job_limit 一致）。
+    "subtitle_concurrency": config.SUBTITLE_DEFAULT_CONCURRENCY,
 }
 
 # 密钥键：GET/日志/审计/扫描结果中绝不允许出现明文
@@ -365,6 +368,8 @@ def _normalize_value(key, value):
         return _check_bool(key, value)
     if key == "subtitle_job_limit":
         return _check_int(key, value, 20, 1000)
+    if key == "subtitle_concurrency":
+        return _check_int(key, value, 1, config.SUBTITLE_CONCURRENCY_MAX)
     if key == "skip_symlinks":
         # 无论前端传什么，符号链接一律跳过（安全强制）
         if not isinstance(value, bool):

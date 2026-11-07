@@ -113,6 +113,72 @@ class FakeCloudHandler(http.server.BaseHTTPRequestHandler):
             return
         self._send(404, {"error": "not found"})
 
+    def _handle_transcription(self, server, body):
+        """ASR 转写请求处理（v0034：独立方法便于统计并发 in-flight 请求）。"""
+        server.asr_calls += 1
+        server.audio_sizes.append(len(body))
+        server.authorizations.append(self.headers.get("Authorization") or "")
+        filename_match = re.search(rb'filename="([^"]*)"', body[:4000])
+        server.upload_filenames.append(
+            filename_match.group(1).decode("utf-8", "replace")
+            if filename_match else "")
+        type_match = re.search(rb"Content-Type:\s*([^\r\n]+)", body[:4000])
+        server.upload_content_types.append(
+            type_match.group(1).decode("utf-8", "replace").strip()
+            if type_match else "")
+        if server.asr_delay:
+            time.sleep(float(server.asr_delay))
+        mode = server.asr_mode
+        if mode == "401":
+            self._send(401, {"error": {"message": "invalid key"}})
+            return
+        if mode == "429_twice" and server.asr_calls <= 2:
+            self._send(429, {"error": {"message": "rate limit"}})
+            return
+        if mode == "500_twice" and server.asr_calls <= 2:
+            self._send(500, {"error": {"message": "server error"}})
+            return
+        if mode == "timeout":
+            time.sleep(2.0)
+            self._send(200, {"segments": []})
+            return
+        if mode == "srt":
+            self._send_raw(200, SRT_RESPONSE, "text/plain")
+            return
+        if mode == "no_timestamps":
+            self._send(200, {"text": "plain transcript without timeline"})
+            return
+        if mode == "wlk":
+            # WhisperLiveKit REST verbose_json（含 task/duration/text，多余字段
+            # 我们的解析应忽略；segments 用于生成字幕）。
+            self._send(200, {
+                "task": "transcribe", "language": "en",
+                "duration": 7.16, "text": "Hello world",
+                "segments": [
+                    {"id": 0, "start": 0.0, "end": 1.0,
+                     "text": "Hello world"},
+                    {"id": 1, "start": 1.0, "end": 2.0,
+                     "text": "Second line"}],
+                "usage": {"type": "duration", "seconds": 7},
+            })
+            return
+        if mode == "wlk_empty":
+            # 静音音频在 WLK 上返回空 segments，但仍是 verbose_json 结构。
+            self._send(200, {
+                "task": "transcribe", "language": "en",
+                "duration": 1.0, "text": "", "segments": [],
+                "usage": {"type": "duration", "seconds": 1},
+            })
+            return
+        prefix = getattr(server, "asr_text_prefix", "chunk-cue")
+        payload = {"segments": [
+            {"start": 0.0, "end": 5.0,
+             "text": "%s-%d" % (prefix, server.asr_calls)},
+            {"start": 5.0, "end": 9.0,
+             "text": "%s-%d-b" % (prefix, server.asr_calls)},
+        ]}
+        self._send(200, payload)
+
     def do_POST(self):
         server = self.server
         try:
@@ -122,67 +188,16 @@ class FakeCloudHandler(http.server.BaseHTTPRequestHandler):
         body = self.rfile.read(length)
         path = self.path.split("?")[0]
         if path.endswith("/audio/transcriptions"):
-            server.asr_calls += 1
-            server.audio_sizes.append(len(body))
-            server.authorizations.append(self.headers.get("Authorization") or "")
-            filename_match = re.search(rb'filename="([^"]*)"', body[:4000])
-            server.upload_filenames.append(
-                filename_match.group(1).decode("utf-8", "replace")
-                if filename_match else "")
-            type_match = re.search(rb"Content-Type:\s*([^\r\n]+)", body[:4000])
-            server.upload_content_types.append(
-                type_match.group(1).decode("utf-8", "replace").strip()
-                if type_match else "")
-            mode = server.asr_mode
-            if mode == "401":
-                self._send(401, {"error": {"message": "invalid key"}})
-                return
-            if mode == "429_twice" and server.asr_calls <= 2:
-                self._send(429, {"error": {"message": "rate limit"}})
-                return
-            if mode == "500_twice" and server.asr_calls <= 2:
-                self._send(500, {"error": {"message": "server error"}})
-                return
-            if mode == "timeout":
-                time.sleep(2.0)
-                self._send(200, {"segments": []})
-                return
-            if mode == "srt":
-                self._send_raw(200, SRT_RESPONSE, "text/plain")
-                return
-            if mode == "no_timestamps":
-                self._send(200, {"text": "plain transcript without timeline"})
-                return
-            if mode == "wlk":
-                # WhisperLiveKit REST verbose_json（含 task/duration/text，多余字段
-                # 我们的解析应忽略；segments 用于生成字幕）。
-                self._send(200, {
-                    "task": "transcribe", "language": "en",
-                    "duration": 7.16, "text": "Hello world",
-                    "segments": [
-                        {"id": 0, "start": 0.0, "end": 1.0,
-                         "text": "Hello world"},
-                        {"id": 1, "start": 1.0, "end": 2.0,
-                         "text": "Second line"}],
-                    "usage": {"type": "duration", "seconds": 7},
-                })
-                return
-            if mode == "wlk_empty":
-                # 静音音频在 WLK 上返回空 segments，但仍是 verbose_json 结构。
-                self._send(200, {
-                    "task": "transcribe", "language": "en",
-                    "duration": 1.0, "text": "", "segments": [],
-                    "usage": {"type": "duration", "seconds": 1},
-                })
-                return
-            prefix = getattr(server, "asr_text_prefix", "chunk-cue")
-            payload = {"segments": [
-                {"start": 0.0, "end": 5.0,
-                 "text": "%s-%d" % (prefix, server.asr_calls)},
-                {"start": 5.0, "end": 9.0,
-                 "text": "%s-%d-b" % (prefix, server.asr_calls)},
-            ]}
-            self._send(200, payload)
+            # v0034：统计并发 ASR 请求数（验证 subtitle_concurrency 是否真并行）。
+            with server.asr_lock:
+                server.asr_inflight += 1
+                if server.asr_inflight > server.asr_max_inflight:
+                    server.asr_max_inflight = server.asr_inflight
+            try:
+                self._handle_transcription(server, body)
+            finally:
+                with server.asr_lock:
+                    server.asr_inflight -= 1
             return
         if path.endswith("/chat/completions"):
             server.llm_calls += 1
@@ -229,6 +244,11 @@ class FakeCloudServer(object):
         self.httpd.llm_mode = "ok"
         self.httpd.asr_calls = 0
         self.httpd.llm_calls = 0
+        # v0034：并发 ASR 统计（验证 subtitle_concurrency 真并行/默认串行）
+        self.httpd.asr_lock = threading.Lock()
+        self.httpd.asr_inflight = 0
+        self.httpd.asr_max_inflight = 0
+        self.httpd.asr_delay = 0.0
         self.httpd.audio_sizes = []
         self.httpd.authorizations = []
         self.httpd.upload_filenames = []
@@ -408,6 +428,21 @@ class SubtitleSettingsTest(unittest.TestCase):
         ]:
             with self.assertRaises(Exception, msg=str(item)):
                 settings_module.validate_patch(item)
+
+    def test_subtitle_concurrency_settings(self):
+        # v0034：默认 1（与历史串行行为一致），范围 1..4，拒绝 bool/字符串/浮点。
+        defaults = settings_module.default_settings()
+        self.assertEqual(defaults["subtitle_concurrency"], 1)
+        for value in (1, 2, 4):
+            patch = settings_module.validate_patch(
+                {"subtitle_concurrency": value})
+            self.assertEqual(patch["subtitle_concurrency"], value)
+        for value in (0, 5, -1, True, False, "2", "1", 2.0, 2.5, None, [2]):
+            with self.assertRaises(ApiError, msg=repr(value)):
+                settings_module.validate_patch({"subtitle_concurrency": value})
+        public = settings_module.public_settings(
+            {"subtitle_concurrency": 2})
+        self.assertEqual(public["subtitle_concurrency"], 2)
 
     def test_public_settings_masks_secrets(self):
         current = {"subtitle_asr_api_key": "ABC", "subtitle_llm_api_key": ""}
@@ -812,6 +847,236 @@ class SubtitleServiceTest(SubtitleTestBase):
                 self.service.get_file(job["job_id"], bad)
 
 
+class SubtitleConcurrencyTest(SubtitleTestBase):
+    """v0034：subtitle_concurrency（默认 1 串行；2 时真并行；shutdown 全部退出）。"""
+
+    def setUp(self):
+        SubtitleTestBase.setUp(self)
+        self._extra_services = []
+
+    def tearDown(self):
+        for service in self._extra_services:
+            try:
+                service.shutdown(timeout=5)
+            except Exception:
+                pass
+        SubtitleTestBase.tearDown(self)
+
+    def _new_service(self, **settings_overrides):
+        if settings_overrides:
+            self._configure_settings(**settings_overrides)
+        service = subtitles.SubtitleService(
+            self.harness.config, self.harness.services.store,
+            self.harness.services.shares,
+            self.harness.services.settings.get,
+            client=subtitles.OpenAIClient(retry_delay=0.01),
+            ffmpeg=video_similarity.FFmpegTool(cmd=self.ffmpeg_cmd))
+        self._extra_services.append(service)
+        return service
+
+    def _submit_videos(self, service, count, duration=60.0):
+        job_ids = []
+        for index in range(count):
+            video = self.make_video(
+                name="conc-%d-%d.mp4" % (index, int(time.time() * 1000)),
+                duration=duration)
+            payload = {"path": video, "language": "auto", "translate": False,
+                       "confirm_cloud": True}
+            job_ids.append(service.submit("admin", payload)["job_id"])
+        return job_ids
+
+    def _wait_done(self, service, job_id, timeout=60.0):
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            job = service.get(job_id)
+            if job["status"] in ("done", "failed", "cancelled"):
+                return job
+            time.sleep(0.02)
+        raise AssertionError("subtitle job %s did not finish" % job_id)
+
+    def _watch_active_peak(self, service, job_ids, interval=0.01):
+        """后台轮询同时处于 running/translating 的任务数，返回 (stop, peak, thread)。"""
+        stop = threading.Event()
+        peak = [0]
+
+        def watch():
+            while not stop.is_set():
+                active = 0
+                for job_id in job_ids:
+                    try:
+                        status = service.get(job_id)["status"]
+                    except Exception:
+                        continue
+                    if status in ("running", "translating"):
+                        active += 1
+                if active > peak[0]:
+                    peak[0] = active
+                time.sleep(interval)
+
+        thread = threading.Thread(target=watch, daemon=True)
+        thread.start()
+        return stop, peak, thread
+
+    def test_default_concurrency_is_one_and_serial(self):
+        service = self._new_service()
+        self.assertEqual(service.concurrency, 1)
+        self.cloud.httpd.asr_delay = 0.3
+        job_ids = self._submit_videos(service, 2)
+        stop, peak, watcher = self._watch_active_peak(service, job_ids)
+        try:
+            for job_id in job_ids:
+                self.assertEqual(self._wait_done(service, job_id)["status"],
+                                 "done")
+        finally:
+            stop.set()
+            watcher.join(timeout=5)
+        # 同时处于 running/translating 的峰值只能是 1（串行）；ASR 也不重叠。
+        self.assertEqual(peak[0], 1)
+        self.assertEqual(self.cloud.httpd.asr_max_inflight, 1)
+
+    def test_concurrency_two_runs_parallel(self):
+        service = self._new_service(subtitle_concurrency=2)
+        self.assertEqual(service.concurrency, 2)
+        # 阻塞式 fake transcribe：第一个 ASR 请求等待第二个也进入 ASR，确保断言
+        # 的是“两个任务同时执行”而不是总耗时（机器慢也不会偶发通过/失败）。
+        real_transcribe = service.client.transcribe
+        gate = threading.Event()
+        state = {"entered": 0, "peak": 0}
+        state_lock = threading.Lock()
+
+        def blocking_transcribe(*args, **kwargs):
+            with state_lock:
+                state["entered"] += 1
+                if state["entered"] > state["peak"]:
+                    state["peak"] = state["entered"]
+                first = state["entered"] == 1
+            if first:
+                if not gate.wait(10.0):
+                    raise subtitles.SubtitleError(
+                        "TEST_PARALLEL_TIMEOUT",
+                        u"第二个任务未并行进入 ASR")
+            else:
+                gate.set()
+            try:
+                return real_transcribe(*args, **kwargs)
+            finally:
+                with state_lock:
+                    state["entered"] -= 1
+
+        service.client.transcribe = blocking_transcribe
+        job_ids = self._submit_videos(service, 2)
+        stop, peak, watcher = self._watch_active_peak(service, job_ids)
+        try:
+            for job_id in job_ids:
+                done = self._wait_done(service, job_id)
+                self.assertEqual(done["status"], "done", done.get("error"))
+        finally:
+            stop.set()
+            watcher.join(timeout=5)
+        # 两个任务必须真正同时处于 running（状态峰值 2）且 ASR 客户端并发 2。
+        self.assertEqual(peak[0], 2)
+        self.assertEqual(state["peak"], 2)
+        # 完成状态先于 worker 的 finally 清理，给一个短暂宽限避免竞态误判。
+        deadline = time.time() + 5.0
+        while service._active_ids and time.time() < deadline:
+            time.sleep(0.01)
+        self.assertEqual(len(service._active_ids), 0)
+
+    def test_shutdown_stops_all_worker_threads(self):
+        service = self._new_service(subtitle_concurrency=2)
+        service._ensure_worker()
+        self.assertEqual(len(service._workers), 2)
+        self.assertTrue(all(worker.is_alive() for worker in service._workers))
+        service.shutdown(timeout=5)
+        self.assertTrue(service._stopping)
+        self.assertTrue(all(not worker.is_alive()
+                            for worker in service._workers))
+
+
+class SubtitleListFilterTest(SubtitleTestBase):
+    """v0034：任务列表 status 过滤（all/active/单状态/非法）。"""
+
+    STATUSES = ("queued", "running", "translating", "paused", "done",
+                "failed", "cancelled")
+
+    def _register(self, index, status):
+        job_id = "sub-20260101-%06d-%06x" % (index, index + 1)
+        job = subtitles.SubtitleJob(
+            job_id, os.path.join(self.root, "f%02d.mp4" % index), "auto",
+            False, "", "admin", skip_existing=False)
+        job.status = status
+        job.stage = "asr"
+        job.progress = 30 if status in ("running", "translating") else 100
+        job.message = status
+        job.created_epoch = 1000.0 + index
+        job.updated_epoch = job.created_epoch
+        self.service._register_job(job, enqueue=False)
+        return job_id
+
+    def setUp(self):
+        SubtitleTestBase.setUp(self)
+        self.ids = {}
+        for index, status in enumerate(self.STATUSES):
+            self.ids[status] = self._register(index, status)
+
+    def _ids(self, jobs):
+        return sorted(item["job_id"] for item in jobs)
+
+    def test_list_status_filter(self):
+        active = self.service.list(status="active")
+        self.assertEqual(self._ids(active),
+                         sorted([self.ids["running"],
+                                 self.ids["translating"]]))
+        self.assertEqual(self._ids(self.service.list(status="queued")),
+                         [self.ids["queued"]])
+        self.assertEqual(self._ids(self.service.list(status="done")),
+                         [self.ids["done"]])
+        self.assertEqual(self._ids(self.service.list(status="failed")),
+                         [self.ids["failed"]])
+        self.assertEqual(self._ids(self.service.list(status=" ACTIVE ")),
+                         sorted([self.ids["running"],
+                                 self.ids["translating"]]))
+        for value in (None, "", "all"):
+            self.assertEqual(len(self.service.list(status=value)), 7)
+        self.assertEqual(len(self.service.list()), 7)
+
+    def test_list_page_status_filter_total(self):
+        page = self.service.list_page(status="active")
+        self.assertEqual(page["total"], 2)
+        self.assertEqual(len(page["jobs"]), 2)
+        page = self.service.list_page(status="done")
+        self.assertEqual(page["total"], 1)
+        self.assertEqual(self._ids(page["jobs"]), [self.ids["done"]])
+        # 未过滤时 total 仍是全部任务
+        self.assertEqual(self.service.list_page()["total"], 7)
+
+    def test_list_status_filter_comma_combines(self):
+        # v0034：“失败”筛选包含已取消任务（status=failed,cancelled）
+        jobs = self.service.list(status="failed,cancelled")
+        self.assertEqual(self._ids(jobs),
+                         sorted([self.ids["failed"], self.ids["cancelled"]]))
+        page = self.service.list_page(status="done, ACTIVE", limit=50)
+        self.assertEqual(page["total"], 3)
+        self.assertEqual(
+            self._ids(page["jobs"]),
+            sorted([self.ids["done"], self.ids["running"],
+                    self.ids["translating"]]))
+        for value in ("bogus,failed", "all,failed", "active,bogus", ","):
+            with self.assertRaises(ApiError):
+                self.service.list(status=value)
+
+    def test_invalid_status_rejected(self):
+        for service_call in (
+                lambda: self.service.list(status="bogus"),
+                lambda: self.service.list_page(status="bogus"),
+                lambda: self.service.list(status=123),
+                lambda: self.service.list_page(status=["active"])):
+            with self.assertRaises(ApiError) as ctx:
+                service_call()
+            self.assertEqual(ctx.exception.code, "INVALID_ARGUMENT")
+            self.assertEqual(ctx.exception.details.get("key"), "status")
+
+
 class SubtitleBatchGroupTest(SubtitleTestBase):
     """v0032：批次组（一次提交自动拆批、聚合进度、控制与保留策略）。"""
 
@@ -903,6 +1168,127 @@ class SubtitleBatchGroupTest(SubtitleTestBase):
         self.assertEqual(ctx.exception.code, "NOT_FOUND")
         self.assertEqual(self.service.get_batch_group(
             second["group_id"])["status"], "done")
+
+
+class SubtitleGroupSnapshotTest(SubtitleTestBase):
+    """v0034：批次组快照 active_jobs / eta_seconds / concurrency。"""
+
+    GROUP_ID = "grp-20260101-000000-abcdef"
+    BATCH_ID = "bat-20260101-000000-abcdef"
+
+    def _make_job(self, index, status, created, skipped=False):
+        job_id = "sub-20260101-%06d-%06x" % (index, index + 1)
+        job = subtitles.SubtitleJob(
+            job_id, os.path.join(self.root, "g%02d.mp4" % index), "auto",
+            False, "", "admin", group_id=self.GROUP_ID, skip_existing=False)
+        job.status = status
+        job.stage = "asr"
+        job.progress = 30 if status in ("running", "translating") else 100
+        job.message = u"执行中" if status in ("running", "translating") else u""
+        job.skipped = skipped
+        job.created_epoch = float(created)
+        job.updated_epoch = float(created + 1)
+        if status in ("running", "translating"):
+            job.chunk_index = 1
+            job.chunk_total = 4
+        self.service._register_job(job, enqueue=False)
+        return job
+
+    def _save_group(self, jobs):
+        now = time.time()
+        self.service._save_batch_record({
+            "batch_id": self.BATCH_ID,
+            "group_id": self.GROUP_ID,
+            "created_epoch": now,
+            "updated_epoch": now,
+            "user": "admin",
+            "options": {},
+            "job_ids": [job.job_id for job in jobs],
+            "rejected": [],
+            "duplicates": [],
+        })
+        return {
+            "group_id": self.GROUP_ID,
+            "created_epoch": now,
+            "updated_epoch": now,
+            "user": "admin",
+            "options": {},
+            "batch_ids": [self.BATCH_ID],
+            "rejected": [],
+            "duplicates": [],
+        }
+
+    def test_snapshot_active_jobs_and_eta(self):
+        # 组在 400 秒前开始：4 个非 skipped done（吞吐 100s/个）、1 个 skipped done、
+        # 2 个 queued、1 个 running、1 个 translating → 剩余 4 个，ETA≈400s。
+        base = time.time() - 400.0
+        jobs = []
+        index = 0
+        for _ in range(4):
+            jobs.append(self._make_job(index, "done", base))
+            index += 1
+        jobs.append(self._make_job(index, "done", base, skipped=True))
+        index += 1
+        for _ in range(2):
+            jobs.append(self._make_job(index, "queued", base + index))
+            index += 1
+        jobs.append(self._make_job(index, "running", base + index))
+        index += 1
+        jobs.append(self._make_job(index, "translating", base + index))
+        snapshot = self.service._group_snapshot(self._save_group(jobs))
+        self.assertEqual(snapshot["total"], 9)
+        self.assertEqual(snapshot["finished"], 5)
+        self.assertEqual(snapshot["concurrency"], 1)
+        expected = int(round((time.time() - base) / 4.0 * 4 / 1))
+        self.assertIsInstance(snapshot["eta_seconds"], int)
+        self.assertLessEqual(abs(snapshot["eta_seconds"] - expected), 2)
+        active = snapshot["active_jobs"]
+        self.assertEqual([item["status"] for item in active],
+                         ["running", "translating"])
+        for item in active:
+            for key in ("job_id", "name", "path", "status", "stage",
+                        "progress", "message", "chunk_index", "chunk_total",
+                        "updated_at"):
+                self.assertIn(key, item)
+            self.assertTrue(item["name"].endswith(".mp4"))
+            self.assertEqual(item["chunk_total"], 4)
+
+    def test_snapshot_eta_none_when_insufficient_or_invalid(self):
+        base = time.time() - 20.0
+        jobs = [self._make_job(0, "done", base),
+                self._make_job(1, "done", base)]
+        snapshot = self.service._group_snapshot(self._save_group(jobs))
+        self.assertEqual(snapshot["total"], 2)
+        self.assertEqual(snapshot["finished"], 2)
+        self.assertIsNone(snapshot["eta_seconds"])
+        self.assertEqual(snapshot["active_jobs"], [])
+        # 起点在未来（elapsed<=0）→ None
+        future = time.time() + 100.0
+        jobs = [self._make_job(0, "done", future),
+                self._make_job(1, "done", future),
+                self._make_job(2, "done", future)]
+        snapshot = self.service._group_snapshot(self._save_group(jobs))
+        self.assertIsNone(snapshot["eta_seconds"])
+
+    def test_real_group_snapshot_fields(self):
+        videos = [self.make_video("rt%d.mp4" % index, duration=60)
+                  for index in range(4)]
+        group = self.service.create_batch_group("admin", {
+            "paths": videos, "language": "auto", "translate": False,
+            "confirm_cloud": True})
+        deadline = time.time() + 60
+        snapshot = group
+        while time.time() < deadline:
+            snapshot = self.service.get_batch_group(group["group_id"])
+            if snapshot["status"] in ("done", "failed", "cancelled"):
+                break
+            time.sleep(0.02)
+        self.assertEqual(snapshot["status"], "done", snapshot.get("counts"))
+        self.assertEqual(snapshot["concurrency"], 1)
+        self.assertEqual(snapshot["active_jobs"], [])
+        # 全部完成 → 剩余 0，ETA 为 0（int），不再继续增长。
+        self.assertIs(type(snapshot["eta_seconds"]), int)
+        self.assertEqual(snapshot["eta_seconds"], 0)
 
 
 class SubtitleProbeTest(SubtitleTestBase):
@@ -1298,6 +1684,46 @@ class SubtitleApiTest(SubtitleTestBase):
             "POST", "/api/subtitles/%s/cancel" % job_id, {}, csrf=self.csrf)
         self.assertEqual(status, 200)
         self.assertIn(payload["job"]["status"], ("running", "cancelled"))
+
+    def test_list_subtitles_status_filter_and_meta(self):
+        # 直接登记任务，避免真实执行（只验证列表过滤与返回形状）。
+        for index, status in enumerate(("done", "done", "queued")):
+            job = subtitles.SubtitleJob(
+                "sub-20260101-%06d-%06x" % (index, index + 1),
+                os.path.join(self.root, "api-filter-%d.mp4" % index),
+                "auto", False, "", "admin", skip_existing=False)
+            job.status = status
+            job.created_epoch = 1000.0 + index
+            job.updated_epoch = job.created_epoch
+            self.service._register_job(job, enqueue=False)
+        status, _headers, payload = self.client.json(
+            "GET", "/api/subtitles?status=done")
+        self.assertEqual(status, 200, payload)
+        # offset=0 且无 group_id：保持旧 {ok, jobs} 形状（不含 total）
+        self.assertIn("jobs", payload)
+        self.assertNotIn("total", payload)
+        self.assertEqual(len(payload["jobs"]), 2)
+        self.assertTrue(all(item["status"] == "done"
+                            for item in payload["jobs"]))
+        status, _headers, payload = self.client.json(
+            "GET", "/api/subtitles?status=active")
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["jobs"], [])
+        # 带 offset 走分页分支：total 为过滤后数量
+        status, _headers, payload = self.client.json(
+            "GET", "/api/subtitles?offset=1&status=queued")
+        self.assertEqual(status, 200, payload)
+        self.assertEqual(payload["total"], 1)
+        self.assertEqual(payload["jobs"], [])
+        status, _headers, payload = self.client.json(
+            "GET", "/api/subtitles?status=bogus")
+        self.assertEqual(status, 400)
+        self.assertEqual(payload["error"]["code"], "INVALID_ARGUMENT")
+        # meta.subtitle 暴露并发上限/缺省值
+        status, _headers, payload = self.client.json("GET", "/api/meta")
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["subtitle"]["concurrency_max"], 4)
+        self.assertEqual(payload["subtitle"]["default_concurrency"], 1)
 
     def test_models_and_test_api(self):
         status, _headers, payload = self.client.json(

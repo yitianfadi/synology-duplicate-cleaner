@@ -1,7 +1,7 @@
 # 实现契约（前后端共享，版本 1.0）
 
 > 本文件是前后端并行开发的唯一接口约定。任何一方需要改动字段，先改本文件并在团队任务中说明。
-> 产品名：**DuplicateCleaner**；显示名：**重复文件清理与字幕**；SPK 版本：**1.1.0-0033**。
+> 产品名：**DuplicateCleaner**；显示名：**重复文件清理与字幕**；SPK 版本：**1.1.0-0034**。
 > v1.1 新增内容相似度模式；相似模式字段与行为见 [SIMILARITY_CONTRACT.md](SIMILARITY_CONTRACT.md)，**精准模式规则不变**。
 
 ## 1. 仓库与写入边界
@@ -66,6 +66,13 @@ v0032 增量：
 - 设置新增 `subtitle_audio_source`（`nas`|`server`，默认 `nas`）：`server` 时 NAS 只流复制抽音轨、由 ASR 服务器解码；失败回退 NAS 并置 `warning=SERVER_AUDIO_FALLBACK`。
 - 删除任务成功后写入 `scan_file_deletions`（schema v7），分组/统计/CSV 读取自动排除已删除文件（详见 `docs/STORAGE_CONTRACT.md`）。
 
+v0034 增量：
+- `GET /api/subtitles` 新增 `status` 过滤（`all|active|queued|running|translating|paused|done|failed|cancelled`，`active` = running+translating）；
+  批次组快照新增 `active_jobs`（执行中任务明细）/`eta_seconds`（估算剩余秒数）/`concurrency`（生效并发）。
+- 设置新增 `subtitle_concurrency`（1..4，默认 1，服务启动时读取，修改后需重启生效）；默认并发 1 与旧行为一致。
+- 重启语义调整：`queued` 字幕任务启动时自动重新入队继续（不再判 `SERVICE_RESTART` 失败），大批次组升级后不丢队列；
+  `running/translating` 有分片转 `paused` 可继续、无分片仍失败。前端任务明细/任务中心把执行中任务置顶并支持状态筛选。
+
 ## 4. 认证
 
 ### POST /api/auth/login（免登录）
@@ -91,7 +98,7 @@ v0032 增量：
 ### GET /api/meta
 ```json
 {
- "app_version": "1.1.0-0033",
+ "app_version": "1.1.0-0034",
  "dsm_version": "7.2.2-72806" | "dev",
  "python_version": "3.8.16",
  "creation_time_supported": true,
@@ -355,4 +362,4 @@ Content-Disposition: attachment; filename="duplicate-scan-<id>.csv"
 - 后端 unittest 覆盖：statx 时间读取降级、哈希分片/限速、重复分组与三种保留策略、
   路径黑名单、删除前重校验、回收站路径生成、CSV、API 鉴权。
 - 前端可用静态检查 + 本地 dev 后端联调；QA 用 dev 模式在临时目录生成重复文件跑完整 API 流程。
-- 打包产物 `dist/DuplicateCleaner-1.1.0-0033.spk` 必须能通过 `tar -tf` 检查，包含 INFO/package.tgz/scripts/conf/ui。
+- 打包产物 `dist/DuplicateCleaner-1.1.0-0034.spk` 必须能通过 `tar -tf` 检查，包含 INFO/package.tgz/scripts/conf/ui。

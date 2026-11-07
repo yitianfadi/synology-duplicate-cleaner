@@ -358,6 +358,9 @@ class Api(object):
                 "enumerate_max_items": config.SUBTITLE_ENUMERATE_MAX_ITEMS,
                 "output_modes": list(config.SUBTITLE_OUTPUT_MODES),
                 "audio_sources": list(config.SUBTITLE_AUDIO_SOURCES),
+                # v0034：字幕并发上限/缺省值（设置 subtitle_concurrency）
+                "concurrency_max": config.SUBTITLE_CONCURRENCY_MAX,
+                "default_concurrency": config.SUBTITLE_DEFAULT_CONCURRENCY,
             },
         })
 
@@ -631,15 +634,20 @@ class Api(object):
         offset = _query_int(request, "offset", 0)
         batch_id = request.query_last("batch_id") or None
         group_id = request.query_last("group_id") or None
+        # v0034：状态过滤（all/active/queued/running/...；非法值由 service 抛 400）
+        status = request.query_last("status") or None
         if group_id is not None or offset:
             page = service.list_page(limit=limit, batch_id=batch_id,
-                                     group_id=group_id, offset=offset)
+                                     group_id=group_id, offset=offset,
+                                     status=status)
             payload = {"ok": True}
             payload.update(page)
             return json_response(payload)
+        # 旧分支保持 {ok, jobs} 形状（offset=0 且无 group_id 时前端依赖）
         return json_response({"ok": True,
                               "jobs": service.list(limit=limit,
-                                                   batch_id=batch_id)})
+                                                   batch_id=batch_id,
+                                                   status=status)})
 
     def _subtitle_control(self, request, session, params):
         service = self._require_subtitle_admin(session)
