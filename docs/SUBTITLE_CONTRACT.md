@@ -16,7 +16,7 @@
 | subtitle_asr_max_audio_mb | 24 | 1..100；超过则强制分块 |
 | subtitle_audio_source | nas | v0032：`nas`=本机解码抽 16k mp3（只上传音频）；`server`=本机仅流复制抽音轨（不解码），由 ASR 服务器解码（仍只上传音频） |
 | subtitle_write_vtt | false | v0033：默认只生成 SRT；`true` 时任务目录额外生成 `.vtt`（写回视频目录始终只写 `.srt`） |
-| subtitle_concurrency | 1 | v0034：同时执行的字幕任务数 1..4，默认 1（串行，最稳）；服务启动时读取，**修改后需重启套件生效** |
+| subtitle_concurrency | 1 | v0034/v0037：同时执行的字幕任务数 1..4，默认 1（串行，最稳）；**保存设置后立即生效**（动态调整 worker，无需重启套件） |
 | subtitle_translate_enabled | false | 是否生成译文 |
 | subtitle_llm_base_url | https://api.openai.com/v1 | http/https |
 | subtitle_llm_api_key | "" | GET 不回传明文 |
@@ -277,7 +277,7 @@ v0028 在 v1.3 单文件任务之上新增**目录批量生成 / 翻译**：独�
 ## 14. v0034 队列恢复、并发与任务可见性
 
 - **重启/升级恢复**：`queued` 任务在服务启动时自动重新入队并开始执行，不再判 `SERVICE_RESTART` 失败——数千任务的批次组升级套件后不会丢队列；`running/translating` 有分片的转 `paused` 可继续，无分片的仍失败并给出 `SERVICE_RESTART`。
-- **并发**：`subtitle_concurrency`（1..4，默认 1）控制同时执行的任务数；服务启动时读取，修改后需重启套件生效；`/api/meta.subtitle.concurrency_max` 给出上限。
+- **并发**：`subtitle_concurrency`（1..4，默认 1）控制同时执行的任务数；v0037 起**保存设置后立即生效**（动态增减 worker，无需重启套件，见 §17）；`/api/meta.subtitle.concurrency_max` 给出上限。
 - **可见性**：`GET /api/subtitles` 支持 `status` 过滤（见 §2）；批次组快照新增 `active_jobs`（执行中任务明细，≤10 条）、`eta_seconds`（按已完成任务平均耗时估算的剩余秒数，样本不足为 `null`）与 `concurrency`（当前生效并发）。
 - **前端**：批次组卡片显示“当前执行：<文件名> · <阶段> · <进度>%”与预计剩余；任务明细顶部固定“执行中”区块并支持状态筛选（全部/执行中/排队/已完成/失败）；任务中心「字幕任务」把执行中任务置顶（先取 `status=active`，再取最近任务）。
 
@@ -306,4 +306,13 @@ v0028 在 v1.3 单文件任务之上新增**目录批量生成 / 翻译**：独�
 - **译文输出组合**：新增设置 `subtitle_translate_outputs`（`both` 默认 / `target_only` / `bilingual_only`），同时作用于任务目录与视频同目录的译文写回；`original.srt` 始终保留（补翻译源文本）。`target_only` 仍生成 `<target>.vtt`（开启 VTT 时）；`bilingual_only` 不生成 `<target>.vtt`。修改设置不删除已写出的旧文件，也从不覆盖已有文件。
 - 前端设置页新增「译文输出组合」下拉；v0035 补翻译任务与普通翻译任务都遵循该设置。
 - 版本 1.1.0-0036；SQLite schema 不变（仍 v7）。
+
+## 17. v0037 字幕并发设置保存后立即生效
+
+- **行为变更**：`subtitle_concurrency`（1..4）不再需要重启套件——`PUT /api/settings` 保存成功后，后端立即按新值调整 worker 池，正在排队/执行的任务马上按新并发调度。
+- **调大**：立即补 worker，排队中的任务无需等待旧任务完成即可并行开始。
+- **调小**：只把多余 worker 标记为待退出，**正在执行的任务不中断**；它们跑完当前任务后线程自行结束。
+- **惰性**：当前没有 worker/排队任务时不会提前起线程，下一次提交任务时按新并发启动。
+- **前端**：设置页「字幕并发任务数」提示改为“保存后立即生效，无需重启套件”。
+- 版本 1.1.0-0037；SQLite schema 不变（仍 v7）；设置键/默认值/校验范围（1..4）均不变，无迁移。
 

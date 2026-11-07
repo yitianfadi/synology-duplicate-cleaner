@@ -1,7 +1,7 @@
 # 实现契约（前后端共享，版本 1.0）
 
 > 本文件是前后端并行开发的唯一接口约定。任何一方需要改动字段，先改本文件并在团队任务中说明。
-> 产品名：**DuplicateCleaner**；显示名：**重复文件清理与字幕**；SPK 版本：**1.1.0-0036**。
+> 产品名：**DuplicateCleaner**；显示名：**重复文件清理与字幕**；SPK 版本：**1.1.0-0037**。
 > v1.1 新增内容相似度模式；相似模式字段与行为见 [SIMILARITY_CONTRACT.md](SIMILARITY_CONTRACT.md)，**精准模式规则不变**。
 
 ## 1. 仓库与写入边界
@@ -72,7 +72,7 @@ v0032 增量：
 v0034 增量：
 - `GET /api/subtitles` 新增 `status` 过滤（`all|active|queued|running|translating|paused|done|failed|cancelled`，`active` = running+translating）；
   批次组快照新增 `active_jobs`（执行中任务明细）/`eta_seconds`（估算剩余秒数）/`concurrency`（生效并发）。
-- 设置新增 `subtitle_concurrency`（1..4，默认 1，服务启动时读取，修改后需重启生效）；默认并发 1 与旧行为一致。
+- 设置新增 `subtitle_concurrency`（1..4，默认 1；v0037 起**保存设置后立即生效**，动态调整 worker，无需重启套件）；默认并发 1 与旧行为一致。
 - 重启语义调整：`queued` 字幕任务启动时自动重新入队继续（不再判 `SERVICE_RESTART` 失败），大批次组升级后不丢队列；
   `running/translating` 有分片转 `paused` 可继续、无分片仍失败。前端任务明细/任务中心把执行中任务置顶并支持状态筛选。
 
@@ -92,6 +92,11 @@ v0036 增量（语言码与译文输出组合）：
   `original.srt` 始终保留；`target_only` 仍生成 `<target>.vtt`，`bilingual_only` 不生成 `<target>.vtt`；不删除旧文件、不覆盖已有文件。
 - 设置页 ASR 识别语言/翻译目标语言下拉扩展到常见 19 种语言码；API 设置的其它合法语言码在保存设置时不再被重置（后端 `LANGUAGE_RE` 规则不变）。
 - 无新增接口/错误码；SQLite schema 仍 v7。
+
+v0037 增量（字幕并发设置保存后立即生效）：
+- `subtitle_concurrency`（1..4，默认 1）不再需要重启套件：`PUT /api/settings` 保存成功后立即按新值调整 worker 池。
+- 调大并发 → 立即补 worker 消化排队任务；调小 → 多余 worker 在任务边界退出，正在执行的任务不中断。
+- 无新增接口/错误码；请求/响应结构不变；SQLite schema 仍 v7。
 
 
 ## 4. 认证
@@ -119,7 +124,7 @@ v0036 增量（语言码与译文输出组合）：
 ### GET /api/meta
 ```json
 {
- "app_version": "1.1.0-0036",
+ "app_version": "1.1.0-0037",
  "dsm_version": "7.2.2-72806" | "dev",
  "python_version": "3.8.16",
  "creation_time_supported": true,
@@ -383,4 +388,4 @@ Content-Disposition: attachment; filename="duplicate-scan-<id>.csv"
 - 后端 unittest 覆盖：statx 时间读取降级、哈希分片/限速、重复分组与三种保留策略、
   路径黑名单、删除前重校验、回收站路径生成、CSV、API 鉴权。
 - 前端可用静态检查 + 本地 dev 后端联调；QA 用 dev 模式在临时目录生成重复文件跑完整 API 流程。
-- 打包产物 `dist/DuplicateCleaner-1.1.0-0036.spk` 必须能通过 `tar -tf` 检查，包含 INFO/package.tgz/scripts/conf/ui。
+- 打包产物 `dist/DuplicateCleaner-1.1.0-0037.spk` 必须能通过 `tar -tf` 检查，包含 INFO/package.tgz/scripts/conf/ui。

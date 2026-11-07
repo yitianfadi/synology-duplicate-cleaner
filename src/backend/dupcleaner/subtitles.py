@@ -864,11 +864,22 @@ def make_group_id():
     return "grp-" + time.strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:6]
 
 
+def _clamp_concurrency(value):
+    """把设置里的 subtitle_concurrency 规范到 1..MAX（非法值回退默认 1）。"""
+    try:
+        concurrency = int(value or config.SUBTITLE_DEFAULT_CONCURRENCY)
+    except (TypeError, ValueError):
+        concurrency = config.SUBTITLE_DEFAULT_CONCURRENCY
+    return max(1, min(concurrency, config.SUBTITLE_CONCURRENCY_MAX))
+
+
 class SubtitleService(object):
     """异步字幕任务服务：默认同一时间跑 1 个任务，其余排队。
 
-    v0034：并发数由设置 subtitle_concurrency（1..4）在启动时读取；默认 1
-    保持历史串行行为。多个 worker 共享同一个任务队列，暂停/取消语义不变。
+    v0034：并发数由设置 subtitle_concurrency（1..4）控制；默认 1 保持历史
+    串行行为。多个 worker 共享同一个任务队列，暂停/取消语义不变。
+    v0037：设置保存后由 apply_settings() 立即调整 worker 数，无需重启套件；
+    调小并发不打断正在执行的任务，多余 worker 跑完当前任务后自动退出。
     """
 
     def __init__(self, runtime_config, store, share_service, settings_provider,
@@ -901,14 +912,10 @@ class SubtitleService(object):
             self.job_limit = max(20, int(job_limit or MAX_JOBS))
         except (TypeError, ValueError):
             self.job_limit = MAX_JOBS
-        # v0034：并发数（1..MAX）在启动时读取，clamp 到合法范围；设置变更需重启生效。
-        try:
-            concurrency = int(current_settings.get("subtitle_concurrency")
-                              or config.SUBTITLE_DEFAULT_CONCURRENCY)
-        except (TypeError, ValueError):
-            concurrency = config.SUBTITLE_DEFAULT_CONCURRENCY
-        self.concurrency = max(1, min(concurrency,
-                                      config.SUBTITLE_CONCURRENCY_MAX))
+        # v0034/v0037：并发数（1..MAX）从设置读取并 clamp；之后设置保存时
+        # 由 apply_settings() 立即调整（无需重启）。
+        self.concurrency = _clamp_concurrency(
+            current_settings.get("subtitle_concurrency"))
         self._root = os.path.join(runtime_config.data_dir, "subtitles")
         self._jobs_dir = os.path.join(self._root, "jobs")
         self._batches_dir = os.path.join(self._root, "batches")
@@ -923,7 +930,8 @@ class SubtitleService(object):
         self._jobs = {}
         self._queue = deque()
         self._active_ids = set()
-        self._workers = []
+        self._workers = []       # 当前生效的 worker 线程
+        self._retiring = set()   # 调小并发后待退出的线程（跑完当前任务退出）
         self._stopping = False
         # v0032：单任务 LRU 的惰性开关（大批次组注册时避免 O(n²) 扫描）。
         self._trim_needed = False
@@ -938,6 +946,28 @@ class SubtitleService(object):
         # v0034：重启后只要还有排队任务就自动拉起 worker（升级/重启不丢队列）。
         if self._queue:
             self._ensure_worker()
+
+    def apply_settings(self, settings=None):
+        """v0037：立即应用 subtitle_concurrency（保存设置后生效，无需重启套件）。
+
+        调大并发 → 立即补 worker 消化排队任务；调小 → 只把多余 worker 标记为
+        待退出，正在执行的任务不中断，跑完当前任务后线程自行结束。
+        """
+        if settings is None:
+            try:
+                settings = self._settings() or {}
+            except Exception:
+                settings = {}
+        if not isinstance(settings, dict):
+            settings = {}
+        concurrency = _clamp_concurrency(settings.get("subtitle_concurrency"))
+        with self._lock:
+            changed = concurrency != self.concurrency
+            self.concurrency = concurrency
+            # 没有 worker/排队任务时保持惰性：下一次 submit 会按新并发起线程。
+            if changed and (self._workers or self._retiring or self._queue):
+                self._sync_workers_locked()
+        return concurrency
 
     # ------------------------------------------------------------------
     # 持久化 / 查询
@@ -2930,35 +2960,59 @@ class SubtitleService(object):
                 # queued 任务保持排队：重启后自动重新入队执行（不再判失败）
             self._cond.notify_all()
             workers = list(self._workers)
+            workers.extend(item for item in self._retiring
+                           if item not in workers)
         for worker in workers:
             if worker is not None and worker.is_alive():
                 worker.join(timeout=max(0.1, float(timeout)))
         with self._lock:
             self._workers = [item for item in self._workers
                              if item.is_alive()]
+            self._retiring = {item for item in self._retiring
+                              if item.is_alive()}
 
     # ------------------------------------------------------------------
     # 队列 worker
     # ------------------------------------------------------------------
     def _ensure_worker(self):
-        """把 worker 数补齐到 self.concurrency（剔除已退出的线程）。"""
+        """把 worker 数调整到 self.concurrency（剔除已退出线程、补新线程）。"""
         with self._lock:
             if self._stopping:
                 return
-            self._workers = [item for item in self._workers
-                             if item is not None and item.is_alive()]
-            while len(self._workers) < self.concurrency:
-                worker = threading.Thread(target=self._worker_loop,
-                                          name="subtitles", daemon=True)
-                self._workers.append(worker)
-                worker.start()
+            self._sync_workers_locked()
+
+    def _sync_workers_locked(self):
+        """按 self.concurrency 调整 worker 池（调用方需持有 self._lock）。
+
+        v0037：多余的线程移入 self._retiring，由线程自身在任务边界退出；
+        调小并发不会打断正在执行的 ASR/翻译任务。
+        """
+        self._workers = [item for item in self._workers
+                         if item is not None and item.is_alive()]
+        self._retiring = {item for item in self._retiring
+                          if item is not None and item.is_alive()}
+        if len(self._workers) > self.concurrency:
+            for worker in self._workers[self.concurrency:]:
+                self._retiring.add(worker)
+            self._workers = self._workers[:self.concurrency]
+        while len(self._workers) < self.concurrency:
+            worker = threading.Thread(target=self._worker_loop,
+                                      name="subtitles", daemon=True)
+            self._workers.append(worker)
+            worker.start()
+        self._cond.notify_all()
 
     def _worker_loop(self):
+        me = threading.current_thread()
         while True:
             with self._lock:
-                while not self._queue and not self._stopping:
+                while (not self._queue and not self._stopping
+                       and me not in self._retiring):
                     self._cond.wait(timeout=0.5)
-                if self._stopping:
+                if self._stopping or me in self._retiring:
+                    # v0037：调小并发后，多余 worker 在任务边界退出
+                    self._retiring.discard(me)
+                    self._cond.notify_all()
                     return
                 job_id = self._queue.popleft()
                 self._active_ids.add(job_id)

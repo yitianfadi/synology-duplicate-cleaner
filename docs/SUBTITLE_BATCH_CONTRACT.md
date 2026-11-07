@@ -26,7 +26,7 @@
 | subtitle_output_mode | "alongside_video" | `alongside_video` / `download_only`；其它值拒绝 |
 | subtitle_skip_existing | true | 布尔；目标 srt 已存在时跳过该视频 |
 | subtitle_job_limit | 200 | 20..1000；已完成任务保留上限（LRU 只删任务目录，不删视频旁 srt）；**修改后需重启套件生效**（服务启动时读取） |
-| subtitle_concurrency | 1 | 1..4；同时执行的字幕任务数（默认 1 串行）；**修改后需重启套件生效**（服务启动时读取） |
+| subtitle_concurrency | 1 | 1..4；同时执行的字幕任务数（默认 1 串行）；**保存设置后立即生效**（v0037 起动态调整 worker，无需重启套件） |
 | subtitle_translate_outputs | both | v0036：译文输出组合 `both`/`target_only`/`bilingual_only`；控制任务目录与视频旁写出的译文文件数量；`original.srt` 始终保留 |
 
 以下为常量（不做成设置项，避免配置面膨胀）：
@@ -325,7 +325,7 @@ CREATE TABLE IF NOT EXISTS subtitle_batches (
 
 ## 12. 版本与兼容
 
-- 版本 **1.1.0-0036**（v0036 起含语言码扩展与译文输出组合），需同步 8 处：`README.md`、`build/build_spk.py`、`docs/ARCHITECTURE.md`、`docs/CONTRACT.md`、`docs/SPK_PACKAGING.md`、`spk/INFO`、`src/backend/dupcleaner/config.py`、`src/web/index.html`（含 `app.js?v=` 查询串）。
+- 版本 **1.1.0-0037**（v0037 起并发设置保存后立即生效），需同步 8 处：`README.md`、`build/build_spk.py`、`docs/ARCHITECTURE.md`、`docs/CONTRACT.md`、`docs/SPK_PACKAGING.md`、`spk/INFO`、`src/backend/dupcleaner/config.py`、`src/web/index.html`（含 `app.js?v=` 查询串）。
 - 现有 `POST /api/subtitles` 行为不变（新字段均为可选）；旧任务记录可读；旧 SPK 升级后数据目录与包 ID 不变。
 - 文档同步：本文件、`docs/SUBTITLE_CONTRACT.md`（新增 §13 指向本文件）、`docs/ARCHITECTURE.md`（字幕页与批次服务）。
 
@@ -394,7 +394,7 @@ CREATE TABLE IF NOT EXISTS subtitle_batches (
 ## 14. v0034 队列恢复、并发与可见性
 
 - **重启恢复**：服务启动时 `queued` 子任务保留并自动重新入队（不再全部判 `SERVICE_RESTART`），大批次组升级套件后不会丢队列；`running/translating` 有分片转 `paused` 可继续，无分片仍失败。详见 [SUBTITLE_CONTRACT.md](SUBTITLE_CONTRACT.md) §14。
-- **并发**：`subtitle_concurrency`（1..4，默认 1，重启生效）为全局同时执行任务数；批次组/批次状态仍按子任务实时聚合，`eta_seconds` 会按并发折算。
+- **并发**：`subtitle_concurrency`（1..4，默认 1，v0037 起保存后立即生效、无需重启）为全局同时执行任务数；批次组/批次状态仍按子任务实时聚合，`eta_seconds` 会按并发折算。
 - **可见性**：组快照 `active_jobs` + 任务列表 `status` 过滤，解决“任务明细/任务中心只看得到排队任务”的问题（列表排序保持按创建时间倒序稳定分页，执行中由置顶区块展示）。
 
 ## 15. 补翻译（v0035：已完成的仅 ASR 任务）
@@ -464,4 +464,12 @@ CREATE TABLE IF NOT EXISTS subtitle_batches (
   - `original.srt` 始终保留（补翻译/只翻译的源文本）；已有文件从不覆盖，修改设置不删除旧文件。
 - 普通翻译、只翻译已有字幕、v0035 补翻译三类任务都遵循该设置。
 - 版本 1.1.0-0036；SQLite schema 不变（仍 v7）；前端设置页新增「译文输出组合」下拉。
+
+## 17. v0037 字幕并发设置保存后立即生效
+
+- **行为变更**：`subtitle_concurrency`（1..4，默认 1）不再需要重启套件——`PUT /api/settings` 保存成功后立即按新值调整 worker 池。
+- **调大**：立即补 worker，排队任务马上按新并发开始执行；**调小**：多余 worker 标记待退出，正在执行的任务跑完当前任务后退出（不中断 ASR/翻译）。
+- **惰性**：没有 worker/排队任务时不会提前起线程，下一次提交按新并发启动。
+- **前端**：设置页提示改为“保存后立即生效，无需重启套件”；`/api/meta.subtitle.concurrency_max`（4）与校验范围不变。
+- 版本 1.1.0-0037；SQLite schema 不变（仍 v7），无数据迁移。
 

@@ -992,6 +992,72 @@ class SubtitleConcurrencyTest(SubtitleTestBase):
         self.assertTrue(all(not worker.is_alive()
                             for worker in service._workers))
 
+    def test_apply_settings_raises_concurrency_without_restart(self):
+        """v0037：保存设置后立即调到 2 路——不重启服务，排队任务马上并行。"""
+        service = self._new_service()
+        self.assertEqual(service.concurrency, 1)
+        real_transcribe = service.client.transcribe
+        gate = threading.Event()
+        state = {"entered": 0, "peak": 0}
+        state_lock = threading.Lock()
+
+        def blocking_transcribe(*args, **kwargs):
+            with state_lock:
+                state["entered"] += 1
+                if state["entered"] > state["peak"]:
+                    state["peak"] = state["entered"]
+                first = state["entered"] == 1
+            if first:
+                if not gate.wait(10.0):
+                    raise subtitles.SubtitleError(
+                        "TEST_PARALLEL_TIMEOUT",
+                        u"第二个任务未在保存设置后并行进入 ASR")
+            else:
+                gate.set()
+            try:
+                return real_transcribe(*args, **kwargs)
+            finally:
+                with state_lock:
+                    state["entered"] -= 1
+
+        service.client.transcribe = blocking_transcribe
+        job_ids = self._submit_videos(service, 2)
+        # 并发仍是 1：第一个任务进入 ASR 后，第二个应在排队。
+        deadline = time.time() + 10.0
+        while time.time() < deadline:
+            with state_lock:
+                if state["entered"] >= 1:
+                    break
+            time.sleep(0.01)
+        with state_lock:
+            self.assertEqual(state["entered"], 1)
+        # 保存设置（不重启）：应立即补一个 worker 消化排队任务。
+        self.assertEqual(service.apply_settings({"subtitle_concurrency": 2}), 2)
+        self.assertFalse(service._stopping)
+        for job_id in job_ids:
+            done = self._wait_done(service, job_id)
+            self.assertEqual(done["status"], "done", done.get("error"))
+        self.assertEqual(state["peak"], 2)
+
+    def test_apply_settings_lowers_concurrency_and_retires_workers(self):
+        """v0037：调小并发只让多余 worker 在任务边界退出，不重启、不中断。"""
+        service = self._new_service(subtitle_concurrency=2)
+        service._ensure_worker()
+        self.assertEqual(service.concurrency, 2)
+        self.assertEqual(len(service._workers), 2)
+        self.assertEqual(service.apply_settings({"subtitle_concurrency": 1}), 1)
+        self.assertEqual(service.concurrency, 1)
+        self.assertEqual(len(service._workers), 1)
+        deadline = time.time() + 5.0
+        while service._retiring and time.time() < deadline:
+            time.sleep(0.02)
+        self.assertEqual(service._retiring, set())
+        self.assertTrue(service._workers[0].is_alive())
+        # 调回 2 路（仍不需要重启）：worker 池立即补回。
+        self.assertEqual(service.apply_settings({"subtitle_concurrency": 2}), 2)
+        self.assertEqual(len(service._workers), 2)
+        self.assertTrue(all(worker.is_alive() for worker in service._workers))
+
 
 class SubtitleListFilterTest(SubtitleTestBase):
     """v0034：任务列表 status 过滤（all/active/单状态/非法）。"""
@@ -1604,6 +1670,22 @@ class SubtitleApiTest(SubtitleTestBase):
         self.assertFalse(payload["settings"]["subtitle_llm_api_key_set"])
         status, _headers, payload = self.client.json("GET", "/api/settings")
         self.assertFalse(payload["settings"]["subtitle_asr_api_key_set"])
+
+    def test_settings_concurrency_applies_without_restart(self):
+        """v0037：PUT /api/settings 保存 subtitle_concurrency 后立即生效。"""
+        self.assertEqual(self.service.concurrency, 1)
+        status, _headers, payload = self.client.json(
+            "PUT", "/api/settings",
+            {"settings": {"subtitle_concurrency": 2}}, csrf=self.csrf)
+        self.assertEqual(status, 200, payload)
+        self.assertEqual(payload["settings"]["subtitle_concurrency"], 2)
+        self.assertEqual(self.service.concurrency, 2)
+        status, _headers, payload = self.client.json(
+            "PUT", "/api/settings",
+            {"settings": {"subtitle_concurrency": 1}}, csrf=self.csrf)
+        self.assertEqual(status, 200, payload)
+        self.assertEqual(self.service.concurrency, 1)
+        self.assertFalse(self.service._stopping)
 
     def test_submit_and_download_flow(self):
         video = self.make_video(duration=60)

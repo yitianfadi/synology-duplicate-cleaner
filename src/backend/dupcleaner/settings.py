@@ -90,8 +90,8 @@ DEFAULT_SETTINGS = {
     "subtitle_job_limit": config.SUBTITLE_JOB_LIMIT_DEFAULT,
     # v0036：译文输出组合（both/target_only/bilingual_only），默认与历史一致。
     "subtitle_translate_outputs": config.SUBTITLE_DEFAULT_TRANSLATE_OUTPUTS,
-    # v0034：同时执行的字幕任务数（默认 1 = 串行，与历史行为一致）；
-    # 服务启动时读取，修改后需重启套件生效（与 subtitle_job_limit 一致）。
+    # v0034/v0037：同时执行的字幕任务数（默认 1 = 串行，与历史行为一致）；
+    # 保存设置后立即生效（动态调整 worker，无需重启套件）。
     "subtitle_concurrency": config.SUBTITLE_DEFAULT_CONCURRENCY,
 }
 

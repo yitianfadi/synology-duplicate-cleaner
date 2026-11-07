@@ -2072,7 +2072,7 @@ import {
           ? translateOutputs : 'both';
     }
     setVideoNumberValue(els.setSubtitleJobLimit, s.subtitle_job_limit, 200, 20, 1000);
-    // v0034：同时执行的字幕任务数（1..4，默认 1 串行；重启套件后生效）
+    // v0034/v0037：同时执行的字幕任务数（1..4，默认 1 串行；保存后立即生效，无需重启）
     setVideoNumberValue(els.setSubtitleConcurrency, s.subtitle_concurrency, 1, 1, 4);
     if (els.subtitleAsrApiKey) { els.subtitleAsrApiKey.value = ''; }
     if (els.subtitleLlmApiKey) { els.subtitleLlmApiKey.value = ''; }
@@ -2158,7 +2158,7 @@ import {
     settings.subtitle_llm_disable_thinking = !!(els.subtitleLlmDisableThinking && els.subtitleLlmDisableThinking.checked);
     var jobLimit = readSubtitleInt(els.setSubtitleJobLimit, 20, 1000, '字幕任务保留上限', errors, 'setSubtitleJobLimit');
     if (jobLimit !== null) { settings.subtitle_job_limit = jobLimit; }
-    // v0034：字幕并发任务数（1..4，默认 1；服务启动时读取，修改后需重启生效）
+    // v0034/v0037：字幕并发任务数（1..4，默认 1；保存后立即生效，无需重启套件）
     var subtitleConcurrency = readSubtitleInt(els.setSubtitleConcurrency, 1, 4, '字幕并发任务数', errors, 'setSubtitleConcurrency');
     if (subtitleConcurrency !== null) { settings.subtitle_concurrency = subtitleConcurrency; }
     if (els.setSubtitleOutputMode) {

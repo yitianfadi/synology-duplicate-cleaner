@@ -606,6 +606,41 @@ python build/build_spk.py --no-icons --out-dir $env:TEMP\qa-build2
 - 静态新增 `BE-SUBTITLE-TRANSLATE-OUTPUT`、`FE-SUBTITLE-TRANSLATE-OUTPUT`、`FE-SUBTITLE-LANGUAGES`；`FE-SETTINGS-KEYS` 覆盖新键。
 - 前端模块检查/web smoke 通过；语言下拉与输出组合设置在设置页可见、可保存、回读正确。
 
+## 19. 附：v0037 字幕并发设置保存后立即生效（2026-11-07）
+
+### 19.1 需求与行为变更
+
+- 需求：设置页「字幕并发任务数」改为**保存后立即生效**，不再要求重启套件。
+- 后端：`SubtitleService.apply_settings(settings)` 读取并规范化 `subtitle_concurrency` 后立即调整 worker 池（`_sync_workers_locked`）：
+  - **调大** → 立即补 worker，排队任务马上按新并发开始；
+  - **调小** → 多余 worker 进 `_retiring`，在任务边界退出，**正在执行的 ASR/翻译不中断**；
+  - 没有 worker/排队任务时保持惰性，下一次提交按新并发启动；
+  - `PUT /api/settings` 保存成功后调用（补丁含 `subtitle_concurrency` 时）。
+- 前端：设置页提示改为“默认 1 为串行、最稳；可设 2–4 并行。保存后立即生效，无需重启套件。”
+- 无新增接口/错误码；请求/响应结构不变；SQLite schema 仍 v7，无迁移。
+
+### 19.2 测试证据
+
+- 后端单测 **422 tests OK（5 skipped）**，新增 3 例：
+  - `SubtitleConcurrencyTest.test_apply_settings_raises_concurrency_without_restart`：并发 1 时第二个任务排队；保存设置调到 2 后**不重启**立即并行（ASR 并发峰值 2）；
+  - `test_apply_settings_lowers_concurrency_and_retires_workers`：调小到 1 时多余 worker 在任务边界退出、剩余 worker 存活；调回 2 立即补回；
+  - `SubtitleApiTest.test_settings_concurrency_applies_without_restart`：`PUT /api/settings` 后服务内 `concurrency` 立即变为 2/1。
+- 静态检查：`BE-SUBTITLE-CONCURRENCY` 校验 `apply_settings`/`_sync_workers_locked`/`self._retiring`/`apply_settings(updated)`；`FE-SUBTITLE-CONCURRENCY` 校验设置页“保存后立即生效”提示。
+- e2e **146 PASS / 0 FAIL / 1 UNVERIFIED**（Windows symlink）；静态 **152/152**；前端模块 **22/22**；web smoke **8/8**。
+
+### 19.3 最终产物
+
+- `dist/DuplicateCleaner-1.1.0-0037.spk`
+  - SHA256 `566b50551713740a99a840c166259149f086b3cf9de7bfff7af8d7c98966c8fd`
+  - package.tgz MD5 `02aa7d5bd0d3c758312b5c3d4c069b33`（= INFO.checksum）
+  - 大小 38,993,920 B
+- 版本 1.1.0-0037 同步 8 处；SQLite schema 不变（仍 v7）。
+
+### 19.4 真机验证待办
+
+- NAS 安装 1.1.0-0037 后：设置页把「字幕并发任务数」从 1 改为 2 → 保存 → **不重启套件**，任务明细应同时出现 2 个 `running/translating`；改回 1 后不再新增并行，正在跑的 2 个任务跑完当前任务后不再继续并行。
+
+
 - 结论：v0036 **PASS（可交付）**；设置项无遗漏，语言码与译文输出组合缺口已修复。
 
 

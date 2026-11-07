@@ -371,14 +371,18 @@ def check_backend():
           and "if write_vtt:" in subtitles_src,
           "optional vtt markers missing")
     check("BE-SUBTITLE-CONCURRENCY",
-          "字幕并发池：subtitle_concurrency 1..4（默认 1，启动读取），多 worker 共享队列",
+          "字幕并发池：subtitle_concurrency 1..4（默认 1），保存后立即生效（v0037，无需重启）",
           "SUBTITLE_CONCURRENCY_MAX" in conf_src
           and "SUBTITLE_DEFAULT_CONCURRENCY" in conf_src
           and "subtitle_concurrency" in settings_src
           and "self.concurrency" in subtitles_src
+          and "def apply_settings" in subtitles_src
+          and "_sync_workers_locked" in subtitles_src
+          and "self._retiring" in subtitles_src
+          and "apply_settings(updated)" in http_src
           and "self._active_ids" in subtitles_src
           and "self._workers" in subtitles_src,
-          "subtitle concurrency markers missing")
+          "subtitle concurrency/live-apply markers missing")
     check("BE-SUBTITLE-VISIBILITY",
           "任务列表 status 过滤 + 组快照 active_jobs/eta_seconds/concurrency（v0034）",
           "LIST_STATUS_FILTERS" in subtitles_src
@@ -593,9 +597,10 @@ def check_frontend():
     concurrency_ui_ok = (
         'id="setSubtitleConcurrency"' in html
         and "subtitle_concurrency" in app
-        and "setSubtitleConcurrency" in app)
+        and "setSubtitleConcurrency" in app
+        and "保存后立即生效" in html)
     check("FE-SUBTITLE-CONCURRENCY",
-          "设置页提供字幕并发任务数（1–4，默认 1，重启生效）",
+          "设置页提供字幕并发任务数（1–4，默认 1，保存后立即生效，v0037）",
           concurrency_ui_ok, "subtitle concurrency setting UI missing")
     subtitle_page_src = read(os.path.join(js_dir, "subtitle-page.js"))
     visible_ui_ok = (

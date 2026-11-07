@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-11-07T14:18:51+0800",
+  "generated_at": "2026-11-07T19:15:08+0800",
   "summary": {
     "PASS": 152,
     "FAIL": 0,
@@ -52,7 +52,7 @@
       "id": "BE-UNITTEST-LOG",
       "name": "unittest 结果",
       "status": "INFO",
-      "detail": "Ran 419 tests in 139.427s"
+      "detail": "Ran 422 tests in 104.561s"
     },
     {
       "id": "BE-NO-AUTODELETE",
@@ -218,7 +218,7 @@
     },
     {
       "id": "BE-SUBTITLE-CONCURRENCY",
-      "name": "字幕并发池：subtitle_concurrency 1..4（默认 1，启动读取），多 worker 共享队列",
+      "name": "字幕并发池：subtitle_concurrency 1..4（默认 1），保存后立即生效（v0037，无需重启）",
       "status": "PASS",
       "detail": ""
     },
@@ -356,7 +356,7 @@
     },
     {
       "id": "FE-SUBTITLE-CONCURRENCY",
-      "name": "设置页提供字幕并发任务数（1–4，默认 1，重启生效）",
+      "name": "设置页提供字幕并发任务数（1–4，默认 1，保存后立即生效，v0037）",
       "status": "PASS",
       "detail": ""
     },
@@ -824,7 +824,7 @@
     },
     {
       "id": "SPK-DIST",
-      "name": "构建产物存在（DuplicateCleaner-1.1.0-0036.spk）",
+      "name": "构建产物存在（DuplicateCleaner-1.1.0-0037.spk）",
       "status": "PASS",
       "detail": ""
     },
@@ -836,7 +836,7 @@
     },
     {
       "id": "SPK-VERSION",
-      "name": "SPK INFO.version 与当前源码 APP_VERSION（1.1.0-0036）一致",
+      "name": "SPK INFO.version 与当前源码 APP_VERSION（1.1.0-0037）一致",
       "status": "PASS",
       "detail": ""
     },

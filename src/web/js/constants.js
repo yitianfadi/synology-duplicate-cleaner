@@ -221,7 +221,7 @@ export var DEFAULT_SETTINGS = {
   // v0036：译文输出组合 both/target_only/bilingual_only
   subtitle_translate_outputs: 'both',
   subtitle_job_limit: 200,
-  // v0034：同时执行的字幕任务数（1..4，默认 1 串行；服务启动时读取，修改后需重启生效）
+  // v0034/v0037：同时执行的字幕任务数（1..4，默认 1 串行；保存后立即生效，无需重启）
   subtitle_concurrency: 1
 };
 export var SIZE_UNITS = { kb: 1024, mb: 1048576, gb: 1073741824 };

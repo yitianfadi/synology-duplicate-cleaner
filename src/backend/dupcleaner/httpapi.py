@@ -447,6 +447,14 @@ class Api(object):
             if body.get(alias) is True:
                 patch[alias] = True
         updated = self.services.settings.update(patch)
+        # v0037：字幕并发数保存后立即生效（动态增减 worker，无需重启套件）。
+        if "subtitle_concurrency" in patch:
+            subtitles = getattr(self.services, "subtitles", None)
+            if subtitles is not None:
+                try:
+                    subtitles.apply_settings(updated)
+                except Exception:  # pragma: no cover - 保存成功优先
+                    logger.exception("apply subtitle_concurrency failed")
         # 只记录键名，绝不记录任何值（含密钥）
         self.services.store.audit("settings_update", session.user,
                                   {"keys": sorted(str(key) for key in patch)})
