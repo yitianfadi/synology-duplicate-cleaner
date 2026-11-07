@@ -969,9 +969,71 @@ def run():
               resp.status == 400 and code == "INVALID_ARGUMENT",
               "status=%s code=%s" % (resp.status, code))
 
+        # ---------------- v0035 补翻译（历史任务派生仅翻译任务） ----------------
+        resp = client.post_json(
+            "/api/subtitles/sub-20260101-000000-abcdef/translate",
+            {"confirm_cloud": True})
+        code, _ = err_code(resp)
+        check("SUB-22", "补翻译在翻译开关未启用时返回 400 TRANSLATE_DISABLED",
+              resp.status == 400 and code == "TRANSLATE_DISABLED",
+              "status=%s code=%s" % (resp.status, code))
+
+        resp = client.put_json("/api/settings", {"settings": {
+            "subtitle_translate_enabled": True,
+            "subtitle_llm_api_key": "e2e-dummy-llm-key"}})
+        data = jd(resp).get("settings", {})
+        check("SUB-23", "PUT /api/settings 可开启翻译并保存 LLM Key（只回显是否已配置）",
+              resp.status == 200
+              and data.get("subtitle_translate_enabled") is True
+              and data.get("subtitle_llm_api_key_set") is True
+              and "e2e-dummy-llm-key" not in resp.text(),
+              "status=%s data=%s" % (resp.status, data))
+
+        resp = client.post_json(
+            "/api/subtitles/sub-20260101-000000-abcdef/translate",
+            {"confirm_cloud": True})
+        code, _ = err_code(resp)
+        check("SUB-24", "补翻译未知任务返回 404 NOT_FOUND",
+              resp.status == 404 and code == "NOT_FOUND",
+              "status=%s code=%s" % (resp.status, code))
+
+        resp = client.post_json(
+            "/api/subtitles/sub-20260101-000000-abcdef/translate", {})
+        code, _ = err_code(resp)
+        check("SUB-25", "补翻译缺少云端上传确认返回 400 CLOUD_CONFIRM_REQUIRED",
+              resp.status == 400 and code == "CLOUD_CONFIRM_REQUIRED",
+              "status=%s code=%s" % (resp.status, code))
+
+        resp = client.post_json(
+            "/api/subtitles/sub-20260101-000000-abcdef/translate",
+            {"confirm_cloud": True, "target_lang": "auto"})
+        code, _ = err_code(resp)
+        check("SUB-26", "补翻译 target_lang=auto 返回 400 INVALID_ARGUMENT",
+              resp.status == 400 and code == "INVALID_ARGUMENT",
+              "status=%s code=%s" % (resp.status, code))
+
+        resp = client.post_json(
+            "/api/subtitles/batch-groups/grp-20260101-000000-abcdef/translate",
+            {"confirm_cloud": True})
+        code, _ = err_code(resp)
+        check("SUB-27", "整组补翻译未知批次组返回 404 NOT_FOUND",
+              resp.status == 404 and code == "NOT_FOUND",
+              "status=%s code=%s" % (resp.status, code))
+
+        client.put_json("/api/settings",
+                        {"settings": {"subtitle_clear_llm_api_key": True}})
+        resp = client.post_json(
+            "/api/subtitles/sub-20260101-000000-abcdef/translate",
+            {"confirm_cloud": True})
+        code, _ = err_code(resp)
+        check("SUB-28", "未配置 LLM Key 时补翻译返回 400 TRANSLATE_NOT_CONFIGURED",
+              resp.status == 400 and code == "TRANSLATE_NOT_CONFIGURED",
+              "status=%s code=%s" % (resp.status, code))
+
         # 恢复默认（关闭云端字幕），避免影响后续用例
         client.put_json("/api/settings", {"settings": {
             "subtitle_enabled": False, "subtitle_clear_asr_api_key": True,
+            "subtitle_translate_enabled": False,
             "subtitle_concurrency": 1,
             "subtitle_llm_disable_thinking": False,
             "subtitle_write_vtt": False}})

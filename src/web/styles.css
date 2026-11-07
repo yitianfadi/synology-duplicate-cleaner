@@ -2266,3 +2266,16 @@ input[type="checkbox"]:disabled { cursor: not-allowed; }
   color: var(--text-soft);
 }
 .subtitle-jobs-list > .subtitle-jobs-section:first-child .subtitle-jobs-section-title { margin-top: 2px; }
+
+/* ==========================================================================
+   v0035 补翻译入口（任务明细行 / 批次组操作）
+   ========================================================================== */
+.subtitle-batch-row-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: flex-end;
+  margin-top: 2px;
+}
+.subtitle-batch-actions .subtitle-batch-translate-btn { margin-left: 0; }
+.subtitle-batch-row-actions .subtitle-batch-translate-btn { flex: 0 0 auto; }

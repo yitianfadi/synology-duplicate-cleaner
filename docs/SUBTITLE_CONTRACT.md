@@ -278,3 +278,23 @@ v0028 在 v1.3 单文件任务之上新增**目录批量生成 / 翻译**：独�
 - **并发**：`subtitle_concurrency`（1..4，默认 1）控制同时执行的任务数；服务启动时读取，修改后需重启套件生效；`/api/meta.subtitle.concurrency_max` 给出上限。
 - **可见性**：`GET /api/subtitles` 支持 `status` 过滤（见 §2）；批次组快照新增 `active_jobs`（执行中任务明细，≤10 条）、`eta_seconds`（按已完成任务平均耗时估算的剩余秒数，样本不足为 `null`）与 `concurrency`（当前生效并发）。
 - **前端**：批次组卡片显示“当前执行：<文件名> · <阶段> · <进度>%”与预计剩余；任务明细顶部固定“执行中”区块并支持状态筛选（全部/执行中/排队/已完成/失败）；任务中心「字幕任务」把执行中任务置顶（先取 `status=active`，再取最近任务）。
+
+## 15. v0035 补翻译（只做了 ASR、没翻译的历史任务）
+
+提交时未勾选“同时生成译文”的任务（`translate=false`）完成后，可以**单独补翻译**，不需要重新跑 ASR：
+
+- **派生任务，不改原任务**：补翻译新建一条仅翻译任务（`source=existing_srt` + `source_job_id` 指回源任务）；源任务的 `status/files/outputs/审计/警告` 完全不变。原任务与派生任务都出现在任务中心/批次组，可按来源标签区分。
+- **文本来源优先级**：源任务目录 `original.srt` → 视频同目录 `<stem>.srt` → 都不存在则 `SOURCE_SRT_MISSING`（“源字幕已不存在，请重新生成”）。
+  - 因此即使视频文件已删除、或输出方式是 `download_only`、或任务目录是唯一副本，也能补翻译（任务目录可下载；写回视频旁失败只记 `warning`，不判失败）。
+- **不跑 FFmpeg、不调用 ASR、不上传音频**：只把字幕文本发给 LLM，成本远低于重新生成。
+- **资格**：源任务 `status=done` 且（`translate=false` 或 `translation_partial=true`）。
+  - 已有完整译文 → 400 `TRANSLATION_EXISTS`；源任务未完成 → 400 `JOB_NOT_DONE`。
+  - 部分译文回退（`translation_partial=true`）允许“重新翻译”：派生任务 `skip_existing=false`，任务目录重新生成译文；视频旁已有译文按“从不覆盖”规则保留。
+- **开关与凭据**：`subtitle_enabled` 必须开启；`subtitle_translate_enabled` 必须开启；`subtitle_llm_api_key` 必须已配置。否则分别返回 `SUBTITLE_DISABLED` / `TRANSLATE_DISABLED` / `TRANSLATE_NOT_CONFIGURED`。
+- **幂等**：同一源任务已有 `queued/running/translating` 的翻译任务时，重复请求返回 `created=false` 与已有任务（HTTP 200），不会重复入队。
+- **目标语言**：默认 `subtitle_translate_target`；接口 `target_lang` 可覆盖（不得为 `auto`）。
+- **队列与并发**：派生任务进同一 worker 队列，受 `subtitle_concurrency` 约束；`translating` 状态计入“执行中”。
+- **重启恢复**：翻译任务运行中遇服务重启 → `paused` + 可继续（没有 ASR 分片损失，重启后从源 srt 重新翻译）；`queued` 沿用 v0034 自动重新入队。
+- **接口**：`POST /api/subtitles/{job_id}/translate`、`POST /api/subtitles/batch-groups/{group_id}/translate`（字段与错误码见 [SUBTITLE_BATCH_CONTRACT.md](SUBTITLE_BATCH_CONTRACT.md) §15）。
+- **审计**：`subtitle_start` 带 `operation=translate` 与 `source_job_id`；组级补翻译记录 `subtitle_translate_group`（源组、创建数）。
+

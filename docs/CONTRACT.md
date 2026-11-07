@@ -1,7 +1,7 @@
 # 实现契约（前后端共享，版本 1.0）
 
 > 本文件是前后端并行开发的唯一接口约定。任何一方需要改动字段，先改本文件并在团队任务中说明。
-> 产品名：**DuplicateCleaner**；显示名：**重复文件清理与字幕**；SPK 版本：**1.1.0-0034**。
+> 产品名：**DuplicateCleaner**；显示名：**重复文件清理与字幕**；SPK 版本：**1.1.0-0035**。
 > v1.1 新增内容相似度模式；相似模式字段与行为见 [SIMILARITY_CONTRACT.md](SIMILARITY_CONTRACT.md)，**精准模式规则不变**。
 
 ## 1. 仓库与写入边界
@@ -59,6 +59,9 @@ Cookie：`HttpOnly; SameSite=Strict; Path=/; Max-Age=28800`，TLS 时加 `Secure
 `BATCH_TOO_LARGE`、`SOURCE_SRT_MISSING`、`OUTPUT_NOT_WRITABLE`；接口与字段见
 [SUBTITLE_BATCH_CONTRACT.md](SUBTITLE_BATCH_CONTRACT.md)。
 
+补翻译错误码（v0035）：`TRANSLATE_DISABLED`、`TRANSLATE_NOT_CONFIGURED`、`TRANSLATION_EXISTS`、
+`JOB_NOT_DONE`（均 400）；详见 [SUBTITLE_BATCH_CONTRACT.md](SUBTITLE_BATCH_CONTRACT.md) §10/§15。
+
 v0032 增量：
 - 批次组 `POST /api/subtitles/batch-groups`、`GET /api/subtitles/batch-groups/{group_id}`、
   `POST /api/subtitles/batch-groups/{group_id}/{pause|resume|cancel|retry}`；任务分页
@@ -72,6 +75,17 @@ v0034 增量：
 - 设置新增 `subtitle_concurrency`（1..4，默认 1，服务启动时读取，修改后需重启生效）；默认并发 1 与旧行为一致。
 - 重启语义调整：`queued` 字幕任务启动时自动重新入队继续（不再判 `SERVICE_RESTART` 失败），大批次组升级后不丢队列；
   `running/translating` 有分片转 `paused` 可继续、无分片仍失败。前端任务明细/任务中心把执行中任务置顶并支持状态筛选。
+
+v0035 增量（补翻译）：
+- 新增 `POST /api/subtitles/{job_id}/translate`（单任务补翻译；幂等）与
+  `POST /api/subtitles/batch-groups/{group_id}/translate`（组内批量补翻译，返回 `created` + `summary`）；
+  请求体 `{"confirm_cloud": true, "target_lang": "zh"}`，单任务 202/200、组级 202。
+- 补翻译派生新任务（`source=existing_srt` + `source_job_id`），文本取自源任务目录 `original.srt` 或视频旁 `<stem>.srt`；
+  不重新 ASR/不上传音频，原任务不变。
+- 批次组快照新增 `translatable={count,partial}`；任务快照新增 `source_job_id`。
+- 新错误码：`TRANSLATE_DISABLED`、`TRANSLATE_NOT_CONFIGURED`、`TRANSLATION_EXISTS`、`JOB_NOT_DONE`；
+  运行期源字幕丢失仍为 `SOURCE_SRT_MISSING`。
+- 翻译任务重启恢复：运行中 → `paused` 可继续；`queued` 自动重新入队。
 
 ## 4. 认证
 
@@ -98,7 +112,7 @@ v0034 增量：
 ### GET /api/meta
 ```json
 {
- "app_version": "1.1.0-0034",
+ "app_version": "1.1.0-0035",
  "dsm_version": "7.2.2-72806" | "dev",
  "python_version": "3.8.16",
  "creation_time_supported": true,
@@ -362,4 +376,4 @@ Content-Disposition: attachment; filename="duplicate-scan-<id>.csv"
 - 后端 unittest 覆盖：statx 时间读取降级、哈希分片/限速、重复分组与三种保留策略、
   路径黑名单、删除前重校验、回收站路径生成、CSV、API 鉴权。
 - 前端可用静态检查 + 本地 dev 后端联调；QA 用 dev 模式在临时目录生成重复文件跑完整 API 流程。
-- 打包产物 `dist/DuplicateCleaner-1.1.0-0034.spk` 必须能通过 `tar -tf` 检查，包含 INFO/package.tgz/scripts/conf/ui。
+- 打包产物 `dist/DuplicateCleaner-1.1.0-0035.spk` 必须能通过 `tar -tf` 检查，包含 INFO/package.tgz/scripts/conf/ui。

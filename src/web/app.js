@@ -4400,9 +4400,105 @@ import {
     return wrap;
   }
 
+  /** v0035：任务编号简写（前 6 位…后 8 位，沿用项目 head…tail 展示习惯）。 */
+  function subtitleShortJobId(jobId) {
+    var id = String(jobId || '');
+    if (!id) { return '—'; }
+    if (id.length <= 14) { return id; }
+    return id.slice(0, 6) + '…' + id.slice(-8);
+  }
+
   function subtitleSourceLabel(job) {
-    if (!job || !job.source) { return ''; }
+    if (!job) { return ''; }
+    if (job.source_job_id) {
+      return '补翻译（源任务 ' + subtitleShortJobId(job.source_job_id) + '）';
+    }
+    if (!job.source) { return ''; }
     return SUBTITLE_SOURCE_LABEL[job.source] || job.source;
+  }
+
+  // ---------- v0035：补翻译（只做了 ASR、没翻译的已完成任务） ----------
+  /** 已完成且缺译文（或译文部分回退）的任务可补翻译。 */
+  function subtitleJobTranslatable(job) {
+    if (!job || job.status !== 'done') { return false; }
+    return job.translate !== true || job.translation_partial === true;
+  }
+
+  /** 补翻译能力门控：总开关 + 翻译开关 + LLM Key 都就绪才可提交。 */
+  function subtitleTranslateGate() {
+    var sub = subtitleCapability();
+    if (sub.supported !== true) { return { ok: false, reason: '当前后端未提供云端字幕能力' }; }
+    if (sub.enabled !== true) { return { ok: false, reason: '请先在设置中启用云端字幕' }; }
+    if (sub.translateEnabled !== true) { return { ok: false, reason: '字幕翻译未启用（请在设置中开启）' }; }
+    if (sub.llmKeySet !== true) { return { ok: false, reason: '请先在设置中配置 LLM API Key' }; }
+    return { ok: true, reason: '' };
+  }
+
+  function subtitleTargetLangLabel(value) {
+    for (var i = 0; i < SUBTITLE_TARGET_LANGUAGES.length; i += 1) {
+      if (SUBTITLE_TARGET_LANGUAGES[i].value === value) { return SUBTITLE_TARGET_LANGUAGES[i].label; }
+    }
+    return '中文';
+  }
+
+  /** 补翻译按钮（列表 action / 详情 footer 共用）：done 且缺译文时出现。 */
+  function buildSubtitleTranslateButton(job, options) {
+    options = options || {};
+    var partial = job && job.translation_partial === true;
+    var btn = el('button', {
+      className: 'btn btn-ghost' + (options.large ? '' : ' btn-sm'),
+      attrs: { type: 'button' },
+      text: partial ? '重新翻译' : '补翻译'
+    });
+    var gate = subtitleTranslateGate();
+    if (!gate.ok) {
+      btn.disabled = true;
+      btn.title = gate.reason;
+    } else {
+      btn.title = '将字幕文本上传到已配置的 LLM 服务翻译并新建任务（不上传音频/视频）';
+      btn.addEventListener('click', function () { subtitleTranslateJob(job, btn); });
+    }
+    return btn;
+  }
+
+  async function subtitleTranslateJob(job, button) {
+    if (!job || !job.job_id) { return; }
+    var gate = subtitleTranslateGate();
+    if (!gate.ok) { toast(gate.reason, 'error', 7000); return; }
+    var sub = subtitleCapability();
+    var partial = job.translation_partial === true;
+    var targetLabel = subtitleTargetLangLabel(sub.targetLang || 'zh');
+    var ok = await confirmDialog({
+      title: partial ? '重新翻译字幕任务' : '补翻译字幕任务',
+      message: '将把字幕文本（不含音频/视频）上传到已配置的 LLM 服务翻译为' + targetLabel
+        + '，并新建任务。' + (partial ? '该任务此前为“部分译文回退原文”，会重新翻译。' : ''),
+      confirmText: partial ? '重新翻译' : '开始补翻译',
+      danger: false
+    });
+    if (!ok) { return; }
+    if (button) { setBusy(button, true, '提交中…'); }
+    try {
+      var res = await api('/api/subtitles/' + encodePath(job.job_id) + '/translate', {
+        method: 'POST',
+        body: { confirm_cloud: true, target_lang: sub.targetLang || 'zh' },
+        timeout: 60000
+      });
+      if (res && res.created === false) {
+        toast('该任务已在翻译队列，无需重复提交。', 'info', 6000);
+      } else {
+        toast('已创建翻译任务，可在「最近任务」查看进度。', 'success', 6000);
+      }
+      // 详情弹窗打开时关闭，避免继续显示源任务的旧状态
+      if (state.subtitleJobs.detail && state.subtitleJobs.detail.job
+        && state.subtitleJobs.detail.job.job_id === job.job_id) {
+        closeModal(true);
+      }
+      await loadSubtitleJobs({ silent: true });
+    } catch (err) {
+      toast(errorMessage(err, '补翻译失败，请稍后重试。'), 'error', 7000);
+    } finally {
+      if (button) { setBusy(button, false); }
+    }
   }
 
   function subtitleOutputModeLabel(mode) {
@@ -6601,6 +6697,10 @@ import {
       className: 'btn btn-ghost btn-sm', attrs: { type: 'button' }, text: '查看',
       on: { click: function () { openSubtitleJobModal(job); } }
     }));
+    // v0035：已完成但只做了 ASR、没翻译的任务，可在列表直接补翻译
+    if (subtitleJobTranslatable(job)) {
+      actions.appendChild(buildSubtitleTranslateButton(job));
+    }
     if (status === 'paused') {
       var resumeBtn = el('button', {
         className: 'btn btn-primary btn-sm', attrs: { type: 'button' }, text: '继续'
@@ -6947,6 +7047,10 @@ import {
       var cancelBtn = el('button', { className: 'btn btn-danger-ghost', attrs: { type: 'button' }, text: '取消任务' });
       cancelBtn.addEventListener('click', function () { subtitleJobDetailAction(job, 'cancel', cancelBtn); });
       buttons.push(cancelBtn);
+    }
+    // v0035：详情 footer 同样提供补翻译入口（done 且缺译文时才出现）
+    if (subtitleJobTranslatable(job)) {
+      buttons.push(buildSubtitleTranslateButton(job, { large: true }));
     }
     buttons.push(el('button', {
       className: 'btn btn-ghost', attrs: { type: 'button' }, text: '关闭',

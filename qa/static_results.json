@@ -1,7 +1,7 @@
 {
-  "generated_at": "2026-11-07T11:11:29+0800",
+  "generated_at": "2026-11-07T14:02:44+0800",
   "summary": {
-    "PASS": 144,
+    "PASS": 149,
     "FAIL": 0,
     "UNVERIFIED": 0
   },
@@ -28,7 +28,7 @@
       "id": "BE-FILE-COUNT",
       "name": "后端 Python 文件数",
       "status": "INFO",
-      "detail": "47"
+      "detail": "48"
     },
     {
       "id": "BE-SRC-HYGIENE",
@@ -52,7 +52,7 @@
       "id": "BE-UNITTEST-LOG",
       "name": "unittest 结果",
       "status": "INFO",
-      "detail": "Ran 397 tests in 121.989s"
+      "detail": "Ran 412 tests in 127.060s"
     },
     {
       "id": "BE-NO-AUTODELETE",
@@ -235,6 +235,24 @@
       "detail": ""
     },
     {
+      "id": "BE-SUBTITLE-TRANSLATE-ONLY",
+      "name": "补翻译：源文本解析（源任务目录→视频旁）+ 派生任务 + 单任务/组级接口（v0035）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "BE-SUBTITLE-TRANSLATE-STATE",
+      "name": "组快照 translatable 计数 + 同源幂等索引 + 翻译任务重启转 paused（v0035）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "BE-SUBTITLE-TRANSLATE-TESTS",
+      "name": "新增补翻译 unittest（源任务目录/视频删除/幂等/组批量/重启）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
       "id": "FE-FILES",
       "name": "前端 index.html/app.js/styles.css 存在",
       "status": "PASS",
@@ -345,6 +363,18 @@
     {
       "id": "FE-SUBTITLE-CENTER-ACTIVE",
       "name": "任务中心字幕任务把执行中任务置顶（先取 status=active）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "FE-SUBTITLE-TRANSLATE",
+      "name": "补翻译入口：批次组卡片/任务明细行/任务中心列表与详情 + 来源标签（v0035）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "FE-SUBTITLE-TRANSLATE-GATE",
+      "name": "补翻译能力门控与“部分译文回退→重新翻译”入口（v0035）",
       "status": "PASS",
       "detail": ""
     },
@@ -776,7 +806,7 @@
     },
     {
       "id": "SPK-DIST",
-      "name": "构建产物存在（DuplicateCleaner-1.1.0-0034.spk）",
+      "name": "构建产物存在（DuplicateCleaner-1.1.0-0035.spk）",
       "status": "PASS",
       "detail": ""
     },
@@ -788,7 +818,7 @@
     },
     {
       "id": "SPK-VERSION",
-      "name": "SPK INFO.version 与当前源码 APP_VERSION（1.1.0-0034）一致",
+      "name": "SPK INFO.version 与当前源码 APP_VERSION（1.1.0-0035）一致",
       "status": "PASS",
       "detail": ""
     },

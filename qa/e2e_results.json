@@ -1,9 +1,9 @@
 {
-  "generated_at": "2026-11-07T11:11:40+0800",
+  "generated_at": "2026-11-07T13:59:11+0800",
   "python": "3.12.9 | packaged by Anaconda, Inc. | (main, Feb  6 2025, 18:49:16) [MSC v.1929 64 bit (AMD64)]",
   "repo": "D:\\code\\zhouyi\\qunhui\\synology-duplicate-cleaner",
   "summary": {
-    "PASS": 135,
+    "PASS": 142,
     "FAIL": 0,
     "UNVERIFIED": 1
   },
@@ -11,11 +11,11 @@
     "fixture_files": 46,
     "python": "3.12.9",
     "birthtime_supported": true,
-    "backend_port": 2084,
+    "backend_port": 3349,
     "csrf_token_len": 43,
     "meta": {
       "ok": true,
-      "app_version": "1.1.0-0034",
+      "app_version": "1.1.0-0035",
       "dsm_version": "dev",
       "python_version": "3.12.9",
       "creation_time_supported": true,
@@ -312,7 +312,7 @@
       }
     },
     "subtitle_enumerate_count": 0,
-    "main_scan_id": "20261107-111134-a76364",
+    "main_scan_id": "20261107-135904-3fd96a",
     "main_scan_final": "completed",
     "main_stats": {
       "files_seen": 38,
@@ -326,7 +326,7 @@
       "selectable_duplicate_files": 15,
       "selectable_reclaimable_bytes": 4403200,
       "bytes_hashed": 8753152,
-      "bytes_per_sec": 407148343,
+      "bytes_per_sec": 424284993,
       "errors": 0,
       "skipped": {
         "symlink": 0,
@@ -386,13 +386,13 @@
     },
     "main_groups_total": 12,
     "recycle_plan": {
-      "plan_id": "plan-0398749992a6b866",
+      "plan_id": "plan-3c165e62eb132662",
       "count": 2,
       "bytes": 40960,
       "groups_affected": 1
     },
     "recycle_job": {
-      "job_id": "del-20261107-111134-7f9a9c",
+      "job_id": "del-20261107-135905-4e6b10",
       "status": "completed",
       "done": 2,
       "failed": 0,
@@ -595,6 +595,48 @@
     {
       "id": "SUB-21",
       "name": "subtitle_concurrency 超出 1..4 返回 400 INVALID_ARGUMENT",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SUB-22",
+      "name": "补翻译在翻译开关未启用时返回 400 TRANSLATE_DISABLED",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SUB-23",
+      "name": "PUT /api/settings 可开启翻译并保存 LLM Key（只回显是否已配置）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SUB-24",
+      "name": "补翻译未知任务返回 404 NOT_FOUND",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SUB-25",
+      "name": "补翻译缺少云端上传确认返回 400 CLOUD_CONFIRM_REQUIRED",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SUB-26",
+      "name": "补翻译 target_lang=auto 返回 400 INVALID_ARGUMENT",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SUB-27",
+      "name": "整组补翻译未知批次组返回 404 NOT_FOUND",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SUB-28",
+      "name": "未配置 LLM Key 时补翻译返回 400 TRANSLATE_NOT_CONFIGURED",
       "status": "PASS",
       "detail": ""
     },
@@ -812,7 +854,7 @@
       "id": "SKIP-04",
       "name": "符号链接跳过（当前环境无法创建 symlink）",
       "status": "UNVERIFIED",
-      "detail": "os.symlink failed: [WinError 1314] 客户端没有所需的特权。: 'C:\\\\Users\\\\zhouyi\\\\AppData\\\\Local\\\\Temp\\\\dupqa-l5wrohbi\\\\qa-share-a\\\\dup' -> 'C:\\\\Users\\\\zhouyi\\\\AppData\\\\Local\\\\Temp\\\\dupqa-l5wrohbi\\\\qa-share-a\\\\link_to_dup'"
+      "detail": "os.symlink failed: [WinError 1314] 客户端没有所需的特权。: 'C:\\\\Users\\\\zhouyi\\\\AppData\\\\Local\\\\Temp\\\\dupqa-d1n19y81\\\\qa-share-a\\\\dup' -> 'C:\\\\Users\\\\zhouyi\\\\AppData\\\\Local\\\\Temp\\\\dupqa-d1n19y81\\\\qa-share-a\\\\link_to_dup'"
     },
     {
       "id": "HARDLINK-01",

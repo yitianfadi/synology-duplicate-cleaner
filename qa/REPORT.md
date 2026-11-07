@@ -510,3 +510,59 @@ python build/build_spk.py --no-icons --out-dir $env:TEMP\qa-build2
 
 - 结论：v0034 **PASS（可交付）**；升级 1.1.0-0034 后 NAS 上 7340 个排队任务会保留并自动续跑。
 
+## 17. 附：v0035 补翻译（只做了 ASR、没翻译的任务单独翻译，2026-11-07）
+
+### 17.1 需求
+
+用户：“如果只进行了 ASR 没有翻译，则需要能单独进行翻译”。即历史任务（或提交时未勾选“同时生成译文”的批次）跑完 ASR 后，能**只补翻译**，不重新抽音频、不重新 ASR、不重复上传音频。
+
+现有 `source=existing_srt` 只翻译模式不满足：它要求**视频同目录存在 `<stem>.srt`**、需重新枚举目录，且在 `download_only` 输出、视频已删除、任务目录是唯一副本时全部失效；任务明细/任务中心也没有任何补翻译入口。
+
+### 17.2 实现
+
+- **派生任务，不改源任务**：补翻译新建一条仅翻译任务（`source=existing_srt` + `source_job_id` 指向源任务），源任务 status/文件/审计/updated_at 完全不变。
+- **源文本解析**（`_resolve_source_text`）：源任务目录 `original.srt` → 视频同目录 `<stem>.srt` → `SOURCE_SRT_MISSING`。视频文件已删除也能翻译（只写任务目录，写回视频旁按既有 warning 降级）；不调用 `shares.validate_file`。
+- **接口**：
+  - `POST /api/subtitles/{job_id}/translate`（202 新建 / 200 同源幂等），body `{"confirm_cloud":true,"target_lang":"zh"}`；
+  - `POST /api/subtitles/batch-groups/{group_id}/translate`（恒 202），服务端分类统计 eligible/created/already_translated/missing_source/duplicates/rejected，按 ≤500 拆批新建翻译批次组（不混入源组，options 带 `translated_from_group`/`translated_from_job`）。
+  - 批次组快照新增 `translatable={count, partial}`（纯内存计数、零逐任务 stat），供“补翻译（N）”按钮。
+- **资格与错误码**：done 且（`translate=false` 或 `translation_partial=true`）；已有完整译文 `TRANSLATION_EXISTS`、未完成 `JOB_NOT_DONE`、开关关 `TRANSLATE_DISABLED`、LLM Key 空 `TRANSLATE_NOT_CONFIGURED`、缺云端确认 `CLOUD_CONFIRM_REQUIRED`（均 400）。
+- **重启恢复**：带 `source_job_id` 的 running/translating 任务启动时转 `paused` 可继续（无 ASR 分片损失）；queued 沿用 v0034 自动续跑。
+- **前端**：批次组卡片「补翻译（N）」/仅 partial 时「重新翻译（M）」；任务明细行/任务中心列表/详情弹窗「补翻译/重新翻译」；来源标签「补翻译（源任务 sub-…）」；三级能力门控（总开关/翻译开关/LLM Key），确认弹窗明确“只上传字幕文本、不上传音频/视频”。
+- **无 schema 变更**（SQLite 仍 v7，`source_job_id` 只在 payload_json）；文档同步 SUBTITLE_CONTRACT §15、SUBTITLE_BATCH_CONTRACT §1/§7.1/§10/§13.2/§15、UI_PROTOTYPE、ARCHITECTURE §12.5、CONTRACT v0035 增量。
+
+### 17.3 最终产物
+
+- `dist/DuplicateCleaner-1.1.0-0035.spk`
+  - SHA256 `b8fd35be001bc6785bf3bf74c898b20a5b2cbdd17cc6ad4fa3c84a0840fa9e6c`
+  - package.tgz MD5 `2dcef5cbd2ae87bf9d11838fd92e244c`（= INFO.checksum）
+  - 大小 38,993,920 B
+- 版本 1.1.0-0035 同步 8 处；`qa/static_checks.py` SPK-SYNC 通过。
+
+### 17.4 结果总览
+
+| 套件 | 命令 | 结果 |
+|---|---|---|
+| 后端单测 | `cd src/backend && python -m unittest discover -s tests` | **412 tests OK（5 skipped）** |
+| 端到端 | `python qa/e2e_test.py` | **PASS=142 / FAIL=0 / UNVERIFIED=1**（Windows symlink 权限限制） |
+| 静态检查（含 unittest/前端/SPK） | `python qa/static_checks.py` | **PASS=149 / FAIL=0 / UNVERIFIED=0** |
+| 前端模块图 | `node qa/check_web_modules.mjs` | **22/22 PASS** |
+| 无头浏览器冒烟 | `python qa/web_smoke.py` | **8/8 PASS** |
+
+### 17.5 验收要点
+
+- 后端新增 15 例（`tests/test_subtitle_translate.py`）：ASR-only 补翻译生成 `<target>.srt`/`bilingual.<target>.srt` 且源任务快照不变、无 FFmpeg/无重复 ASR、`TRANSLATION_EXISTS`、partial 重译、开关/密钥/confirm/非法参数/404/JOB_NOT_DONE、`SOURCE_SRT_MISSING`、**视频已删除仍可从任务目录翻译**、同源幂等（active 200 同 job、完成后可再派生）、组批量混合分类计数+新组 total/options+源组只读、`translatable` 计数、重启 paused+resumable（普通任务仍 SERVICE_RESTART）、两个 API 状态码/响应形状/CSRF。
+- e2e 新增 SUB-22（翻译未启用 400）、SUB-23（保存翻译开关/LLM Key 且不回显密钥）、SUB-24（未知任务 404）、SUB-25（缺 confirm 400）、SUB-26（`target_lang=auto` 400）、SUB-27（未知组 404）、SUB-28（未配 LLM Key 400）。
+- 静态新增 `BE-SUBTITLE-TRANSLATE-ONLY`、`BE-SUBTITLE-TRANSLATE-STATE`、`BE-SUBTITLE-TRANSLATE-TESTS`、`FE-SUBTITLE-TRANSLATE`、`FE-SUBTITLE-TRANSLATE-GATE`。
+- 前端 DOM-stub 实测：组按钮/明细行按钮→确认→POST body→摘要 toast→切换新组并加载明细；任务中心列表/footer 按钮、来源标签、点击后刷新均正常。
+
+### 17.6 已知边界
+
+- `summary.eligible` = 满足资格且源文本可解析（含随后计入 `duplicates` 的任务），`created` 为实际新建数（已在契约 §15.2 注明）。
+- 单任务补翻译也会创建一个仅含 1 个任务的翻译批次组（便于任务被组保留策略保护、并在批次组视图查看）；组保留上限 20 的既有清理规则不变。
+- 旧版本已判失败的历史任务不会被自动复活；组级补翻译会逐任务读取源 `original.srt`（20000 任务规模有一次性 IO 成本，组快照计数不受影响）。
+- 真机验证待办：NAS 安装 1.1.0-0035 后，对“仅 ASR”的已完成批次组点击「补翻译」，确认新组转 `translating`、产生译文并写回/可下载。
+
+- 结论：v0035 **PASS（可交付）**；升级 1.1.0-0035 后可用「补翻译」处理历史 ASR-only 任务，且不重新消耗 ASR 算力。
+
+

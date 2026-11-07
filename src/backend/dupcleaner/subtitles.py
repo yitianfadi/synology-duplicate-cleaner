@@ -706,7 +706,8 @@ class OpenAIClient(object):
 class SubtitleJob(object):
     def __init__(self, job_id, path, language, translate, target_lang, user,
                  source=SOURCE_ASR, output_mode=None, skip_existing=True,
-                 batch_id=None, group_id=None, audio_source=None):
+                 batch_id=None, group_id=None, audio_source=None,
+                 source_job_id=None):
         self.job_id = job_id
         self.path = path
         self.language = language
@@ -724,6 +725,10 @@ class SubtitleJob(object):
         self.audio_source = (audio_source
                              if audio_source in config.SUBTITLE_AUDIO_SOURCES
                              else config.SUBTITLE_DEFAULT_AUDIO_SOURCE)
+        # v0035 补翻译：仅翻译任务记录源任务 ID（源任务目录 original.srt 为源文本）
+        self.source_job_id = (source_job_id
+                              if isinstance(source_job_id, str) and source_job_id
+                              else None)
         self.status = STATUS_QUEUED
         self.stage = "audio"
         self.progress = 0
@@ -764,6 +769,8 @@ class SubtitleJob(object):
                 "batch_id": self.batch_id,
                 "group_id": self.group_id,
                 "audio_source": self.audio_source,
+                # v0035：补翻译任务指向源任务；普通任务为 None
+                "source_job_id": self.source_job_id,
                 "created_at": timeutil.iso_local(self.created_epoch),
                 "updated_at": timeutil.iso_local(self.updated_epoch),
                 "error": dict(self.error) if isinstance(self.error, dict) else None,
@@ -797,6 +804,7 @@ class SubtitleJob(object):
             "batch_id": self.batch_id,
             "group_id": self.group_id,
             "audio_source": self.audio_source,
+            "source_job_id": self.source_job_id,
             "created_epoch": self.created_epoch,
             "updated_epoch": self.updated_epoch,
             "error": self.error,
@@ -823,7 +831,8 @@ class SubtitleJob(object):
                   skip_existing=record.get("skip_existing") is not False,
                   batch_id=record.get("batch_id"),
                   group_id=record.get("group_id"),
-                  audio_source=record.get("audio_source"))
+                  audio_source=record.get("audio_source"),
+                  source_job_id=record.get("source_job_id"))
         job.status = record.get("status") or STATUS_FAILED
         job.stage = record.get("stage") or "audio"
         job.progress = int(record.get("progress") or 0)
@@ -1003,6 +1012,13 @@ class SubtitleService(object):
                     job.resumable = True
                     job.error = None
                     job.message = u"服务重启导致任务暂停，可继续"
+                elif job.source_job_id:
+                    # v0035：补翻译任务没有 ASR 分片缓存，重启后仍可继续
+                    # （源文本解析与翻译都是可重入的，不产生重复上传）
+                    job.status = STATUS_PAUSED
+                    job.resumable = True
+                    job.error = None
+                    job.message = u"服务重启导致翻译暂停，可继续"
                 else:
                     job.status = STATUS_FAILED
                     job.resumable = False
@@ -1830,6 +1846,8 @@ class SubtitleService(object):
         group_jobs = []
         total = 0
         missing = 0
+        # v0035：组内“可补翻译”任务计数（只读内存快照，不做逐任务文件 stat）
+        translatable = {"count": 0, "partial": 0}
         with self._lock:
             jobs_by_id = dict(self._jobs)
         for batch_id in batch_ids:
@@ -1848,6 +1866,11 @@ class SubtitleService(object):
                 status = job.status
                 batch_counts[status] = batch_counts.get(status, 0) + 1
                 counts[status] = counts.get(status, 0) + 1
+                if status == STATUS_DONE:
+                    if not job.translate:
+                        translatable["count"] += 1
+                    elif job.translation_partial:
+                        translatable["partial"] += 1
             batch_total = len(job_ids)
             total += batch_total
             batches.append({
@@ -1873,6 +1896,8 @@ class SubtitleService(object):
             "progress": int(round(100.0 * finished / total)) if total else 0,
             "counts": counts,
             "missing": missing,
+            # v0035：可补翻译统计（count=仅 ASR 的 done；partial=部分译文可重译）
+            "translatable": translatable,
             # v0034：执行中任务明细（最多 10 条）+ 剩余时间估算 + 当前并发数。
             "active_jobs": [self._active_job_entry(item)
                             for item in active_jobs[:10]],
@@ -2075,6 +2100,309 @@ class SubtitleService(object):
                 continue
         self._save_group_record(record)
         return self._group_snapshot(record)
+
+    # ------------------------------------------------------------------
+    # v0035 补翻译：已完成 ASR（或部分译文）任务派生“仅翻译”任务
+    # 只调 LLM（源文本来自源任务目录 original.srt），不跑 FFmpeg、不重新 ASR，
+    # 源任务的 status/文件/审计完全不动。
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _read_text_file(path):
+        """读取 UTF-8（容忍 BOM/非法字节）；失败返回 None。"""
+        try:
+            with open(path, "r", encoding="utf-8-sig",
+                      errors="replace") as handle:
+                return handle.read()
+        except OSError:
+            return None
+
+    def _resolve_source_text(self, source_job_id, video_path):
+        """解析补翻译源文本：源任务目录 original.srt → 视频同目录 <stem>.srt。
+
+        返回 (源字幕路径, 文本)；都不可用时抛 SOURCE_SRT_MISSING。
+        只翻译任务不要求视频文件存在（不调用 shares.validate_file）。
+        """
+        if source_job_id:
+            with self._lock:
+                source_exists = source_job_id in self._jobs
+            if source_exists:
+                try:
+                    source_dir = self._job_dir(source_job_id)
+                except ApiError:
+                    source_dir = None
+                if source_dir:
+                    path = os.path.join(source_dir, "original.srt")
+                    if os.path.isfile(path):
+                        text = self._read_text_file(path)
+                        if text is not None:
+                            return path, text
+        source_srt = find_source_srt(video_path)
+        if source_srt is not None:
+            text = self._read_text_file(source_srt)
+            if text is not None:
+                return source_srt, text
+        raise SubtitleError("SOURCE_SRT_MISSING", u"源字幕已不存在，请重新生成")
+
+    def _active_translate_by_source(self):
+        """构建 source_job_id → 排队/执行中翻译任务的索引。
+
+        组批量最多 20000 个任务，逐任务全量扫描 _jobs 会退化为 O(n²)。
+        """
+        index = {}
+        with self._lock:
+            jobs = list(self._jobs.values())
+        for item in jobs:
+            source_id = getattr(item, "source_job_id", None)
+            if (source_id and item.status in ACTIVE_STATUSES
+                    and item.translate):
+                index.setdefault(source_id, item)
+        return index
+
+    def _find_active_translate_job(self, source_job_id):
+        """同源已有排队/执行中的翻译任务则返回它（幂等去重）。"""
+        return self._active_translate_by_source().get(source_job_id)
+
+    def _translate_precondition(self, payload):
+        """补翻译公共前置校验：功能/翻译开关、LLM 密钥、云端上传确认。"""
+        if not isinstance(payload, dict):
+            raise invalid(u"请求体必须是 JSON 对象")
+        settings = self._settings() or {}
+        if not settings.get("subtitle_enabled"):
+            raise SubtitleError("SUBTITLE_DISABLED", u"云端字幕功能未启用")
+        if not settings.get("subtitle_translate_enabled"):
+            raise SubtitleError("TRANSLATE_DISABLED", u"字幕翻译功能未启用")
+        if not str(settings.get("subtitle_llm_api_key") or "").strip():
+            raise SubtitleError(
+                "TRANSLATE_NOT_CONFIGURED",
+                u"未配置字幕翻译模型密钥，请先在设置中填写")
+        if payload.get("confirm_cloud") is not True:
+            raise SubtitleError(
+                "CLOUD_CONFIRM_REQUIRED",
+                u"请先确认字幕文本将上传到所配置的第三方服务")
+        return settings
+
+    @staticmethod
+    def _translate_target_lang(payload, settings):
+        target_lang = (payload.get("target_lang")
+                       or settings.get("subtitle_translate_target") or "zh")
+        if (not isinstance(target_lang, str)
+                or not LANGUAGE_RE.match(target_lang.strip())
+                or target_lang.strip().lower() == "auto"):
+            raise invalid(u"目标语言非法")
+        return target_lang.strip()
+
+    @staticmethod
+    def _check_translate_source(source_job):
+        """源任务必须 done；已有完整译文时拒绝（部分译文允许重译）。"""
+        if source_job.status != STATUS_DONE:
+            raise SubtitleError("JOB_NOT_DONE", u"源任务尚未完成，无法补翻译")
+        if source_job.translate and not source_job.translation_partial:
+            raise SubtitleError("TRANSLATION_EXISTS", u"源任务已有完整译文")
+
+    def _build_translate_job(self, user, source_job, target_lang):
+        """按 v0035 契约构造“仅翻译”任务（skip_existing 必须为 False）。"""
+        return SubtitleJob(
+            make_job_id(), source_job.path, source_job.language, True,
+            target_lang, user, source=SOURCE_EXISTING_SRT,
+            output_mode=source_job.output_mode, skip_existing=False,
+            audio_source=source_job.audio_source,
+            source_job_id=source_job.job_id)
+
+    @staticmethod
+    def _translate_options(source_job, target_lang, extra=None):
+        options = {
+            "source": SOURCE_EXISTING_SRT,
+            "language": source_job.language,
+            "translate": True,
+            "target_lang": target_lang,
+            "output_mode": source_job.output_mode,
+            "skip_existing": False,
+            "audio_source": source_job.audio_source,
+            "recursive": False,
+            "root": "",
+        }
+        if extra:
+            options.update(extra)
+        return options
+
+    def _create_translate_group(self, user, jobs, options):
+        """把已构造好的仅翻译任务登记为一个新批次组（按上限自动拆批）。"""
+        group_id = make_group_id()
+        batch_ids = []
+        per_batch = max(1, int(config.SUBTITLE_BATCH_MAX_ITEMS))
+        now = time.time()
+        for start in range(0, len(jobs), per_batch):
+            chunk = jobs[start:start + per_batch]
+            batch_id = make_batch_id()
+            batch_ids.append(batch_id)
+            for job in chunk:
+                job.batch_id = batch_id
+                job.group_id = group_id
+            self._save_batch_record({
+                "batch_id": batch_id,
+                "group_id": group_id,
+                "created_epoch": now,
+                "updated_epoch": now,
+                "user": user,
+                "options": dict(options),
+                "job_ids": [job.job_id for job in chunk],
+                "rejected": [],
+                "duplicates": [],
+            })
+        group_record = {
+            "group_id": group_id,
+            "created_epoch": now,
+            "updated_epoch": now,
+            "user": user,
+            "options": dict(options),
+            "batch_ids": batch_ids,
+            "rejected": [],
+            "duplicates": [],
+        }
+        self._save_group_record(group_record)
+        for job in jobs:
+            self._register_job(job, enqueue=True)
+            self.store.audit("subtitle_start", user, {
+                "job_id": job.job_id,
+                "batch_id": job.batch_id,
+                "group_id": group_id,
+                "path": job.path,
+                "source": job.source,
+                "language": job.language,
+                "translate": True,
+                "target_lang": job.target_lang,
+                "output_mode": job.output_mode,
+                "audio_source": job.audio_source,
+                # v0035：补翻译审计可追溯到源任务
+                "operation": "translate",
+                "source_job_id": job.source_job_id,
+            })
+        self._save_group_record(group_record)
+        with self._lock:
+            self._trim_groups_locked()
+        return group_record
+
+    def translate_job(self, user, job_id, payload):
+        """v0035：为已完成任务单独补翻译（返回 created/source_job_id/job/group）。"""
+        settings = self._translate_precondition(payload)
+        target_lang = self._translate_target_lang(payload, settings)
+        source_job = self._get_job(job_id)
+        self._check_translate_source(source_job)
+        existing = self._find_active_translate_job(job_id)
+        if existing is not None:
+            group = None
+            if existing.group_id:
+                try:
+                    group = self._group_snapshot(
+                        self._load_group_record(existing.group_id))
+                except (ApiError, SubtitleError):
+                    group = None
+            return {
+                "created": False,
+                "source_job_id": job_id,
+                "job": existing.snapshot(),
+                "group": group,
+            }
+        # 提交时源文本必须可用；运行期会重新解析（源文件可能变化）
+        self._resolve_source_text(job_id, source_job.path)
+        job = self._build_translate_job(user, source_job, target_lang)
+        options = self._translate_options(
+            source_job, target_lang, {"translated_from_job": job_id})
+        group_record = self._create_translate_group(user, [job], options)
+        self._ensure_worker()
+        return {
+            "created": True,
+            "source_job_id": job_id,
+            "job": job.snapshot(),
+            "group": self._group_snapshot(group_record),
+        }
+
+    def _group_source_jobs(self, record):
+        """按创建时间升序返回组内仍存在的任务对象（跳过已被清理的任务）。"""
+        jobs = []
+        seen = set()
+        with self._lock:
+            jobs_by_id = dict(self._jobs)
+        for batch_id in record.get("batch_ids") or []:
+            try:
+                batch_record = self._load_batch_record(batch_id)
+            except (ApiError, SubtitleError):
+                continue
+            for job_id in batch_record.get("job_ids") or []:
+                if job_id in seen:
+                    continue
+                seen.add(job_id)
+                job = jobs_by_id.get(job_id)
+                if job is not None:
+                    jobs.append(job)
+        jobs.sort(key=lambda item: item.created_epoch)
+        return jobs
+
+    def translate_batch_group(self, user, group_id, payload):
+        """v0035：整组补翻译，派生新组并返回分类统计。"""
+        settings = self._translate_precondition(payload)
+        target_lang = self._translate_target_lang(payload, settings)
+        record = self._load_group_record(group_id)
+        source_jobs = self._group_source_jobs(record)
+        summary = {
+            "eligible": 0,
+            "created": 0,
+            "already_translated": 0,
+            "missing_source": 0,
+            "duplicates": 0,
+            "rejected": [],
+        }
+        options_source = None
+        jobs = []
+        active_translate = self._active_translate_by_source()
+        for source_job in source_jobs:
+            if source_job.status != STATUS_DONE:
+                continue
+            if source_job.translate and not source_job.translation_partial:
+                summary["already_translated"] += 1
+                continue
+            try:
+                self._resolve_source_text(source_job.job_id, source_job.path)
+            except SubtitleError:
+                summary["missing_source"] += 1
+                continue
+            summary["eligible"] += 1
+            if source_job.job_id in active_translate:
+                summary["duplicates"] += 1
+                continue
+            try:
+                jobs.append(self._build_translate_job(
+                    user, source_job, target_lang))
+            except Exception as exc:  # 构造失败只记录，不整组失败
+                summary["rejected"].append({
+                    "path": source_job.path,
+                    "code": getattr(exc, "code", "INVALID_ARGUMENT"),
+                    "message": getattr(exc, "message", u"补翻译任务创建失败"),
+                })
+                continue
+            if options_source is None:
+                options_source = source_job
+        group_snapshot = None
+        new_group_id = None
+        if jobs:
+            options = self._translate_options(
+                options_source, target_lang,
+                {"translated_from_group": group_id})
+            group_record = self._create_translate_group(user, jobs, options)
+            new_group_id = group_record.get("group_id")
+            summary["created"] = len(jobs)
+            group_snapshot = self._group_snapshot(group_record)
+            self._ensure_worker()
+        self.store.audit("subtitle_translate_group", user, {
+            "group_id": new_group_id,
+            "source_group_id": group_id,
+            "created": summary["created"],
+        })
+        return {
+            "created": summary["created"],
+            "group": group_snapshot,
+            "summary": summary,
+        }
 
     def _trim_groups_locked(self):
         """批次组保留上限：只清理已终态的老组（组内任务不参与单任务 LRU）。"""
@@ -2838,19 +3166,13 @@ class SubtitleService(object):
             shutil.rmtree(tempdir, ignore_errors=True)
 
     def _process_existing_srt(self, job, settings):
-        """只翻译已有字幕：不启动 FFmpeg、不调用 ASR。"""
-        stem = os.path.splitext(os.path.basename(job.path))[0]
-        source_srt = find_source_srt(job.path)
-        if source_srt is None:
-            raise SubtitleError(
-                "SOURCE_SRT_MISSING",
-                u"视频同目录未找到 %s.srt，无法只翻译" % stem)
-        try:
-            with open(source_srt, "r", encoding="utf-8-sig",
-                      errors="replace") as handle:
-                text = handle.read()
-        except OSError:
-            raise SubtitleError("SOURCE_SRT_MISSING", u"无法读取已有字幕文件")
+        """只翻译已有字幕：不启动 FFmpeg、不调用 ASR。
+
+        v0035：补翻译任务优先读源任务目录 original.srt；源任务目录缺失时
+        回退到视频同目录 <stem>.srt（不要求视频文件仍存在）。
+        """
+        source_srt, text = self._resolve_source_text(
+            getattr(job, "source_job_id", None), job.path)
         cues = parse_srt(text)
         if not cues:
             raise SubtitleError("NO_SPEECH", u"已有字幕文件没有可用内容")

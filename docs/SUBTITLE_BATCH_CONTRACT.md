@@ -16,7 +16,8 @@
 - 支持两种来源：
   - `source="asr"`：云端 ASR 生成字幕（可顺带翻译）；
   - `source="existing_srt"`：对视频同目录已有的 `movie.srt` **只翻译**，不调 ASR、不上传音频。
-- **不在范围**：`custom_dir` 输出模式；`.vtt` 落盘到视频旁；字幕编辑/手工校对；说话人分离；翻译结果重新生成。
+- v0035 起支持**补翻译**：已完成但未翻译（或部分译文回退）的历史任务，可单独派生一条仅翻译任务，文本取自源任务目录 `original.srt`（详见 §15）。
+- **不在范围**：`custom_dir` 输出模式；`.vtt` 落盘到视频旁；字幕编辑/手工校对；说话人分离。
 
 ## 2. 新增配置
 
@@ -216,6 +217,7 @@ v0034 新增 `status`：`all`（默认）/`active`（= running+translating）/`q
 ```json
 {
   "source": "asr",
+  "source_job_id": null,
   "batch_id": "bat-...",
   "group_id": "grp-...",
   "audio_source": "nas",
@@ -229,6 +231,7 @@ v0034 新增 `status`：`all`（默认）/`active`（= running+translating）/`q
 
 - `group_id`：v0032 批次组 ID（单批提交/单任务为 null）。
 - `audio_source`：提交时的音频来源快照（`nas` | `server`），运行期不随设置变化。
+- `source_job_id`：v0035 补翻译任务指回源任务（`sub-...`）；普通任务为 null。仅存 payload_json，无 schema 变更。
 
 旧 job JSON 缺这些字段时按默认值读取（`_load_jobs` 容错），保证升级后可读。
 
@@ -303,6 +306,10 @@ CREATE TABLE IF NOT EXISTS subtitle_batches (
 | BATCH_TOO_LARGE | 400 | 路径数超 `SUBTITLE_BATCH_GROUP_MAX_ITEMS`（v0032：默认 20000；批次内自动拆成 ≤500） |
 | SOURCE_SRT_MISSING | 400 | 只翻译但视频旁无 `<stem>.srt` |
 | OUTPUT_NOT_WRITABLE | 400 | 视频旁目录不可写（任务级 warning，不作为接口错误抛出） |
+| TRANSLATE_DISABLED | 400 | `subtitle_translate_enabled=false`（v0035 补翻译同样适用） |
+| TRANSLATE_NOT_CONFIGURED | 400 | 补翻译时 `subtitle_llm_api_key` 为空 |
+| TRANSLATION_EXISTS | 400 | 源任务已有完整译文，无需补翻译 |
+| JOB_NOT_DONE | 400 | 源任务未完成，不能补翻译 |
 
 任务失败码（写入 job.error.code，不新增 HTTP 语义）：`SOURCE_SRT_MISSING`（运行期源字幕丢失）、`NO_SPEECH`（已有字幕无可用内容）。`OUTPUT_NOT_WRITABLE` 只作为任务 `warning`，不判失败。
 
@@ -317,7 +324,7 @@ CREATE TABLE IF NOT EXISTS subtitle_batches (
 
 ## 12. 版本与兼容
 
-- 版本 **1.1.0-0034**，需同步 8 处：`README.md`、`build/build_spk.py`、`docs/ARCHITECTURE.md`、`docs/CONTRACT.md`、`docs/SPK_PACKAGING.md`、`spk/INFO`、`src/backend/dupcleaner/config.py`、`src/web/index.html`（含 `app.js?v=` 查询串）。
+- 版本 **1.1.0-0035**（v0034 起含补翻译），需同步 8 处：`README.md`、`build/build_spk.py`、`docs/ARCHITECTURE.md`、`docs/CONTRACT.md`、`docs/SPK_PACKAGING.md`、`spk/INFO`、`src/backend/dupcleaner/config.py`、`src/web/index.html`（含 `app.js?v=` 查询串）。
 - 现有 `POST /api/subtitles` 行为不变（新字段均为可选）；旧任务记录可读；旧 SPK 升级后数据目录与包 ID 不变。
 - 文档同步：本文件、`docs/SUBTITLE_CONTRACT.md`（新增 §13 指向本文件）、`docs/ARCHITECTURE.md`（字幕页与批次服务）。
 
@@ -353,6 +360,7 @@ CREATE TABLE IF NOT EXISTS subtitle_batches (
                    "updated_at": "..."}],
   "eta_seconds": 432000,
   "concurrency": 1,
+  "translatable": {"count": 1200, "partial": 3},
   "created_at": "...", "updated_at": "...",
   "options": {"source": "asr", "language": "auto", "translate": false,
                "target_lang": "zh", "output_mode": "alongside_video",
@@ -367,6 +375,8 @@ CREATE TABLE IF NOT EXISTS subtitle_batches (
 - `counts` 为 7 个状态键求和；`finished` = done+failed+cancelled；`progress` = round(100×finished/total)。
 - v0034：`active_jobs` 为正在执行的任务（running/translating，最多 10 条），前端用于“当前执行”与置顶区块；
   `eta_seconds` 为估算剩余秒数（按已处理非 skipped 任务的平均耗时 × 剩余 ÷ 并发；样本不足为 `null`）；`concurrency` 为当前生效并发。
+- v0035：`translatable` 为补翻译按钮计数（不做逐任务文件 stat，避免 20000 任务组快照变慢）：
+  `count` = 已完成且 `translate=false` 的任务数；`partial` = 已完成且 `translate=true && translation_partial=true` 的任务数。
 - 状态推导与批次一致：全部终态时 failed 优先，其次 cancelled（且无 done），否则 done；未全部终态时 running/translating > paused > queued。
 - 组记录持久化到 SQLite `subtitle_batch_groups`（schema v7），并镜像 JSON 到 `<var>/subtitles/groups/`。
 - 保留：`SUBTITLE_BATCH_GROUP_LIMIT`（默认 20）个组；只清理已终态最老组及其批次/任务；组内任务不参与单任务 LRU。
@@ -385,3 +395,61 @@ CREATE TABLE IF NOT EXISTS subtitle_batches (
 - **重启恢复**：服务启动时 `queued` 子任务保留并自动重新入队（不再全部判 `SERVICE_RESTART`），大批次组升级套件后不会丢队列；`running/translating` 有分片转 `paused` 可继续，无分片仍失败。详见 [SUBTITLE_CONTRACT.md](SUBTITLE_CONTRACT.md) §14。
 - **并发**：`subtitle_concurrency`（1..4，默认 1，重启生效）为全局同时执行任务数；批次组/批次状态仍按子任务实时聚合，`eta_seconds` 会按并发折算。
 - **可见性**：组快照 `active_jobs` + 任务列表 `status` 过滤，解决“任务明细/任务中心只看得到排队任务”的问题（列表排序保持按创建时间倒序稳定分页，执行中由置顶区块展示）。
+
+## 15. 补翻译（v0035：已完成的仅 ASR 任务）
+
+### 15.1 目标与范围
+
+历史任务（或提交时未勾选“同时生成译文”的批次）完成 ASR 后，可以**单独补翻译**，不重新抽音频、不重新 ASR：
+
+- 原任务记录不变；新增一条**派生翻译任务**（`source="existing_srt"` + `source_job_id` 指回源任务），原任务与派生任务都可下载/查看/审计。
+- 文本来源优先级：源任务目录 `original.srt` → 视频同目录 `<stem>.srt` → 都没有则 `SOURCE_SRT_MISSING`。视频文件已删除也可补翻译（任务目录可下载；写回视频旁按不可写/部分失败降级为 `warning`）。
+- 目标语言：默认 `subtitle_translate_target`，请求体可覆盖（不得 `auto`）。
+- 复用现有队列/并发/暂停/取消/重试；`translating` 计入“执行中”；重启时运行中的翻译任务转 `paused` 可继续。
+- 新批次组不混入源组，便于单独查看补翻译进度；`skip_existing=false`（部分译文回退任务允许重新翻译，视频旁已有译文仍遵守“从不覆盖”）。
+
+### 15.2 API
+
+`POST /api/subtitles/{job_id}/translate`（管理员 + CSRF）
+
+```json
+{"confirm_cloud": true, "target_lang": "zh"}
+```
+
+- 202 新建：`{"ok":true,"created":true,"source_job_id":"sub-...","job":{...},"group":{...}}`
+- 200 幂等：同一源任务已有排队/执行中的翻译任务 → `created=false` 并返回已有任务。
+- 400：`SUBTITLE_DISABLED` / `TRANSLATE_DISABLED` / `TRANSLATE_NOT_CONFIGURED` / `JOB_NOT_DONE` / `TRANSLATION_EXISTS` / `SOURCE_SRT_MISSING` / `CLOUD_CONFIRM_REQUIRED` / `INVALID_ARGUMENT`；404：任务不存在。
+- 源任务 `translation_partial=true` 允许重新翻译；已有完整译文返回 `TRANSLATION_EXISTS`。
+
+`POST /api/subtitles/batch-groups/{group_id}/translate`（管理员 + CSRF）
+
+```json
+{"confirm_cloud": true, "target_lang": "zh"}
+```
+
+- 202：`{"ok":true,"created":N,"group":{新组快照}|null,"summary":{
+    "eligible":N,"created":N,"already_translated":0,"missing_source":0,
+    "duplicates":0,"rejected":[{"path":"...","code":"...","message":"..."}]}}`
+- 逐任务独立：缺源文本 / 已完整译文只计入 `summary`，不使整组失败；`created=0` 时不创建组，`group=null`。
+- `summary` 口径：`eligible` = 满足资格（done 且 `translate=false` 或 `partial=true`）且源文本可解析的任务数（含随后因已有排队翻译任务而计入 `duplicates` 的任务）；`created` = 实际新建任务数；`already_translated`/`missing_source`/`duplicates`/`rejected` 为分类计数。
+- 任务按创建时间升序、按 `SUBTITLE_BATCH_MAX_ITEMS`（500）拆批；新组 `options` 带
+  `{"source":"existing_srt","translate":true,"target_lang":...,"output_mode":<源任务输出方式>,"skip_existing":false,"translated_from_group":"grp-..."}`，每个 job 带 `source_job_id`。
+- 审计：`subtitle_start`（`operation=translate`、`source_job_id`）与 `subtitle_translate_group`（源组、创建数）。
+
+组快照新增（见 §13.2）：
+
+```json
+"translatable": {"count": 1200, "partial": 3}
+```
+
+### 15.3 前端
+
+- 批次组卡片：`translatable.count>0` 时显示「补翻译（N）」，确认弹窗说明“只上传字幕文本、不上传音频，将新建翻译批次组”；成功后切换到新组并 toast 汇总（已创建 / 已有译文 / 源缺失 / 重复）。
+- 任务明细行与任务中心列表/详情：`done` 且可补翻译的任务显示「补翻译」，`translation_partial=true` 显示「重新翻译」；创建后刷新列表。
+- 任务来源标签显示「补翻译（源任务 <短 id>）」；翻译关闭或未配置 LLM Key 时按钮禁用并提示。
+
+### 15.4 测试与版本
+
+- 测试：单任务补翻译（含视频已删除）、已有译文拒绝、部分译文重译、幂等、开关/凭据缺失、组批量分类计数、组快照 `translatable`、重启转 `paused`、两个接口的状态码/响应形状；前端 node 模块检查 + web smoke + e2e（SUB-22 起）。
+- 版本 **1.1.0-0035**；SQLite schema 不变（仍 v7），旧任务/旧组记录可读。
+

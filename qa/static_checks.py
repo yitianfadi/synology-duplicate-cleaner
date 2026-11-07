@@ -397,6 +397,39 @@ def check_backend():
           and "self._ensure_worker()" in subtitles_src,
           "restart queue resume markers missing")
 
+    # ---- v0035 补翻译：已完成仅 ASR 任务派生“仅翻译”任务 ----
+    translate_test_path = os.path.join(backend, "tests",
+                                       "test_subtitle_translate.py")
+    translate_markers_ok = (
+        "def translate_job" in subtitles_src
+        and "def translate_batch_group" in subtitles_src
+        and "def _resolve_source_text" in subtitles_src
+        and '"source_job_id"' in subtitles_src
+        and "TRANSLATION_EXISTS" in subtitles_src
+        and "TRANSLATE_NOT_CONFIGURED" in subtitles_src
+        and '"translated_from_group"' in subtitles_src
+        and "skip_existing=False" in subtitles_src
+        and "def _subtitle_translate" in http_src
+        and "def _subtitle_group_translate" in http_src
+        and "/translate$" in http_src)
+    check("BE-SUBTITLE-TRANSLATE-ONLY",
+          "补翻译：源文本解析（源任务目录→视频旁）+ 派生任务 + 单任务/组级接口（v0035）",
+          translate_markers_ok, "subtitle translate markers missing")
+    translate_state_ok = (
+        '"translatable"' in subtitles_src
+        and 'translatable["count"]' in subtitles_src
+        and 'translatable["partial"]' in subtitles_src
+        and "服务重启导致翻译暂停" in subtitles_src
+        and "def _active_translate_by_source" in subtitles_src)
+    check("BE-SUBTITLE-TRANSLATE-STATE",
+          "组快照 translatable 计数 + 同源幂等索引 + 翻译任务重启转 paused（v0035）",
+          translate_state_ok, "subtitle translate state markers missing")
+    check("BE-SUBTITLE-TRANSLATE-TESTS",
+          "新增补翻译 unittest（源任务目录/视频删除/幂等/组批量/重启）",
+          os.path.isfile(translate_test_path)
+          and "test_" in read(translate_test_path),
+          "test_subtitle_translate.py missing")
+
 
 # ---------------------------------------------------------------------------
 # 前端
@@ -564,6 +597,28 @@ def check_frontend():
     check("FE-SUBTITLE-CENTER-ACTIVE",
           "任务中心字幕任务把执行中任务置顶（先取 status=active）",
           center_active_ok, "task center active-first wiring missing")
+    translate_ui_ok = (
+        "补翻译" in subtitle_page_src
+        and "translatable" in subtitle_page_src
+        and "translateCapability" in subtitle_page_src
+        and "translateGroup" in subtitle_page_src
+        and "translateJob" in subtitle_page_src
+        and "/translate" in subtitle_page_src
+        and "source_job_id" in app
+        and "buildSubtitleTranslateButton" in app
+        and "补翻译" in app
+        and "/translate" in app)
+    check("FE-SUBTITLE-TRANSLATE",
+          "补翻译入口：批次组卡片/任务明细行/任务中心列表与详情 + 来源标签（v0035）",
+          translate_ui_ok, "subtitle translate UI markers missing")
+    translate_gate_ok = (
+        "字幕翻译未启用" in subtitle_page_src
+        and "LLM API Key" in subtitle_page_src
+        and "translateBtn.disabled = true" in subtitle_page_src
+        and "重新翻译" in subtitle_page_src)
+    check("FE-SUBTITLE-TRANSLATE-GATE",
+          "补翻译能力门控与“部分译文回退→重新翻译”入口（v0035）",
+          translate_gate_ok, "subtitle translate gate markers missing")
     delete_refresh_ok = (
         "resetResultsViewAfterDelete" in app
         and "recoverEmptyResultsPageAfterDelete" in app

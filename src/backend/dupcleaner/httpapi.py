@@ -203,6 +203,10 @@ class Api(object):
              self._subtitle_control, False),
             ("POST", re.compile(r"^/api/subtitles/(?P<job_id>[^/]+)/cancel$"),
              self._cancel_subtitle, False),
+            # v0035：补翻译（已完成任务派生仅翻译任务；同源 active 幂等）
+            ("POST", re.compile(
+                r"^/api/subtitles/(?P<job_id>[^/]+)/translate$"),
+             self._subtitle_translate, False),
             ("GET", re.compile(
                 r"^/api/subtitles/(?P<job_id>[^/]+)/file/(?P<name>[^/]+)$"),
              self._subtitle_file, False),
@@ -222,6 +226,10 @@ class Api(object):
             ("GET", re.compile(
                 r"^/api/subtitles/batch-groups/(?P<group_id>[^/]+)$"),
              self._subtitle_group_get, False),
+            # v0035：整组补翻译（与上面各组控制动作路由不冲突）
+            ("POST", re.compile(
+                r"^/api/subtitles/batch-groups/(?P<group_id>[^/]+)/translate$"),
+             self._subtitle_group_translate, False),
             ("POST", re.compile(
                 r"^/api/subtitles/batch-groups/(?P<group_id>[^/]+)/"
                 r"(?P<action>pause|resume|cancel|retry)$"),
@@ -663,6 +671,22 @@ class Api(object):
         return json_response({"ok": True,
                               "job": service.cancel(params["job_id"])})
 
+    # ------------------------------------------------------------------
+    # v0035 补翻译（仅管理员；docs/SUBTITLE_BATCH_CONTRACT.md §15）
+    # ------------------------------------------------------------------
+    def _subtitle_translate(self, request, session, params):
+        service = self._require_subtitle_admin(session)
+        body = _json_body(request)
+        try:
+            result = service.translate_job(session.user, params["job_id"], body)
+        except SubtitleError as exc:
+            raise ApiError(exc.code, exc.message, status=400)
+        payload = {"ok": True}
+        payload.update(result)
+        # 新建 202；同源已有排队/执行中的翻译任务 → 200 幂等
+        return json_response(payload,
+                             status=202 if result.get("created") else 200)
+
     def _subtitle_file(self, request, session, params):
         service = self._require_subtitle_admin(session)
         path = service.get_file(params["job_id"], params["name"])
@@ -761,6 +785,19 @@ class Api(object):
         return json_response({"ok": True,
                               "group": service.get_batch_group(
                                   params["group_id"])})
+
+    def _subtitle_group_translate(self, request, session, params):
+        service = self._require_subtitle_admin(session)
+        body = _json_body(request)
+        try:
+            result = service.translate_batch_group(
+                session.user, params["group_id"], body)
+        except SubtitleError as exc:
+            raise ApiError(exc.code, exc.message, status=400)
+        payload = {"ok": True}
+        payload.update(result)
+        # 无可翻译任务时仍返回 202（created=0，前端据 summary 提示）
+        return json_response(payload, status=202)
 
     def _subtitle_group_control(self, request, session, params):
         service = self._require_subtitle_admin(session)
