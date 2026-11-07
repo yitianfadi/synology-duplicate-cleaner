@@ -267,7 +267,7 @@ CREATE TABLE IF NOT EXISTS subtitle_batches (
   1. **选择目录**：复用 `Picker` 目录选择器（`/api/browse`），「包含子目录」开关，「枚举视频」按钮；显示 `N 个视频 / X GB / 已有字幕 M 个`。
   2. **视频列表**：勾选/全选、按「全部 / 缺少字幕 / 已有字幕」过滤；行内显示路径、大小、已有字幕徽标；超过 200 条分页「加载更多」（前端截断展示，不重新请求）。
   3. **选项**：识别语言、生成译文 + 目标语言、输出说明「字幕将写入视频同目录（只写 .srt）」、跳过已有字幕开关（默认开）。
-  4. **提交**：必须勾选「音频/字幕文本将上传到第三方服务」；超过 20 条二次确认；提交后展示批次进度卡（总数/完成/失败/剩余 + 暂停/继续/取消/重试）。
+  4. **提交**：必须勾选「音频/字幕文本将上传到第三方服务」；超过 20 条二次确认；提交后展示批次进度卡（总数/完成/失败/剩余 + 暂停/继续/取消/重试）。v0031 起提交按钮**禁用原因常显**（未选视频/未勾确认项/超单批上限/配置缺失），「全选」只选到单批上限并提示分批，避免“全选 5000 个后按钮点不动”的误解。
 - 独立 ES module `src/web/js/subtitle-page.js`，由 `app.js` 导入；不新增第三方依赖、不用 `innerHTML`、符合 ES2019。
 - 设置页「云端字幕」分组提供 `subtitle_output_mode`（下拉）、`subtitle_skip_existing`（勾选）、`subtitle_job_limit`（数字，20–1000）；页面进度/批次状态/错误码在 `src/web/js/constants.js` 统一维护。
 - 原「视频结果行 → 生成字幕」入口保留，行为统一走 `POST /api/subtitles`（默认 `output_mode` 取自设置）。
@@ -300,6 +300,6 @@ CREATE TABLE IF NOT EXISTS subtitle_batches (
 
 ## 12. 版本与兼容
 
-- 版本 **1.1.0-0030**，需同步 8 处：`README.md`、`build/build_spk.py`、`docs/ARCHITECTURE.md`、`docs/CONTRACT.md`、`docs/SPK_PACKAGING.md`、`spk/INFO`、`src/backend/dupcleaner/config.py`、`src/web/index.html`（含 `app.js?v=` 查询串）。
+- 版本 **1.1.0-0031**，需同步 8 处：`README.md`、`build/build_spk.py`、`docs/ARCHITECTURE.md`、`docs/CONTRACT.md`、`docs/SPK_PACKAGING.md`、`spk/INFO`、`src/backend/dupcleaner/config.py`、`src/web/index.html`（含 `app.js?v=` 查询串）。
 - 现有 `POST /api/subtitles` 行为不变（新字段均为可选）；旧任务记录可读；旧 SPK 升级后数据目录与包 ID 不变。
 - 文档同步：本文件、`docs/SUBTITLE_CONTRACT.md`（新增 §13 指向本文件）、`docs/ARCHITECTURE.md`（字幕页与批次服务）。

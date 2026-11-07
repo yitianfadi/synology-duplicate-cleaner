@@ -2166,6 +2166,8 @@ input[type="checkbox"]:disabled { cursor: not-allowed; }
 .subtitle-mode-row { display: flex; gap: 18px; align-items: center; flex-wrap: wrap; margin: 6px 0 12px; }
 .subtitle-submit-row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-top: 12px; }
 .subtitle-submit-row .muted { font-size: 12px; }
+/* v0031：提交按钮禁用原因常显（避免只靠 title 提示） */
+.subtitle-submit-hint { margin: 8px 0 0; font-size: 12px; color: var(--warning); }
 .subtitle-batch-list { display: flex; flex-direction: column; gap: 2px; margin: 10px 0; max-height: 360px; overflow: auto; }
 .subtitle-batch-row { padding: 5px 8px; border-radius: 8px; }
 .subtitle-batch-row:hover { background: var(--card-soft); }

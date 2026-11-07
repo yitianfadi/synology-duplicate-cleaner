@@ -459,6 +459,16 @@ def check_frontend():
     check("FE-SUBTITLE-PARTIAL",
           "字幕任务列表/详情提示“部分译文回退原文”（translation_partial）",
           partial_ok, "translation_partial display missing")
+    submit_reason_ok = (
+        'id="subtitleSubmitReason"' in html
+        and "subtitleSubmitReason" in app
+        and "请勾选下方「我了解" in app
+        and "超过单批上限" in app
+        and "全选" in html
+        and "filtered.slice(0, batchMax)" in app)
+    check("FE-SUBTITLE-SUBMIT-REASON",
+          "提交按钮禁用原因常显；「全选」自动截断到单批上限（v0031）",
+          submit_reason_ok, "submit reason / select-all cap markers missing")
 
     check("FE-RISK-TEXT", "风险提示文案与契约逐字一致（index.html）",
           RISK_TEXT in html, "risk text not found verbatim")

@@ -192,22 +192,37 @@ function updateSubmitState() {
   var confirm = q('subtitleBatchConfirm');
   var submit = q('subtitleSubmitBtn');
   var hint = q('subtitleSelectionHint');
+  var reasonEl = q('subtitleSubmitReason');
   var count = page.selected.size;
   var batchMax = metaLimits().batchMax;
   var requirement = modeRequirement();
   if (hint) {
     setText(hint, count
-      ? '已选择 ' + count + ' 个视频' + (count > batchMax ? '（超过单批上限 ' + batchMax + '，请分批提交）' : '')
+      ? '已选择 ' + fmtInt(count) + ' 个视频'
+        + (count > batchMax ? '（超过单批上限 ' + fmtInt(batchMax) + '，请分批提交）' : '')
       : '尚未选择视频');
   }
   if (!submit) { return; }
-  var ready = requirement.ok && count > 0 && count <= batchMax
-    && confirm && confirm.checked && !page.busy;
-  submit.disabled = !ready;
-  submit.title = ready ? '' : (requirement.message || (
-    !count ? '请先勾选视频'
-      : count > batchMax ? '单批最多 ' + batchMax + ' 个视频'
-        : '请先确认上传第三方服务'));
+  // 按钮禁用原因常显（v0031）：只靠 title 提示用户看不到，容易误以为按钮坏了
+  var reason = '';
+  if (!requirement.ok) {
+    reason = requirement.message || '当前配置不可提交';
+  } else if (!count) {
+    reason = '请先在上方视频列表中勾选要处理的视频';
+  } else if (count > batchMax) {
+    reason = '已选 ' + fmtInt(count) + ' 个，超过单批上限 ' + fmtInt(batchMax)
+      + ' 个：请点「清空」后分批提交，或用筛选条件缩小范围';
+  } else if (!confirm || !confirm.checked) {
+    reason = '请勾选下方「我了解音频/字幕文本将上传到所配置的第三方服务」确认项';
+  } else if (page.busy) {
+    reason = '正在处理中，请稍候';
+  }
+  submit.disabled = !!reason;
+  submit.title = reason;
+  if (reasonEl) {
+    setText(reasonEl, reason);
+    reasonEl.hidden = !reason;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -691,8 +706,17 @@ export function initSubtitlePage() {
   var selectAll = q('subtitleSelectAllBtn');
   if (selectAll) {
     selectAll.addEventListener('click', function () {
-      filteredItems().forEach(function (item) { page.selected.add(item.path); });
+      // v0031：全选只在单批上限内生效，避免“全选 5000 个 → 按钮直接禁用”
+      var filtered = filteredItems();
+      var batchMax = metaLimits().batchMax;
+      var limited = filtered.slice(0, batchMax);
+      limited.forEach(function (item) { page.selected.add(item.path); });
       renderVideos();
+      if (filtered.length > batchMax) {
+        toast('当前筛选结果共 ' + fmtInt(filtered.length) + ' 个，已选择前 '
+          + fmtInt(batchMax) + ' 个（单批上限）；其余请分批提交或用筛选缩小范围。',
+          'info', 7000);
+      }
     });
   }
   var clearBtn = q('subtitleClearSelectBtn');

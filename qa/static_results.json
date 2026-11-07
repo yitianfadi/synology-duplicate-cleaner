@@ -1,7 +1,7 @@
 {
-  "generated_at": "2026-11-07T08:28:00+0800",
+  "generated_at": "2026-11-07T08:57:21+0800",
   "summary": {
-    "PASS": 129,
+    "PASS": 130,
     "FAIL": 0,
     "UNVERIFIED": 0
   },
@@ -52,7 +52,7 @@
       "id": "BE-UNITTEST-LOG",
       "name": "unittest 结果",
       "status": "INFO",
-      "detail": "Ran 373 tests in 94.038s"
+      "detail": "Ran 373 tests in 88.154s"
     },
     {
       "id": "BE-NO-AUTODELETE",
@@ -273,6 +273,12 @@
     {
       "id": "FE-SUBTITLE-PARTIAL",
       "name": "字幕任务列表/详情提示“部分译文回退原文”（translation_partial）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "FE-SUBTITLE-SUBMIT-REASON",
+      "name": "提交按钮禁用原因常显；「全选」自动截断到单批上限（v0031）",
       "status": "PASS",
       "detail": ""
     },
@@ -686,7 +692,7 @@
     },
     {
       "id": "SPK-DIST",
-      "name": "构建产物存在（DuplicateCleaner-1.1.0-0030.spk）",
+      "name": "构建产物存在（DuplicateCleaner-1.1.0-0031.spk）",
       "status": "PASS",
       "detail": ""
     },
@@ -698,7 +704,7 @@
     },
     {
       "id": "SPK-VERSION",
-      "name": "SPK INFO.version 与当前源码 APP_VERSION（1.1.0-0030）一致",
+      "name": "SPK INFO.version 与当前源码 APP_VERSION（1.1.0-0031）一致",
       "status": "PASS",
       "detail": ""
     },

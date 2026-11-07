@@ -335,3 +335,40 @@ python build/build_spk.py --no-icons --out-dir $env:TEMP\qa-build2
 
 - 结论：v0030 **PASS（可交付）**。
 
+---
+
+## 13. 附：v0031 字幕页「提交批量字幕任务」按钮可用性修复（2026-11-07）
+
+> 现场反馈：NAS（1.1.0-0030）在「字幕」页勾选视频后「提交批量字幕任务」按钮点不动。用无头 Chromium（CDP）直连 NAS 页面复现并定位。
+
+### 13.1 定位结论
+
+- 按钮逻辑本身正常：勾选视频 + 勾选「我了解音频/字幕文本将上传…」后按钮即可点击（复现中 `submitDisabled=false`）。
+- 真正的 UX 缺陷：
+  1. 禁用原因只写在按钮 `title` 里，界面不可见（不悬停就以为按钮坏了）；
+  2. 「全选」会把全部筛选结果一次性加入——该目录枚举到 5000 个，全选后远超单批上限 500 → 按钮一直禁用，提示只有一行小字；
+  3. 最常见误操作是未勾选确认项，同样只有 tooltip 说明。
+
+### 13.2 修复内容
+
+- 按钮下方新增常显原因 `#subtitleSubmitReason`：未选视频 / 已选超单批上限 / 未勾确认项 / 云端字幕未启用或缺凭据 / 处理中；按钮重新可用时清空。
+- 「全选」只选中前 `batch_max_items`（500）个并 toast 提示「其余请分批提交或用筛选缩小范围」，不再一次选中 5000 个锁死按钮。
+- 选择计数统一千分位（`fmtInt`）。
+- 静态检查新增 `FE-SUBTITLE-SUBMIT-REASON`。
+
+### 13.3 验证
+
+- 无头 Chromium 直连 NAS 复现：按钮在「1 个视频 + 勾选确认项」时可点击；「全选 5000 个」时禁用且原因可见（修复前仅 tooltip）。
+- 本地 dev 模式（520 个视频）验证修复：全选 → 选中 500（不再超限），原因提示“请勾选确认项”；勾选确认项后按钮可用（`submitDisabled=false`）。
+- 回归：unittest 373 OK（5 skipped）；static **PASS=130 / FAIL=0**；e2e **PASS=123 / FAIL=0 / UNVERIFIED=1**（Windows symlink）；web modules 22/22；web smoke 8/8。
+
+### 13.4 最终产物
+
+- `dist/DuplicateCleaner-1.1.0-0031.spk`
+  - SHA256 `a4f040ba0f06a0c7328c1d53d18ab3c7e1e0f674a7bd767cba33beb5e8a8046f`
+  - package.tgz MD5 `91c6c37e113784c72fbf7b02459c4a6f`（= INFO.checksum）
+  - 大小 38,963,200 B
+- 版本 1.1.0-0031 同步 8 处；后端无行为变更（仅前端/样式/文档/QA）。
+
+- 结论：v0031 **PASS（可交付）**。
+
