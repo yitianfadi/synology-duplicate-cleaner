@@ -362,6 +362,7 @@ class SubtitleSettingsTest(unittest.TestCase):
         self.assertEqual(defaults["subtitle_translate_timeout_sec"], 120)
         self.assertEqual(defaults["subtitle_translate_batch_size"], 20)
         self.assertFalse(defaults["subtitle_llm_disable_thinking"])
+        self.assertFalse(defaults["subtitle_write_vtt"])
         patch = settings_module.validate_patch({
             "subtitle_enabled": True,
             "subtitle_asr_base_url": "http://127.0.0.1:9000/v1/",
@@ -379,9 +380,11 @@ class SubtitleSettingsTest(unittest.TestCase):
             "subtitle_translate_timeout_sec": 300,
             "subtitle_translate_batch_size": 40,
             "subtitle_llm_disable_thinking": True,
+            "subtitle_write_vtt": True,
         })
         self.assertTrue(patch["subtitle_enabled"])
         self.assertTrue(patch["subtitle_llm_disable_thinking"])
+        self.assertTrue(patch["subtitle_write_vtt"])
         self.assertEqual(patch["subtitle_asr_base_url"],
                          "http://127.0.0.1:9000/v1")
         for item in [
@@ -398,6 +401,7 @@ class SubtitleSettingsTest(unittest.TestCase):
             {"subtitle_translate_batch_size": 0},
             {"subtitle_translate_batch_size": 41},
             {"subtitle_llm_disable_thinking": "yes"},
+            {"subtitle_write_vtt": "yes"},
             {"subtitle_asr_language": "auto-auto-auto"},
             {"subtitle_translate_target": "auto"},
             {"subtitle_asr_model": "bad model name"},
@@ -534,21 +538,37 @@ class SubtitleServiceTest(SubtitleTestBase):
         self.assertEqual(done["status"], "done", done.get("error"))
         self.assertEqual(done["progress"], 100)
         self.assertFalse(done["translation_partial"])
+        # v0033：默认只生成 SRT，任务目录不再生成 VTT
         names = {item["name"] for item in done["files"]}
-        self.assertEqual(names, {"original.srt", "original.vtt", "zh.srt",
-                                 "zh.vtt", "bilingual.zh.srt"})
+        self.assertEqual(names, {"original.srt", "zh.srt", "bilingual.zh.srt"})
+        self.assertFalse(any(name.endswith(".vtt") for name in names))
         original = self.file_text(job["job_id"], "original.srt")
         self.assertIn("chunk-cue-1", original)
         self.assertIn("00:10:00,000", original)
         translated = self.file_text(job["job_id"], "zh.srt")
         self.assertIn("T:", translated)
         self.assertIn("00:10:00,000", translated)
-        vtt = self.file_text(job["job_id"], "original.vtt")
-        self.assertTrue(vtt.startswith("WEBVTT"))
         self.assertGreaterEqual(self.cloud.httpd.asr_calls, 2)
         job_dir = self.service._job_dir(job["job_id"])
+        self.assertFalse(os.path.exists(os.path.join(job_dir, "original.vtt")))
         for name in os.listdir(job_dir):
             self.assertFalse(name.endswith(".mp3") or name.endswith(".wav"))
+
+    def test_write_vtt_optional(self):
+        # v0033：开启 subtitle_write_vtt 后才生成 VTT（原文 + 译文）
+        self._configure_settings(subtitle_write_vtt=True)
+        video = self.make_video("vtt.mp4", duration=120)
+        job = self.submit(video, translate=True, target_lang="zh")
+        done = self.wait_job(job["job_id"])
+        self.assertEqual(done["status"], "done", done.get("error"))
+        names = {item["name"] for item in done["files"]}
+        self.assertEqual(names, {"original.srt", "original.vtt", "zh.srt",
+                                 "zh.vtt", "bilingual.zh.srt"})
+        vtt = self.file_text(job["job_id"], "original.vtt")
+        self.assertTrue(vtt.startswith("WEBVTT"))
+        # 视频同目录仍只写 srt（不写 vtt）
+        alongside = os.path.join(self.root, "vtt.vtt")
+        self.assertFalse(os.path.exists(alongside))
 
     def test_asr_srt_response(self):
         self.cloud.httpd.asr_mode = "srt"

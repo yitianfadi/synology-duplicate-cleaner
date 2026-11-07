@@ -424,3 +424,41 @@ python build/build_spk.py --no-icons --out-dir $env:TEMP\qa-build2
 
 - 结论：v0032 **PASS（可交付）**。
 
+---
+
+## 15. 附：v0033 字幕默认只生成 SRT（VTT 可选）（2026-11-07）
+
+### 15.1 变更
+
+- 新设置 `subtitle_write_vtt`（默认 **false**）：任务目录默认只生成 `original.srt`（翻译时 `<lang>.srt`、`bilingual.<lang>.srt`）；
+  开启后才额外生成 `original.vtt`、`<lang>.vtt`。视频同目录始终只写 `.srt`（原有约束不变）。
+- 单视频弹窗「首选下载格式」仅在开启 VTT 时显示 VTT 选项；未开启时提示“默认只生成 SRT”。
+- 历史任务已生成的 VTT 仍可下载（下载白名单不变）；如需释放空间由任务 LRU 清理。
+
+### 15.2 最终产物
+
+- `dist/DuplicateCleaner-1.1.0-0033.spk`
+  - SHA256 `e683ef80ade22479f052b1597f1a2936cdadd427eae22a8fda7e56a4bdd4c8e7`
+  - package.tgz MD5 `acae407a6390096e7dc36c5c104faa2a`（= INFO.checksum）
+  - 大小 38,973,440 B
+- 版本 1.1.0-0033 同步 8 处；SQLite schema 仍为 v7（无新增迁移）。
+
+### 15.3 结果总览
+
+| 套件 | 命令 | 结果 |
+|---|---|---|
+| 后端单测 | `cd src/backend && python -m unittest discover -s tests` | **383 tests OK（5 skipped）** |
+| 端到端 | `python qa/e2e_test.py` | **PASS=130 / FAIL=0 / UNVERIFIED=1**（Windows symlink 权限限制） |
+| 静态检查（含 unittest/前端/SPK） | `python qa/static_checks.py` | **PASS=138 / FAIL=0 / UNVERIFIED=0** |
+| 前端模块图 | `node qa/check_web_modules.mjs` | **22/22 PASS** |
+| 无头浏览器冒烟 | `python qa/web_smoke.py` | **8/8 PASS** |
+
+### 15.4 验收要点
+
+- 默认行为：`test_happy_path_with_translation` 断言任务目录文件为 `original.srt/zh.srt/bilingual.zh.srt`，无 `.vtt`。
+- 可选行为：`test_write_vtt_optional` 开启设置后生成 `original.vtt/zh.vtt`，且视频同目录仍无 `.vtt`。
+- 设置：默认 false、布尔校验；e2e SUB-05 覆盖保存/回读，恢复默认时置回 false。
+- 静态：新增 `BE-SUBTITLE-VTT`、`FE-SUBTITLE-VTT`；设置键清单加入 `subtitle_write_vtt`。
+
+- 结论：v0033 **PASS（可交付）**。
+

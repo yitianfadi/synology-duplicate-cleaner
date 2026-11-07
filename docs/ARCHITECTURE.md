@@ -1,7 +1,7 @@
 # 整体方案架构
 
 > 项目：**重复文件清理与字幕（Duplicate Cleaner & Subtitles）** · 群晖 DSM 7.x SPK 套件
-> 版本：1.1.0-0032
+> 版本：1.1.0-0033
 > 原则：**先扫描、出报告、人工确认、二次确认、可回收、全程审计**。任何情况下都不自动静默删除。
 
 ## 1. 目标与边界
@@ -375,7 +375,7 @@ Linux 的 `st_ctime` 是 **inode 状态变更时间**，不是创建时间，复
 
 ### 12.3 落盘策略
 
-- 任务目录始终生成 `original.srt`/`original.vtt`（可下载）。
+- 任务目录默认生成 `original.srt`（可下载）；v0033 起 `.vtt` 仅在设置 `subtitle_write_vtt=true` 时生成。
 - `subtitle_output_mode=alongside_video`（默认）时，把 `.srt` 原子复制到视频同目录：`<stem>.srt`、`<stem>.<lang>.srt`、`<stem>.bilingual.<lang>.srt`；**只写 srt，不覆盖已有文件**。
 - 目标目录不可写/复制失败：任务仍为 `done`，置 `warning=OUTPUT_NOT_WRITABLE/OUTPUT_WRITE_PARTIAL`，任务目录下载保留。
 - 已有字幕按 `subtitle_skip_existing`（默认 true）跳过，不会重复调用 ASR。

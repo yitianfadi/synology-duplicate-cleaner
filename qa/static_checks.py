@@ -363,6 +363,13 @@ def check_backend():
           and "_extract_chunk_remux" in subtitles_src
           and "SERVER_AUDIO_FALLBACK" in subtitles_src,
           "server audio markers missing")
+    check("BE-SUBTITLE-VTT",
+          "任务目录默认只写 SRT；subtitle_write_vtt=true 时才写 VTT",
+          "subtitle_write_vtt" in settings_src
+          and 'write_vtt=bool(settings.get("subtitle_write_vtt"))'
+          in subtitles_src
+          and "if write_vtt:" in subtitles_src,
+          "optional vtt markers missing")
 
 
 # ---------------------------------------------------------------------------
@@ -502,6 +509,13 @@ def check_frontend():
     check("FE-SUBTITLE-AUDIO",
           "设置页提供音频来源（NAS 解码 / 服务器解码）",
           audio_ui_ok, "subtitle audio source setting UI missing")
+    vtt_ui_ok = (
+        'id="subtitleWriteVtt"' in html
+        and "subtitle_write_vtt" in app
+        and "subtitleWriteVtt" in app)
+    check("FE-SUBTITLE-VTT",
+          "默认只生成 SRT，VTT 为可选设置（设置页勾选后才生成）",
+          vtt_ui_ok, "subtitle vtt optional setting missing")
     delete_refresh_ok = (
         "resetResultsViewAfterDelete" in app
         and "recoverEmptyResultsPageAfterDelete" in app
@@ -620,7 +634,9 @@ def check_frontend():
                     # v0030 本地推理模型禁用思考
                     "subtitle_llm_disable_thinking",
                     # v0032 音频来源（NAS 解码 / 服务器解码）
-                    "subtitle_audio_source"]
+                    "subtitle_audio_source",
+                    # v0033 VTT 可选生成
+                    "subtitle_write_vtt"]
     missing_settings = [key for key in setting_keys if key not in app]
     check("FE-SETTINGS-KEYS", "设置页覆盖契约全部设置键",
           not missing_settings, "missing=%s" % missing_settings)

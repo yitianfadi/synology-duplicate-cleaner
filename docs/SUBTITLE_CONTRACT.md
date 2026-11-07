@@ -15,6 +15,7 @@
 | subtitle_asr_chunk_sec | 600 | 60..1800 |
 | subtitle_asr_max_audio_mb | 24 | 1..100；超过则强制分块 |
 | subtitle_audio_source | nas | v0032：`nas`=本机解码抽 16k mp3（只上传音频）；`server`=本机仅流复制抽音轨（不解码），由 ASR 服务器解码（仍只上传音频） |
+| subtitle_write_vtt | false | v0033：默认只生成 SRT；`true` 时任务目录额外生成 `.vtt`（写回视频目录始终只写 `.srt`） |
 | subtitle_translate_enabled | false | 是否生成译文 |
 | subtitle_llm_base_url | https://api.openai.com/v1 | http/https |
 | subtitle_llm_api_key | "" | GET 不回传明文 |
@@ -96,8 +97,9 @@ job schema：
 - SRT 时间格式 `HH:MM:SS,mmm`；VTT 为 `HH:MM:SS.mmm`。
 - 去空 cue、end>start、按 start 排序；单行过长按字符宽度换行（CJK 42/行，拉丁 80/行），不改变时间。
 - 文件：
-  - `original.srt` / `original.vtt`
-  - 翻译开启时：`<target>.srt` / `<target>.vtt` / `bilingual.<target>.srt`
+  - `original.srt`（始终）
+  - `original.vtt`（仅 `subtitle_write_vtt=true`）
+  - 翻译开启时：`<target>.srt` / `bilingual.<target>.srt`，以及 `<target>.vtt`（仅 `subtitle_write_vtt=true`）
 - 字幕文本必须做 SRT/VTT 安全转义；VTT 使用 WEBVTT 头。
 - 不覆盖同名；文件名固定白名单，下载时防目录穿越。
 
@@ -262,3 +264,9 @@ v0028 在 v1.3 单文件任务之上新增**目录批量生成 / 翻译**：独�
 - 一次提交最多 20000 个视频，自动拆成每批 ≤500 的批次组（详见 `SUBTITLE_BATCH_CONTRACT.md` §13）。
 - `subtitle_audio_source=server`：NAS 只流复制抽音轨，ASR 服务器解码（详见 §3）；失败回退 NAS 解码并置 `warning=SERVER_AUDIO_FALLBACK`。
 - 删除任务成功后，扫描分组/统计/CSV 读取自动排除已删除文件（`scan_file_deletions`，schema v7；详见 `docs/STORAGE_CONTRACT.md`）。
+
+## 13. v0033 VTT 可选生成
+
+- 默认**只生成 SRT**（任务目录不再产生 `.vtt`，避免无谓的重复文件/写盘）。
+- 设置 `subtitle_write_vtt=true` 后，任务目录额外生成 `original.vtt` 与（翻译时）`<target>.vtt`；视频同目录仍只写 `.srt`。
+- 单个视频弹窗的“首选下载格式”仅在开启 VTT 时提供 VTT 选项；历史任务（已含 VTT）仍可下载。

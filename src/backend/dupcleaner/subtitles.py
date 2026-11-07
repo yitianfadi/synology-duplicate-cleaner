@@ -2665,7 +2665,8 @@ class SubtitleService(object):
             self._update(job, stage="write", progress=91,
                          message=u"正在写入字幕文件")
             files, outputs, output_errors, warning = self._write_outputs(
-                job, cues, translations, partial)
+                job, cues, translations, partial,
+                write_vtt=bool(settings.get("subtitle_write_vtt")))
             if fallback_used and not warning:
                 warning = WARNING_SERVER_AUDIO_FALLBACK
             self._finish_done(job, files, outputs, output_errors, warning,
@@ -2697,7 +2698,8 @@ class SubtitleService(object):
         self._update(job, stage="write", progress=91,
                      message=u"正在写入字幕文件")
         files, outputs, output_errors, warning = self._write_outputs(
-            job, cues, translations, partial, existing_source=source_srt)
+            job, cues, translations, partial, existing_source=source_srt,
+            write_vtt=bool(settings.get("subtitle_write_vtt")))
         self._finish_done(job, files, outputs, output_errors, warning,
                           partial, u"字幕翻译完成",
                           extra_audit={"source_srt": source_srt})
@@ -2969,17 +2971,20 @@ class SubtitleService(object):
         return translations, partial
 
     def _write_outputs(self, job, cues, translations, partial,
-                       existing_source=None):
+                       existing_source=None, write_vtt=False):
         directory = self._job_dir(job.job_id)
         os.makedirs(directory, exist_ok=True)
+        # v0033：默认只生成 SRT；VTT 仅当设置 subtitle_write_vtt=true 时生成
         self._write_file(directory, "original.srt", build_srt(cues))
-        self._write_file(directory, "original.vtt", build_vtt(cues))
+        if write_vtt:
+            self._write_file(directory, "original.vtt", build_vtt(cues))
         if translations is not None:
             target = job.target_lang
             self._write_file(directory, "%s.srt" % target,
                              build_srt(cues, translations))
-            self._write_file(directory, "%s.vtt" % target,
-                             build_vtt(cues, translations))
+            if write_vtt:
+                self._write_file(directory, "%s.vtt" % target,
+                                 build_vtt(cues, translations))
             self._write_file(directory, "bilingual.%s.srt" % target,
                              build_srt(cues, translations, bilingual=True))
         job.translation_partial = bool(partial)

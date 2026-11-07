@@ -71,6 +71,8 @@ DEFAULT_SETTINGS = {
     "subtitle_asr_max_audio_mb": 24,
     # v0032：音频来源 nas（本机抽音，默认）/ server（上传视频段由 ASR 服务器抽音）
     "subtitle_audio_source": config.SUBTITLE_DEFAULT_AUDIO_SOURCE,
+    # v0033：默认只生成 SRT；开启后任务目录额外生成 VTT（写回视频目录始终只写 srt）
+    "subtitle_write_vtt": False,
     "subtitle_translate_enabled": False,
     "subtitle_llm_base_url": "https://api.openai.com/v1",
     "subtitle_llm_api_key": "",
@@ -342,6 +344,8 @@ def _normalize_value(key, value):
         if value not in config.SUBTITLE_AUDIO_SOURCES:
             _err(u"subtitle_audio_source 只能是 nas/server", {"key": key})
         return value
+    if key == "subtitle_write_vtt":
+        return _check_bool(key, value)
     if key == "subtitle_llm_model":
         return _check_model_name(key, value)
     if key == "subtitle_translate_target":

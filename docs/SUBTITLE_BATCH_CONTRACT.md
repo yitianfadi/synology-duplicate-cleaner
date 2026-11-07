@@ -34,7 +34,7 @@
 | SUBTITLE_ENUMERATE_MAX_ITEMS | 5000 | 单次目录枚举返回上限；超出截断并置 `truncated=true` |
 | SUBTITLE_ALONGSIDE_EXT | ".srt" | 允许写回视频旁的后缀 |
 
-`subtitle_output_mode` 只影响「是否额外复制到视频同目录」；任务目录内始终生成 `original.srt` / `original.vtt`（可下载），与 v1.3 一致。
+`subtitle_output_mode` 只影响「是否额外复制到视频同目录」；任务目录默认只生成 `original.srt`（v0033 起；`subtitle_write_vtt=true` 时额外生成 `original.vtt`，可下载）。
 
 ## 3. 目录枚举 API
 
@@ -175,7 +175,8 @@
 
 ## 6. 输出落盘
 
-- 任务目录（始终）：`<var>/subtitles/<job_id>/original.srt`、`original.vtt`、（翻译时）`<lang>.srt`、`<lang>.vtt`、`bilingual.<lang>.srt`。
+- 任务目录（始终）：`<var>/subtitles/<job_id>/original.srt`；v0033 起默认不再生成 `.vtt`，
+  `subtitle_write_vtt=true` 时额外生成 `original.vtt`、`<lang>.vtt`；翻译时始终有 `<lang>.srt`、`bilingual.<lang>.srt`。
 - 视频同目录（`output_mode=alongside_video` 时复制）：
 
 | 文件 | 内容 | 写入条件 |
@@ -310,7 +311,7 @@ CREATE TABLE IF NOT EXISTS subtitle_batches (
 
 ## 12. 版本与兼容
 
-- 版本 **1.1.0-0032**，需同步 8 处：`README.md`、`build/build_spk.py`、`docs/ARCHITECTURE.md`、`docs/CONTRACT.md`、`docs/SPK_PACKAGING.md`、`spk/INFO`、`src/backend/dupcleaner/config.py`、`src/web/index.html`（含 `app.js?v=` 查询串）。
+- 版本 **1.1.0-0033**，需同步 8 处：`README.md`、`build/build_spk.py`、`docs/ARCHITECTURE.md`、`docs/CONTRACT.md`、`docs/SPK_PACKAGING.md`、`spk/INFO`、`src/backend/dupcleaner/config.py`、`src/web/index.html`（含 `app.js?v=` 查询串）。
 - 现有 `POST /api/subtitles` 行为不变（新字段均为可选）；旧任务记录可读；旧 SPK 升级后数据目录与包 ID 不变。
 - 文档同步：本文件、`docs/SUBTITLE_CONTRACT.md`（新增 §13 指向本文件）、`docs/ARCHITECTURE.md`（字幕页与批次服务）。
 

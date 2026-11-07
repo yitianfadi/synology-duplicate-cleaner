@@ -1,7 +1,7 @@
 {
-  "generated_at": "2026-11-07T09:36:36+0800",
+  "generated_at": "2026-11-07T09:43:50+0800",
   "summary": {
-    "PASS": 136,
+    "PASS": 138,
     "FAIL": 0,
     "UNVERIFIED": 0
   },
@@ -52,7 +52,7 @@
       "id": "BE-UNITTEST-LOG",
       "name": "unittest 结果",
       "status": "INFO",
-      "detail": "Ran 382 tests in 96.300s"
+      "detail": "Ran 383 tests in 93.596s"
     },
     {
       "id": "BE-NO-AUTODELETE",
@@ -211,6 +211,12 @@
       "detail": ""
     },
     {
+      "id": "BE-SUBTITLE-VTT",
+      "name": "任务目录默认只写 SRT；subtitle_write_vtt=true 时才写 VTT",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
       "id": "FE-FILES",
       "name": "前端 index.html/app.js/styles.css 存在",
       "status": "PASS",
@@ -297,6 +303,12 @@
     {
       "id": "FE-SUBTITLE-AUDIO",
       "name": "设置页提供音频来源（NAS 解码 / 服务器解码）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "FE-SUBTITLE-VTT",
+      "name": "默认只生成 SRT，VTT 为可选设置（设置页勾选后才生成）",
       "status": "PASS",
       "detail": ""
     },
@@ -728,7 +740,7 @@
     },
     {
       "id": "SPK-DIST",
-      "name": "构建产物存在（DuplicateCleaner-1.1.0-0032.spk）",
+      "name": "构建产物存在（DuplicateCleaner-1.1.0-0033.spk）",
       "status": "PASS",
       "detail": ""
     },
@@ -740,7 +752,7 @@
     },
     {
       "id": "SPK-VERSION",
-      "name": "SPK INFO.version 与当前源码 APP_VERSION（1.1.0-0032）一致",
+      "name": "SPK INFO.version 与当前源码 APP_VERSION（1.1.0-0033）一致",
       "status": "PASS",
       "detail": ""
     },

@@ -835,12 +835,14 @@ def run():
             "subtitle_output_mode": "alongside_video",
             "subtitle_skip_existing": True,
             "subtitle_job_limit": 200,
-            "subtitle_llm_disable_thinking": True}})
+            "subtitle_llm_disable_thinking": True,
+            "subtitle_write_vtt": True}})
         saved = jd(resp).get("settings", {})
-        check("SUB-05", "PUT /api/settings 可保存 v0028 目录批量字幕设置与 v0030 禁用思考开关",
+        check("SUB-05", "PUT /api/settings 可保存 v0028 目录批量字幕设置与 v0030/v0033 可选开关",
               resp.status == 200
               and saved.get("subtitle_output_mode") == "alongside_video"
-              and saved.get("subtitle_llm_disable_thinking") is True,
+              and saved.get("subtitle_llm_disable_thinking") is True
+              and saved.get("subtitle_write_vtt") is True,
               "status=%s data=%s" % (resp.status, jd(resp)))
 
         resp = client.post_json("/api/subtitles/batch",
@@ -931,7 +933,8 @@ def run():
         # 恢复默认（关闭云端字幕），避免影响后续用例
         client.put_json("/api/settings", {"settings": {
             "subtitle_enabled": False, "subtitle_clear_asr_api_key": True,
-            "subtitle_llm_disable_thinking": False}})
+            "subtitle_llm_disable_thinking": False,
+            "subtitle_write_vtt": False}})
 
         # ---------------- 静态页面 / 风险提示 ----------------
         resp = client.get("/", csrf=False)

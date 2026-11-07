@@ -1935,7 +1935,8 @@ import {
   function subtitleCapability() {
     return state.subtitle || {
       supported: false, enabled: false, asrKeySet: false, llmKeySet: false,
-      asrLanguage: 'auto', translateEnabled: false, targetLang: 'zh'
+      asrLanguage: 'auto', translateEnabled: false, targetLang: 'zh',
+      writeVtt: false
     };
   }
 
@@ -1957,7 +1958,8 @@ import {
       llmKeySet: supported && raw.subtitle_llm_api_key_set === true,
       asrLanguage: (raw && raw.subtitle_asr_language) || 'auto',
       translateEnabled: supported && raw.subtitle_translate_enabled === true,
-      targetLang: (raw && raw.subtitle_translate_target) || 'zh'
+      targetLang: (raw && raw.subtitle_translate_target) || 'zh',
+      writeVtt: supported && raw.subtitle_write_vtt === true
     };
     updateSubtitleAvailabilityUi();
     refreshSubtitleGenerateButtons();
@@ -2039,6 +2041,9 @@ import {
     if (els.subtitleAudioSource) {
       els.subtitleAudioSource.value = s.subtitle_audio_source === 'server' ? 'server' : 'nas';
     }
+    if (els.subtitleWriteVtt) {
+      els.subtitleWriteVtt.checked = s.subtitle_write_vtt === true;
+    }
     setVideoNumberValue(els.subtitleAsrTimeout, s.subtitle_asr_timeout_sec, 300, 30, 1800);
     setVideoNumberValue(els.subtitleAsrChunk, s.subtitle_asr_chunk_sec, 600, 60, 1800);
     setVideoNumberValue(els.subtitleAsrMaxAudioMb, s.subtitle_asr_max_audio_mb, 24, 1, 100);
@@ -2112,6 +2117,7 @@ import {
       ? String(els.subtitleAudioSource.value || '').trim()
       : '';
     settings.subtitle_audio_source = audioSource === 'server' ? 'server' : 'nas';
+    settings.subtitle_write_vtt = !!(els.subtitleWriteVtt && els.subtitleWriteVtt.checked);
     var asrTimeout = readSubtitleInt(els.subtitleAsrTimeout, 30, 1800, 'ASR 超时', errors, 'subtitleAsrTimeout');
     if (asrTimeout !== null) { settings.subtitle_asr_timeout_sec = asrTimeout; }
     var asrChunk = readSubtitleInt(els.subtitleAsrChunk, 60, 1800, '音频分块', errors, 'subtitleAsrChunk');
@@ -4433,10 +4439,12 @@ import {
     translateCheck.addEventListener('change', function () {
       targetSelect.disabled = !translateCheck.checked;
     });
-    var formatSelect = el('select', { attrs: { 'aria-label': '首选下载格式' } }, [
-      el('option', { attrs: { value: 'srt' }, text: 'SRT' }),
-      el('option', { attrs: { value: 'vtt' }, text: 'VTT' })
-    ]);
+    var formatOptions = [el('option', { attrs: { value: 'srt' }, text: 'SRT' })];
+    if (sub.writeVtt) {
+      formatOptions.push(el('option', { attrs: { value: 'vtt' }, text: 'VTT' }));
+    }
+    var formatSelect = el('select',
+      { attrs: { 'aria-label': '首选下载格式' } }, formatOptions);
     formatSelect.value = 'srt';
     var confirmCheck = el('input', { attrs: { type: 'checkbox' } });
     var errorBox = el('div', { className: 'modal-error', attrs: { role: 'alert' }, hidden: true });
@@ -4463,7 +4471,12 @@ import {
         el('div', { className: 'field' }, [
           el('label', { text: '首选下载格式' }),
           formatSelect,
-          el('p', { className: 'hint', text: '任务会生成 SRT/VTT；这里决定完成后优先展示的格式。' })
+          el('p', {
+            className: 'hint',
+            text: sub.writeVtt
+              ? '任务会生成 SRT/VTT；这里决定完成后优先展示的格式。'
+              : '默认只生成 SRT；如需 VTT 请在设置中开启「任务目录同时生成 VTT」。'
+          })
         ])
       ]),
       el('label', { className: 'modal-check-row' }, [
