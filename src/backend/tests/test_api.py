@@ -655,3 +655,72 @@ class ApiTest(unittest.TestCase):
 
         status, headers, raw = self.client.request("GET", "/../etc/passwd")
         self.assertEqual(status, 404)
+
+
+class LogsDeleteApiTest(ApiTest):
+    """v0038：操作日志删除（选中 / 保留最近 N 天）与日志文件删除。"""
+
+    def _audit(self, limit=80):
+        status, _headers, payload = self.json_call(
+            "GET", "/api/logs?limit=%d" % limit)
+        self.assertEqual(status, 200)
+        return payload.get("audit") or []
+
+    def test_delete_selected_audit_entry(self):
+        self.login()
+        self.json_call("PUT", "/api/settings",
+                       {"settings": {"keep_mode": "latest"}})
+        audit = self._audit()
+        self.assertTrue(audit)
+        target = audit[-1]
+        self.assertTrue(target.get("id"))
+        status, _headers, payload = self.json_call(
+            "POST", "/api/logs/audit/delete", {"ids": [target["id"]]})
+        self.assertEqual(status, 200, payload)
+        self.assertEqual(payload["deleted"], 1)
+        after = self._audit()
+        self.assertNotIn(target["id"], [item.get("id") for item in after])
+        # 删除动作本身写入审计
+        self.assertTrue(any(item.get("action") == "audit_delete"
+                            for item in after))
+
+    def test_keep_recent_days_audit(self):
+        self.login()
+        status, _headers, payload = self.json_call(
+            "POST", "/api/logs/audit/delete", {"keep_days": 3650})
+        self.assertEqual(status, 200, payload)
+        self.assertGreaterEqual(payload["deleted"], 0)
+        for bad in (0, 3651, True, "x"):
+            status, _headers, _payload = self.json_call(
+                "POST", "/api/logs/audit/delete", {"keep_days": bad})
+            self.assertEqual(status, 400, bad)
+        # 1 天保留：测试中刚写入的事件都保留
+        status, _headers, payload = self.json_call(
+            "POST", "/api/logs/audit/delete", {"keep_days": 1})
+        self.assertEqual(status, 200, payload)
+
+    def test_delete_log_files(self):
+        self.login()
+        store = self.harness.services.store
+        name = "scan-20260101-000000-abcdef.log"
+        store.write_log(name, "hello")
+        status, _headers, payload = self.json_call(
+            "POST", "/api/logs/files/delete", {"names": [name]})
+        self.assertEqual(status, 200, payload)
+        self.assertEqual(payload["deleted"], 1)
+        self.assertFalse(os.path.exists(os.path.join(store.logs_dir, name)))
+        self.assertTrue(any(item.get("action") == "log_delete"
+                            for item in self._audit()))
+        # 路径穿越 / 非法文件名被拒绝
+        for bad in ("../config.json", "..\\config.json", "a/b.log", ""):
+            status, _headers, _payload = self.json_call(
+                "POST", "/api/logs/files/delete", {"names": [bad]})
+            self.assertEqual(status, 400, bad)
+
+    def test_delete_requires_csrf(self):
+        self.login()
+        status, _headers, payload = self.json_call(
+            "POST", "/api/logs/audit/delete",
+            {"keep_days": 30}, csrf=False)
+        self.assertEqual(status, 403)
+        self.assertEqual(payload["error"]["code"], "CSRF_FAILED")

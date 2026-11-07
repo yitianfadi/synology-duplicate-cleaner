@@ -643,5 +643,33 @@ python build/build_spk.py --no-icons --out-dir $env:TEMP\qa-build2
 
 - 结论：v0036 **PASS（可交付）**；设置项无遗漏，语言码与译文输出组合缺口已修复。
 
+## 20. 附：v0038 步骤时间线 / 操作日志删除 / 菜单调整（2026-11-07）
+
+### 20.1 需求与实现
+
+- **字幕步骤时间线**：任务详情记录排队（queue）、媒体探测（probe）、音频提取+识别（asr）、翻译（translate）、写盘（write）各步骤的开始/结束/耗时（暂停时间不计入）与明细；另记录每个 ASR 分片（抽音频/识别耗时）与每个翻译批次（字幕条数/尝试次数/是否回退原文）。随任务 JSON payload 持久化，旧任务无记录时前端提示；列表接口只带轻量时间字段。
+- **操作日志删除**：审计事件新增稳定 id（原始行 sha1 前 16 位，旧记录可直接删除），`POST /api/logs/audit/delete` 支持按 id 选中删除或 `keep_days` 只保留最近 N 天；`POST /api/logs/files/delete` 支持按文件名或保留天数删除运行日志；均为管理员 + CSRF，删除动作本身写入 `audit_delete` / `log_delete` 审计。
+- **菜单调整（方案 A）**：顶部导航改为「扫描 / 字幕 / 任务中心」+ 右上角设置；操作日志并入任务中心标签页；存储诊断从任务中心移到设置页「系统 · 存储与运行诊断」；旧 `#/logs` 书签自动跳转。
+
+### 20.2 测试证据
+
+- 后端单测 **444 tests OK（5 skipped）**，新增：`SubtitleTimelineTest`（全步骤/只翻译无 ASR 步骤/失败步骤）、`LogsDeleteApiTest`（选中删除 + audit_delete、keep_days 校验、日志文件删除与路径穿越拒绝、CSRF）。
+- 静态检查 **PASS=157 / FAIL=0 / UNVERIFIED=0**：新增 `BE-SUBTITLE-TIMELINE`、`BE-LOGS-DELETE`、`FE-SUBTITLE-TIMELINE`、`FE-LOGS-DELETE`、`FE-NAV-V0038`。
+- 端到端 **PASS=152 / FAIL=0 / UNVERIFIED=1**（Windows symlink 限制）：新增 LOGS-04~09（id 返回、选中删除、audit_delete、keep_days 校验、路径穿越、保留最近 N 天不误删）。
+- 前端模块 **22/22**、无头浏览器冒烟 **8/8**。
+- 额外无头 Chromium UI 探针 **13/13**：导航 3 项 + 右上设置、任务中心 4 个标签页、操作日志勾选/二次确认/删除（audit_delete 可见）、设置页存储诊断加载、旧 `#/logs` 跳转、无控制台错误。
+
+### 20.3 最终产物
+
+- `dist/DuplicateCleaner-1.1.0-0038.spk`
+  - SHA256 `17dc49d81cff920f0dbae9f3a72cdb77a2020b0425ba634d05175bfa450ab344`
+  - package.tgz MD5 `42e061743fd427e7975897a646636f87`（= INFO.checksum）
+  - 大小 38,993,920 B
+- 版本 1.1.0-0038 同步 8 处；SQLite schema 不变（仍 v7），无数据迁移。
+
+### 20.4 真机验证待办
+
+- NAS 安装 1.1.0-0038 后：刷新页面确认导航为 扫描/字幕/任务中心 + 右上设置；任务中心 → 操作日志 勾选删除 / 保留最近 N 天；打开任意已完成字幕任务详情查看「步骤耗时」与分片/批次明细；设置页底部「系统 · 存储与运行诊断」可加载；旧 `#/logs` 链接可正常跳转。
+
 
 

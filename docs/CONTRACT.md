@@ -1,7 +1,7 @@
 # 实现契约（前后端共享，版本 1.0）
 
 > 本文件是前后端并行开发的唯一接口约定。任何一方需要改动字段，先改本文件并在团队任务中说明。
-> 产品名：**DuplicateCleaner**；显示名：**重复文件清理与字幕**；SPK 版本：**1.1.0-0037**。
+> 产品名：**DuplicateCleaner**；显示名：**重复文件清理与字幕**；SPK 版本：**1.1.0-0038**。
 > v1.1 新增内容相似度模式；相似模式字段与行为见 [SIMILARITY_CONTRACT.md](SIMILARITY_CONTRACT.md)，**精准模式规则不变**。
 
 ## 1. 仓库与写入边界
@@ -98,6 +98,13 @@ v0037 增量（字幕并发设置保存后立即生效）：
 - 调大并发 → 立即补 worker 消化排队任务；调小 → 多余 worker 在任务边界退出，正在执行的任务不中断。
 - 无新增接口/错误码；请求/响应结构不变；SQLite schema 仍 v7。
 
+v0038 增量（字幕步骤时间线 / 操作日志删除 / 菜单调整）：
+- `GET /api/subtitles/{job_id}` 增加 `started_at` / `finished_at` / `duration_sec` 与 `timeline`（阶段、ASR 分片、翻译批次的开始/结束/耗时）；列表接口只带轻量时间字段。
+- 新增 `POST /api/logs/audit/delete`（`ids` 或 `keep_days`）与 `POST /api/logs/files/delete`（`names` 或 `keep_days`），管理员 + CSRF，返回 `deleted`；删除动作本身写入审计（`audit_delete` / `log_delete`）。
+- `GET /api/logs` 的 audit 项新增稳定 `id`（原始行 sha1 前 16 位），用于选中删除；旧记录无需迁移。
+- 前端导航调整为「扫描 / 字幕 / 任务中心」+ 右上角设置；操作日志并入任务中心标签页；存储诊断移入设置页；旧 `#/logs` 自动跳转到任务中心操作日志。
+- SQLite schema 仍 v7（字幕时间线随任务 JSON payload 持久化）。
+
 
 ## 4. 认证
 
@@ -124,7 +131,7 @@ v0037 增量（字幕并发设置保存后立即生效）：
 ### GET /api/meta
 ```json
 {
- "app_version": "1.1.0-0037",
+ "app_version": "1.1.0-0038",
  "dsm_version": "7.2.2-72806" | "dev",
  "python_version": "3.8.16",
  "creation_time_supported": true,
@@ -347,11 +354,20 @@ Content-Disposition: attachment; filename="duplicate-scan-<id>.csv"
 ### GET /api/logs?limit=50
 ```json
 {"ok":true,"logs":[{"name":"scan-20261101-....log","kind":"scan","size":1234,
- "modified_at":"...","scan_id":"..."}],"audit":[{"ts":"...","action":"scan_start","user":"admin","detail":{}}]}
+ "modified_at":"...","scan_id":"..."}],"audit":[{"id":"1a2b3c4d5e6f7788","ts":"...","action":"scan_start","user":"admin","detail":{}}]}
 ```
+`audit[].id` 为原始行 sha1 前 16 位，用于选中删除。
 
 ### GET /api/logs/download?name=scan-....log
 鉴权后下载；name 必须匹配白名单正则，禁止路径穿越。
+
+### POST /api/logs/audit/delete（管理员 + CSRF）
+请求二选一：`{"ids":["id1","id2"]}` 或 `{"keep_days":30}`（删除 30 天前的审计事件，保留最近 30 天）。
+响应 `{"ok":true,"deleted":N}`；删除动作本身追加一条 `audit_delete` 审计。`keep_days` 取值 1..3650，非法返回 400 `INVALID_ARGUMENT`。
+
+### POST /api/logs/files/delete（管理员 + CSRF）
+请求二选一：`{"names":["scan-....log"]}` 或 `{"keep_days":30}`（删除 N 天前的扫描/删除日志文件）。
+响应 `{"ok":true,"deleted":N}`；文件名必须匹配白名单正则；删除动作追加 `log_delete` 审计。
 
 ## 9. 文件/目录安全规则（后端强制）
 
@@ -388,4 +404,4 @@ Content-Disposition: attachment; filename="duplicate-scan-<id>.csv"
 - 后端 unittest 覆盖：statx 时间读取降级、哈希分片/限速、重复分组与三种保留策略、
   路径黑名单、删除前重校验、回收站路径生成、CSV、API 鉴权。
 - 前端可用静态检查 + 本地 dev 后端联调；QA 用 dev 模式在临时目录生成重复文件跑完整 API 流程。
-- 打包产物 `dist/DuplicateCleaner-1.1.0-0037.spk` 必须能通过 `tar -tf` 检查，包含 INFO/package.tgz/scripts/conf/ui。
+- 打包产物 `dist/DuplicateCleaner-1.1.0-0038.spk` 必须能通过 `tar -tf` 检查，包含 INFO/package.tgz/scripts/conf/ui。

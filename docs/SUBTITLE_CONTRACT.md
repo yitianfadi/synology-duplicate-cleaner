@@ -316,3 +316,15 @@ v0028 在 v1.3 单文件任务之上新增**目录批量生成 / 翻译**：独�
 - **前端**：设置页「字幕并发任务数」提示改为“保存后立即生效，无需重启套件”。
 - 版本 1.1.0-0037；SQLite schema 不变（仍 v7）；设置键/默认值/校验范围（1..4）均不变，无迁移。
 
+## 18. v0038 字幕任务步骤时间线
+
+- **任务详情新增时间线**：`GET /api/subtitles/{job_id}` 返回 `started_at` / `finished_at` / `duration_sec` 与 `timeline`：
+  - `timeline.steps[]`：`queue`（排队）/ `probe`（媒体探测）/ `asr`（音频提取+识别）/ `translate` / `write`，每项含 `status`（running/done/failed/paused/cancelled）、`attempts`、`started_at`、`finished_at`、`duration_sec`（暂停期间不计入）与 `detail`（分片数/字幕条数/写回数等）。
+  - `timeline.asr_chunks[]`：每个 ASR 分片的开始/结束、抽音频耗时、识别耗时、是否服务器解码回退。
+  - `timeline.translate_batches[]`：每个翻译批次的开始/结束、耗时、字幕条数、尝试次数、是否回退原文。
+- **列表保持轻量**：`GET /api/subtitles` 仅带 `started_at` / `finished_at` / `duration_sec`，不带时间线明细。
+- **持久化与兼容**：时间线与任务 JSON payload 一起落库/落盘（SQLite schema 仍 v7）；旧任务没有时间线，前端显示“该任务创建于旧版本，未记录步骤时间”。
+- **暂停/恢复/重试**：暂停时进行中的步骤标记 `paused` 并结束计时；恢复/重试重新打开步骤并累加 `attempts`；失败/取消把进行中的步骤标记为 `failed`/`cancelled`；服务重启时遗留 `running` 步骤按 `paused` 恢复。
+- **前端**：任务详情新增「步骤耗时」表，可展开 ASR 分片/翻译批次明细；任务列表显示总耗时。
+- 版本 1.1.0-0038；SQLite schema 不变（仍 v7），无数据迁移。
+

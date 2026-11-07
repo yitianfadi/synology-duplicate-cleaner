@@ -199,7 +199,8 @@ def check_backend():
                        "/api/auth/logout", "/api/meta", "/api/shares", "/api/browse",
                        "/api/settings", "/api/scans", "groups", "stats", "csv",
                        "delete-plan", "delete", "/api/preview", "/api/logs",
-                       "/api/logs/download"]
+                       "/api/logs/download", "/api/logs/audit/delete",
+                       "/api/logs/files/delete"]
     missing = []
     for marker in expected_routes:
         if marker.startswith("/api/"):
@@ -400,6 +401,31 @@ def check_backend():
           and "if self._queue:" in subtitles_src
           and "self._ensure_worker()" in subtitles_src,
           "restart queue resume markers missing")
+    check("BE-SUBTITLE-TIMELINE",
+          "字幕任务记录步骤时间线：阶段 + ASR 分片 + 翻译批次（v0038）",
+          "timeline_steps" in subtitles_src
+          and "asr_chunks" in subtitles_src
+          and "translate_batches" in subtitles_src
+          and "def step_start" in subtitles_src
+          and "def step_end" in subtitles_src
+          and "_timeline_close" in subtitles_src
+          and "include_timeline=True" in subtitles_src
+          and "started_epoch" in subtitles_src
+          and "finished_epoch" in subtitles_src,
+          "subtitle timeline markers missing")
+    check("BE-LOGS-DELETE",
+          "操作日志可删除：按 id 删除 / 只保留最近 N 天 / 日志文件删除（v0038）",
+          "def delete_audit_entries" in store_src
+          and "def delete_log_files" in store_src
+          and "def _write_audit_lines" in store_src
+          and "audit_delete" in store_src
+          and "log_delete" in store_src
+          and "/api/logs/audit/delete" in http_src
+          and "/api/logs/files/delete" in http_src
+          and "keep_days" in http_src
+          and "def _delete_audit" in http_src
+          and "def _delete_log_files" in http_src,
+          "logs delete markers missing")
 
     # ---- v0035 补翻译：已完成仅 ASR 任务派生“仅翻译”任务 ----
     translate_test_path = os.path.join(backend, "tests",
@@ -602,6 +628,39 @@ def check_frontend():
     check("FE-SUBTITLE-CONCURRENCY",
           "设置页提供字幕并发任务数（1–4，默认 1，保存后立即生效，v0037）",
           concurrency_ui_ok, "subtitle concurrency setting UI missing")
+    timeline_ui_ok = (
+        "SUBTITLE_STEP_LABEL" in app
+        and "subtitleTimelineSection" in app
+        and u"步骤耗时" in app
+        and "asr_chunks" in app
+        and "translate_batches" in app
+        and "timeline.steps" in app)
+    check("FE-SUBTITLE-TIMELINE",
+          "字幕任务详情展示步骤耗时（含 ASR 分片 / 翻译批次明细，v0038）",
+          timeline_ui_ok, "subtitle timeline UI markers missing")
+    logs_delete_ui_ok = (
+        all(marker in html for marker in
+            ('id="auditSelectAll"', 'id="auditDeleteSelectedBtn"',
+             'id="auditPruneBtn"', 'id="logFilesPruneBtn"',
+             'id="logsKeepDays"'))
+        and "/api/logs/audit/delete" in app
+        and "/api/logs/files/delete" in app
+        and "keep_days" in app
+        and u"保留最近" in html)
+    check("FE-LOGS-DELETE",
+          "操作日志页支持勾选删除 / 清理选中的 N 天前审计与日志文件（v0038）",
+          logs_delete_ui_ok, "logs delete UI markers missing")
+    nav_v0038_ok = (
+        'id="navSettingsBtn"' in html
+        and 'id="taskTabLogs"' in html
+        and 'id="taskPanelLogs"' in html
+        and 'id="settingsDiagnosticsGroup"' in html
+        and 'id="storagePanel"' in html
+        and "taskTabStorage" not in html
+        and "view-logs" not in html)
+    check("FE-NAV-V0038",
+          "菜单调整：扫描/字幕/任务中心 + 右上角设置，操作日志并入任务中心，存储诊断移入设置（v0038）",
+          nav_v0038_ok, "v0038 navigation markers missing")
     subtitle_page_src = read(os.path.join(js_dir, "subtitle-page.js"))
     visible_ui_ok = (
         all(marker in html for marker in
@@ -716,6 +775,8 @@ def check_frontend():
         ("/api/preview", "预览"),
         ("/api/logs", "日志"),
         ("/api/logs/download", "日志下载"),
+        ("/api/logs/audit/delete", "审计事件删除"),
+        ("/api/logs/files/delete", "日志文件删除"),
         ("/api/subtitles/models", "字幕模型列表"),
         ("/api/subtitles/test", "字幕连接测试"),
     ]
@@ -829,14 +890,18 @@ def check_frontend():
           safe_dom >= 8 and inner_html == 0,
           "textContent=%d createTextNode=%d innerHTML=%d"
           % (app.count("textContent"), app.count("createTextNode"), inner_html))
-    check("FE-CHINESE", "前端存在中文界面文案（抽查扫描/历史/日志/设置）",
+    check("FE-CHINESE", "前端存在中文界面文案（抽查扫描/任务中心/日志/设置）",
           all(text in app or text in html for text in
-              (u"扫描", u"历史记录", u"操作日志", u"设置")),
+              (u"扫描", u"任务中心", u"操作日志", u"设置")),
           "Chinese nav text missing")
 
-    nav = [u"扫描", u"历史记录", u"操作日志", u"设置"]
-    check("FE-NAV", "顶部导航包含 扫描/历史记录/操作日志/设置",
-          all(text in html for text in nav), "nav text missing in index.html")
+    nav = [u"扫描", u"字幕", u"任务中心"]
+    check("FE-NAV", "顶部导航为 扫描/字幕/任务中心 + 右上角设置入口（v0038）",
+          all(text in html for text in nav)
+          and 'id="navSettingsBtn"' in html
+          and 'id="taskTabLogs"' in html
+          and u"操作日志" in html,
+          "nav text missing in index.html")
 
     folder_picker = (u"文件夹" in app or u"选择文件夹" in app) and "/api/browse" in app
     check("FE-FOLDER-PICKER", "文件夹选择器调用 /api/browse 并支持多选/排除",

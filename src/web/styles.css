@@ -2279,3 +2279,46 @@ input[type="checkbox"]:disabled { cursor: not-allowed; }
 }
 .subtitle-batch-actions .subtitle-batch-translate-btn { margin-left: 0; }
 .subtitle-batch-row-actions .subtitle-batch-translate-btn { flex: 0 0 auto; }
+
+/* ==========================================================================
+   v0038：菜单调整（任务中心/设置）/ 操作日志删除 / 字幕步骤时间线
+   ========================================================================== */
+.nav-settings-btn { margin-left: 4px; }
+.nav-settings-btn[aria-current="page"] {
+  color: var(--primary);
+  border-color: var(--primary);
+  background: var(--primary-soft);
+}
+.logs-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 6px;
+}
+.logs-head h2 { margin: 0 0 2px; font-size: 17px; }
+.logs-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.logs-actions .inline-label { white-space: nowrap; }
+.col-check { width: 34px; text-align: center; }
+.col-check input { width: 16px; height: 16px; vertical-align: middle; }
+.icon-btn-danger { color: var(--danger); }
+.icon-btn-danger:hover { color: #fff; background: var(--danger); }
+.subtitle-step-table th,
+.subtitle-step-table td { font-size: 12px; white-space: nowrap; }
+.subtitle-step-table td.hint { white-space: normal; }
+.subtitle-timeline { margin: 4px 0 10px; }
+.subtitle-timeline > .hint { margin: 0 0 6px; }
+.subtitle-timeline-details { margin: 6px 0 10px; }
+.subtitle-timeline-details > summary {
+  cursor: pointer;
+  color: var(--primary);
+  font-size: 13px;
+  margin-bottom: 4px;
+}
+.subtitle-timeline-details .table-wrap { margin-top: 4px; }
+#settingsDiagnosticsGroup .storage-diagnostics-panel {
+  border: 0;
+  box-shadow: none;
+  padding: 0;
+}

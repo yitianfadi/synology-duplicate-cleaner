@@ -8,6 +8,7 @@ import logging
 import os
 import platform
 import re
+import time
 import urllib.parse
 import uuid
 
@@ -185,6 +186,11 @@ class Api(object):
             ("GET", re.compile(r"^/api/preview$"), self._preview, False),
             ("GET", re.compile(r"^/api/logs$"), self._logs, False),
             ("GET", re.compile(r"^/api/logs/download$"), self._logs_download, False),
+            # v0038：操作日志删除（管理员 + CSRF；支持选中删除 / 只保留最近 N 天）
+            ("POST", re.compile(r"^/api/logs/audit/delete$"),
+             self._delete_audit, False),
+            ("POST", re.compile(r"^/api/logs/files/delete$"),
+             self._delete_log_files, False),
             # v0021 P0：诊断 / 存储维护 / 删除任务历史（仅管理员）
             ("GET", re.compile(r"^/api/diagnostics$"), self._diagnostics, False),
             ("POST", re.compile(r"^/api/storage/backup$"), self._storage_backup, False),
@@ -979,6 +985,59 @@ class Api(object):
                 "Cache-Control": "no-store",
             },
         )
+
+    # ------------------------------------------------------------------
+    # v0038：操作日志删除（管理员 + CSRF）
+    # ------------------------------------------------------------------
+    def _delete_audit(self, request, session, params):
+        self._require_admin(session)
+        body = _json_body(request)
+        ids = body.get("ids")
+        keep_days = body.get("keep_days")
+        if isinstance(ids, list) and ids:
+            deleted = self.services.store.delete_audit_entries(
+                session.user, ids=ids)
+        elif keep_days is not None:
+            days = _keep_days_param(keep_days)
+            deleted = self.services.store.delete_audit_entries(
+                session.user,
+                before_epoch=time.time() - days * 86400,
+                keep_days=days)
+        else:
+            raise invalid(u"需要 ids 或 keep_days 参数")
+        return json_response({"ok": True, "deleted": int(deleted)})
+
+    def _delete_log_files(self, request, session, params):
+        self._require_admin(session)
+        body = _json_body(request)
+        names = body.get("names")
+        keep_days = body.get("keep_days")
+        if isinstance(names, list) and names:
+            deleted = self.services.store.delete_log_files(
+                session.user, names=names)
+        elif keep_days is not None:
+            days = _keep_days_param(keep_days)
+            deleted = self.services.store.delete_log_files(
+                session.user,
+                before_epoch=time.time() - days * 86400,
+                keep_days=days)
+        else:
+            raise invalid(u"需要 names 或 keep_days 参数")
+        return json_response({"ok": True, "deleted": int(deleted)})
+
+
+def _keep_days_param(value):
+    """校验“保留最近 N 天”参数：整数 1..3650。"""
+    if isinstance(value, bool):
+        raise invalid(u"keep_days 必须是整数", details={"key": "keep_days"})
+    try:
+        days = int(value)
+    except (TypeError, ValueError):
+        raise invalid(u"keep_days 必须是整数", details={"key": "keep_days"})
+    if days < 1 or days > 3650:
+        raise invalid(u"keep_days 超出范围 1..3650",
+                      details={"key": "keep_days"})
+    return days
 
 
 def _is_loopback(host):

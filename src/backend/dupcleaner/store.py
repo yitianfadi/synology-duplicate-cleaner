@@ -17,6 +17,7 @@
 
 from __future__ import absolute_import
 
+import hashlib
 import json
 import logging
 import os
@@ -180,10 +181,149 @@ class Store(object):
         entries = []
         for raw in lines:
             try:
-                entries.append(json.loads(raw.decode("utf-8")))
+                entry = json.loads(raw.decode("utf-8"))
             except (ValueError, UnicodeError):
                 continue
+            if not isinstance(entry, dict):
+                continue
+            # v0038：稳定 id（原始行 sha1 前 16 位），旧记录也能用于删除
+            entry["id"] = self._audit_line_id(raw)
+            entries.append(entry)
         return entries[-limit:]
+
+    @staticmethod
+    def _audit_line_id(raw):
+        return hashlib.sha1(raw).hexdigest()[:16]
+
+    @staticmethod
+    def _read_audit_lines(path):
+        try:
+            with open(path, "rb") as handle:
+                data = handle.read()
+        except OSError:
+            return []
+        return [line for line in data.split(b"\n") if line.strip()]
+
+    def _write_audit_lines(self, path, lines):
+        """原子重写审计文件（保留 600 权限）。"""
+        directory = os.path.dirname(path)
+        fd, temporary = tempfile.mkstemp(prefix=".audit-", dir=directory)
+        try:
+            with os.fdopen(fd, "wb") as handle:
+                for line in lines:
+                    handle.write(line + b"\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+            try:
+                os.chmod(temporary, 0o600)
+            except OSError:
+                pass
+            os.replace(temporary, path)
+        except Exception:
+            try:
+                os.unlink(temporary)
+            except OSError:
+                pass
+            raise
+
+    def delete_audit_entries(self, user, ids=None, before_epoch=None,
+                             keep_days=None):
+        """v0038：删除审计事件（按 id 选中，或删除 before_epoch 之前的）。
+
+        同时处理轮转文件 audit.jsonl.1；删除动作本身写一条 audit_delete 审计。
+        返回删除条数。
+        """
+        wanted = set(str(item) for item in (ids or [])
+                     if isinstance(item, (str, int)))
+        if not wanted and before_epoch is None:
+            raise invalid(u"缺少要删除的审计事件")
+        removed = 0
+        with self._audit_lock:
+            for path in (self._audit_path, self._audit_path + ".1"):
+                lines = self._read_audit_lines(path)
+                if not lines:
+                    continue
+                kept = []
+                for line in lines:
+                    drop = False
+                    if wanted:
+                        drop = self._audit_line_id(line) in wanted
+                    elif before_epoch is not None:
+                        try:
+                            entry = json.loads(line.decode("utf-8"))
+                        except (ValueError, UnicodeError):
+                            entry = None
+                        try:
+                            epoch = float(entry.get("epoch"))
+                        except (AttributeError, TypeError, ValueError):
+                            epoch = None
+                        drop = (epoch is not None
+                                and epoch < float(before_epoch))
+                    if not drop:
+                        kept.append(line)
+                removed += len(lines) - len(kept)
+                if not kept:
+                    if path == self._audit_path:
+                        self._write_audit_lines(path, [])
+                    else:
+                        try:
+                            os.remove(path)
+                        except OSError:
+                            pass
+                elif len(kept) != len(lines):
+                    self._write_audit_lines(path, kept)
+        if removed:
+            detail = {"deleted": removed,
+                      "mode": "ids" if wanted else "before_epoch"}
+            if keep_days is not None:
+                detail["keep_days"] = int(keep_days)
+            self.audit("audit_delete", user, detail)
+        return removed
+
+    def delete_log_files(self, user, names=None, before_epoch=None,
+                         keep_days=None):
+        """v0038：删除运行日志文件（按文件名列表或 before_epoch 之前的）。
+
+        文件名必须通过 SAFE_LOG_NAME_RE 校验（防目录穿越）；删除动作记审计。
+        """
+        names = [item for item in (names or []) if isinstance(item, str)]
+        if not names and before_epoch is None:
+            raise invalid(u"缺少要删除的日志文件")
+        removed = 0
+        deleted = []
+        if names:
+            for name in names:
+                path = self.log_path(name)
+                try:
+                    if os.path.isfile(path):
+                        os.unlink(path)
+                        removed += 1
+                        deleted.append(name)
+                except OSError:
+                    continue
+        else:
+            for item in self.list_logs(limit=10000):
+                try:
+                    older = float(item.get("modified_epoch") or 0) < float(before_epoch)
+                except (TypeError, ValueError):
+                    older = False
+                if not older:
+                    continue
+                path = self.log_path(item.get("name"))
+                try:
+                    os.unlink(path)
+                    removed += 1
+                    deleted.append(item.get("name"))
+                except OSError:
+                    continue
+        if removed:
+            detail = {"deleted": removed,
+                      "mode": "names" if names else "before_epoch",
+                      "names": deleted[:20]}
+            if keep_days is not None:
+                detail["keep_days"] = int(keep_days)
+            self.audit("log_delete", user, detail)
+        return removed
 
     @staticmethod
     def _tail_lines(path, max_bytes):

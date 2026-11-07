@@ -1531,6 +1531,45 @@ def run():
         else:
             record("LOGS-03", "日志下载", "FAIL", "没有 scan 日志可下载")
 
+        # ---------------- v0038：操作日志删除（选中 / 保留最近 N 天） ----------------
+        audit_with_ids = [item for item in audit
+                          if isinstance(item, dict) and item.get("id")]
+        check("LOGS-04", "审计事件返回稳定 id（供删除）",
+              bool(audit_with_ids), "audit_len=%s" % len(audit))
+        if audit_with_ids:
+            # 只删“登录/设置”这类可再生的审计，避免影响后续 AUDIT-01 对扫描/删除事件的断言
+            safe_actions = ("login_success", "login_failed", "settings_update")
+            candidates = [item for item in audit_with_ids
+                          if item.get("action") in safe_actions]
+            target_id = (candidates[0] if candidates
+                         else audit_with_ids[0])["id"]
+            resp = client.post_json("/api/logs/audit/delete", {"ids": [target_id]})
+            data = jd(resp)
+            check("LOGS-05", "按 id 删除审计事件返回 deleted=1",
+                  resp.status == 200 and data.get("deleted") == 1,
+                  "status=%s data=%s" % (resp.status, data))
+            resp = client.get(q("/api/logs", limit=200))
+            after = jd(resp).get("audit") if isinstance(jd(resp).get("audit"), list) else []
+            check("LOGS-06", "删除动作本身写入 audit_delete 审计",
+                  "audit_delete" in {item.get("action") for item in after},
+                  "actions=%s" % sorted(a for a in
+                                        {item.get("action") for item in after} if a))
+        resp = client.post_json("/api/logs/audit/delete", {"keep_days": 0})
+        code, _ = err_code(resp)
+        check("LOGS-07", "非法 keep_days 返回 400 INVALID_ARGUMENT",
+              resp.status == 400 and code == "INVALID_ARGUMENT",
+              "status=%s code=%s" % (resp.status, code))
+        resp = client.post_json("/api/logs/files/delete",
+                                {"names": ["../config.json"]})
+        code, _ = err_code(resp)
+        check("LOGS-08", "日志文件删除拒绝路径穿越（400 INVALID_ARGUMENT）",
+              resp.status == 400 and code == "INVALID_ARGUMENT",
+              "status=%s code=%s" % (resp.status, code))
+        resp = client.post_json("/api/logs/audit/delete", {"keep_days": 3650})
+        check("LOGS-09", "只保留最近 N 天（大 N 不误删）返回 200 deleted=0",
+              resp.status == 200 and jd(resp).get("deleted") == 0,
+              "status=%s data=%s" % (resp.status, jd(resp)))
+
         # ---------------- 删除安全：保留项 / 变更文件 ----------------
         resp = client.post_json("/api/scans/%s/delete-plan" % quote(main_id),
                                 {"file_ids": [photo_keep.get("file_id")], "recycle": True})

@@ -743,6 +743,12 @@ class SubtitleJob(object):
         self.warning = None
         self.created_epoch = time.time()
         self.updated_epoch = self.created_epoch
+        # v0038：执行/结束时间与步骤时间线（随任务 payload 持久化，无需 DB 迁移）
+        self.started_epoch = None
+        self.finished_epoch = None
+        self.timeline_steps = []      # [{key,status,attempts,start_epoch,end_epoch,active_sec,detail}]
+        self.asr_chunks = []          # [{index,status,start_epoch,end_epoch,extract_sec,asr_sec,fallback}]
+        self.translate_batches = []   # [{index,status,start_epoch,end_epoch,duration_sec,cues,attempts,partial}]
         self.cancel_event = threading.Event()
         self.pause_event = threading.Event()
         # plan C：ASR 分片进度 / 是否可继续
@@ -751,9 +757,116 @@ class SubtitleJob(object):
         self.resumable = False
         self.lock = threading.RLock()
 
-    def snapshot(self):
+    # ---- v0038：步骤时间线 ----
+    def _find_step(self, key):
+        for step in self.timeline_steps:
+            if step.get("key") == key:
+                return step
+        return None
+
+    def step_start(self, key, detail=None):
+        """开始/继续一个步骤：首次记录开始时间，恢复/重试时累加 attempts。"""
+        now = time.time()
         with self.lock:
-            return {
+            if self.started_epoch is None:
+                self.started_epoch = now
+            step = self._find_step(key)
+            if step is None:
+                step = {
+                    "key": key, "status": "running", "attempts": 1,
+                    "start_epoch": now, "end_epoch": None,
+                    "active_sec": 0.0, "_active_start": now,
+                    "detail": dict(detail or {}),
+                }
+                self.timeline_steps.append(step)
+            else:
+                step["attempts"] = int(step.get("attempts") or 0) + 1
+                step["status"] = "running"
+                step["_active_start"] = now
+                if step.get("start_epoch") is None:
+                    step["start_epoch"] = now
+                if detail:
+                    step.setdefault("detail", {}).update(detail)
+            return step
+
+    def step_end(self, key, status="done", detail=None):
+        now = time.time()
+        with self.lock:
+            step = self._find_step(key)
+            if step is None:
+                return None
+            active = step.pop("_active_start", None)
+            if active is not None:
+                step["active_sec"] = round(
+                    float(step.get("active_sec") or 0.0)
+                    + max(0.0, now - float(active)), 3)
+            step["end_epoch"] = now
+            step["status"] = status
+            if detail:
+                step.setdefault("detail", {}).update(detail)
+            return step
+
+    def add_asr_chunk(self, entry):
+        with self.lock:
+            self.asr_chunks.append(dict(entry))
+
+    def add_translate_batch(self, entry):
+        with self.lock:
+            self.translate_batches.append(dict(entry))
+
+    @staticmethod
+    def _iso(ts):
+        return timeutil.iso_local(ts)
+
+    def _step_view(self, step):
+        now = time.time()
+        start = step.get("start_epoch")
+        active = float(step.get("active_sec") or 0.0)
+        active_start = step.get("_active_start")
+        if active_start is not None:
+            active += max(0.0, now - float(active_start))
+        return {
+            "key": step.get("key"),
+            "status": step.get("status") or "unknown",
+            "attempts": int(step.get("attempts") or 1),
+            "started_at": self._iso(start),
+            "finished_at": self._iso(step.get("end_epoch")),
+            "duration_sec": round(active, 3) if start is not None else None,
+            "detail": dict(step.get("detail") or {}),
+        }
+
+    def _chunk_view(self, item):
+        extract = float(item.get("extract_sec") or 0.0)
+        asr = float(item.get("asr_sec") or 0.0)
+        return {
+            "index": int(item.get("index") or 0),
+            "status": item.get("status") or "done",
+            "started_at": self._iso(item.get("start_epoch")),
+            "finished_at": self._iso(item.get("end_epoch")),
+            "extract_sec": round(extract, 3),
+            "asr_sec": round(asr, 3),
+            "duration_sec": round(extract + asr, 3),
+            "fallback": bool(item.get("fallback")),
+        }
+
+    def _translate_batch_view(self, item):
+        return {
+            "index": int(item.get("index") or 0),
+            "status": item.get("status") or "done",
+            "started_at": self._iso(item.get("start_epoch")),
+            "finished_at": self._iso(item.get("end_epoch")),
+            "duration_sec": round(float(item.get("duration_sec") or 0.0), 3),
+            "cues": int(item.get("cues") or 0),
+            "attempts": int(item.get("attempts") or 1),
+            "partial": bool(item.get("partial")),
+        }
+
+    def snapshot(self, include_timeline=False):
+        with self.lock:
+            started = self.started_epoch
+            finished = self.finished_epoch
+            end = finished if finished is not None else time.time()
+            data = {
                 "job_id": self.job_id,
                 "status": self.status,
                 "stage": self.stage,
@@ -784,7 +897,23 @@ class SubtitleJob(object):
                 "resumable": bool(self.resumable),
                 "chunk_index": int(self.chunk_index),
                 "chunk_total": int(self.chunk_total),
+                # v0038：执行/结束时间与总耗时（列表也用，保持轻量）
+                "started_at": timeutil.iso_local(started),
+                "finished_at": timeutil.iso_local(finished),
+                "duration_sec": (round(max(0.0, float(end) - float(started)), 3)
+                                 if started is not None else None),
             }
+            if include_timeline:
+                data["timeline"] = {
+                    "queued_at": timeutil.iso_local(self.created_epoch),
+                    "started_at": data["started_at"],
+                    "finished_at": data["finished_at"],
+                    "steps": [self._step_view(step) for step in self.timeline_steps],
+                    "asr_chunks": [self._chunk_view(item) for item in self.asr_chunks],
+                    "translate_batches": [self._translate_batch_view(item)
+                                          for item in self.translate_batches],
+                }
+            return data
 
     def to_record(self):
         return {
@@ -817,6 +946,15 @@ class SubtitleJob(object):
             "chunk_index": int(self.chunk_index),
             "chunk_total": int(self.chunk_total),
             "resumable": bool(self.resumable),
+            # v0038：步骤时间线 / 分片 / 翻译批次（JSON payload 持久化，无需迁移）
+            "started_epoch": self.started_epoch,
+            "finished_epoch": self.finished_epoch,
+            "timeline_steps": [
+                dict((key, value) for key, value in step.items()
+                     if not str(key).startswith("_"))
+                for step in self.timeline_steps],
+            "asr_chunks": [dict(item) for item in self.asr_chunks],
+            "translate_batches": [dict(item) for item in self.translate_batches],
         }
 
     @classmethod
@@ -849,6 +987,33 @@ class SubtitleJob(object):
         job.chunk_index = int(record.get("chunk_index") or 0)
         job.chunk_total = int(record.get("chunk_total") or 0)
         job.resumable = bool(record.get("resumable"))
+        # v0038：恢复步骤时间线；服务重启时仍为 running 的步骤按 paused 处理
+        try:
+            job.started_epoch = (float(record.get("started_epoch"))
+                                 if record.get("started_epoch") else None)
+        except (TypeError, ValueError):
+            job.started_epoch = None
+        try:
+            job.finished_epoch = (float(record.get("finished_epoch"))
+                                  if record.get("finished_epoch") else None)
+        except (TypeError, ValueError):
+            job.finished_epoch = None
+        job.timeline_steps = []
+        for item in record.get("timeline_steps") or []:
+            if not isinstance(item, dict):
+                continue
+            step = dict((key, value) for key, value in item.items()
+                        if not str(key).startswith("_"))
+            if step.get("status") == "running":
+                step["status"] = "paused"
+                if not step.get("end_epoch"):
+                    step["end_epoch"] = job.updated_epoch
+            job.timeline_steps.append(step)
+        job.asr_chunks = [dict(item) for item in (record.get("asr_chunks") or [])
+                          if isinstance(item, dict)]
+        job.translate_batches = [dict(item)
+                                 for item in (record.get("translate_batches") or [])
+                                 if isinstance(item, dict)]
         return job
 
 
@@ -1086,6 +1251,60 @@ class SubtitleService(object):
         except Exception:
             pass
 
+    # ------------------------------------------------------------------
+    # v0038：步骤时间线（排队/探测/识别/翻译/写盘 + 分片/批次明细）
+    # ------------------------------------------------------------------
+    def _timeline_begin(self, job):
+        """任务被 worker 取到：结束排队段并记录开始执行时间（只做一次）。"""
+        with job.lock:
+            if job.started_epoch is not None:
+                return
+            now = time.time()
+            job.started_epoch = now
+            step = job._find_step("queue")
+            if step is None:
+                job.timeline_steps.insert(0, {
+                    "key": "queue", "status": "done", "attempts": 1,
+                    "start_epoch": job.created_epoch, "end_epoch": now,
+                    "active_sec": round(max(0.0, now - job.created_epoch), 3),
+                    "detail": {},
+                })
+            else:
+                step["end_epoch"] = now
+                step["status"] = "done"
+                step["active_sec"] = round(
+                    float(step.get("active_sec") or 0.0)
+                    + max(0.0, now - float(step.get("start_epoch") or now)), 3)
+
+    def _timeline_close(self, job, status, finished=True):
+        """收尾：结束仍处于 running 的步骤；finished=True 时记录结束时间。"""
+        now = time.time()
+        with job.lock:
+            if not job.timeline_steps and job.started_epoch is None:
+                # 从未开始执行（排队中取消/暂停）：只补一条排队段
+                job.timeline_steps.append({
+                    "key": "queue", "status": status, "attempts": 1,
+                    "start_epoch": job.created_epoch, "end_epoch": now,
+                    "active_sec": round(max(0.0, now - job.created_epoch), 3),
+                    "detail": {},
+                })
+            for step in job.timeline_steps:
+                if step.get("status") == "running":
+                    active = step.pop("_active_start", None)
+                    if active is not None:
+                        step["active_sec"] = round(
+                            float(step.get("active_sec") or 0.0)
+                            + max(0.0, now - float(active)), 3)
+                    step["end_epoch"] = now
+                    step["status"] = status
+            if finished:
+                job.finished_epoch = now
+
+    def _timeline_skip(self, job):
+        """跳过已有字幕的任务：只记录排队段，立即结束。"""
+        self._timeline_begin(job)
+        self._timeline_close(job, "done")
+
     def _list_files(self, job_id):
         try:
             names = sorted(os.listdir(self._job_dir(job_id)))
@@ -1113,7 +1332,7 @@ class SubtitleService(object):
 
     def get(self, job_id):
         job = self._get_job(job_id)
-        snapshot = job.snapshot()
+        snapshot = job.snapshot(include_timeline=True)
         snapshot["files"] = self._list_files(job.job_id)
         return snapshot
 
@@ -1533,6 +1752,9 @@ class SubtitleService(object):
         return None
 
     def _register_job(self, job, enqueue=True):
+        # v0038：跳过任务（submit/batch/group 直接置 done）也记录排队与结束时间
+        if job.status in FINISHED_STATUSES and job.started_epoch is None:
+            self._timeline_skip(job)
         if enqueue:
             with self._lock:
                 self._jobs[job.job_id] = job
@@ -1719,6 +1941,7 @@ class SubtitleService(object):
                 job.skipped = False
                 job.warning = None
                 job.resumable = True
+                job.finished_epoch = None
                 job.updated_epoch = time.time()
                 if job.job_id not in self._queue:
                     self._queue.append(job.job_id)
@@ -2876,6 +3099,7 @@ class SubtitleService(object):
                 job.message = u"任务已取消"
                 job.resumable = False
                 job.updated_epoch = time.time()
+                self._timeline_close(job, "cancelled")
                 try:
                     self._queue.remove(job_id)
                 except ValueError:
@@ -2902,6 +3126,8 @@ class SubtitleService(object):
             job.resumable = True
             job.message = u"任务已暂停，可继续" if previous != STATUS_QUEUED else u"任务已暂停"
             job.updated_epoch = time.time()
+            if previous in (STATUS_RUNNING, STATUS_TRANSLATING):
+                self._timeline_close(job, "paused", finished=False)
             if previous == STATUS_QUEUED:
                 try:
                     self._queue.remove(job_id)
@@ -3073,6 +3299,7 @@ class SubtitleService(object):
             job.resumable = True
             job.message = u"任务已暂停，当前分片已完成"
             job.updated_epoch = time.time()
+            self._timeline_close(job, "paused", finished=False)
             self._persist(job)
         self.store.audit("subtitle_pause", job.user, {
             "job_id": job.job_id,
@@ -3082,6 +3309,7 @@ class SubtitleService(object):
 
     def _process(self, job):
         settings = self._settings() or {}
+        self._timeline_begin(job)
         try:
             with job.lock:
                 if job.status in FINISHED_STATUSES or job.status == STATUS_PAUSED:
@@ -3099,6 +3327,8 @@ class SubtitleService(object):
         except SubtitlePaused:
             self._handle_paused(job)
         except SubtitleCancelled:
+            # v0038：取消也写入步骤结束时间（进行中的步骤标记 cancelled）
+            self._timeline_close(job, "cancelled")
             with job.lock:
                 if job.status != STATUS_CANCELLED:
                     job.status = STATUS_CANCELLED
@@ -3136,6 +3366,7 @@ class SubtitleService(object):
             audit["batch_id"] = job.batch_id
         if extra_audit:
             audit.update(extra_audit)
+        self._timeline_close(job, "done")
         self._update(job, status=STATUS_DONE, stage="write", progress=100,
                      message=progress_message, files=files, error=None,
                      resumable=False, chunk_index=total,
@@ -3158,6 +3389,7 @@ class SubtitleService(object):
             })
 
     def _process_asr(self, job, settings):
+        job.step_start("probe")
         if not self.ffmpeg.available():
             raise SubtitleError("FFMPEG_UNAVAILABLE", u"未找到 FFmpeg，无法提取音频")
         timeout = float(settings.get("subtitle_asr_timeout_sec") or 300)
@@ -3184,35 +3416,57 @@ class SubtitleService(object):
             plan = self._chunk_plan(job, duration, chunk_sec)
             if not plan:
                 raise SubtitleError("NO_AUDIO", u"视频没有可用音轨")
+            job.step_end("probe", detail={
+                "duration_sec": round(float(duration), 3),
+                "chunks": len(plan),
+            })
             resuming = int(job.chunk_index or 0) > 0
             self._update(
                 job, status=STATUS_RUNNING,
                 stage="asr" if resuming else "audio",
                 progress=20 if resuming else 2,
                 message=u"正在识别语音" if resuming else u"正在提取音频")
+            job.step_start("asr")
             cues, fallback_used = self._run_chunked_asr(
                 job, settings, plan, max_bytes, tempdir, mode=mode,
                 server_max_bytes=server_max_bytes)
             cues = dedupe_cues(cues)
             if not cues:
                 raise SubtitleError("NO_SPEECH", u"未识别到可用字幕内容")
+            job.step_end("asr", detail={
+                "chunks": len(plan),
+                "cues": len(cues),
+                "fallback": bool(fallback_used),
+            })
             translations = None
             partial = False
             if job.translate:
+                job.step_start("translate")
                 self._update(job, status=STATUS_TRANSLATING,
                              stage="translate", progress=70,
                              message=u"正在翻译字幕")
                 translations, partial = self._translate_cues(
                     job, settings, cues)
+                job.step_end("translate", detail={
+                    "cues": len(cues),
+                    "batches": len(job.translate_batches),
+                    "partial": bool(partial),
+                })
             # 最后一个翻译批次结束时也要响应暂停（resume 会重跑翻译批次，
             # 但 ASR 分片缓存保证不重复上传音频）
             self._check_control(job)
+            job.step_start("write")
             self._update(job, stage="write", progress=91,
                          message=u"正在写入字幕文件")
             files, outputs, output_errors, warning = self._write_outputs(
                 job, cues, translations, partial,
                 write_vtt=bool(settings.get("subtitle_write_vtt")),
                 translate_outputs=settings.get("subtitle_translate_outputs"))
+            job.step_end("write", detail={
+                "files": len(files),
+                "outputs": len(outputs or []),
+                "output_errors": len(output_errors or []),
+            })
             if fallback_used and not warning:
                 warning = WARNING_SERVER_AUDIO_FALLBACK
             self._finish_done(job, files, outputs, output_errors, warning,
@@ -3231,16 +3485,28 @@ class SubtitleService(object):
         cues = parse_srt(text)
         if not cues:
             raise SubtitleError("NO_SPEECH", u"已有字幕文件没有可用内容")
+        job.step_start("translate")
         self._update(job, status=STATUS_TRANSLATING, stage="translate",
                      progress=10, message=u"正在翻译已有字幕")
         translations, partial = self._translate_cues(job, settings, cues)
+        job.step_end("translate", detail={
+            "cues": len(cues),
+            "batches": len(job.translate_batches),
+            "partial": bool(partial),
+        })
         self._check_control(job)
+        job.step_start("write")
         self._update(job, stage="write", progress=91,
                      message=u"正在写入字幕文件")
         files, outputs, output_errors, warning = self._write_outputs(
             job, cues, translations, partial, existing_source=source_srt,
             write_vtt=bool(settings.get("subtitle_write_vtt")),
             translate_outputs=settings.get("subtitle_translate_outputs"))
+        job.step_end("write", detail={
+            "files": len(files),
+            "outputs": len(outputs or []),
+            "output_errors": len(output_errors or []),
+        })
         self._finish_done(job, files, outputs, output_errors, warning,
                           partial, u"字幕翻译完成",
                           extra_audit={"source_srt": source_srt})
@@ -3248,6 +3514,7 @@ class SubtitleService(object):
     def _fail(self, job, code, message):
         with job.lock:
             job.resumable = False
+        self._timeline_close(job, "failed")
         self._update(job, status=STATUS_FAILED, message=message,
                      error={"code": code, "message": message})
         self.store.audit("subtitle_failed", job.user, {
@@ -3424,11 +3691,14 @@ class SubtitleService(object):
                 with job.lock:
                     job.chunk_index = max(int(job.chunk_index or 0), index + 1)
                 continue
+            chunk_started = time.time()
             audio, chunk_fallback = self._extract_chunk_audio(
                 job, settings, start, length, max_bytes, tempdir, counter,
                 mode=mode, server_max_bytes=server_max_bytes)
+            extract_sec = round(time.time() - chunk_started, 3)
             fallback_used = fallback_used or chunk_fallback
             chunk_cues = []
+            asr_started = time.time()
             try:
                 for entry in audio:
                     self._check_cancel(job)
@@ -3451,6 +3721,7 @@ class SubtitleService(object):
                     except OSError:
                         pass
             chunk_cues = dedupe_cues(chunk_cues)
+            asr_sec = round(time.time() - asr_started, 3)
             try:
                 self.store.save_subtitle_chunk(
                     job.job_id, index, start, start + length,
@@ -3458,6 +3729,13 @@ class SubtitleService(object):
             except Exception:
                 pass
             all_cues.extend(chunk_cues)
+            job.add_asr_chunk({
+                "index": index, "status": "done",
+                "start_epoch": round(chunk_started, 3),
+                "end_epoch": round(time.time(), 3),
+                "extract_sec": extract_sec, "asr_sec": asr_sec,
+                "fallback": bool(chunk_fallback),
+            })
             progress = 20 + int(50.0 * (index + 1) / total)
             self._update(
                 job, stage="asr", progress=progress,
@@ -3481,6 +3759,8 @@ class SubtitleService(object):
             # 翻译批次是暂停安全点：当前批完成后暂停；resume 重新翻译当前批次即可
             self._check_control(job)
             batch = cues[start:start + batch_size]
+            batch_index = start // batch_size
+            batch_started = time.time()
             texts = [sanitize_cue_text(item["text"]) for item in batch]
             result = None
             attempt = 0
@@ -3501,10 +3781,21 @@ class SubtitleService(object):
                                 for item in candidate)):
                     result = [sanitize_cue_text(item) for item in candidate]
                     break
-            if result is None:
+            batch_partial = result is None
+            if batch_partial:
                 partial = True
                 result = texts
             translations.extend(result)
+            batch_finished = time.time()
+            job.add_translate_batch({
+                "index": batch_index,
+                "status": "partial" if batch_partial else "done",
+                "start_epoch": round(batch_started, 3),
+                "end_epoch": round(batch_finished, 3),
+                "duration_sec": round(batch_finished - batch_started, 3),
+                "cues": len(batch), "attempts": attempt,
+                "partial": bool(batch_partial),
+            })
             progress = 70 + int(20.0 * (start + len(batch)) / total)
             self._update(job, stage="translate", progress=progress,
                          message=u"正在翻译字幕 %d/%d" % (

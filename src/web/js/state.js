@@ -45,18 +45,20 @@ export var state = {
   openSubtitleDirPicker: null,
   preview: { urls: [], abort: null },
   historyCache: null,
-  // 任务中心标签页：history / subtitles / deletions / storage
+  // 任务中心标签页：history / subtitles / deletions / logs（v0038：操作日志并入）
   taskTab: 'history',
   deletionJobs: { list: [], loading: false, loaded: false, lastError: '' },
   diagnostics: { data: null, loading: false, loaded: false, busy: false },
   logsLoaded: false,
   settingsLoaded: false,
-  logsLimit: 50
+  logsLimit: 50,
+  logsKeepDays: 30,
+  auditSelection: new Set()
 };
 
 export var els = {};
 export var IDS = ('loginView loginForm loginUsername loginPassword loginOtp loginSubmit loginError app riskBanner envBadge userChip userName ' +
-  'logoutBtn main view-scan view-subtitles view-history view-logs view-settings scanHeading subtitlesHeading historyHeading logsHeading settingsHeading ' +
+  'logoutBtn main view-scan view-subtitles view-history view-settings navSettingsBtn scanHeading subtitlesHeading historyHeading settingsHeading ' +
   'rootsList rootsCount rootsError pickRootsBtn clearRootsBtn excludeChips excludeCount pickExcludesBtn optionsForm resetOptionsBtn ' +
   'hashAlgo keepMode keepModeHint pinnedField pinnedValue pinnedError pickPinnedBtn clearPinnedBtn minSize minUnit minSizeError maxSize maxUnit ' +
   'maxSizeError includeExt includeExtError excludeExt excludeExtError ignoreCaseExt skipEmpty skipHidden recycleDefault ' +
@@ -66,7 +68,7 @@ export var IDS = ('loginView loginForm loginUsername loginPassword loginOtp logi
   'counterDuplicateFiles counterReclaimable counterRate counterErrors progressPath progressElapsed pauseBtn resumeBtn stopBtn ' +
   'viewResultsBtn resultsSection resultsSubtitle refreshResultsBtn resultsSummary searchGroups sortGroups resultsCountLabel ' +
   'selectAllBtn clearSelectionBtn csvLink deleteSelectedBtn selectionSummary resultsLoading resultsError resultsEmpty groupsList ' +
-  'loadMoreBtn loadMoreStatus historyRefreshBtn historyLoading historyError historyEmpty historyList logLimitSelect logsRefreshBtn ' +
+  'loadMoreBtn loadMoreStatus historyRefreshBtn historyLoading historyError historyEmpty historyList logLimitSelect logsKeepDays auditSelectAll auditPruneBtn logFilesPruneBtn auditDeleteSelectedBtn logsRefreshBtn ' +
   'logsLoading logsError auditCount auditEmpty auditList logFilesCount logFilesEmpty logFilesList settingsForm settingsLoading ' +
   'settingsLoadError setHashAlgo setKeepMode setPinnedPath setMinSizeMb setMinSizeError setMaxSizeMb setMaxSizeError ' +
   'setIncludeExt setIncludeExtError setExcludeExt setExcludeExtError setIgnoreCase setSkipEmpty setSkipHidden setSkipSymlinks ' +
@@ -114,8 +116,9 @@ export var IDS = ('loginView loginForm loginUsername loginPassword loginOtp logi
   'setSubtitleConcurrency setSubtitleConcurrencyError ' +
   'setSubtitleTranslateOutputs setSubtitleTranslateOutputsError ' +
   'subtitleGroupCurrent subtitleJobsFilter subtitleJobsActive ' +
-  'taskTabHistory taskTabSubtitles taskTabDeletions taskTabStorage ' +
-  'taskPanelHistory taskPanelSubtitles taskPanelDeletions taskPanelStorage ' +
+  'taskTabHistory taskTabSubtitles taskTabDeletions taskTabLogs ' +
+  'taskPanelHistory taskPanelSubtitles taskPanelDeletions taskPanelLogs ' +
+  'settingsDiagnosticsGroup settingsDiagnosticsSummary ' +
   'deletionJobsPanel deletionJobsHeading deletionJobsStatus deletionJobsRefreshBtn ' +
   'deletionJobsLoading deletionJobsError deletionJobsEmpty deletionJobsList ' +
   'deletionJobsTable deletionJobsTableWrap ' +

@@ -22,11 +22,12 @@
 import {
   ACTIVE_STATUS, AUDIT_LABEL, CSRF_KEY, DEFAULT_SETTINGS, DEFAULT_SIMILARITY_EXTENSIONS,
   DEFAULT_VIDEO_EXTENSIONS, DELETE_REASON_LABEL, DELETE_STATUS_LABEL,
-  ERROR_FALLBACK, JOB_STATUS_LABEL, KEEP_LABEL, KEEP_MODE_LABEL,
+  ERROR_FALLBACK, JOB_STATUS_LABEL, KEEP_LABEL, KEEP_MODE_LABEL, LEGACY_VIEW_ALIASES,
   MTIME_FALLBACK_LABEL, MTIME_FALLBACK_REASONS, POLL_MS,
   SIZE_UNITS, SOURCE_INFO, STAGE_LABEL, STATUS_BADGE, STATUS_LABEL,
   SUBTITLE_ACTIVE_STATUS, SUBTITLE_LANGUAGES, SUBTITLE_OUTPUT_KIND_LABEL,
   SUBTITLE_RUNNING_STATUS, SUBTITLE_SOURCE_LABEL, SUBTITLE_STAGE_LABEL,
+  SUBTITLE_STEP_LABEL, SUBTITLE_STEP_STATUS_LABEL,
   SUBTITLE_STATUS_BADGE, SUBTITLE_STATUS_LABEL, SUBTITLE_TARGET_LANGUAGES,
   SUBTITLE_TRANSLATE_OUTPUTS, SUBTITLE_WARNING_LABEL,
   TERMINAL_STATUS, VIDEO_HWACCEL_LABEL, VIDEO_HWACCEL_MODES, VIEWS, VIEW_HEADINGS
@@ -176,6 +177,7 @@ import {
     state.historyCache = null;
     state.logsLoaded = false;
     state.settingsLoaded = false;
+    if (state.auditSelection) { state.auditSelection.clear(); }
     state.scan = { id: null, data: null, stats: null, timer: null, abort: null, polling: false, errors: 0, handled: false };
     resetResultsState();
     state.deleteFlow = { plan: null, job: null, timer: null, abort: null, running: false, busy: false, modal: null, recycle: true };
@@ -254,8 +256,17 @@ import {
     $$('.nav-item').forEach(function (btn) {
       btn.addEventListener('click', function () { setView(btn.dataset.nav); });
     });
+    if (els.navSettingsBtn) {
+      els.navSettingsBtn.addEventListener('click', function () { setView('settings'); });
+    }
     window.addEventListener('hashchange', function () {
-      var view = String(window.location.hash || '').replace(/^#\/?/, '');
+      var raw = String(window.location.hash || '').replace(/^#\/?/, '');
+      var view = LEGACY_VIEW_ALIASES[raw] || raw;
+      if (raw === 'logs') {
+        // v0038：旧 #/logs 书签兼容 → 任务中心「操作日志」标签页
+        state.taskTab = 'logs';
+        try { history.replaceState(null, '', '#/history'); } catch (e) { /* 忽略 */ }
+      }
       if (VIEWS.indexOf(view) !== -1) { setView(view, { fromHash: true }); }
     });
   }
@@ -269,6 +280,10 @@ import {
       if (btn.dataset.nav === view) { btn.setAttribute('aria-current', 'page'); }
       else { btn.removeAttribute('aria-current'); }
     });
+    if (els.navSettingsBtn) {
+      if (view === 'settings') { els.navSettingsBtn.setAttribute('aria-current', 'page'); }
+      else { els.navSettingsBtn.removeAttribute('aria-current'); }
+    }
     if (!options.fromHash) {
       var target = '#/' + view;
       if (window.location.hash !== target) {
@@ -283,12 +298,14 @@ import {
     if (view !== 'subtitles') { stopSubtitlePagePolling(); }
     if (view === 'history') { setTaskTab(state.taskTab, { load: true }); }
     else if (view === 'subtitles') { showSubtitlePage(); }
-    else if (view === 'logs') { loadLogs(); }
-    else if (view === 'settings') { loadSettingsPage(); }
+    else if (view === 'settings') {
+      loadSettingsPage();
+      if (!state.diagnostics.loaded) { loadDiagnostics(); }
+    }
   }
 
   // ==================== 7.1 任务中心标签页（键盘 / aria 可访问） ====================
-  var TASK_TABS = ['history', 'subtitles', 'deletions', 'storage'];
+  var TASK_TABS = ['history', 'subtitles', 'deletions', 'logs'];
 
   function normalizeTaskTab(tab) {
     return TASK_TABS.indexOf(tab) === -1 ? 'history' : tab;
@@ -332,7 +349,7 @@ import {
     if (tab === 'history') { loadHistory(); }
     else if (tab === 'subtitles') { loadSubtitleJobs(); }
     else if (tab === 'deletions') { loadDeletionJobs(); }
-    else if (tab === 'storage' && (!state.diagnostics.loaded || options.force)) { loadDiagnostics(); }
+    else if (tab === 'logs') { loadLogs(); }
   }
 
   function refreshTaskCenter() {
@@ -362,7 +379,13 @@ import {
   }
 
   function initialViewFromHash() {
-    var view = String(window.location.hash || '').replace(/^#\/?/, '');
+    var raw = String(window.location.hash || '').replace(/^#\/?/, '');
+    if (raw === 'logs') {
+      // v0038：旧 #/logs 兼容到任务中心「操作日志」
+      state.taskTab = 'logs';
+      return 'history';
+    }
+    var view = LEGACY_VIEW_ALIASES[raw] || raw;
     return VIEWS.indexOf(view) !== -1 ? view : 'scan';
   }
 
@@ -6682,6 +6705,148 @@ import {
     return pct + '%';
   }
 
+  // ---- v0038：步骤时间线 ----
+  var SUBTITLE_STEP_BADGE = {
+    running: 'badge-blue', done: 'badge-green', failed: 'badge-red',
+    paused: 'badge-amber', cancelled: 'badge-gray', skipped: 'badge-gray'
+  };
+
+  function subtitleStepStatusLabel(status) {
+    return SUBTITLE_STEP_STATUS_LABEL[status] || status || '—';
+  }
+
+  function subtitleStepLabel(key) {
+    return SUBTITLE_STEP_LABEL[key] || key || '—';
+  }
+
+  function subtitleDurationText(seconds) {
+    if (seconds === null || seconds === undefined || seconds === '') { return '—'; }
+    var sec = Number(seconds);
+    if (!isFinite(sec) || sec < 0) { return '—'; }
+    if (sec > 0 && sec < 0.1) { return '<0.1 秒'; }
+    return fmtElapsed(sec);
+  }
+
+  function subtitleStepRow(step) {
+    var detail = step.detail || {};
+    var bits = [];
+    if (step.key === 'probe') {
+      if (detail.duration_sec !== undefined) { bits.push('媒体时长 ' + subtitleDurationText(detail.duration_sec)); }
+    } else if (step.key === 'asr') {
+      if (detail.chunks !== undefined) { bits.push('分片 ' + fmtInt(detail.chunks)); }
+      if (detail.cues !== undefined) { bits.push('字幕 ' + fmtInt(detail.cues) + ' 条'); }
+      if (detail.fallback) { bits.push('服务器解码回退'); }
+    } else if (step.key === 'translate') {
+      if (detail.cues !== undefined) { bits.push('字幕 ' + fmtInt(detail.cues) + ' 条'); }
+      if (detail.batches !== undefined) { bits.push('批次 ' + fmtInt(detail.batches)); }
+      if (detail.partial) { bits.push('部分批次回退原文'); }
+    } else if (step.key === 'write') {
+      if (detail.files !== undefined) { bits.push('任务目录 ' + fmtInt(detail.files) + ' 个文件'); }
+      if (detail.outputs !== undefined) { bits.push('写回 ' + fmtInt(detail.outputs)); }
+      if (detail.output_errors) { bits.push('写回失败 ' + fmtInt(detail.output_errors)); }
+    }
+    if (step.attempts && step.attempts > 1) { bits.push('第 ' + fmtInt(step.attempts) + ' 次执行'); }
+    return el('tr', {}, [
+      el('td', { text: subtitleStepLabel(step.key) }),
+      el('td', {}, [el('span', {
+        className: 'badge ' + (SUBTITLE_STEP_BADGE[step.status] || 'badge-gray'),
+        text: subtitleStepStatusLabel(step.status)
+      })]),
+      el('td', { className: 'mono', text: fmtDateTime(step.started_at) }),
+      el('td', { className: 'mono', text: fmtDateTime(step.finished_at) }),
+      el('td', { className: 'mono', text: subtitleDurationText(step.duration_sec) }),
+      el('td', { className: 'hint', text: bits.join(' · ') || '—' })
+    ]);
+  }
+
+  function subtitleTimelineSection(job) {
+    var timeline = job && job.timeline;
+    if (!timeline || typeof timeline !== 'object') {
+      return el('p', { className: 'hint', text: '该任务创建于旧版本，未记录步骤时间。' });
+    }
+    var wrap = el('div', { className: 'subtitle-timeline' });
+    wrap.appendChild(el('p', {
+      className: 'hint',
+      text: '总耗时 ' + subtitleDurationText(job.duration_sec) +
+        ' · 开始 ' + fmtDateTime(job.started_at) +
+        ' · 结束 ' + fmtDateTime(job.finished_at)
+    }));
+    var steps = Array.isArray(timeline.steps) ? timeline.steps : [];
+    wrap.appendChild(el('div', { className: 'table-wrap' }, [
+      el('table', { className: 'data-table subtitle-step-table' }, [
+        el('thead', {}, [el('tr', {}, [
+          el('th', { text: '步骤' }), el('th', { text: '状态' }),
+          el('th', { text: '开始' }), el('th', { text: '结束' }),
+          el('th', { text: '耗时' }), el('th', { text: '明细' })
+        ])]),
+        el('tbody', {}, steps.map(subtitleStepRow))
+      ])
+    ]));
+
+    var chunks = Array.isArray(timeline.asr_chunks) ? timeline.asr_chunks : [];
+    if (chunks.length) {
+      var chunkRows = chunks.map(function (item) {
+        return el('tr', {}, [
+          el('td', { className: 'mono', text: String((Number(item.index) || 0) + 1) }),
+          el('td', {}, [el('span', {
+            className: 'badge ' + (SUBTITLE_STEP_BADGE[item.status] || 'badge-gray'),
+            text: subtitleStepStatusLabel(item.status)
+          })]),
+          el('td', { className: 'mono', text: fmtDateTime(item.started_at) }),
+          el('td', { className: 'mono', text: subtitleDurationText(item.duration_sec) }),
+          el('td', { className: 'mono', text: subtitleDurationText(item.extract_sec) }),
+          el('td', { className: 'mono', text: subtitleDurationText(item.asr_sec) }),
+          el('td', { className: 'hint', text: item.fallback ? '服务器解码回退' : '—' })
+        ]);
+      });
+      wrap.appendChild(el('details', { className: 'subtitle-timeline-details' }, [
+        el('summary', { text: 'ASR 分片明细（' + fmtInt(chunks.length) + '）' }),
+        el('div', { className: 'table-wrap' }, [
+          el('table', { className: 'data-table subtitle-step-table' }, [
+            el('thead', {}, [el('tr', {}, [
+              el('th', { text: '分片' }), el('th', { text: '状态' }), el('th', { text: '开始' }),
+              el('th', { text: '总耗时' }), el('th', { text: '抽音频' }),
+              el('th', { text: '识别' }), el('th', { text: '备注' })
+            ])]),
+            el('tbody', {}, chunkRows)
+          ])
+        ])
+      ]));
+    }
+
+    var batches = Array.isArray(timeline.translate_batches) ? timeline.translate_batches : [];
+    if (batches.length) {
+      var batchRows = batches.map(function (item) {
+        return el('tr', {}, [
+          el('td', { className: 'mono', text: String((Number(item.index) || 0) + 1) }),
+          el('td', {}, [el('span', {
+            className: 'badge ' + (SUBTITLE_STEP_BADGE[item.status] || 'badge-gray'),
+            text: subtitleStepStatusLabel(item.status)
+          })]),
+          el('td', { className: 'mono', text: fmtDateTime(item.started_at) }),
+          el('td', { className: 'mono', text: subtitleDurationText(item.duration_sec) }),
+          el('td', { className: 'mono', text: fmtInt(item.cues) }),
+          el('td', { className: 'mono', text: fmtInt(item.attempts) }),
+          el('td', { className: 'hint', text: item.partial ? '回退原文' : '—' })
+        ]);
+      });
+      wrap.appendChild(el('details', { className: 'subtitle-timeline-details' }, [
+        el('summary', { text: '翻译批次明细（' + fmtInt(batches.length) + '）' }),
+        el('div', { className: 'table-wrap' }, [
+          el('table', { className: 'data-table subtitle-step-table' }, [
+            el('thead', {}, [el('tr', {}, [
+              el('th', { text: '批次' }), el('th', { text: '状态' }), el('th', { text: '开始' }),
+              el('th', { text: '耗时' }), el('th', { text: '字幕条数' }),
+              el('th', { text: '尝试次数' }), el('th', { text: '备注' })
+            ])]),
+            el('tbody', {}, batchRows)
+          ])
+        ])
+      ]));
+    }
+    return wrap;
+  }
+
   function renderSubtitleJobItem(job) {
     var status = job.status || 'queued';
     var item = el('div', { className: 'subtitle-job-item', dataset: { jobId: job.job_id } });
@@ -6695,6 +6860,9 @@ import {
     var sourceText = subtitleSourceLabel(job);
     if (sourceText) { metaBits.push(sourceText); }
     if (job.translate) { metaBits.push('译文 ' + (job.target_lang || '—')); }
+    if (job.duration_sec !== undefined && job.duration_sec !== null) {
+      metaBits.push('耗时 ' + subtitleDurationText(job.duration_sec));
+    }
     metaBits.push('创建 ' + subtitleJobTimeText(job));
     var meta = el('div', { className: 'subtitle-job-meta' }, metaBits.map(function (text) {
       return el('span', { text: text });
@@ -6941,6 +7109,8 @@ import {
         icon('warning'), el('p', { text: warningText })
       ]));
     }
+    body.appendChild(el('h3', { text: '步骤耗时' }));
+    body.appendChild(subtitleTimelineSection(job));
     var outputsEl = renderSubtitleOutputs(job, false);
     if (outputsEl) {
       body.appendChild(el('h3', { text: '已写入视频目录' }));
@@ -7673,8 +7843,15 @@ import {
     }
     appendDiagRows(els.storageKeysList, keyRows);
 
-    renderDiagnosticsOthers(diag);
+      renderDiagnosticsOthers(diag);
     setText(els.storageStatus, '已加载 ' + fmtDateTime(new Date().toISOString()));
+    if (els.settingsDiagnosticsSummary) {
+      var summaryBits = [];
+      if (dbSize !== undefined) { summaryBits.push('数据库 ' + fmtBytes(dbSize)); }
+      if (tableTotal) { summaryBits.push('表记录 ' + fmtInt(tableTotal)); }
+      summaryBits.push('FFmpeg ' + (diagLooseValue(ffmpeg, ['available']) ? '可用' : '不可用'));
+      setText(els.settingsDiagnosticsSummary, summaryBits.join(' · '));
+    }
   }
 
   async function loadDiagnostics() {
@@ -7835,10 +8012,31 @@ import {
     }
   }
 
+  function syncAuditSelectionUi() {
+    var selected = state.auditSelection;
+    if (els.auditDeleteSelectedBtn) {
+      els.auditDeleteSelectedBtn.disabled = selected.size === 0;
+      els.auditDeleteSelectedBtn.textContent = selected.size
+        ? '删除选中 (' + fmtInt(selected.size) + ')' : '删除选中';
+    }
+    if (els.auditSelectAll) {
+      var boxes = $$('#auditList input.audit-check');
+      var checked = boxes.filter(function (box) { return box.checked; }).length;
+      els.auditSelectAll.checked = boxes.length > 0 && checked === boxes.length;
+      els.auditSelectAll.indeterminate = checked > 0 && checked < boxes.length;
+    }
+  }
+
   function renderLogs(data) {
     setHidden(els.logsLoading, true);
     var logs = Array.isArray(data.logs) ? data.logs : [];
     var audit = Array.isArray(data.audit) ? data.audit : [];
+    // 只保留仍在当前列表中的选中项（删除/刷新后不残留）
+    var present = new Set();
+    audit.forEach(function (entry) { if (entry && entry.id) { present.add(entry.id); } });
+    Array.from(state.auditSelection).forEach(function (id) {
+      if (!present.has(id)) { state.auditSelection.delete(id); }
+    });
 
     clear(els.auditList);
     setText(els.auditCount, audit.length ? '共 ' + fmtInt(audit.length) + ' 条' : '');
@@ -7857,13 +8055,29 @@ import {
       if (AUDIT_LABEL[entry.action]) {
         actionCell.appendChild(el('span', { className: 'muted small', text: ' (' + entry.action + ')' }));
       }
+      var id = entry.id || '';
+      var checkbox = el('input', {
+        attrs: { type: 'checkbox', 'aria-label': '选择该条审计事件', 'data-id': id }
+      });
+      checkbox.className = 'audit-check';
+      checkbox.checked = !!(id && state.auditSelection.has(id));
+      checkbox.disabled = !id;
+      if (id) {
+        checkbox.addEventListener('change', function () {
+          if (checkbox.checked) { state.auditSelection.add(id); }
+          else { state.auditSelection.delete(id); }
+          syncAuditSelectionUi();
+        });
+      }
       els.auditList.appendChild(el('tr', {}, [
+        el('td', { className: 'col-check' }, [checkbox]),
         el('td', { text: fmtDateTime(entry.ts) }),
         el('td', {}, [actionCell]),
         el('td', { text: entry.user || '—' }),
         el('td', {}, [el('span', { className: 'audit-detail', attrs: { title: detailText || '' }, text: detailText || '—' })])
       ]));
     });
+    syncAuditSelectionUi();
 
     clear(els.logFilesList);
     setText(els.logFilesCount, logs.length ? '共 ' + fmtInt(logs.length) + ' 个' : '');
@@ -7879,6 +8093,11 @@ import {
           'aria-label': '下载日志 ' + name
         }
       }, [icon('download')]);
+      var deleteButton = el('button', {
+        className: 'icon-btn icon-btn-danger',
+        attrs: { type: 'button', title: '删除该日志文件', 'aria-label': '删除日志文件 ' + name },
+        on: { click: function () { deleteLogFile(name); } }
+      }, [icon('trash')]);
       var metaText = '类型 ' + (LOG_KIND_LABEL[log.kind] || log.kind || '未知') +
         ' · ' + fmtBytes(log.size) + ' · ' + fmtDateTime(log.modified_at);
       if (log.scan_id) { metaText += ' · ' + log.scan_id; }
@@ -7888,9 +8107,98 @@ import {
           el('div', { className: 'log-name', text: name || '—' }),
           el('div', { className: 'log-meta', text: metaText })
         ]),
-        downloadLink
+        downloadLink,
+        deleteButton
       ]));
     });
+  }
+
+  function logsKeepDays() {
+    var value = parseInt(els.logsKeepDays && els.logsKeepDays.value, 10);
+    return value > 0 ? value : (state.logsKeepDays || 30);
+  }
+
+  async function deleteAuditSelected() {
+    var ids = Array.from(state.auditSelection);
+    if (!ids.length) { return; }
+    var ok = await confirmDialog({
+      title: '删除选中的审计事件？',
+      message: '将删除选中的 ' + fmtInt(ids.length) + ' 条审计事件，删除后不可恢复。',
+      confirmText: '删除',
+      danger: true
+    });
+    if (!ok) { return; }
+    try {
+      var res = await api('/api/logs/audit/delete', {
+        method: 'POST', body: { ids: ids }, timeout: 20000
+      });
+      toast('已删除 ' + fmtInt((res && res.deleted) || 0) + ' 条审计事件。', 'success');
+      state.auditSelection.clear();
+      await loadLogs();
+    } catch (err) {
+      toast(errorMessage(err, '删除审计事件失败，请稍后重试。'), 'error', 6000);
+    }
+  }
+
+  async function pruneAuditByDays() {
+    var days = logsKeepDays();
+    var ok = await confirmDialog({
+      title: '清理审计事件？',
+      message: '将删除 ' + days + ' 天之前的审计事件（保留最近 ' + days + ' 天），删除后不可恢复。',
+      confirmText: '清理',
+      danger: true
+    });
+    if (!ok) { return; }
+    try {
+      var res = await api('/api/logs/audit/delete', {
+        method: 'POST', body: { keep_days: days }, timeout: 30000
+      });
+      toast('已清理 ' + fmtInt((res && res.deleted) || 0) + ' 条审计事件。', 'success');
+      state.auditSelection.clear();
+      await loadLogs();
+    } catch (err) {
+      toast(errorMessage(err, '清理审计事件失败，请稍后重试。'), 'error', 6000);
+    }
+  }
+
+  async function pruneLogFilesByDays() {
+    var days = logsKeepDays();
+    var ok = await confirmDialog({
+      title: '清理日志文件？',
+      message: '将删除 ' + days + ' 天之前的扫描/删除日志文件（保留最近 ' + days + ' 天），删除后不可恢复。',
+      confirmText: '清理',
+      danger: true
+    });
+    if (!ok) { return; }
+    try {
+      var res = await api('/api/logs/files/delete', {
+        method: 'POST', body: { keep_days: days }, timeout: 30000
+      });
+      toast('已清理 ' + fmtInt((res && res.deleted) || 0) + ' 个日志文件。', 'success');
+      await loadLogs();
+    } catch (err) {
+      toast(errorMessage(err, '清理日志文件失败，请稍后重试。'), 'error', 6000);
+    }
+  }
+
+  async function deleteLogFile(name) {
+    if (!name) { return; }
+    var ok = await confirmDialog({
+      title: '删除日志文件？',
+      message: '将删除日志文件「' + name + '」，删除后不可恢复。',
+      confirmText: '删除',
+      danger: true
+    });
+    if (!ok) { return; }
+    try {
+      var res = await api('/api/logs/files/delete', {
+        method: 'POST', body: { names: [name] }, timeout: 20000
+      });
+      toast('已删除 ' + fmtInt((res && res.deleted) || 0) + ' 个日志文件。', 'success');
+      await loadLogs();
+    } catch (err) {
+      toast(errorMessage(err, '删除日志文件失败，请稍后重试。'), 'error', 6000);
+    }
   }
 
   function bindLogsEvents() {
@@ -7900,6 +8208,31 @@ import {
       state.logsLimit = value > 0 ? value : 50;
       loadLogs();
     });
+    if (els.logsKeepDays) {
+      els.logsKeepDays.value = String(state.logsKeepDays || 30);
+      els.logsKeepDays.addEventListener('change', function () {
+        var value = parseInt(els.logsKeepDays.value, 10);
+        state.logsKeepDays = value > 0 ? value : 30;
+      });
+    }
+    if (els.auditSelectAll) {
+      els.auditSelectAll.addEventListener('change', function () {
+        var checked = !!els.auditSelectAll.checked;
+        state.auditSelection.clear();
+        $$('#auditList input.audit-check').forEach(function (box) {
+          if (box.disabled) { return; }
+          box.checked = checked;
+          var id = box.getAttribute('data-id');
+          if (checked && id) { state.auditSelection.add(id); }
+        });
+        syncAuditSelectionUi();
+      });
+    }
+    if (els.auditDeleteSelectedBtn) {
+      els.auditDeleteSelectedBtn.addEventListener('click', deleteAuditSelected);
+    }
+    if (els.auditPruneBtn) { els.auditPruneBtn.addEventListener('click', pruneAuditByDays); }
+    if (els.logFilesPruneBtn) { els.logFilesPruneBtn.addEventListener('click', pruneLogFilesByDays); }
   }
 
   // ==================== 17. 设置页 ====================
@@ -8142,6 +8475,8 @@ import {
       setHidden(els.settingsLoadError, false);
       if (state.settings) { fillSettingsForm(state.settings); }
     }
+    // v0038：存储诊断已从任务中心移到设置页，首次进入时懒加载
+    if (!state.diagnostics.loaded && !state.diagnostics.loading) { loadDiagnostics(); }
   }
 
   function readSettingsForm() {

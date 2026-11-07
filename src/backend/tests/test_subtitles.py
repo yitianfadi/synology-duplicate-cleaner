@@ -847,6 +847,66 @@ class SubtitleServiceTest(SubtitleTestBase):
                 self.service.get_file(job["job_id"], bad)
 
 
+class SubtitleTimelineTest(SubtitleTestBase):
+    """v0038：步骤时间线（阶段 + ASR 分片 + 翻译批次）。"""
+
+    def test_timeline_covers_stages_chunks_and_batches(self):
+        job = self.submit(self.make_video(duration=60), translate=True)
+        done = self.wait_job(job["job_id"])
+        self.assertEqual(done["status"], "done", done.get("error"))
+        detail = self.service.get(job["job_id"])
+        self.assertIsNotNone(detail["started_at"])
+        self.assertIsNotNone(detail["finished_at"])
+        self.assertGreater(detail["duration_sec"], 0)
+        # 列表保持轻量：不带 timeline，但有总耗时
+        light = [item for item in self.service.list(limit=10)
+                 if item["job_id"] == job["job_id"]][0]
+        self.assertNotIn("timeline", light)
+        self.assertIsNotNone(light["duration_sec"])
+        timeline = detail["timeline"]
+        keys = [step["key"] for step in timeline["steps"]]
+        for key in ("queue", "probe", "asr", "translate", "write"):
+            self.assertIn(key, keys)
+        for step in timeline["steps"]:
+            self.assertEqual(step["status"], "done", step)
+            self.assertIsNotNone(step["started_at"])
+            self.assertIsNotNone(step["finished_at"])
+            self.assertIsNotNone(step["duration_sec"])
+            self.assertGreaterEqual(step["duration_sec"], 0)
+        self.assertTrue(timeline["asr_chunks"])
+        chunk = timeline["asr_chunks"][0]
+        self.assertEqual(chunk["status"], "done")
+        self.assertIsNotNone(chunk["started_at"])
+        self.assertIsNotNone(chunk["finished_at"])
+        self.assertGreaterEqual(chunk["asr_sec"], 0)
+        self.assertTrue(timeline["translate_batches"])
+        batch = timeline["translate_batches"][0]
+        self.assertGreater(batch["cues"], 0)
+        self.assertIsNotNone(batch["duration_sec"])
+
+    def test_timeline_existing_srt_skips_asr(self):
+        video = self.make_video(name="existing.mp4", duration=60)
+        write_text(os.path.splitext(video)[0] + ".srt", SRT_RESPONSE)
+        job = self.submit(video, source="existing_srt", translate=True)
+        done = self.wait_job(job["job_id"])
+        self.assertEqual(done["status"], "done", done.get("error"))
+        timeline = self.service.get(job["job_id"])["timeline"]
+        keys = [step["key"] for step in timeline["steps"]]
+        self.assertEqual(keys, ["queue", "translate", "write"])
+        self.assertEqual(timeline["asr_chunks"], [])
+        self.assertTrue(timeline["translate_batches"])
+
+    def test_timeline_marks_failed_step(self):
+        self.cloud.httpd.asr_mode = "401"
+        job = self.submit(self.make_video(duration=60))
+        done = self.wait_job(job["job_id"])
+        self.assertEqual(done["status"], "failed")
+        detail = self.service.get(job["job_id"])
+        self.assertIsNotNone(detail["finished_at"])
+        statuses = [step["status"] for step in detail["timeline"]["steps"]]
+        self.assertIn("failed", statuses)
+
+
 class SubtitleConcurrencyTest(SubtitleTestBase):
     """v0034：subtitle_concurrency（默认 1 串行；2 时真并行；shutdown 全部退出）。"""
 

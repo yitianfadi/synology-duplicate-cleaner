@@ -325,7 +325,7 @@ CREATE TABLE IF NOT EXISTS subtitle_batches (
 
 ## 12. 版本与兼容
 
-- 版本 **1.1.0-0037**（v0037 起并发设置保存后立即生效），需同步 8 处：`README.md`、`build/build_spk.py`、`docs/ARCHITECTURE.md`、`docs/CONTRACT.md`、`docs/SPK_PACKAGING.md`、`spk/INFO`、`src/backend/dupcleaner/config.py`、`src/web/index.html`（含 `app.js?v=` 查询串）。
+- 版本 **1.1.0-0038**（v0038 起含任务步骤时间线、操作日志删除、任务中心菜单调整），需同步 8 处：`README.md`、`build/build_spk.py`、`docs/ARCHITECTURE.md`、`docs/CONTRACT.md`、`docs/SPK_PACKAGING.md`、`spk/INFO`、`src/backend/dupcleaner/config.py`、`src/web/index.html`（含 `app.js?v=` 查询串）。
 - 现有 `POST /api/subtitles` 行为不变（新字段均为可选）；旧任务记录可读；旧 SPK 升级后数据目录与包 ID 不变。
 - 文档同步：本文件、`docs/SUBTITLE_CONTRACT.md`（新增 §13 指向本文件）、`docs/ARCHITECTURE.md`（字幕页与批次服务）。
 
@@ -472,4 +472,11 @@ CREATE TABLE IF NOT EXISTS subtitle_batches (
 - **惰性**：没有 worker/排队任务时不会提前起线程，下一次提交按新并发启动。
 - **前端**：设置页提示改为“保存后立即生效，无需重启套件”；`/api/meta.subtitle.concurrency_max`（4）与校验范围不变。
 - 版本 1.1.0-0037；SQLite schema 不变（仍 v7），无数据迁移。
+
+## 18. v0038 字幕任务步骤时间线与任务中心菜单调整
+
+- **任务详情时间线**：`GET /api/subtitles/{job_id}` 新增 `started_at` / `finished_at` / `duration_sec` 与 `timeline.steps` / `asr_chunks` / `translate_batches`（字段口径见 [SUBTITLE_CONTRACT.md](SUBTITLE_CONTRACT.md) §18）；列表接口只带轻量时间字段。
+- **前端**：任务详情新增「步骤耗时」表与可展开的分片/批次明细；任务列表显示总耗时。
+- **菜单调整（方案 A）**：顶部导航改为「扫描 / 字幕 / 任务中心」+ 右上角设置入口；操作日志并入任务中心标签页（扫描历史 / 字幕任务 / 删除任务 / 操作日志）；「存储诊断」从任务中心移到设置页「系统 · 存储与运行诊断」；旧 `#/logs` 书签自动跳转到任务中心操作日志。
+- 版本 1.1.0-0038；SQLite schema 不变（仍 v7）。
 

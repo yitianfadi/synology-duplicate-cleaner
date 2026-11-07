@@ -1,7 +1,7 @@
 {
-  "generated_at": "2026-11-07T19:15:08+0800",
+  "generated_at": "2026-11-07T19:55:47+0800",
   "summary": {
-    "PASS": 152,
+    "PASS": 157,
     "FAIL": 0,
     "UNVERIFIED": 0
   },
@@ -52,7 +52,7 @@
       "id": "BE-UNITTEST-LOG",
       "name": "unittest 结果",
       "status": "INFO",
-      "detail": "Ran 422 tests in 104.561s"
+      "detail": "Ran 444 tests in 117.737s"
     },
     {
       "id": "BE-NO-AUTODELETE",
@@ -235,6 +235,18 @@
       "detail": ""
     },
     {
+      "id": "BE-SUBTITLE-TIMELINE",
+      "name": "字幕任务记录步骤时间线：阶段 + ASR 分片 + 翻译批次（v0038）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "BE-LOGS-DELETE",
+      "name": "操作日志可删除：按 id 删除 / 只保留最近 N 天 / 日志文件删除（v0038）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
       "id": "BE-SUBTITLE-TRANSLATE-ONLY",
       "name": "补翻译：源文本解析（源任务目录→视频旁）+ 派生任务 + 单任务/组级接口（v0035）",
       "status": "PASS",
@@ -357,6 +369,24 @@
     {
       "id": "FE-SUBTITLE-CONCURRENCY",
       "name": "设置页提供字幕并发任务数（1–4，默认 1，保存后立即生效，v0037）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "FE-SUBTITLE-TIMELINE",
+      "name": "字幕任务详情展示步骤耗时（含 ASR 分片 / 翻译批次明细，v0038）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "FE-LOGS-DELETE",
+      "name": "操作日志页支持勾选删除 / 清理选中的 N 天前审计与日志文件（v0038）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "FE-NAV-V0038",
+      "name": "菜单调整：扫描/字幕/任务中心 + 右上角设置，操作日志并入任务中心，存储诊断移入设置（v0038）",
       "status": "PASS",
       "detail": ""
     },
@@ -542,13 +572,13 @@
     },
     {
       "id": "FE-CHINESE",
-      "name": "前端存在中文界面文案（抽查扫描/历史/日志/设置）",
+      "name": "前端存在中文界面文案（抽查扫描/任务中心/日志/设置）",
       "status": "PASS",
       "detail": ""
     },
     {
       "id": "FE-NAV",
-      "name": "顶部导航包含 扫描/历史记录/操作日志/设置",
+      "name": "顶部导航为 扫描/字幕/任务中心 + 右上角设置入口（v0038）",
       "status": "PASS",
       "detail": ""
     },
@@ -824,7 +854,7 @@
     },
     {
       "id": "SPK-DIST",
-      "name": "构建产物存在（DuplicateCleaner-1.1.0-0037.spk）",
+      "name": "构建产物存在（DuplicateCleaner-1.1.0-0038.spk）",
       "status": "PASS",
       "detail": ""
     },
@@ -836,7 +866,7 @@
     },
     {
       "id": "SPK-VERSION",
-      "name": "SPK INFO.version 与当前源码 APP_VERSION（1.1.0-0037）一致",
+      "name": "SPK INFO.version 与当前源码 APP_VERSION（1.1.0-0038）一致",
       "status": "PASS",
       "detail": ""
     },

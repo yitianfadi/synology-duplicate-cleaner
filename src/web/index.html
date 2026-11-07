@@ -6,8 +6,8 @@
 <meta name="color-scheme" content="light">
 <meta name="referrer" content="same-origin">
 <title>重复文件清理与字幕 · Duplicate Cleaner &amp; Subtitles</title>
-<link rel="icon" href="./assets/favicon.svg?v=1.1.0-0037" type="image/svg+xml">
-<link rel="stylesheet" href="./styles.css?v=1.1.0-0037">
+<link rel="icon" href="./assets/favicon.svg?v=1.1.0-0038" type="image/svg+xml">
+<link rel="stylesheet" href="./styles.css?v=1.1.0-0038">
 </head>
 <body>
 <a class="skip-link" href="#main">跳到主要内容</a>
@@ -74,12 +74,13 @@
       <nav class="main-nav" aria-label="主导航">
         <button type="button" class="nav-item" data-nav="scan" aria-current="page">扫描</button>
         <button type="button" class="nav-item" data-nav="subtitles">字幕</button>
-        <button type="button" class="nav-item" data-nav="history">历史记录</button>
-        <button type="button" class="nav-item" data-nav="logs">操作日志</button>
-        <button type="button" class="nav-item" data-nav="settings">设置</button>
+        <button type="button" class="nav-item" data-nav="history">任务中心</button>
       </nav>
       <div class="topbar-right">
         <span class="env-badge" id="envBadge" hidden></span>
+        <button type="button" class="btn btn-ghost btn-sm nav-settings-btn" id="navSettingsBtn" title="设置（扫描/字幕/存储默认值）">
+          <svg class="icon" aria-hidden="true"><use href="#i-settings"></use></svg>设置
+        </button>
         <span class="user-chip" id="userChip" title="当前登录账号">
           <svg class="icon" aria-hidden="true"><use href="#i-user"></use></svg>
           <span id="userName">—</span>
@@ -767,7 +768,7 @@
       <div class="page-head">
         <div>
           <h1 id="historyHeading">任务中心</h1>
-          <p class="page-desc">扫描历史、字幕任务、删除任务与存储诊断集中在这里，用标签页切换即可。正在进行的任务不会因为切换标签而中断。</p>
+          <p class="page-desc">扫描历史、字幕任务、删除任务与操作日志集中在这里，用标签页切换即可。正在进行的任务不会因为切换标签而中断。</p>
         </div>
         <button type="button" class="btn btn-ghost btn-sm" id="historyRefreshBtn">
           <svg class="icon" aria-hidden="true"><use href="#i-refresh"></use></svg>刷新当前页
@@ -778,7 +779,7 @@
         <button type="button" class="task-tab is-active" role="tab" id="taskTabHistory" data-task-tab="history" aria-selected="true" aria-controls="taskPanelHistory" tabindex="0">扫描历史</button>
         <button type="button" class="task-tab" role="tab" id="taskTabSubtitles" data-task-tab="subtitles" aria-selected="false" aria-controls="taskPanelSubtitles" tabindex="-1">字幕任务</button>
         <button type="button" class="task-tab" role="tab" id="taskTabDeletions" data-task-tab="deletions" aria-selected="false" aria-controls="taskPanelDeletions" tabindex="-1">删除任务</button>
-        <button type="button" class="task-tab" role="tab" id="taskTabStorage" data-task-tab="storage" aria-selected="false" aria-controls="taskPanelStorage" tabindex="-1">存储诊断</button>
+        <button type="button" class="task-tab" role="tab" id="taskTabLogs" data-task-tab="logs" aria-selected="false" aria-controls="taskPanelLogs" tabindex="-1">操作日志</button>
       </div>
 
       <div class="task-panel" id="taskPanelHistory" role="tabpanel" aria-labelledby="taskTabHistory" data-task-panel="history" tabindex="0">
@@ -839,106 +840,68 @@
         </section>
       </div>
 
-      <div class="task-panel" id="taskPanelStorage" role="tabpanel" aria-labelledby="taskTabStorage" data-task-panel="storage" tabindex="0" hidden>
-        <section class="card storage-diagnostics-panel" id="storagePanel" aria-labelledby="storagePanelHeading">
-          <div class="card-head">
-            <h2 id="storagePanelHeading">存储诊断</h2>
-            <span class="muted" id="storageStatus"></span>
-            <button type="button" class="btn btn-ghost btn-sm" id="storageRefreshBtn">
-              <svg class="icon" aria-hidden="true"><use href="#i-refresh"></use></svg>刷新诊断
+      <div class="task-panel" id="taskPanelLogs" role="tabpanel" aria-labelledby="taskTabLogs" data-task-panel="logs" tabindex="0" hidden>
+        <div class="logs-head">
+          <div>
+            <h2 id="logsHeading">操作日志</h2>
+            <p class="page-desc">审计事件与扫描/删除日志文件都持久化保存在数据目录中，便于事后追溯。可勾选删除单条，或只保留最近 N 天。</p>
+          </div>
+          <div class="logs-actions">
+            <label class="inline-label" for="logLimitSelect">条数</label>
+            <select id="logLimitSelect" class="select-compact">
+              <option value="50">50</option>
+              <option value="100">100</option>
+              <option value="200">200</option>
+            </select>
+            <label class="inline-label" for="logsKeepDays">保留最近</label>
+            <select id="logsKeepDays" class="select-compact">
+              <option value="7">7 天</option>
+              <option value="30" selected>30 天</option>
+              <option value="90">90 天</option>
+              <option value="180">180 天</option>
+              <option value="365">365 天</option>
+            </select>
+            <button type="button" class="btn btn-ghost btn-sm" id="auditPruneBtn">
+              <svg class="icon" aria-hidden="true"><use href="#i-trash"></use></svg>清理审计
+            </button>
+            <button type="button" class="btn btn-ghost btn-sm" id="logFilesPruneBtn">
+              <svg class="icon" aria-hidden="true"><use href="#i-trash"></use></svg>清理日志文件
+            </button>
+            <button type="button" class="btn btn-ghost btn-sm" id="logsRefreshBtn">
+              <svg class="icon" aria-hidden="true"><use href="#i-refresh"></use></svg>刷新
             </button>
           </div>
-          <p class="hint">诊断信息来自后端 /api/diagnostics，只显示路径、大小、版本与“是否已配置”等状态，不显示任何密钥内容。本页不会自动轮询，请手动刷新。</p>
-          <div class="state-box" id="storageLoading" hidden><span class="spinner" aria-hidden="true"></span>正在读取存储诊断…</div>
-          <div class="state-box state-error" id="storageError" role="alert" hidden></div>
-          <div id="storageContent" hidden>
-            <div class="summary-grid diag-summary" id="storageSummary" aria-label="存储诊断摘要"></div>
-            <div class="diag-grid">
-              <section class="diag-section" aria-labelledby="storageDbHeading">
-                <h3 id="storageDbHeading">数据库</h3>
-                <dl class="diag-list" id="storageDbList"></dl>
-              </section>
-              <section class="diag-section" aria-labelledby="storageTablesHeading">
-                <h3 id="storageTablesHeading">表行数</h3>
-                <dl class="diag-list" id="storageTablesList"></dl>
-              </section>
-              <section class="diag-section" aria-labelledby="storageCachesHeading">
-                <h3 id="storageCachesHeading">缓存</h3>
-                <dl class="diag-list" id="storageCachesList"></dl>
-              </section>
-              <section class="diag-section" aria-labelledby="storageMediaHeading">
-                <h3 id="storageMediaHeading">媒体与识别</h3>
-                <dl class="diag-list" id="storageMediaList"></dl>
-              </section>
-              <section class="diag-section" aria-labelledby="storageRuntimeHeading">
-                <h3 id="storageRuntimeHeading">运行中任务</h3>
-                <dl class="diag-list" id="storageRuntimeList"></dl>
-              </section>
-              <section class="diag-section" aria-labelledby="storageKeysHeading">
-                <h3 id="storageKeysHeading">密钥状态（仅布尔）</h3>
-                <dl class="diag-list" id="storageKeysList"></dl>
-              </section>
-            </div>
-            <section class="diag-section diag-other" id="storageOtherSection" aria-labelledby="storageOtherHeading" hidden>
-              <h3 id="storageOtherHeading">其他诊断</h3>
-              <dl class="diag-list" id="storageOtherList"></dl>
-            </section>
-            <div class="diag-actions">
-              <button type="button" class="btn btn-primary" id="storageBackupBtn">
-                <svg class="icon" aria-hidden="true"><use href="#i-download"></use></svg>备份数据库
+        </div>
+        <p class="hint">删除不可恢复：勾选可删除单条审计事件；「清理审计 / 清理日志文件」按上面选择的“保留最近 N 天”删除更早记录。</p>
+        <div class="state-box" id="logsLoading" hidden><span class="spinner" aria-hidden="true"></span>正在加载日志…</div>
+        <div class="state-box state-error" id="logsError" role="alert" hidden></div>
+        <div class="two-col">
+          <section class="card" aria-labelledby="auditHeading">
+            <div class="card-head">
+              <h2 id="auditHeading">审计事件</h2>
+              <span class="muted" id="auditCount"></span>
+              <button type="button" class="btn btn-ghost btn-sm" id="auditDeleteSelectedBtn" disabled>
+                <svg class="icon" aria-hidden="true"><use href="#i-trash"></use></svg>删除选中
               </button>
-              <button type="button" class="btn btn-ghost" id="storageMaintenanceBtn">
-                <svg class="icon" aria-hidden="true"><use href="#i-refresh"></use></svg>执行维护
-              </button>
-              <label class="check diag-vacuum"><input type="checkbox" id="storageMaintenanceVacuum">维护时执行 VACUUM（更慢，需要足够磁盘空间）</label>
             </div>
-            <div class="state-box" id="storageActionLoading" hidden><span class="spinner" aria-hidden="true"></span>正在执行存储操作…</div>
-            <div class="state-box" id="storageActionResult" role="status" hidden></div>
-          </div>
-        </section>
+            <div class="state-box state-empty" id="auditEmpty" hidden>暂无审计事件。</div>
+            <div class="table-wrap">
+              <table class="data-table" id="auditTable">
+                <caption class="visually-hidden">最近的审计事件</caption>
+                <thead><tr><th scope="col" class="col-check"><input type="checkbox" id="auditSelectAll" aria-label="全选审计事件"></th><th scope="col">时间</th><th scope="col">操作</th><th scope="col">用户</th><th scope="col">详情</th></tr></thead>
+                <tbody id="auditList"></tbody>
+              </table>
+            </div>
+          </section>
+          <section class="card" aria-labelledby="logFilesHeading">
+            <div class="card-head"><h2 id="logFilesHeading">日志文件</h2><span class="muted" id="logFilesCount"></span></div>
+            <div class="state-box state-empty" id="logFilesEmpty" hidden>暂无日志文件。</div>
+            <ul class="log-file-list" id="logFilesList"></ul>
+            <p class="hint">下载链接需要登录会话，文件仅保存在 NAS 本地；单个文件可点击右侧删除。</p>
+          </section>
+        </div>
       </div>
-    </section>
 
-    <!-- ========== 操作日志 ========== -->
-    <section id="view-logs" class="view" data-view="logs" aria-labelledby="logsHeading" hidden>
-      <div class="page-head">
-        <div>
-          <h1 id="logsHeading">操作日志</h1>
-          <p class="page-desc">审计事件与扫描/删除日志文件都持久化保存在数据目录中，便于事后追溯。</p>
-        </div>
-        <div class="page-head-actions">
-          <label class="inline-label" for="logLimitSelect">条数</label>
-          <select id="logLimitSelect" class="select-compact">
-            <option value="50">50</option>
-            <option value="100">100</option>
-            <option value="200">200</option>
-          </select>
-          <button type="button" class="btn btn-ghost btn-sm" id="logsRefreshBtn">
-            <svg class="icon" aria-hidden="true"><use href="#i-refresh"></use></svg>刷新
-          </button>
-        </div>
-      </div>
-      <div class="state-box" id="logsLoading" hidden><span class="spinner" aria-hidden="true"></span>正在加载日志…</div>
-      <div class="state-box state-error" id="logsError" role="alert" hidden></div>
-      <div class="two-col">
-        <section class="card" aria-labelledby="auditHeading">
-          <div class="card-head"><h2 id="auditHeading">审计事件</h2><span class="muted" id="auditCount"></span></div>
-          <div class="state-box state-empty" id="auditEmpty" hidden>暂无审计事件。</div>
-          <div class="table-wrap">
-            <table class="data-table" id="auditTable">
-              <caption class="visually-hidden">最近的审计事件</caption>
-              <thead><tr><th scope="col">时间</th><th scope="col">操作</th><th scope="col">用户</th><th scope="col">详情</th></tr></thead>
-              <tbody id="auditList"></tbody>
-            </table>
-          </div>
-        </section>
-        <section class="card" aria-labelledby="logFilesHeading">
-          <div class="card-head"><h2 id="logFilesHeading">日志文件</h2><span class="muted" id="logFilesCount"></span></div>
-          <div class="state-box state-empty" id="logFilesEmpty" hidden>暂无日志文件。</div>
-          <ul class="log-file-list" id="logFilesList"></ul>
-          <p class="hint">下载链接需要登录会话，文件仅保存在 NAS 本地。</p>
-        </section>
-      </div>
     </section>
 
     <!-- ========== 设置 ========== -->
@@ -1392,6 +1355,66 @@
             </div>
           </div>
         </details>
+        <details class="advanced settings-group" id="settingsDiagnosticsGroup">
+          <summary><span class="settings-group-title">系统 · 存储与运行诊断</span><span class="settings-summary" id="settingsDiagnosticsSummary"></span></summary>
+          <p class="hint">来自后端 /api/diagnostics：只显示路径、大小、版本与“是否已配置”等状态，不显示任何密钥内容；本页不自动轮询，请手动刷新。</p>
+        <section class="card storage-diagnostics-panel" id="storagePanel" aria-labelledby="storagePanelHeading">
+          <div class="card-head">
+            <h2 id="storagePanelHeading">存储诊断</h2>
+            <span class="muted" id="storageStatus"></span>
+            <button type="button" class="btn btn-ghost btn-sm" id="storageRefreshBtn">
+              <svg class="icon" aria-hidden="true"><use href="#i-refresh"></use></svg>刷新诊断
+            </button>
+          </div>
+          <p class="hint">诊断信息来自后端 /api/diagnostics，只显示路径、大小、版本与“是否已配置”等状态，不显示任何密钥内容。本页不会自动轮询，请手动刷新。</p>
+          <div class="state-box" id="storageLoading" hidden><span class="spinner" aria-hidden="true"></span>正在读取存储诊断…</div>
+          <div class="state-box state-error" id="storageError" role="alert" hidden></div>
+          <div id="storageContent" hidden>
+            <div class="summary-grid diag-summary" id="storageSummary" aria-label="存储诊断摘要"></div>
+            <div class="diag-grid">
+              <section class="diag-section" aria-labelledby="storageDbHeading">
+                <h3 id="storageDbHeading">数据库</h3>
+                <dl class="diag-list" id="storageDbList"></dl>
+              </section>
+              <section class="diag-section" aria-labelledby="storageTablesHeading">
+                <h3 id="storageTablesHeading">表行数</h3>
+                <dl class="diag-list" id="storageTablesList"></dl>
+              </section>
+              <section class="diag-section" aria-labelledby="storageCachesHeading">
+                <h3 id="storageCachesHeading">缓存</h3>
+                <dl class="diag-list" id="storageCachesList"></dl>
+              </section>
+              <section class="diag-section" aria-labelledby="storageMediaHeading">
+                <h3 id="storageMediaHeading">媒体与识别</h3>
+                <dl class="diag-list" id="storageMediaList"></dl>
+              </section>
+              <section class="diag-section" aria-labelledby="storageRuntimeHeading">
+                <h3 id="storageRuntimeHeading">运行中任务</h3>
+                <dl class="diag-list" id="storageRuntimeList"></dl>
+              </section>
+              <section class="diag-section" aria-labelledby="storageKeysHeading">
+                <h3 id="storageKeysHeading">密钥状态（仅布尔）</h3>
+                <dl class="diag-list" id="storageKeysList"></dl>
+              </section>
+            </div>
+            <section class="diag-section diag-other" id="storageOtherSection" aria-labelledby="storageOtherHeading" hidden>
+              <h3 id="storageOtherHeading">其他诊断</h3>
+              <dl class="diag-list" id="storageOtherList"></dl>
+            </section>
+            <div class="diag-actions">
+              <button type="button" class="btn btn-primary" id="storageBackupBtn">
+                <svg class="icon" aria-hidden="true"><use href="#i-download"></use></svg>备份数据库
+              </button>
+              <button type="button" class="btn btn-ghost" id="storageMaintenanceBtn">
+                <svg class="icon" aria-hidden="true"><use href="#i-refresh"></use></svg>执行维护
+              </button>
+              <label class="check diag-vacuum"><input type="checkbox" id="storageMaintenanceVacuum">维护时执行 VACUUM（更慢，需要足够磁盘空间）</label>
+            </div>
+            <div class="state-box" id="storageActionLoading" hidden><span class="spinner" aria-hidden="true"></span>正在执行存储操作…</div>
+            <div class="state-box" id="storageActionResult" role="status" hidden></div>
+          </div>
+        </section>
+        </details>
         <p class="form-error-banner" id="settingsError" role="alert" hidden></p>
         <div class="form-actions settings-save-bar">
           <button type="button" class="btn btn-primary" id="saveSettingsBtn">保存设置</button>
@@ -1437,9 +1460,10 @@
   <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4v10.5M7.8 10.5 12 14.7l4.2-4.2" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/><path d="M5 19.2h14" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></symbol>
   <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="10" width="14" height="9.6" rx="1.8" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M8.2 10V7.8a3.8 3.8 0 0 1 7.6 0V10" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></symbol>
   <symbol id="i-file" viewBox="0 0 24 24"><path d="M6 3.8h7.5L19 9.3v10.9H6V3.8Z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M13.4 3.8v5.6H19" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></symbol>
+  <symbol id="i-settings" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.1" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M12 3.4v2.2M12 18.4v2.2M20.6 12h-2.2M5.6 12H3.4M18.1 5.9l-1.6 1.6M7.5 16.5l-1.6 1.6M18.1 18.1l-1.6-1.6M7.5 7.5 5.9 5.9" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></symbol>
   <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.6" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M12 10.8v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="12" cy="7.6" r="1.05" fill="currentColor"/></symbol>
 </svg>
 
-<script type="module" src="./app.js?v=1.1.0-0037"></script>
+<script type="module" src="./app.js?v=1.1.0-0038"></script>
 </body>
 </html>

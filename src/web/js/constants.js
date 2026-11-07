@@ -8,8 +8,10 @@ export var POLL_MS = 800;                 // 扫描 / 删除任务轮询间隔�
 export var GROUPS_LIMIT = 50;             // 结果分页大小
 export var TERMINAL_STATUS = ['completed', 'failed', 'stopped', 'interrupted'];
 export var ACTIVE_STATUS = ['queued', 'running', 'paused', 'stopping'];
-export var VIEWS = ['scan', 'subtitles', 'history', 'logs', 'settings'];
-export var VIEW_HEADINGS = { scan: 'scanHeading', subtitles: 'subtitlesHeading', history: 'historyHeading', logs: 'logsHeading', settings: 'settingsHeading' };
+export var VIEWS = ['scan', 'subtitles', 'history', 'settings'];
+export var VIEW_HEADINGS = { scan: 'scanHeading', subtitles: 'subtitlesHeading', history: 'historyHeading', settings: 'settingsHeading' };
+// v0038：旧书签 #/logs 兼容 → 任务中心「操作日志」标签页
+export var LEGACY_VIEW_ALIASES = { logs: 'history' };
 
 export var STATUS_LABEL = {
   queued: '排队中', running: '扫描中', paused: '已暂停', stopping: '正在停止',
@@ -87,7 +89,9 @@ export var AUDIT_LABEL = {
   login: '登录', logout: '退出登录', scan_start: '开始扫描', scan_finish: '扫描完成',
   scan_stop: '停止扫描', scan_pause: '暂停扫描', scan_resume: '继续扫描',
   delete_plan: '创建删除计划', delete_start: '开始删除', delete_file: '删除文件',
-  delete_finish: '删除完成', settings_update: '更新设置', preview: '预览文件'
+  delete_finish: '删除完成', settings_update: '更新设置', preview: '预览文件',
+  // v0038：日志清理自身也记审计
+  audit_delete: '删除审计事件', log_delete: '删除日志文件'
 };
 export var ERROR_FALLBACK = {
   AUTH_REQUIRED: '登录已过期，请重新登录。',
@@ -134,6 +138,15 @@ export var SUBTITLE_STATUS_BADGE = {
 };
 export var SUBTITLE_STAGE_LABEL = {
   audio: '提取音频', asr: '云端语音识别', translate: '翻译字幕', write: '写入字幕文件'
+};
+// v0038：任务步骤时间线（阶段 + 分片/批次明细）
+export var SUBTITLE_STEP_LABEL = {
+  queue: '排队等待', probe: '媒体探测', asr: '音频提取 + 语音识别',
+  translate: '字幕翻译', write: '写入字幕文件'
+};
+export var SUBTITLE_STEP_STATUS_LABEL = {
+  running: '进行中', done: '完成', failed: '失败', paused: '已暂停',
+  cancelled: '已取消', skipped: '跳过', unknown: '未知'
 };
 export var SUBTITLE_SOURCE_LABEL = {
   asr: '云端 ASR 生成', existing_srt: '只翻译已有字幕'
