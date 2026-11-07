@@ -282,3 +282,56 @@ python build/build_spk.py --no-icons --out-dir $env:TEMP\qa-build2
 
 - 结论：v0028 **PASS（可交付）**。
 
+---
+
+## 12. 附：v0030 本地 ASR/LLM 接入核对与“禁用思考”复验（2026-11-07）
+
+> 本节为 v0030 增量验收摘要；契约见 [docs/SUBTITLE_CONTRACT.md](../docs/SUBTITLE_CONTRACT.md) §1/§5。背景：对照 `DEPLOYMENT_SUMMARY.md` 核对群晖套件与 zyserver 本地服务（FunASR `10.10.10.233:8090`、Strata `10.10.10.233:8080`）的接入方式。
+
+### 12.1 接入核对结论
+
+- **视频大小/时长无需改接入方式**：套件从不上传原视频，始终用内置 FFmpeg 抽 `16kHz 单声道 32kbps MP3` 分块（默认 600s / ≤24MB）后上传；ASR 的「单文件 ≤800MB、音频 ≤2h、并发 1 路」三条限制因此不构成约束（实测每片约 1.9MB、44.6s，RTF 0.074）。
+- **LLM 本地推理模型需关闭“思考”**：Strata 的 Qwen3.6-35B-A3B 默认输出大量 reasoning，20 条 cue 翻译耗时 47.8s（completion 3475 tokens）；附加 `chat_template_kwargs.enable_thinking=false` 后 3.4s，输出仍为合法 20 条 JSON 数组（约 14 倍）。v0030 做成可选设置（默认关，兼容 OpenAI 官方等不支持该参数的服务）。
+- **译文回退需可见**：`translation_partial` 此前只在接口返回，列表/详情不提示；v0030 在字幕任务列表与任务中心详情显示“部分译文回退原文”。
+
+### 12.2 最终产物
+
+- `dist/DuplicateCleaner-1.1.0-0030.spk`
+  - SHA256 `b5cf8a6c96d7f3cd7ed5ea60d068c5199f460c5335ffb251288824782acc8aac`
+  - package.tgz MD5 `530f821539ea7b14bfe8ef733e65719e`（= INFO.checksum）
+  - 大小 38,963,200 B
+- 版本 1.1.0-0030 同步 8 处；SQLite schema v6 不变（无新增迁移）。
+
+### 12.3 结果总览
+
+| 套件 | 命令 | 结果 |
+|---|---|---|
+| 后端单测 | `cd src/backend && python -m unittest discover -s tests` | **373 tests OK（5 skipped）** |
+| 端到端 | `python qa/e2e_test.py` | **PASS=123 / FAIL=0 / UNVERIFIED=1**（Windows symlink 权限限制） |
+| 静态检查（含 unittest/前端/SPK） | `python qa/static_checks.py` | **PASS=129 / FAIL=0 / UNVERIFIED=0** |
+| 前端模块图 | `node qa/check_web_modules.mjs` | **22/22 PASS** |
+| 无头浏览器冒烟 | `python qa/web_smoke.py` | **8/8 PASS** |
+
+### 12.4 真实服务联调（开发模式套件 → 局域网本地服务）
+
+| 场景 | 结果 |
+|---|---|
+| 20 分钟视频（1200s）→ 本地 ASR | 2 个 600s 分片，**92.7s** done，SRT 写回视频旁（61 条 cue） |
+| 45s 视频 → ASR + 翻译（禁用思考关） | 全链路 **75.1s**（翻译约 70s），`original`/`.en`/`bilingual.en` 三个 SRT 正确 |
+| 同一视频 → 开启“禁用思考” | 全链路 **7.1s**（翻译约 2s），输出内容一致，`translation_partial=false` |
+| ASR 单分片 | 600s 音频 44.6s（RTF 0.074），远低于 300s 默认超时 |
+
+### 12.5 新增/变更
+
+- 设置项 `subtitle_llm_disable_thinking`（默认 false）：翻译与「测试连接」请求附带 `chat_template_kwargs.enable_thinking=false`；设置页新增复选框与说明。
+- 字幕任务列表/任务中心详情显示“部分译文回退原文”（`translation_partial`），不再静默。
+- e2e SUB-05 覆盖新设置保存/回读；新增静态检查 `BE-SUBTITLE-THINKING`、`FE-SUBTITLE-THINKING`、`FE-SUBTITLE-PARTIAL`。
+
+### 12.6 残余风险与未验证项
+
+- “禁用思考”是 llama.cpp / vLLM / Strata 等扩展参数；不兼容的服务保持默认关闭，失败时按契约回退原文并标记。
+- 真实 DSM 安装、ACL 授权与视频目录写回仍未真机验证；本次本地联调使用开发模式套件与局域网真实 ASR/LLM。
+- NAS 套件当前 `subtitle_translate_enabled=true` 但 LLM 未配置（Key 未设置、Base URL 仍为公网默认）：需配置本地 LLM（并建议勾选“禁用思考”）或先关闭翻译开关，否则译文会全部回退原文（v0030 起界面会提示）。
+
+- 结论：v0030 **PASS（可交付）**。
+

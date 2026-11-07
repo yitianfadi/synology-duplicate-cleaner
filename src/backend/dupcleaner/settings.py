@@ -76,6 +76,9 @@ DEFAULT_SETTINGS = {
     "subtitle_translate_target": "zh",
     "subtitle_translate_timeout_sec": 120,
     "subtitle_translate_batch_size": 20,
+    # v0030：本地 Qwen3/llama.cpp 类服务可关闭“思考”以大幅提速（默认关，
+    # 避免 OpenAI 官方等不支持 chat_template_kwargs 的服务拒收）。
+    "subtitle_llm_disable_thinking": False,
     # --- 目录批量字幕（docs/SUBTITLE_BATCH_CONTRACT.md §2）---
     # 字幕默认写回视频同目录（只写 .srt）；download_only 仅保留任务目录下载。
     "subtitle_output_mode": config.SUBTITLE_DEFAULT_OUTPUT_MODE,
@@ -341,6 +344,8 @@ def _normalize_value(key, value):
         return _check_int(key, value, 30, 900)
     if key == "subtitle_translate_batch_size":
         return _check_int(key, value, 1, 40)
+    if key == "subtitle_llm_disable_thinking":
+        return _check_bool(key, value)
     if key == "subtitle_output_mode":
         if value not in config.SUBTITLE_OUTPUT_MODES:
             _err(u"subtitle_output_mode 只能是 alongside_video/download_only",

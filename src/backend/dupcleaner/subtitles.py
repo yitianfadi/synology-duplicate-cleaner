@@ -556,7 +556,7 @@ class OpenAIClient(object):
         return parse_asr_body(body.decode("utf-8", "replace"))
 
     def translate(self, base_url, api_key, model, texts, target_lang,
-                  timeout, cancel_event):
+                  timeout, cancel_event, disable_thinking=False):
         url = (base_url or "").rstrip("/") + "/chat/completions"
         system_prompt = (
             u"You are a professional subtitle translator. Translate every cue "
@@ -575,6 +575,10 @@ class OpenAIClient(object):
                 {"role": "user", "content": user_content},
             ],
         }
+        if disable_thinking:
+            # llama.cpp / vLLM / Strata 等支持的模板参数；关闭思考后本地
+            # Qwen3 类推理模型翻译 20 条由约 48s 降到约 3s（v0030 实测）。
+            payload["chat_template_kwargs"] = {"enable_thinking": False}
         data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         body = self._post_with_retry(
             url, api_key, data, "application/json",
@@ -658,7 +662,7 @@ class OpenAIClient(object):
                                    timeout)
 
     def probe_chat(self, base_url, api_key, model, texts, target_lang,
-                   timeout=CONNECTION_TEST_TIMEOUT_SEC):
+                   timeout=CONNECTION_TEST_TIMEOUT_SEC, disable_thinking=False):
         """单次 LLM 探测（固定测试文本，不重试）。成功返回 (status, body)。"""
         url = (base_url or "").rstrip("/") + "/chat/completions"
         system_prompt = (
@@ -677,6 +681,8 @@ class OpenAIClient(object):
                 {"role": "user", "content": user_content},
             ],
         }
+        if disable_thinking:
+            payload["chat_template_kwargs"] = {"enable_thinking": False}
         data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         return self._probe_request("POST", url, api_key, data,
                                    "application/json", timeout)
@@ -1851,7 +1857,9 @@ class SubtitleService(object):
         try:
             status, body = self.client.probe_chat(
                 provider["base_url"], api_key, model, ["Hello world"],
-                target_lang, CONNECTION_TEST_TIMEOUT_SEC)
+                target_lang, CONNECTION_TEST_TIMEOUT_SEC,
+                disable_thinking=bool(
+                    settings.get("subtitle_llm_disable_thinking")))
             latency_ms = int(round((time.monotonic() - started) * 1000))
             text = (bytes(body).decode("utf-8", "replace")
                     if isinstance(body, (bytes, bytearray)) else str(body or ""))
@@ -2395,6 +2403,7 @@ class SubtitleService(object):
         model = settings.get("subtitle_llm_model") or "gpt-4.1-mini"
         timeout = float(settings.get("subtitle_translate_timeout_sec") or 120)
         batch_size = max(1, int(settings.get("subtitle_translate_batch_size") or 20))
+        disable_thinking = bool(settings.get("subtitle_llm_disable_thinking"))
         translations = []
         partial = False
         total = max(1, len(cues))
@@ -2410,7 +2419,8 @@ class SubtitleService(object):
                 try:
                     candidate = self.client.translate(
                         base_url, api_key, model, texts, job.target_lang,
-                        timeout, job.cancel_event)
+                        timeout, job.cancel_event,
+                        disable_thinking=disable_thinking)
                 except SubtitleCancelled:
                     raise
                 except SubtitleError:

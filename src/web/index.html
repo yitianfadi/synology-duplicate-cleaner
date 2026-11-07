@@ -6,8 +6,8 @@
 <meta name="color-scheme" content="light">
 <meta name="referrer" content="same-origin">
 <title>重复文件清理与字幕 · Duplicate Cleaner &amp; Subtitles</title>
-<link rel="icon" href="./assets/favicon.svg?v=1.1.0-0029" type="image/svg+xml">
-<link rel="stylesheet" href="./styles.css?v=1.1.0-0029">
+<link rel="icon" href="./assets/favicon.svg?v=1.1.0-0030" type="image/svg+xml">
+<link rel="stylesheet" href="./styles.css?v=1.1.0-0030">
 </head>
 <body>
 <a class="skip-link" href="#main">跳到主要内容</a>
@@ -1228,6 +1228,10 @@
                 <p class="field-error" id="subtitleTranslateBatchSizeError" role="alert" hidden></p>
               </div>
               <div class="field field-wide">
+                <label class="check"><input id="subtitleLlmDisableThinking" type="checkbox">禁用 LLM“思考”（本地推理模型建议开启）</label>
+                <p class="hint">开启后翻译/测试请求附带 <code>chat_template_kwargs.enable_thinking=false</code>；实测本地 Qwen3.6 翻译 20 条由约 48 秒降到约 3 秒。OpenAI 官方接口可能不支持该参数，非本地推理模型请保持关闭；失败时回退原文并标记。</p>
+              </div>
+              <div class="field field-wide">
                 <label for="setSubtitleOutputMode">目录批量字幕：输出方式</label>
                 <select id="setSubtitleOutputMode">
                   <option value="alongside_video">写入视频同目录（推荐）</option>
@@ -1312,6 +1316,6 @@
   <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.6" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M12 10.8v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="12" cy="7.6" r="1.05" fill="currentColor"/></symbol>
 </svg>
 
-<script type="module" src="./app.js?v=1.1.0-0029"></script>
+<script type="module" src="./app.js?v=1.1.0-0030"></script>
 </body>
 </html>

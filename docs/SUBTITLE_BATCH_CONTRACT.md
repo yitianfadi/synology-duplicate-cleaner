@@ -300,6 +300,6 @@ CREATE TABLE IF NOT EXISTS subtitle_batches (
 
 ## 12. 版本与兼容
 
-- 版本 **1.1.0-0029**，需同步 8 处：`README.md`、`build/build_spk.py`、`docs/ARCHITECTURE.md`、`docs/CONTRACT.md`、`docs/SPK_PACKAGING.md`、`spk/INFO`、`src/backend/dupcleaner/config.py`、`src/web/index.html`（含 `app.js?v=` 查询串）。
+- 版本 **1.1.0-0030**，需同步 8 处：`README.md`、`build/build_spk.py`、`docs/ARCHITECTURE.md`、`docs/CONTRACT.md`、`docs/SPK_PACKAGING.md`、`spk/INFO`、`src/backend/dupcleaner/config.py`、`src/web/index.html`（含 `app.js?v=` 查询串）。
 - 现有 `POST /api/subtitles` 行为不变（新字段均为可选）；旧任务记录可读；旧 SPK 升级后数据目录与包 ID 不变。
 - 文档同步：本文件、`docs/SUBTITLE_CONTRACT.md`（新增 §13 指向本文件）、`docs/ARCHITECTURE.md`（字幕页与批次服务）。

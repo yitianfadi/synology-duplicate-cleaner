@@ -183,6 +183,7 @@ class FakeCloudHandler(http.server.BaseHTTPRequestHandler):
                 request_payload = json.loads(body.decode("utf-8"))
                 cues = json.loads(
                     request_payload["messages"][-1]["content"])["cues"]
+                server.llm_payloads.append(request_payload)
             except (ValueError, KeyError, TypeError, IndexError):
                 cues = []
             mode = server.llm_mode
@@ -221,6 +222,7 @@ class FakeCloudServer(object):
         self.httpd.llm_calls = 0
         self.httpd.audio_sizes = []
         self.httpd.authorizations = []
+        self.httpd.llm_payloads = []
         self.httpd.asr_text_prefix = "chunk-cue"
         # v0026 模型列表 / 连接测试
         self.httpd.models_mode = "ok"
@@ -348,6 +350,7 @@ class SubtitleSettingsTest(unittest.TestCase):
         self.assertEqual(defaults["subtitle_translate_target"], "zh")
         self.assertEqual(defaults["subtitle_translate_timeout_sec"], 120)
         self.assertEqual(defaults["subtitle_translate_batch_size"], 20)
+        self.assertFalse(defaults["subtitle_llm_disable_thinking"])
         patch = settings_module.validate_patch({
             "subtitle_enabled": True,
             "subtitle_asr_base_url": "http://127.0.0.1:9000/v1/",
@@ -364,8 +367,10 @@ class SubtitleSettingsTest(unittest.TestCase):
             "subtitle_translate_target": "en",
             "subtitle_translate_timeout_sec": 300,
             "subtitle_translate_batch_size": 40,
+            "subtitle_llm_disable_thinking": True,
         })
         self.assertTrue(patch["subtitle_enabled"])
+        self.assertTrue(patch["subtitle_llm_disable_thinking"])
         self.assertEqual(patch["subtitle_asr_base_url"],
                          "http://127.0.0.1:9000/v1")
         for item in [
@@ -381,6 +386,7 @@ class SubtitleSettingsTest(unittest.TestCase):
             {"subtitle_translate_timeout_sec": 901},
             {"subtitle_translate_batch_size": 0},
             {"subtitle_translate_batch_size": 41},
+            {"subtitle_llm_disable_thinking": "yes"},
             {"subtitle_asr_language": "auto-auto-auto"},
             {"subtitle_translate_target": "auto"},
             {"subtitle_asr_model": "bad model name"},
@@ -627,6 +633,27 @@ class SubtitleServiceTest(SubtitleTestBase):
         limit = 1024 * 1024 + 4096
         for size in self.cloud.httpd.audio_sizes:
             self.assertLessEqual(size, limit)
+
+    def test_disable_thinking_payload(self):
+        # v0030：默认不发送 chat_template_kwargs（兼容 OpenAI 官方等）
+        video = self.make_video(duration=60)
+        job = self.submit(video, translate=True, target_lang="zh")
+        done = self.wait_job(job["job_id"])
+        self.assertEqual(done["status"], "done", done.get("error"))
+        self.assertTrue(self.cloud.httpd.llm_payloads)
+        self.assertNotIn("chat_template_kwargs",
+                         self.cloud.httpd.llm_payloads[-1])
+        # 开启后翻译请求附带 enable_thinking=false
+        self._configure_settings(subtitle_llm_disable_thinking=True)
+        video2 = self.make_video("b.mp4", duration=60)
+        job2 = self.submit(video2, translate=True, target_lang="zh")
+        done2 = self.wait_job(job2["job_id"])
+        self.assertEqual(done2["status"], "done", done2.get("error"))
+        self.assertEqual(
+            self.cloud.httpd.llm_payloads[-1].get("chat_template_kwargs"),
+            {"enable_thinking": False})
+        self.assertNotIn("SECRET_LLM_KEY_XYZ",
+                         json.dumps(self.cloud.httpd.llm_payloads[-1]))
 
     def test_llm_fenced_and_retry(self):
         for mode in ("fenced", "wrong_then_ok"):
@@ -917,6 +944,15 @@ class SubtitleProbeTest(SubtitleTestBase):
             self.service.test_connection("llm", {})
         self.assertEqual(ctx.exception.code, "PROVIDER_AUTH_FAILED")
         self.assertNotIn("SECRET_LLM_KEY_XYZ", ctx.exception.message)
+        # v0030：连接测试同样遵循“禁用思考”开关
+        self.assertNotIn("chat_template_kwargs",
+                         self.cloud.httpd.llm_payloads[-1])
+        self.cloud.httpd.llm_mode = "ok"
+        self._configure_settings(subtitle_llm_disable_thinking=True)
+        self.service.test_connection("llm", {})
+        self.assertEqual(
+            self.cloud.httpd.llm_payloads[-1].get("chat_template_kwargs"),
+            {"enable_thinking": False})
 
     def test_no_secret_persisted_after_probes(self):
         self.cloud.httpd.error_echo = "SECRET_ASR_KEY_XYZ"

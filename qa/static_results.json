@@ -1,7 +1,7 @@
 {
-  "generated_at": "2026-11-05T20:58:26+0800",
+  "generated_at": "2026-11-07T08:28:00+0800",
   "summary": {
-    "PASS": 126,
+    "PASS": 129,
     "FAIL": 0,
     "UNVERIFIED": 0
   },
@@ -52,7 +52,7 @@
       "id": "BE-UNITTEST-LOG",
       "name": "unittest 结果",
       "status": "INFO",
-      "detail": "Ran 372 tests in 95.688s"
+      "detail": "Ran 373 tests in 94.038s"
     },
     {
       "id": "BE-NO-AUTODELETE",
@@ -187,6 +187,12 @@
       "detail": ""
     },
     {
+      "id": "BE-SUBTITLE-THINKING",
+      "name": "翻译/连接测试可关闭模型思考（subtitle_llm_disable_thinking → chat_template_kwargs）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
       "id": "FE-FILES",
       "name": "前端 index.html/app.js/styles.css 存在",
       "status": "PASS",
@@ -255,6 +261,18 @@
     {
       "id": "FE-SUBTITLE-POLL-RESUME",
       "name": "切换视图后批次轮询可恢复、跳转任务中心直达字幕任务、记住上次目录",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "FE-SUBTITLE-THINKING",
+      "name": "设置页提供“禁用 LLM 思考”开关（本地推理模型建议开启）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "FE-SUBTITLE-PARTIAL",
+      "name": "字幕任务列表/详情提示“部分译文回退原文”（translation_partial）",
       "status": "PASS",
       "detail": ""
     },
@@ -668,7 +686,7 @@
     },
     {
       "id": "SPK-DIST",
-      "name": "构建产物存在（DuplicateCleaner-1.1.0-0029.spk）",
+      "name": "构建产物存在（DuplicateCleaner-1.1.0-0030.spk）",
       "status": "PASS",
       "detail": ""
     },
@@ -680,7 +698,7 @@
     },
     {
       "id": "SPK-VERSION",
-      "name": "SPK INFO.version 与当前源码 APP_VERSION（1.1.0-0029）一致",
+      "name": "SPK INFO.version 与当前源码 APP_VERSION（1.1.0-0030）一致",
       "status": "PASS",
       "detail": ""
     },

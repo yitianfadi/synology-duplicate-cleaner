@@ -21,6 +21,7 @@
 | subtitle_translate_target | zh | zh/en/ja/ko/... |
 | subtitle_translate_timeout_sec | 120 | 30..900 |
 | subtitle_translate_batch_size | 20 | 1..40 |
+| subtitle_llm_disable_thinking | false | 布尔；true 时翻译/连接测试请求附带 `chat_template_kwargs.enable_thinking=false`（本地 Qwen3/Strata 类推理模型建议开启；OpenAI 官方等不支持该参数的服务保持关闭） |
 
 密钥存储：只在 `var/settings.json`（DSM 权限保护）。GET /api/settings 返回 `subtitle_asr_api_key_set/subtitle_llm_api_key_set`，绝不返回明文；PUT 空字符串表示保持原值，`clear_*_api_key=true` 才删除。不得写日志/错误信息/审计。
 
@@ -74,9 +75,12 @@ job schema：
 
 - `POST {base_url}/chat/completions`：
   - model, temperature=0, messages
+  - `subtitle_llm_disable_thinking=true` 时附加 `chat_template_kwargs={"enable_thinking":false}`
+    （llama.cpp / vLLM / Strata 等支持；v0030 实测本地 Qwen3.6 翻译 20 条 cue 由约 48s
+    降到约 3s。OpenAI 官方等不接受该参数的服务保持默认关闭；不兼容时按失败回退原文）。
   - 逐批 cue（batch_size），system 要求“只翻译，不合并/拆分/改时间，返回 JSON 字符串数组，长度必须等于 N”
   - user 内容为 `{"target_language":"zh","cues":["...","..."]}`
-- 解析 JSON（容忍 ```json 包围）；长度不等/空项/失败：重试一次，仍失败则整批回退原文并标记 `translation_partial=true`，不中断字幕生成。
+- 解析 JSON（容忍 ```json 包围）；长度不等/空项/失败：重试一次，仍失败则整批回退原文并标记 `translation_partial=true`，不中断字幕生成。v0030 起字幕任务列表/详情会显示“部分译文回退原文”，不静默。
 - 翻译绝不改 start/end；不把时间轴交给 LLM。
 - 目标语言码 zh/en/ja/ko 等；UI 提供中文/英文/日文等。
 - 不记录原文/译文到日志；结果文件仅保存在任务目录，供管理员下载。

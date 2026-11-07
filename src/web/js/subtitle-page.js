@@ -568,6 +568,13 @@ function renderBatchJobRow(job) {
       attrs: { title: SUBTITLE_WARNING_LABEL.OUTPUT_WRITE_PARTIAL }
     }));
   }
+  if (job.translation_partial === true) {
+    // v0030：部分翻译批次失败时对应 cue 回退原文，避免误以为译文已完整
+    badges.push(el('span', {
+      className: 'badge badge-amber', text: '部分译文回退原文',
+      attrs: { title: '部分翻译批次失败，对应 cue 保留原文；可检查 LLM 配置后重新生成。' }
+    }));
+  }
   var outputs = Array.isArray(job.outputs) ? job.outputs : [];
   if (outputs.length) {
     badges.push(el('span', {

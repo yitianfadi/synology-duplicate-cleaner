@@ -2044,6 +2044,9 @@ import {
     if (els.subtitleTranslateTarget) { els.subtitleTranslateTarget.value = s.subtitle_translate_target || 'zh'; }
     setVideoNumberValue(els.subtitleTranslateTimeout, s.subtitle_translate_timeout_sec, 120, 30, 900);
     setVideoNumberValue(els.subtitleTranslateBatchSize, s.subtitle_translate_batch_size, 20, 1, 40);
+    if (els.subtitleLlmDisableThinking) {
+      els.subtitleLlmDisableThinking.checked = s.subtitle_llm_disable_thinking === true;
+    }
     if (els.setSubtitleOutputMode) {
       els.setSubtitleOutputMode.value = s.subtitle_output_mode === 'download_only'
         ? 'download_only' : 'alongside_video';
@@ -2121,6 +2124,8 @@ import {
     if (translateTimeout !== null) { settings.subtitle_translate_timeout_sec = translateTimeout; }
     var batchSize = readSubtitleInt(els.subtitleTranslateBatchSize, 1, 40, '翻译批大小', errors, 'subtitleTranslateBatchSize');
     if (batchSize !== null) { settings.subtitle_translate_batch_size = batchSize; }
+    // v0030：本地推理模型可关闭“思考”（默认关，避免不兼容服务拒收）
+    settings.subtitle_llm_disable_thinking = !!(els.subtitleLlmDisableThinking && els.subtitleLlmDisableThinking.checked);
     var jobLimit = readSubtitleInt(els.setSubtitleJobLimit, 20, 1000, '字幕任务保留上限', errors, 'setSubtitleJobLimit');
     if (jobLimit !== null) { settings.subtitle_job_limit = jobLimit; }
     if (els.setSubtitleOutputMode) {
@@ -4320,8 +4325,15 @@ import {
 
   // ---------- v0028：写回结果（视频同目录 .srt）展示 ----------
   function subtitleWarningText(job) {
-    if (!job || !job.warning) { return ''; }
-    return SUBTITLE_WARNING_LABEL[job.warning] || job.warning;
+    if (!job) { return ''; }
+    var text = '';
+    if (job.warning) { text = SUBTITLE_WARNING_LABEL[job.warning] || job.warning; }
+    if (job.translation_partial === true) {
+      // v0030：翻译批次失败会回退原文，必须在任务详情里明确提示，避免误以为已翻译
+      var note = '部分翻译批次失败，对应 cue 已回退原文；请检查 LLM 配置（Base URL/Key/模型，本地推理模型可尝试“禁用思考”）后重新生成。';
+      text = text ? text + '；' + note : note;
+    }
+    return text;
   }
 
   function subtitleOutputKindLabel(kind) {

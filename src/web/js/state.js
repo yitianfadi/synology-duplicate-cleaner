@@ -106,6 +106,7 @@ export var IDS = ('loginView loginForm loginUsername loginPassword loginOtp logi
   'subtitleLlmBaseUrl subtitleLlmBaseUrlError subtitleLlmModel subtitleLlmModelError subtitleLlmApiKey ' +
   'subtitleLlmApiKeyError subtitleLlmKeySetBadge subtitleClearLlmKey subtitleTranslateTarget subtitleTranslateTimeout ' +
   'subtitleTranslateTimeoutError subtitleTranslateBatchSize subtitleTranslateBatchSizeError ' +
+  'subtitleLlmDisableThinking ' +
   'subtitleAsrModelsBtn subtitleAsrModelPicker subtitleAsrModelsHint subtitleAsrTestBtn subtitleAsrTestResult ' +
   'subtitleLlmModelsBtn subtitleLlmModelPicker subtitleLlmModelsHint subtitleLlmTestBtn subtitleLlmTestResult ' +
   'setSubtitleOutputMode setSubtitleSkipExisting setSubtitleJobLimit setSubtitleJobLimitError ' +

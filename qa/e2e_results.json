@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-11-05T20:56:51+0800",
+  "generated_at": "2026-11-07T08:28:13+0800",
   "python": "3.12.9 | packaged by Anaconda, Inc. | (main, Feb  6 2025, 18:49:16) [MSC v.1929 64 bit (AMD64)]",
   "repo": "D:\\code\\zhouyi\\qunhui\\synology-duplicate-cleaner",
   "summary": {
@@ -11,11 +11,11 @@
     "fixture_files": 46,
     "python": "3.12.9",
     "birthtime_supported": true,
-    "backend_port": 4128,
+    "backend_port": 6395,
     "csrf_token_len": 43,
     "meta": {
       "ok": true,
-      "app_version": "1.1.0-0029",
+      "app_version": "1.1.0-0030",
       "dsm_version": "dev",
       "python_version": "3.12.9",
       "creation_time_supported": true,
@@ -109,6 +109,7 @@
         "subtitle_translate_target": "zh",
         "subtitle_translate_timeout_sec": 120,
         "subtitle_translate_batch_size": 20,
+        "subtitle_llm_disable_thinking": false,
         "subtitle_output_mode": "alongside_video",
         "subtitle_skip_existing": true,
         "subtitle_job_limit": 200,
@@ -301,7 +302,7 @@
       }
     },
     "subtitle_enumerate_count": 0,
-    "main_scan_id": "20261105-205645-29d17f",
+    "main_scan_id": "20261107-082807-10a35d",
     "main_scan_final": "completed",
     "main_stats": {
       "files_seen": 38,
@@ -315,7 +316,7 @@
       "selectable_duplicate_files": 15,
       "selectable_reclaimable_bytes": 4403200,
       "bytes_hashed": 8753152,
-      "bytes_per_sec": 308223119,
+      "bytes_per_sec": 327757070,
       "errors": 0,
       "skipped": {
         "symlink": 0,
@@ -375,13 +376,13 @@
     },
     "main_groups_total": 12,
     "recycle_plan": {
-      "plan_id": "plan-1f73dc14c000a7c3",
+      "plan_id": "plan-7554d109495e1753",
       "count": 2,
       "bytes": 40960,
       "groups_affected": 1
     },
     "recycle_job": {
-      "job_id": "del-20261105-205646-e5451e",
+      "job_id": "del-20261107-082807-7e013f",
       "status": "completed",
       "done": 2,
       "failed": 0,
@@ -487,7 +488,7 @@
     },
     {
       "id": "SUB-05",
-      "name": "PUT /api/settings 可保存 v0028 目录批量字幕设置",
+      "name": "PUT /api/settings 可保存 v0028 目录批量字幕设置与 v0030 禁用思考开关",
       "status": "PASS",
       "detail": ""
     },
@@ -735,7 +736,7 @@
       "id": "SKIP-04",
       "name": "符号链接跳过（当前环境无法创建 symlink）",
       "status": "UNVERIFIED",
-      "detail": "os.symlink failed: [WinError 1314] 客户端没有所需的特权。: 'C:\\\\Users\\\\zhouyi\\\\AppData\\\\Local\\\\Temp\\\\dupqa-8wqtbkm8\\\\qa-share-a\\\\dup' -> 'C:\\\\Users\\\\zhouyi\\\\AppData\\\\Local\\\\Temp\\\\dupqa-8wqtbkm8\\\\qa-share-a\\\\link_to_dup'"
+      "detail": "os.symlink failed: [WinError 1314] 客户端没有所需的特权。: 'C:\\\\Users\\\\zhouyi\\\\AppData\\\\Local\\\\Temp\\\\dupqa-n_evcinr\\\\qa-share-a\\\\dup' -> 'C:\\\\Users\\\\zhouyi\\\\AppData\\\\Local\\\\Temp\\\\dupqa-n_evcinr\\\\qa-share-a\\\\link_to_dup'"
     },
     {
       "id": "HARDLINK-01",

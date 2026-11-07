@@ -323,6 +323,18 @@ def check_backend():
           and '(group.get("match_type") or "exact") == "similar"' in del_src,
           "backward compatibility marker missing")
 
+    # ---- v0030 云端字幕：本地推理模型“禁用思考”接入（Strata/Qwen3 实测快 14 倍）----
+    subtitles_path = os.path.join(backend, "dupcleaner", "subtitles.py")
+    subtitles_src = read(subtitles_path) if os.path.isfile(subtitles_path) else ""
+    check("BE-SUBTITLE-THINKING",
+          "翻译/连接测试可关闭模型思考（subtitle_llm_disable_thinking → chat_template_kwargs）",
+          "subtitle_llm_disable_thinking" in settings_src
+          and 'payload["chat_template_kwargs"] = {"enable_thinking": False}'
+          in subtitles_src
+          and subtitles_src.count('"chat_template_kwargs"') >= 2
+          and "disable_thinking=disable_thinking" in subtitles_src,
+          "disable-thinking markers missing")
+
 
 # ---------------------------------------------------------------------------
 # 前端
@@ -433,6 +445,20 @@ def check_frontend():
     check("FE-SUBTITLE-POLL-RESUME",
           "切换视图后批次轮询可恢复、跳转任务中心直达字幕任务、记住上次目录",
           poll_ok, "subtitle batch polling/jump/memory wiring missing")
+    thinking_ui_ok = (
+        all(marker in html for marker in
+            ("subtitleLlmDisableThinking", "enable_thinking=false"))
+        and "subtitle_llm_disable_thinking" in app
+        and "subtitleLlmDisableThinking" in app)
+    check("FE-SUBTITLE-THINKING",
+          "设置页提供“禁用 LLM 思考”开关（本地推理模型建议开启）",
+          thinking_ui_ok, "disable-thinking setting UI missing")
+    partial_ok = ("translation_partial" in app
+                  and "translation_partial" in read(
+                      os.path.join(js_dir, "subtitle-page.js")))
+    check("FE-SUBTITLE-PARTIAL",
+          "字幕任务列表/详情提示“部分译文回退原文”（translation_partial）",
+          partial_ok, "translation_partial display missing")
 
     check("FE-RISK-TEXT", "风险提示文案与契约逐字一致（index.html）",
           RISK_TEXT in html, "risk text not found verbatim")
@@ -524,7 +550,9 @@ def check_frontend():
                     "ffmpeg_path", "video_hwaccel",
                     # v0028 目录批量字幕
                     "subtitle_output_mode", "subtitle_skip_existing",
-                    "subtitle_job_limit"]
+                    "subtitle_job_limit",
+                    # v0030 本地推理模型禁用思考
+                    "subtitle_llm_disable_thinking"]
     missing_settings = [key for key in setting_keys if key not in app]
     check("FE-SETTINGS-KEYS", "设置页覆盖契约全部设置键",
           not missing_settings, "missing=%s" % missing_settings)

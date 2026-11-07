@@ -187,6 +187,8 @@ export var DEFAULT_SETTINGS = {
   subtitle_translate_target: 'zh',
   subtitle_translate_timeout_sec: 120,
   subtitle_translate_batch_size: 20,
+  // v0030：本地 Qwen3/llama.cpp 类服务关闭“思考”（默认关）
+  subtitle_llm_disable_thinking: false,
   // v0028 目录批量字幕默认值（与后端 settings.DEFAULT_SETTINGS 对齐）
   subtitle_output_mode: 'alongside_video',
   subtitle_skip_existing: true,
