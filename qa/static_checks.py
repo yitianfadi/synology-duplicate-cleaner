@@ -430,6 +430,21 @@ def check_backend():
           and "test_" in read(translate_test_path),
           "test_subtitle_translate.py missing")
 
+    # ---- v0036：语言码扩展 + 译文输出组合 ----
+    outputs_test_path = os.path.join(backend, "tests",
+                                     "test_subtitle_outputs.py")
+    check("BE-SUBTITLE-TRANSLATE-OUTPUT",
+          "译文输出组合：config/settings 校验 + both/target_only/bilingual_only 写盘裁剪（v0036）",
+          "SUBTITLE_TRANSLATE_OUTPUTS" in conf_src
+          and "SUBTITLE_DEFAULT_TRANSLATE_OUTPUTS" in conf_src
+          and "subtitle_translate_outputs" in settings_src
+          and "def _translate_outputs_mode" in subtitles_src
+          and 'outputs_mode != "bilingual_only"' in subtitles_src
+          and 'outputs_mode != "target_only"' in subtitles_src
+          and "translate_outputs=settings.get(" in subtitles_src
+          and os.path.isfile(outputs_test_path),
+          "subtitle translate outputs markers missing")
+
 
 # ---------------------------------------------------------------------------
 # 前端
@@ -619,6 +634,28 @@ def check_frontend():
     check("FE-SUBTITLE-TRANSLATE-GATE",
           "补翻译能力门控与“部分译文回退→重新翻译”入口（v0035）",
           translate_gate_ok, "subtitle translate gate markers missing")
+    translate_outputs_ok = (
+        'id="setSubtitleTranslateOutputs"' in html
+        and 'id="setSubtitleTranslateOutputsError"' in html
+        and "subtitle_translate_outputs" in app
+        and "setSubtitleTranslateOutputs" in app
+        and "SUBTITLE_TRANSLATE_OUTPUTS" in app
+        and "subtitle_translate_outputs: 'both'" in read(
+            os.path.join(js_dir, "constants.js")))
+    check("FE-SUBTITLE-TRANSLATE-OUTPUT",
+          "设置页提供译文输出组合（译文+双语/只写译文/只写双语，v0036）",
+          translate_outputs_ok, "subtitle translate outputs setting missing")
+    language_ui_ok = (
+        "SUBTITLE_LANGUAGE_RE" in app
+        and "fillLanguageSelect" in app
+        and "ensureLanguageOption" in app
+        and all("'%s'" % code in read(os.path.join(js_dir, "constants.js"))
+                for code in ("es", "fr", "de", "it", "pt", "ru", "vi", "th"))
+        and all('value="%s"' % code in html
+                for code in ("es", "fr", "de", "it", "pt", "ru", "vi", "th")))
+    check("FE-SUBTITLE-LANGUAGES",
+          "语言下拉覆盖常见语言码且不再静默重置 API 设置的合法语言码（v0036）",
+          language_ui_ok, "subtitle language list markers missing")
     delete_refresh_ok = (
         "resetResultsViewAfterDelete" in app
         and "recoverEmptyResultsPageAfterDelete" in app
@@ -739,7 +776,9 @@ def check_frontend():
                     # v0032 音频来源（NAS 解码 / 服务器解码）
                     "subtitle_audio_source",
                     # v0033 VTT 可选生成
-                    "subtitle_write_vtt"]
+                    "subtitle_write_vtt",
+                    # v0036 译文输出组合
+                    "subtitle_translate_outputs"]
     missing_settings = [key for key in setting_keys if key not in app]
     check("FE-SETTINGS-KEYS", "设置页覆盖契约全部设置键",
           not missing_settings, "missing=%s" % missing_settings)

@@ -3157,7 +3157,8 @@ class SubtitleService(object):
                          message=u"正在写入字幕文件")
             files, outputs, output_errors, warning = self._write_outputs(
                 job, cues, translations, partial,
-                write_vtt=bool(settings.get("subtitle_write_vtt")))
+                write_vtt=bool(settings.get("subtitle_write_vtt")),
+                translate_outputs=settings.get("subtitle_translate_outputs"))
             if fallback_used and not warning:
                 warning = WARNING_SERVER_AUDIO_FALLBACK
             self._finish_done(job, files, outputs, output_errors, warning,
@@ -3184,7 +3185,8 @@ class SubtitleService(object):
                      message=u"正在写入字幕文件")
         files, outputs, output_errors, warning = self._write_outputs(
             job, cues, translations, partial, existing_source=source_srt,
-            write_vtt=bool(settings.get("subtitle_write_vtt")))
+            write_vtt=bool(settings.get("subtitle_write_vtt")),
+            translate_outputs=settings.get("subtitle_translate_outputs"))
         self._finish_done(job, files, outputs, output_errors, warning,
                           partial, u"字幕翻译完成",
                           extra_audit={"source_srt": source_srt})
@@ -3455,34 +3457,50 @@ class SubtitleService(object):
                              min(start + len(batch), len(cues)), len(cues)))
         return translations, partial
 
+    @staticmethod
+    def _translate_outputs_mode(value):
+        """v0036：译文输出组合兜底；非法/缺失回退 both（与历史行为一致）。"""
+        if value in config.SUBTITLE_TRANSLATE_OUTPUTS:
+            return value
+        return config.SUBTITLE_DEFAULT_TRANSLATE_OUTPUTS
+
     def _write_outputs(self, job, cues, translations, partial,
-                       existing_source=None, write_vtt=False):
+                       existing_source=None, write_vtt=False,
+                       translate_outputs=None):
         directory = self._job_dir(job.job_id)
         os.makedirs(directory, exist_ok=True)
-        # v0033：默认只生成 SRT；VTT 仅当设置 subtitle_write_vtt=true 时生成
+        # v0033：默认只生成 SRT；VTT 仅当设置 subtitle_write_vtt=true 时生成。
+        # v0036：译文输出组合由 subtitle_translate_outputs 控制；original.srt
+        # 始终写入（补翻译/只翻译的源文本，也是任务目录下载兜底）。
         self._write_file(directory, "original.srt", build_srt(cues))
         if write_vtt:
             self._write_file(directory, "original.vtt", build_vtt(cues))
+        outputs_mode = self._translate_outputs_mode(translate_outputs)
         if translations is not None:
             target = job.target_lang
-            self._write_file(directory, "%s.srt" % target,
-                             build_srt(cues, translations))
-            if write_vtt:
-                self._write_file(directory, "%s.vtt" % target,
-                                 build_vtt(cues, translations))
-            self._write_file(directory, "bilingual.%s.srt" % target,
-                             build_srt(cues, translations, bilingual=True))
+            if outputs_mode != "bilingual_only":
+                self._write_file(directory, "%s.srt" % target,
+                                 build_srt(cues, translations))
+                if write_vtt:
+                    self._write_file(directory, "%s.vtt" % target,
+                                     build_vtt(cues, translations))
+            if outputs_mode != "target_only":
+                self._write_file(directory, "bilingual.%s.srt" % target,
+                                 build_srt(cues, translations, bilingual=True))
         job.translation_partial = bool(partial)
         files = self._list_files(job.job_id)
         outputs, output_errors, warning = self._write_alongside(
-            job, cues, translations, existing_source)
+            job, cues, translations, existing_source,
+            translate_outputs=outputs_mode)
         return files, outputs, output_errors, warning
 
-    def _write_alongside(self, job, cues, translations, existing_source=None):
+    def _write_alongside(self, job, cues, translations, existing_source=None,
+                         translate_outputs=None):
         """把 srt 复制到视频同目录（只写 .srt，从不覆盖已有文件）。
 
         返回 (outputs, output_errors, warning)；写回失败只记 warning，
         任务仍为 done，任务目录里的文件可继续下载。
+        v0036：译文输出组合（both/target_only/bilingual_only）与任务目录一致。
         """
         outputs = []
         errors = []
@@ -3492,15 +3510,18 @@ class SubtitleService(object):
         if not directory or not fsutil.writable_dir(directory):
             return outputs, errors, WARNING_OUTPUT_NOT_WRITABLE
         names = subtitle_output_names(stem, job.target_lang)
+        outputs_mode = self._translate_outputs_mode(translate_outputs)
         targets = []
         # 原文：只有 ASR 生成才写；只翻译模式下视频旁本来就有 <stem>.srt
         if existing_source is None:
             targets.append(("original", names["original"], build_srt(cues)))
         if translations is not None:
-            targets.append(("translation", names["translation"],
-                            build_srt(cues, translations)))
-            targets.append(("bilingual", names["bilingual"],
-                            build_srt(cues, translations, bilingual=True)))
+            if outputs_mode != "bilingual_only":
+                targets.append(("translation", names["translation"],
+                                build_srt(cues, translations)))
+            if outputs_mode != "target_only":
+                targets.append(("bilingual", names["bilingual"],
+                                build_srt(cues, translations, bilingual=True)))
         for kind, name, content in targets:
             path = os.path.join(directory, name)
             if os.path.exists(path):

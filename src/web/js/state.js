@@ -112,6 +112,7 @@ export var IDS = ('loginView loginForm loginUsername loginPassword loginOtp logi
   'subtitleLlmModelsBtn subtitleLlmModelPicker subtitleLlmModelsHint subtitleLlmTestBtn subtitleLlmTestResult ' +
   'setSubtitleOutputMode setSubtitleSkipExisting setSubtitleJobLimit setSubtitleJobLimitError ' +
   'setSubtitleConcurrency setSubtitleConcurrencyError ' +
+  'setSubtitleTranslateOutputs setSubtitleTranslateOutputsError ' +
   'subtitleGroupCurrent subtitleJobsFilter subtitleJobsActive ' +
   'taskTabHistory taskTabSubtitles taskTabDeletions taskTabStorage ' +
   'taskPanelHistory taskPanelSubtitles taskPanelDeletions taskPanelStorage ' +

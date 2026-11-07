@@ -1020,8 +1020,8 @@ def run():
               resp.status == 404 and code == "NOT_FOUND",
               "status=%s code=%s" % (resp.status, code))
 
-        client.put_json("/api/settings",
-                        {"settings": {"subtitle_clear_llm_api_key": True}})
+        resp = client.put_json("/api/settings",
+                               {"settings": {"subtitle_clear_llm_api_key": True}})
         resp = client.post_json(
             "/api/subtitles/sub-20260101-000000-abcdef/translate",
             {"confirm_cloud": True})
@@ -1030,11 +1030,48 @@ def run():
               resp.status == 400 and code == "TRANSLATE_NOT_CONFIGURED",
               "status=%s code=%s" % (resp.status, code))
 
+        # ---------------- v0036 译文输出组合 + 语言码 ----------------
+        resp = client.put_json("/api/settings", {"settings": {
+            "subtitle_translate_outputs": "target_only"}})
+        data = jd(resp).get("settings", {})
+        check("SUB-29", "PUT /api/settings 可保存译文输出组合 target_only",
+              resp.status == 200
+              and data.get("subtitle_translate_outputs") == "target_only",
+              "status=%s data=%s" % (resp.status, data))
+
+        resp = client.get("/api/settings")
+        data = jd(resp).get("settings", {})
+        check("SUB-30", "GET /api/settings 回读译文输出组合",
+              resp.status == 200
+              and data.get("subtitle_translate_outputs") == "target_only",
+              "status=%s data=%s" % (resp.status, data))
+
+        resp = client.put_json("/api/settings", {"settings": {
+            "subtitle_translate_outputs": "target_and_bilingual"}})
+        code, _ = err_code(resp)
+        check("SUB-31", "非法译文输出组合返回 400 INVALID_ARGUMENT",
+              resp.status == 400 and code == "INVALID_ARGUMENT",
+              "status=%s code=%s" % (resp.status, code))
+
+        # v0036：API 可设置非下拉语言码（es），保存设置时不应被重置
+        resp = client.put_json("/api/settings", {"settings": {
+            "subtitle_asr_language": "es",
+            "subtitle_translate_target": "fr"}})
+        data = jd(resp).get("settings", {})
+        check("SUB-32", "API 可保存非下拉常见语言码（asr=es / target=fr）",
+              resp.status == 200
+              and data.get("subtitle_asr_language") == "es"
+              and data.get("subtitle_translate_target") == "fr",
+              "status=%s data=%s" % (resp.status, data))
+
         # 恢复默认（关闭云端字幕），避免影响后续用例
         client.put_json("/api/settings", {"settings": {
             "subtitle_enabled": False, "subtitle_clear_asr_api_key": True,
             "subtitle_translate_enabled": False,
             "subtitle_concurrency": 1,
+            "subtitle_translate_outputs": "both",
+            "subtitle_asr_language": "auto",
+            "subtitle_translate_target": "zh",
             "subtitle_llm_disable_thinking": False,
             "subtitle_write_vtt": False}})
 

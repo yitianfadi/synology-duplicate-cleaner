@@ -28,7 +28,7 @@ import {
   SUBTITLE_ACTIVE_STATUS, SUBTITLE_LANGUAGES, SUBTITLE_OUTPUT_KIND_LABEL,
   SUBTITLE_RUNNING_STATUS, SUBTITLE_SOURCE_LABEL, SUBTITLE_STAGE_LABEL,
   SUBTITLE_STATUS_BADGE, SUBTITLE_STATUS_LABEL, SUBTITLE_TARGET_LANGUAGES,
-  SUBTITLE_WARNING_LABEL,
+  SUBTITLE_TRANSLATE_OUTPUTS, SUBTITLE_WARNING_LABEL,
   TERMINAL_STATUS, VIDEO_HWACCEL_LABEL, VIDEO_HWACCEL_MODES, VIEWS, VIEW_HEADINGS
 } from './js/constants.js';
 import { els, IDS, state } from './js/state.js';
@@ -2037,7 +2037,7 @@ import {
     if (els.subtitleEnabled) { els.subtitleEnabled.checked = s.subtitle_enabled === true; }
     if (els.subtitleAsrBaseUrl) { els.subtitleAsrBaseUrl.value = s.subtitle_asr_base_url || ''; }
     if (els.subtitleAsrModel) { els.subtitleAsrModel.value = s.subtitle_asr_model || ''; }
-    if (els.subtitleAsrLanguage) { els.subtitleAsrLanguage.value = s.subtitle_asr_language || 'auto'; }
+    if (els.subtitleAsrLanguage) { fillLanguageSelect(els.subtitleAsrLanguage, s.subtitle_asr_language, 'auto'); }
     // v0032：音频来源 nas（默认，由 NAS 转音频后上传）| server（按段上传原视频给 ASR 服务端转音频）
     if (els.subtitleAudioSource) {
       els.subtitleAudioSource.value = s.subtitle_audio_source === 'server' ? 'server' : 'nas';
@@ -2051,7 +2051,7 @@ import {
     if (els.subtitleTranslateEnabled) { els.subtitleTranslateEnabled.checked = s.subtitle_translate_enabled === true; }
     if (els.subtitleLlmBaseUrl) { els.subtitleLlmBaseUrl.value = s.subtitle_llm_base_url || ''; }
     if (els.subtitleLlmModel) { els.subtitleLlmModel.value = s.subtitle_llm_model || ''; }
-    if (els.subtitleTranslateTarget) { els.subtitleTranslateTarget.value = s.subtitle_translate_target || 'zh'; }
+    if (els.subtitleTranslateTarget) { fillLanguageSelect(els.subtitleTranslateTarget, s.subtitle_translate_target, 'zh'); }
     setVideoNumberValue(els.subtitleTranslateTimeout, s.subtitle_translate_timeout_sec, 120, 30, 900);
     setVideoNumberValue(els.subtitleTranslateBatchSize, s.subtitle_translate_batch_size, 20, 1, 40);
     if (els.subtitleLlmDisableThinking) {
@@ -2063,6 +2063,13 @@ import {
     }
     if (els.setSubtitleSkipExisting) {
       els.setSubtitleSkipExisting.checked = s.subtitle_skip_existing !== false;
+    }
+    // v0036：译文输出组合（both/target_only/bilingual_only，默认 both）
+    if (els.setSubtitleTranslateOutputs) {
+      var translateOutputs = s.subtitle_translate_outputs;
+      els.setSubtitleTranslateOutputs.value =
+        (translateOutputs === 'target_only' || translateOutputs === 'bilingual_only')
+          ? translateOutputs : 'both';
     }
     setVideoNumberValue(els.setSubtitleJobLimit, s.subtitle_job_limit, 200, 20, 1000);
     // v0034：同时执行的字幕任务数（1..4，默认 1 串行；重启套件后生效）
@@ -2111,8 +2118,9 @@ import {
     else if (asrModel.length > 200) { errors.subtitleAsrModel = 'ASR 模型名称过长。'; }
     else { settings.subtitle_asr_model = asrModel; }
     if (els.subtitleAsrLanguage) {
-      settings.subtitle_asr_language = ['auto', 'zh', 'en', 'ja', 'ko'].indexOf(els.subtitleAsrLanguage.value) !== -1
-        ? els.subtitleAsrLanguage.value : 'auto';
+      var asrLanguage = String(els.subtitleAsrLanguage.value || '').trim();
+      settings.subtitle_asr_language = SUBTITLE_LANGUAGE_RE.test(asrLanguage)
+        ? asrLanguage : 'auto';
     }
     // v0032：音频来源只接受 nas / server，缺失或非法值一律回落到 nas（默认）；
     // server 表示把原视频按段上传给 ASR 服务器转音频（更快，但会上传原视频）。
@@ -2136,8 +2144,11 @@ import {
     else if (llmModel.length > 200) { errors.subtitleLlmModel = 'LLM 模型名称过长。'; }
     else { settings.subtitle_llm_model = llmModel; }
     if (els.subtitleTranslateTarget) {
-      settings.subtitle_translate_target = ['zh', 'en', 'ja', 'ko'].indexOf(els.subtitleTranslateTarget.value) !== -1
-        ? els.subtitleTranslateTarget.value : 'zh';
+      var translateTarget = String(els.subtitleTranslateTarget.value || '').trim();
+      settings.subtitle_translate_target =
+        (SUBTITLE_LANGUAGE_RE.test(translateTarget)
+          && translateTarget.toLowerCase() !== 'auto')
+          ? translateTarget : 'zh';
     }
     var translateTimeout = readSubtitleInt(els.subtitleTranslateTimeout, 30, 900, '翻译超时', errors, 'subtitleTranslateTimeout');
     if (translateTimeout !== null) { settings.subtitle_translate_timeout_sec = translateTimeout; }
@@ -2156,6 +2167,16 @@ import {
     }
     if (els.setSubtitleSkipExisting) {
       settings.subtitle_skip_existing = !!els.setSubtitleSkipExisting.checked;
+    }
+    // v0036：译文输出组合（both/target_only/bilingual_only，默认 both）
+    if (els.setSubtitleTranslateOutputs) {
+      var translateOutputsValue = String(
+        els.setSubtitleTranslateOutputs.value || '').trim();
+      var allowedTranslateOutputs = SUBTITLE_TRANSLATE_OUTPUTS.map(
+        function (item) { return item.value; });
+      settings.subtitle_translate_outputs =
+        allowedTranslateOutputs.indexOf(translateOutputsValue) !== -1
+          ? translateOutputsValue : 'both';
     }
     var asrKey = els.subtitleAsrApiKey ? els.subtitleAsrApiKey.value.trim() : '';
     if (els.subtitleClearAsrKey && els.subtitleClearAsrKey.checked) {
@@ -4507,6 +4528,24 @@ import {
     return '—';
   }
 
+  // v0036：语言码校验与“未知但合法”的语言码保留（避免保存设置时把
+  // es/fr/de 等后端支持的语言静默重置回 auto/zh）。
+  var SUBTITLE_LANGUAGE_RE = /^(?:auto|[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})?)$/;
+  function ensureLanguageOption(select, value) {
+    if (!select || !value) { return; }
+    for (var i = 0; i < select.options.length; i += 1) {
+      if (select.options[i].value === value) { return; }
+    }
+    select.appendChild(el('option', { attrs: { value: value }, text: value }));
+  }
+  function fillLanguageSelect(select, value, fallback) {
+    if (!select) { return; }
+    var normalized = (typeof value === 'string' && SUBTITLE_LANGUAGE_RE.test(value))
+      ? value : (fallback || 'auto');
+    ensureLanguageOption(select, normalized);
+    select.value = normalized;
+  }
+
   /** 语言下拉：SUBTITLE_LANGUAGES / SUBTITLE_TARGET_LANGUAGES 渲染。 */
   function buildSubtitleLanguageSelect(options) {
     options = options || {};
@@ -4517,7 +4556,10 @@ import {
     source.forEach(function (item) {
       select.appendChild(el('option', { attrs: { value: item.value }, text: item.label }));
     });
-    if (options.value) { select.value = options.value; }
+    if (options.value) {
+      ensureLanguageOption(select, options.value);
+      select.value = options.value;
+    }
     return select;
   }
 

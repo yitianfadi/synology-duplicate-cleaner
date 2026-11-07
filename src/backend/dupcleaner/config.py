@@ -7,9 +7,9 @@ import os
 import re
 
 APP_NAME = "DuplicateCleaner"
-APP_VERSION = "1.1.0-0035"
+APP_VERSION = "1.1.0-0036"
 DISPLAY_NAME = "重复文件清理与字幕"
-SPK_VERSION = "1.1.0-0035"
+SPK_VERSION = "1.1.0-0036"
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8787
@@ -142,6 +142,11 @@ SUBTITLE_BATCH_GROUP_LIMIT = 20
 SUBTITLE_ALONGSIDE_EXT = ".srt"
 SUBTITLE_OUTPUT_MODES = ("alongside_video", "download_only")
 SUBTITLE_DEFAULT_OUTPUT_MODE = "alongside_video"
+# v0036：译文输出组合（both=译文+双语，默认；target_only=只写译文；
+# bilingual_only=只写双语）。任务目录始终保留 original.srt（补翻译源文本），
+# 视频同目录已有文件从不覆盖；修改设置不删除已写出的旧文件。
+SUBTITLE_TRANSLATE_OUTPUTS = ("both", "target_only", "bilingual_only")
+SUBTITLE_DEFAULT_TRANSLATE_OUTPUTS = "both"
 # 音频来源（v0032）：nas=本机解码抽 16k 单声道 mp3（默认，只上传音频）；
 # server=NAS 只做流复制抽音轨（不解码，速度快），由 ASR 服务器解码转音频，
 # 仍然只上传音频（不上传视频），体积取决于原音轨码率。

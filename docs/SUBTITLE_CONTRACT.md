@@ -10,7 +10,7 @@
 | subtitle_asr_base_url | https://api.openai.com/v1 | http/https，去尾部 /；拒绝 URL userinfo（user:pass@host） |
 | subtitle_asr_api_key | "" | 密钥；GET 不回传明文 |
 | subtitle_asr_model | whisper-1 | 必须支持 verbose_json/segments 或 srt；字符集 [A-Za-z0-9._/:@+-]{1,100} |
-| subtitle_asr_language | auto | auto/zh/en/ja/ko/... |
+| subtitle_asr_language | auto | auto/zh/en/ja/ko/es/fr/de/...（ISO 639-1，2–3 位；以所配置 ASR 服务支持为准） |
 | subtitle_asr_timeout_sec | 300 | 30..1800 |
 | subtitle_asr_chunk_sec | 600 | 60..1800 |
 | subtitle_asr_max_audio_mb | 24 | 1..100；超过则强制分块 |
@@ -21,9 +21,10 @@
 | subtitle_llm_base_url | https://api.openai.com/v1 | http/https |
 | subtitle_llm_api_key | "" | GET 不回传明文 |
 | subtitle_llm_model | gpt-4.1-mini | 任意 chat completions 模型 |
-| subtitle_translate_target | zh | zh/en/ja/ko/... |
+| subtitle_translate_target | zh | zh/en/ja/ko/es/fr/de/...（ISO 639-1，2–3 位；不得为 auto） |
 | subtitle_translate_timeout_sec | 120 | 30..900 |
 | subtitle_translate_batch_size | 20 | 1..40 |
+| subtitle_translate_outputs | both | v0036：译文输出组合 `both`（译文+双语）/`target_only`（只写译文）/`bilingual_only`（只写双语）；任务目录始终保留 `original.srt`；修改设置不会删除已写出的旧文件 |
 | subtitle_llm_disable_thinking | false | 布尔；true 时翻译/连接测试请求附带 `chat_template_kwargs.enable_thinking=false`（本地 Qwen3/Strata 类推理模型建议开启；OpenAI 官方等不支持该参数的服务保持关闭） |
 
 密钥存储：只在 `var/settings.json`（DSM 权限保护）。GET /api/settings 返回 `subtitle_asr_api_key_set/subtitle_llm_api_key_set`，绝不返回明文；PUT 空字符串表示保持原值，`clear_*_api_key=true` 才删除。不得写日志/错误信息/审计。
@@ -101,12 +102,13 @@ job schema：
   - `original.srt`（始终）
   - `original.vtt`（仅 `subtitle_write_vtt=true`）
   - 翻译开启时：`<target>.srt` / `bilingual.<target>.srt`，以及 `<target>.vtt`（仅 `subtitle_write_vtt=true`）
+  - v0036：`<target>.srt` / `bilingual.<target>.srt` 由 `subtitle_translate_outputs` 控制（`both` 默认两个都写；`target_only` 只写译文；`bilingual_only` 只写双语）。`target_only` 时会写 `<target>.vtt`；`bilingual_only` 时因不生成 `<target>.srt` 而**不写** `<target>.vtt`（避免孤立文件）。
 - 字幕文本必须做 SRT/VTT 安全转义；VTT 使用 WEBVTT 头。
 - 不覆盖同名；文件名固定白名单，下载时防目录穿越。
 
 ## 7. 前端
 
-- 设置页“云端字幕（实验，默认关闭）”：ASR base URL、模型、API Key（password，已配置占位）、语言；翻译开关、LLM base URL/model/API Key、目标语言、超时/chunk/max；隐私警告“音频将上传到所配置的第三方服务”。
+- 设置页“云端字幕（实验，默认关闭）”：ASR base URL、模型、API Key（password，已配置占位）、语言；翻译开关、LLM base URL/model/API Key、目标语言、超时/chunk/max；v0036 起语言下拉覆盖常见语种（zh/en/ja/ko/es/fr/de/it/pt/ru/ar/hi/th/vi/id/ms/tr/nl/pl/uk/sv），API 设置的其它合法语言码也会保留；新增“译文输出组合”（译文+双语 / 只写译文 / 只写双语）。隐私警告“音频将上传到所配置的第三方服务”。
 - 视频结果每个视频行有“生成字幕”按钮；弹窗选择语言、是否翻译/目标语言、格式（SRT/VTT），必须勾选“我了解音频将上传到第三方”才能提交。
 - 任务进度/取消/下载；错误显示后端消息（不含密钥）。
 - 未配置/未启用时按钮禁用或提示；不阻塞视频查重。
@@ -223,7 +225,7 @@ wlk --host 0.0.0.0 --port 8000 --model base --language zh --api-token “<自定
 | ASR Base URL | `http://<WLK主机>:8000/v1` |
 | ASR 模型 | 任意非空（WLK 忽略该字段）；可点「获取模型列表」选 `whisper-base` / `faster-whisper/base` 等以保持一致 |
 | ASR API Key | 与 WLK 的 `--api-token` 相同；WLK 未启用 token 时留空 |
-| 识别语言 | auto（不发送 language）/ zh / en / ja / ko |
+| 识别语言 | auto（不发送 language）/ zh / en / ja / ko / es / fr / de / it / pt / ru / ar / hi / th / vi / id / ms / tr / nl / pl / uk / sv（下拉未列出的合法语言码也可用） |
 | ASR 超时 | CPU 慢时建议 900–1800s |
 | 音频分块 | CPU 建议 120–300s（否则单个 10 分钟分块可能超过超时） |
 | 单块音频上限 | 保持 24MB 左右；分块过大会增加单请求时长 |
@@ -297,4 +299,11 @@ v0028 在 v1.3 单文件任务之上新增**目录批量生成 / 翻译**：独�
 - **重启恢复**：翻译任务运行中遇服务重启 → `paused` + 可继续（没有 ASR 分片损失，重启后从源 srt 重新翻译）；`queued` 沿用 v0034 自动重新入队。
 - **接口**：`POST /api/subtitles/{job_id}/translate`、`POST /api/subtitles/batch-groups/{group_id}/translate`（字段与错误码见 [SUBTITLE_BATCH_CONTRACT.md](SUBTITLE_BATCH_CONTRACT.md) §15）。
 - **审计**：`subtitle_start` 带 `operation=translate` 与 `source_job_id`；组级补翻译记录 `subtitle_translate_group`（源组、创建数）。
+
+## 16. v0036 语言码与译文输出组合
+
+- **语言码**：后端 `LANGUAGE_RE = ^(auto|[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})?)$` 一直支持任意 2–3 位语言码；v0036 起设置页 ASR 语言/翻译目标语言下拉扩展到常见 19 种（zh/en/ja/ko/es/fr/de/it/pt/ru/ar/hi/th/vi/id/ms/tr/nl/pl/uk/sv），并修复“API 设置其它合法语言码后，前端保存设置会静默重置为 auto/zh”的问题（未知但合法的码在前端保存时原样保留并在下拉中临时补一项）。
+- **译文输出组合**：新增设置 `subtitle_translate_outputs`（`both` 默认 / `target_only` / `bilingual_only`），同时作用于任务目录与视频同目录的译文写回；`original.srt` 始终保留（补翻译源文本）。`target_only` 仍生成 `<target>.vtt`（开启 VTT 时）；`bilingual_only` 不生成 `<target>.vtt`。修改设置不删除已写出的旧文件，也从不覆盖已有文件。
+- 前端设置页新增「译文输出组合」下拉；v0035 补翻译任务与普通翻译任务都遵循该设置。
+- 版本 1.1.0-0036；SQLite schema 不变（仍 v7）。
 

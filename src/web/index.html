@@ -6,8 +6,8 @@
 <meta name="color-scheme" content="light">
 <meta name="referrer" content="same-origin">
 <title>重复文件清理与字幕 · Duplicate Cleaner &amp; Subtitles</title>
-<link rel="icon" href="./assets/favicon.svg?v=1.1.0-0035" type="image/svg+xml">
-<link rel="stylesheet" href="./styles.css?v=1.1.0-0035">
+<link rel="icon" href="./assets/favicon.svg?v=1.1.0-0036" type="image/svg+xml">
+<link rel="stylesheet" href="./styles.css?v=1.1.0-0036">
 </head>
 <body>
 <a class="skip-link" href="#main">跳到主要内容</a>
@@ -659,6 +659,23 @@
               <option value="en">英文</option>
               <option value="ja">日文</option>
               <option value="ko">韩文</option>
+              <option value="es">西班牙文</option>
+              <option value="fr">法文</option>
+              <option value="de">德文</option>
+              <option value="it">意大利文</option>
+              <option value="pt">葡萄牙文</option>
+              <option value="ru">俄文</option>
+              <option value="ar">阿拉伯文</option>
+              <option value="hi">印地文</option>
+              <option value="th">泰文</option>
+              <option value="vi">越南文</option>
+              <option value="id">印尼文</option>
+              <option value="ms">马来文</option>
+              <option value="tr">土耳其文</option>
+              <option value="nl">荷兰文</option>
+              <option value="pl">波兰文</option>
+              <option value="uk">乌克兰文</option>
+              <option value="sv">瑞典文</option>
             </select>
             <p class="hint">「只翻译已有字幕」时忽略此项。</p>
           </div>
@@ -669,6 +686,23 @@
               <option value="en">英文</option>
               <option value="ja">日文</option>
               <option value="ko">韩文</option>
+              <option value="es">西班牙文</option>
+              <option value="fr">法文</option>
+              <option value="de">德文</option>
+              <option value="it">意大利文</option>
+              <option value="pt">葡萄牙文</option>
+              <option value="ru">俄文</option>
+              <option value="ar">阿拉伯文</option>
+              <option value="hi">印地文</option>
+              <option value="th">泰文</option>
+              <option value="vi">越南文</option>
+              <option value="id">印尼文</option>
+              <option value="ms">马来文</option>
+              <option value="tr">土耳其文</option>
+              <option value="nl">荷兰文</option>
+              <option value="pl">波兰文</option>
+              <option value="uk">乌克兰文</option>
+              <option value="sv">瑞典文</option>
             </select>
             <p class="hint">译文只处理字幕文本，不改时间轴。</p>
           </div>
@@ -1186,7 +1220,25 @@
                   <option value="en">英文</option>
                   <option value="ja">日文</option>
                   <option value="ko">韩文</option>
+                  <option value="es">西班牙文</option>
+                  <option value="fr">法文</option>
+                  <option value="de">德文</option>
+                  <option value="it">意大利文</option>
+                  <option value="pt">葡萄牙文</option>
+                  <option value="ru">俄文</option>
+                  <option value="ar">阿拉伯文</option>
+                  <option value="hi">印地文</option>
+                  <option value="th">泰文</option>
+                  <option value="vi">越南文</option>
+                  <option value="id">印尼文</option>
+                  <option value="ms">马来文</option>
+                  <option value="tr">土耳其文</option>
+                  <option value="nl">荷兰文</option>
+                  <option value="pl">波兰文</option>
+                  <option value="uk">乌克兰文</option>
+                  <option value="sv">瑞典文</option>
                 </select>
+                <p class="hint">语言码遵循 ISO 639-1（2–3 位）；以所配置 ASR 服务支持的语种为准。</p>
               </div>
               <div class="field">
                 <label for="subtitleAsrTimeout">ASR 超时（秒，30–1800）</label>
@@ -1255,7 +1307,25 @@
                   <option value="en">英文</option>
                   <option value="ja">日文</option>
                   <option value="ko">韩文</option>
+                  <option value="es">西班牙文</option>
+                  <option value="fr">法文</option>
+                  <option value="de">德文</option>
+                  <option value="it">意大利文</option>
+                  <option value="pt">葡萄牙文</option>
+                  <option value="ru">俄文</option>
+                  <option value="ar">阿拉伯文</option>
+                  <option value="hi">印地文</option>
+                  <option value="th">泰文</option>
+                  <option value="vi">越南文</option>
+                  <option value="id">印尼文</option>
+                  <option value="ms">马来文</option>
+                  <option value="tr">土耳其文</option>
+                  <option value="nl">荷兰文</option>
+                  <option value="pl">波兰文</option>
+                  <option value="uk">乌克兰文</option>
+                  <option value="sv">瑞典文</option>
                 </select>
+                <p class="hint">语言码遵循 ISO 639-1（2–3 位）；未列出的语言码通过 API 设置后也会保留。</p>
               </div>
               <div class="field">
                 <label for="subtitleTranslateTimeout">翻译超时（秒，30–900）</label>
@@ -1282,6 +1352,16 @@
                   <option value="download_only">仅任务目录下载</option>
                 </select>
                 <p class="hint">写入视频同目录时只写 .srt、不覆盖已有文件；视频目录不可写时自动回退为任务目录下载。</p>
+              </div>
+              <div class="field field-wide">
+                <label for="setSubtitleTranslateOutputs">译文输出组合</label>
+                <select id="setSubtitleTranslateOutputs">
+                  <option value="both">译文 + 双语（默认，两个都写）</option>
+                  <option value="target_only">只写译文（&lt;lang&gt;.srt）</option>
+                  <option value="bilingual_only">只写双语（bilingual.&lt;lang&gt;.srt）</option>
+                </select>
+                <p class="hint">控制译文文件数量，减少多余文件；任务目录始终保留 original.srt（补翻译源文本）。已写出的旧文件不会删除，也从不覆盖已有文件。</p>
+                <p class="field-error" id="setSubtitleTranslateOutputsError" role="alert" hidden></p>
               </div>
               <div class="field">
                 <label class="check"><input id="setSubtitleSkipExisting" type="checkbox" checked>目录批量字幕默认跳过已有字幕</label>
@@ -1360,6 +1440,6 @@
   <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.6" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M12 10.8v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="12" cy="7.6" r="1.05" fill="currentColor"/></symbol>
 </svg>
 
-<script type="module" src="./app.js?v=1.1.0-0035"></script>
+<script type="module" src="./app.js?v=1.1.0-0036"></script>
 </body>
 </html>

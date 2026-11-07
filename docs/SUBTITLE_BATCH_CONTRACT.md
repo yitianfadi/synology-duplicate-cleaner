@@ -27,6 +27,7 @@
 | subtitle_skip_existing | true | 布尔；目标 srt 已存在时跳过该视频 |
 | subtitle_job_limit | 200 | 20..1000；已完成任务保留上限（LRU 只删任务目录，不删视频旁 srt）；**修改后需重启套件生效**（服务启动时读取） |
 | subtitle_concurrency | 1 | 1..4；同时执行的字幕任务数（默认 1 串行）；**修改后需重启套件生效**（服务启动时读取） |
+| subtitle_translate_outputs | both | v0036：译文输出组合 `both`/`target_only`/`bilingual_only`；控制任务目录与视频旁写出的译文文件数量；`original.srt` 始终保留 |
 
 以下为常量（不做成设置项，避免配置面膨胀）：
 
@@ -189,8 +190,8 @@ v0034 新增 `status`：`all`（默认）/`active`（= running+translating）/`q
 | 文件 | 内容 | 写入条件 |
 |---|---|---|
 | `<stem>.srt` | 原文 | `source=asr` 且不存在 |
-| `<stem>.<target>.srt` | 译文 | 有译文且不存在 |
-| `<stem>.bilingual.<target>.srt` | 双语 | 有译文且不存在 |
+| `<stem>.<target>.srt` | 译文 | 有译文且不存在；v0036 起 `subtitle_translate_outputs=bilingual_only` 时不写 |
+| `<stem>.bilingual.<target>.srt` | 双语 | 有译文且不存在；v0036 起 `subtitle_translate_outputs=target_only` 时不写 |
 
 - 只写 `.srt`；`.vtt` 不复制到视频旁。
 - 写入方式：先写任务目录，再以**临时文件 + `os.replace`** 原子复制到视频旁；复制失败逐一记入 `output_errors`。
@@ -324,7 +325,7 @@ CREATE TABLE IF NOT EXISTS subtitle_batches (
 
 ## 12. 版本与兼容
 
-- 版本 **1.1.0-0035**（v0034 起含补翻译），需同步 8 处：`README.md`、`build/build_spk.py`、`docs/ARCHITECTURE.md`、`docs/CONTRACT.md`、`docs/SPK_PACKAGING.md`、`spk/INFO`、`src/backend/dupcleaner/config.py`、`src/web/index.html`（含 `app.js?v=` 查询串）。
+- 版本 **1.1.0-0036**（v0036 起含语言码扩展与译文输出组合），需同步 8 处：`README.md`、`build/build_spk.py`、`docs/ARCHITECTURE.md`、`docs/CONTRACT.md`、`docs/SPK_PACKAGING.md`、`spk/INFO`、`src/backend/dupcleaner/config.py`、`src/web/index.html`（含 `app.js?v=` 查询串）。
 - 现有 `POST /api/subtitles` 行为不变（新字段均为可选）；旧任务记录可读；旧 SPK 升级后数据目录与包 ID 不变。
 - 文档同步：本文件、`docs/SUBTITLE_CONTRACT.md`（新增 §13 指向本文件）、`docs/ARCHITECTURE.md`（字幕页与批次服务）。
 
@@ -452,4 +453,15 @@ CREATE TABLE IF NOT EXISTS subtitle_batches (
 
 - 测试：单任务补翻译（含视频已删除）、已有译文拒绝、部分译文重译、幂等、开关/凭据缺失、组批量分类计数、组快照 `translatable`、重启转 `paused`、两个接口的状态码/响应形状；前端 node 模块检查 + web smoke + e2e（SUB-22 起）。
 - 版本 **1.1.0-0035**；SQLite schema 不变（仍 v7），旧任务/旧组记录可读。
+
+## 16. v0036 语言码扩展与译文输出组合
+
+- **语言码**：设置页 ASR 语言/翻译目标语言下拉扩展到常见 19 种；后端 `LANGUAGE_RE` 仍接受任意 2–3 位合法语言码，API 设置的非下拉语言码在设置页保存时不再被静默重置（会保留并临时补一项）。
+- **译文输出组合**：新设置 `subtitle_translate_outputs`（`both` 默认 / `target_only` / `bilingual_only`），作用于任务目录与视频同目录：
+  - `both`：`<target>.srt` + `bilingual.<target>.srt`（历史行为）；
+  - `target_only`：只写 `<target>.srt`（开启 VTT 时仍写 `<target>.vtt`）；
+  - `bilingual_only`：只写 `bilingual.<target>.srt`（不生成 `<target>.srt`/`<target>.vtt`）。
+  - `original.srt` 始终保留（补翻译/只翻译的源文本）；已有文件从不覆盖，修改设置不删除旧文件。
+- 普通翻译、只翻译已有字幕、v0035 补翻译三类任务都遵循该设置。
+- 版本 1.1.0-0036；SQLite schema 不变（仍 v7）；前端设置页新增「译文输出组合」下拉。
 

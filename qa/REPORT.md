@@ -565,4 +565,48 @@ python build/build_spk.py --no-icons --out-dir $env:TEMP\qa-build2
 
 - 结论：v0035 **PASS（可交付）**；升级 1.1.0-0035 后可用「补翻译」处理历史 ASR-only 任务，且不重新消耗 ASR 算力。
 
+## 18. 附：v0036 设置检查与两处修复（语言码 / 译文输出组合，2026-11-07）
+
+### 18.1 设置审计结论
+
+对 64 个后端设置键做全量核对（`settings.default_settings()` × 校验分支 × 设置页填充/保存 × `constants.DEFAULT_SETTINGS` 镜像 × 文档 × 后端消费点）：
+
+- 校验分支 64/64、设置页保存 64/64、前端默认值镜像 64/64、后端均有消费点（`recycle_default` 仅作前端删除默认值、`skip_symlinks` 后端强制 true，均属设计）。
+- 设置页填充仅 3 个例外且都合理：`skip_symlinks`（强制，禁用勾选）、两个 API Key（只显示“已配置/未配置”，不回显明文）。
+- **无漏接线设置**；但发现两个功能选项缺口，v0036 修复。
+
+### 18.2 修复内容
+
+- **语言码**：设置页 ASR 识别语言/翻译目标语言下拉由 4 种扩展为常见 19 种（zh/en/ja/ko/es/fr/de/it/pt/ru/ar/hi/th/vi/id/ms/tr/nl/pl/uk/sv）；`readSubtitleSettings` 改为按后端同一 `LANGUAGE_RE` 校验，API 设置的其它合法语言码不再被静默重置为 `auto`/`zh`，并在下拉中临时补项显示（`fillLanguageSelect`/`ensureLanguageOption`）。
+- **译文输出组合**：新增设置 `subtitle_translate_outputs`（`both` 默认 / `target_only` 只写译文 / `bilingual_only` 只写双语），`_write_outputs` 与 `_write_alongside` 统一裁剪任务目录与视频同目录的译文文件；`original.srt` 始终保留（补翻译源文本）；`target_only` 仍写 `<target>.vtt`，`bilingual_only` 不写 `<target>.vtt`；已有文件从不覆盖、修改设置不删除旧文件。普通翻译、只翻译已有字幕、v0035 补翻译三类任务都遵循该设置。
+- 设置页新增「译文输出组合」下拉与错误位；`state.IDS` 补 id；前端默认值镜像补键。
+
+### 18.3 最终产物
+
+- `dist/DuplicateCleaner-1.1.0-0036.spk`
+  - SHA256 `bf849585c1dced09390e598689e5aa676680a370bc6adcd4a7aa15a294d29903`
+  - package.tgz MD5 `230ab54d6b67b1328bc28529c2f3f336`（= INFO.checksum）
+  - 大小 38,993,920 B
+- 版本 1.1.0-0036 同步 8 处；SQLite schema 不变（仍 v7）。
+
+### 18.4 结果总览
+
+| 套件 | 命令 | 结果 |
+|---|---|---|
+| 后端单测 | `cd src/backend && python -m unittest discover -s tests` | **419 tests OK（5 skipped）** |
+| 端到端 | `python qa/e2e_test.py` | **PASS=146 / FAIL=0 / UNVERIFIED=1**（Windows symlink 权限限制） |
+| 静态检查（含 unittest/前端/SPK） | `python qa/static_checks.py` | **PASS=152 / FAIL=0 / UNVERIFIED=0** |
+| 前端模块图 | `node qa/check_web_modules.mjs` | **22/22 PASS** |
+| 无头浏览器冒烟 | `python qa/web_smoke.py` | **8/8 PASS** |
+
+### 18.5 验收要点
+
+- 后端新增 7 例（`tests/test_subtitle_outputs.py`）：默认 both 产出两个译文文件；`target_only` 不写双语；`bilingual_only` 不写单语；VTT 随组合裁剪（bilingual_only 不写 `<target>.vtt`）；只翻译已有字幕与 v0035 补翻译任务同样遵循设置；设置默认值与非法值校验。
+- e2e 新增 SUB-29（保存 target_only）、SUB-30（回读）、SUB-31（非法值 400）、SUB-32（API 保存 asr=es/target=fr）。
+- 静态新增 `BE-SUBTITLE-TRANSLATE-OUTPUT`、`FE-SUBTITLE-TRANSLATE-OUTPUT`、`FE-SUBTITLE-LANGUAGES`；`FE-SETTINGS-KEYS` 覆盖新键。
+- 前端模块检查/web smoke 通过；语言下拉与输出组合设置在设置页可见、可保存、回读正确。
+
+- 结论：v0036 **PASS（可交付）**；设置项无遗漏，语言码与译文输出组合缺口已修复。
+
+
 

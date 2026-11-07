@@ -88,6 +88,8 @@ DEFAULT_SETTINGS = {
     "subtitle_output_mode": config.SUBTITLE_DEFAULT_OUTPUT_MODE,
     "subtitle_skip_existing": True,
     "subtitle_job_limit": config.SUBTITLE_JOB_LIMIT_DEFAULT,
+    # v0036：译文输出组合（both/target_only/bilingual_only），默认与历史一致。
+    "subtitle_translate_outputs": config.SUBTITLE_DEFAULT_TRANSLATE_OUTPUTS,
     # v0034：同时执行的字幕任务数（默认 1 = 串行，与历史行为一致）；
     # 服务启动时读取，修改后需重启套件生效（与 subtitle_job_limit 一致）。
     "subtitle_concurrency": config.SUBTITLE_DEFAULT_CONCURRENCY,
@@ -368,6 +370,11 @@ def _normalize_value(key, value):
         return _check_bool(key, value)
     if key == "subtitle_job_limit":
         return _check_int(key, value, 20, 1000)
+    if key == "subtitle_translate_outputs":
+        if value not in config.SUBTITLE_TRANSLATE_OUTPUTS:
+            _err(u"subtitle_translate_outputs 只能是 both/target_only/bilingual_only",
+                 {"key": key})
+        return value
     if key == "subtitle_concurrency":
         return _check_int(key, value, 1, config.SUBTITLE_CONCURRENCY_MAX)
     if key == "skip_symlinks":

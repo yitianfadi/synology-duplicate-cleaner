@@ -151,13 +151,31 @@ export var SUBTITLE_LANGUAGES = [
   { value: 'zh', label: '中文' },
   { value: 'en', label: '英文' },
   { value: 'ja', label: '日文' },
-  { value: 'ko', label: '韩文' }
+  { value: 'ko', label: '韩文' },
+  { value: 'es', label: '西班牙文' },
+  { value: 'fr', label: '法文' },
+  { value: 'de', label: '德文' },
+  { value: 'it', label: '意大利文' },
+  { value: 'pt', label: '葡萄牙文' },
+  { value: 'ru', label: '俄文' },
+  { value: 'ar', label: '阿拉伯文' },
+  { value: 'hi', label: '印地文' },
+  { value: 'th', label: '泰文' },
+  { value: 'vi', label: '越南文' },
+  { value: 'id', label: '印尼文' },
+  { value: 'ms', label: '马来文' },
+  { value: 'tr', label: '土耳其文' },
+  { value: 'nl', label: '荷兰文' },
+  { value: 'pl', label: '波兰文' },
+  { value: 'uk', label: '乌克兰文' },
+  { value: 'sv', label: '瑞典文' }
 ];
-export var SUBTITLE_TARGET_LANGUAGES = [
-  { value: 'zh', label: '中文' },
-  { value: 'en', label: '英文' },
-  { value: 'ja', label: '日文' },
-  { value: 'ko', label: '韩文' }
+export var SUBTITLE_TARGET_LANGUAGES = SUBTITLE_LANGUAGES.slice(1);
+// v0036：译文输出组合（与后端 config.SUBTITLE_TRANSLATE_OUTPUTS 一致）
+export var SUBTITLE_TRANSLATE_OUTPUTS = [
+  { value: 'both', label: '译文 + 双语（默认，两个都写）' },
+  { value: 'target_only', label: '只写译文（<lang>.srt）' },
+  { value: 'bilingual_only', label: '只写双语（bilingual.<lang>.srt）' }
 ];
 export var DEFAULT_SETTINGS = {
   hash_algo: 'sha256', keep_mode: 'latest', pinned_path: '',
@@ -200,6 +218,8 @@ export var DEFAULT_SETTINGS = {
   // v0028 目录批量字幕默认值（与后端 settings.DEFAULT_SETTINGS 对齐）
   subtitle_output_mode: 'alongside_video',
   subtitle_skip_existing: true,
+  // v0036：译文输出组合 both/target_only/bilingual_only
+  subtitle_translate_outputs: 'both',
   subtitle_job_limit: 200,
   // v0034：同时执行的字幕任务数（1..4，默认 1 串行；服务启动时读取，修改后需重启生效）
   subtitle_concurrency: 1

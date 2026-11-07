@@ -1,7 +1,7 @@
 # 整体方案架构
 
 > 项目：**重复文件清理与字幕（Duplicate Cleaner & Subtitles）** · 群晖 DSM 7.x SPK 套件
-> 版本：1.1.0-0035
+> 版本：1.1.0-0036
 > 原则：**先扫描、出报告、人工确认、二次确认、可回收、全程审计**。任何情况下都不自动静默删除。
 
 ## 1. 目标与边界
@@ -394,4 +394,9 @@ Linux 的 `st_ctime` 是 **inode 状态变更时间**，不是创建时间，复
 - 源文本解析顺序：源任务目录 `original.srt` → 视频同目录 `<stem>.srt` → 都没有则 `SOURCE_SRT_MISSING`；视频文件已删除也能补翻译（任务目录可下载，写回视频旁按 warning 降级）。
 - 接口：`POST /api/subtitles/{job_id}/translate`（单任务，幂等）与 `POST /api/subtitles/batch-groups/{group_id}/translate`（服务端筛选可翻译任务，新建批次组，返回 summary 分类计数）；组快照新增 `translatable={count,partial}` 供按钮计数。
 - 重启恢复：翻译任务运行中遇重启转 `paused` 可继续（无 ASR 分片损失）；`queued` 沿用 v0034 自动重新入队。
+
+### 12.6 语言码与译文输出组合（v0036）
+
+- 语言码：后端 `LANGUAGE_RE` 接受任意 2–3 位合法语言码；设置页下拉扩展为常见 19 种，非下拉合法码由前端保留（临时补 option），不再在保存设置时被重置为 `auto`/`zh`。
+- 译文输出：`subtitle_translate_outputs`（`both`/`target_only`/`bilingual_only`）在 `_write_outputs`/`_write_alongside` 统一裁剪译文文件；`original.srt` 始终保留（补翻译源文本），已有文件不覆盖、旧文件不删除。
 
