@@ -6,8 +6,8 @@
 <meta name="color-scheme" content="light">
 <meta name="referrer" content="same-origin">
 <title>重复文件清理与字幕 · Duplicate Cleaner &amp; Subtitles</title>
-<link rel="icon" href="./assets/favicon.svg?v=1.1.0-0045" type="image/svg+xml">
-<link rel="stylesheet" href="./styles.css?v=1.1.0-0045">
+<link rel="icon" href="./assets/favicon.svg?v=1.1.0-0046" type="image/svg+xml">
+<link rel="stylesheet" href="./styles.css?v=1.1.0-0046">
 </head>
 <body>
 <a class="skip-link" href="#main">跳到主要内容</a>
@@ -1146,6 +1146,62 @@
         </div>
       </details>
 
+        <details class="advanced settings-group" id="settingsAutomationGroup">
+          <summary><span class="settings-group-title">自动化 · 计划扫描与通知</span><span class="settings-summary" id="settingsAutomationSummary"></span></summary>
+          <div class="form-grid">
+            <div class="field field-wide">
+              <label class="check"><input id="setScheduledScanEnabled" type="checkbox">启用计划扫描（后台定时执行，可安排在低负载时段）</label>
+              <label for="setScheduledScanRules">计划规则（每行一条，最多 10 条）</label>
+              <textarea id="setScheduledScanRules" rows="3" placeholder="daily 03:30&#10;weekly mon,wed,fri 04:00&#10;interval 360"></textarea>
+              <p class="field-error" id="setScheduledScanRulesError" role="alert" hidden></p>
+              <p class="hint">格式：<code>daily HH:MM</code>（每天）、<code>weekly mon,wed,fri HH:MM</code>（每周）、<code>interval 分钟</code>（最小 5 分钟）。到点时若已有扫描在跑、或 1 分钟负载超过阈值，本次跳过并记审计。</p>
+              <label for="setScheduledScanRoots">计划扫描目录（每行一个绝对路径；留空 = 复用上次完成的扫描范围）</label>
+              <textarea id="setScheduledScanRoots" rows="2" placeholder="/volume1/photo"></textarea>
+              <p class="field-error" id="setScheduledScanRootsError" role="alert" hidden></p>
+              <label for="setScheduledScanMaxLoad">负载阈值（1 分钟 loadavg，0 = 不检查）</label>
+              <input id="setScheduledScanMaxLoad" type="number" min="0" max="256" step="0.5" value="0">
+              <p class="hint" id="schedulerStatusText"></p>
+            </div>
+            <div class="field field-wide">
+              <label class="check"><input id="setNotifyEnabled" type="checkbox">启用通知（扫描完成/失败、字幕批次结束、批量失败、释放空间达阈值）</label>
+              <label>通知渠道</label>
+              <div class="check-grid">
+                <label class="check"><input id="setNotifyChannelDsm" type="checkbox">DSM 系统通知（@administrators）</label>
+                <label class="check"><input id="setNotifyChannelWebhook" type="checkbox">Webhook</label>
+                <label class="check"><input id="setNotifyChannelTelegram" type="checkbox">Telegram</label>
+              </div>
+              <p class="hint" id="notifyChannelsHint"></p>
+              <label>通知事件</label>
+              <div class="check-grid">
+                <label class="check"><input id="setNotifyEventScanComplete" type="checkbox">扫描完成</label>
+                <label class="check"><input id="setNotifyEventScanFailed" type="checkbox">扫描失败</label>
+                <label class="check"><input id="setNotifyEventSubtitleBatchDone" type="checkbox">字幕批次结束</label>
+                <label class="check"><input id="setNotifyEventFailureBurst" type="checkbox">批量失败超阈值</label>
+                <label class="check"><input id="setNotifyEventFreedThreshold" type="checkbox">释放空间达阈值</label>
+              </div>
+              <label for="setNotifyWebhookUrl">Webhook 地址（POST JSON）</label>
+              <input id="setNotifyWebhookUrl" type="text" placeholder="https://example.com/hook">
+              <p class="field-error" id="setNotifyWebhookUrlError" role="alert" hidden></p>
+              <label for="setNotifyTelegramToken">Telegram Bot Token（保存后不回显，留空表示保持原值）</label>
+              <input id="setNotifyTelegramToken" type="password" autocomplete="new-password" placeholder="123456:ABC-DEF...">
+              <label for="setNotifyTelegramChatId">Telegram chat_id</label>
+              <input id="setNotifyTelegramChatId" type="text" placeholder="-1001234567890">
+              <label for="setNotifyFailThreshold">批量失败阈值（失败任务数，默认 20）</label>
+              <input id="setNotifyFailThreshold" type="number" min="1" max="100000" value="20">
+              <label for="setNotifyFreedGb">释放空间阈值（GB，0 = 不通知）</label>
+              <input id="setNotifyFreedGb" type="number" min="0" step="0.5" value="10">
+              <label for="setNotifyTimeout">发送超时（秒，2..30）</label>
+              <input id="setNotifyTimeout" type="number" min="2" max="30" value="5">
+              <div class="setting-test-row">
+                <button type="button" class="btn btn-ghost btn-sm" id="notifyTestDsm">测试 DSM</button>
+                <button type="button" class="btn btn-ghost btn-sm" id="notifyTestWebhook">测试 Webhook</button>
+                <button type="button" class="btn btn-ghost btn-sm" id="notifyTestTelegram">测试 Telegram</button>
+                <span class="muted" id="notifyTestResult"></span>
+              </div>
+            </div>
+          </div>
+        </details>
+
         <details class="advanced settings-group" id="settingsSimilarityDetails">
           <summary><span class="settings-group-title">相似 · 内容相似默认值</span><span class="settings-summary" id="settingsSimilaritySummary"></span></summary>
           <div class="form-grid">
@@ -1626,6 +1682,6 @@
   <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.6" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M12 10.8v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="12" cy="7.6" r="1.05" fill="currentColor"/></symbol>
 </svg>
 
-<script type="module" src="./app.js?v=1.1.0-0045"></script>
+<script type="module" src="./app.js?v=1.1.0-0046"></script>
 </body>
 </html>

@@ -116,6 +116,15 @@ export var MERGE_REASON_LABEL = {
   PROTECTED: '受删除白名单保护', NOT_FOUND: '文件不存在',
   FILE_CHANGED: '文件已被修改', HASH_MISMATCH: '哈希不一致'
 };
+// v0046：通知渠道 / 事件标签（与后端 config 对应）
+export var NOTIFY_CHANNEL_LABEL = {
+  dsm: 'DSM 系统通知', webhook: 'Webhook', telegram: 'Telegram'
+};
+export var NOTIFY_EVENT_LABEL = {
+  scan_complete: '扫描完成', scan_failed: '扫描失败',
+  subtitle_batch_done: '字幕批次结束', failure_burst: '批量失败超阈值',
+  freed_threshold: '释放空间达阈值'
+};
 export var JOB_STATUS_LABEL = {
   running: '删除中', completed: '删除完成', partial: '部分成功',
   failed: '删除失败', stopped: '已停止'
@@ -290,5 +299,20 @@ export var DEFAULT_SETTINGS = {
   // v0045：硬链接合并（默认关）与删除去向（share=#recycle 默认 / package=套件回收站）
   merge_enabled: false,
   delete_recycle_mode: 'share',
+  // v0046：通知系统 / 计划扫描
+  notify_enabled: false,
+  notify_channels: ['dsm'],
+  notify_events: ['scan_complete', 'scan_failed', 'subtitle_batch_done',
+    'failure_burst', 'freed_threshold'],
+  notify_webhook_url: '',
+  notify_telegram_bot_token: '',
+  notify_telegram_chat_id: '',
+  notify_fail_threshold: 20,
+  notify_freed_bytes_threshold: 10 * 1024 * 1024 * 1024,
+  notify_timeout_sec: 5,
+  scheduled_scan_enabled: false,
+  scheduled_scan_rules: [],
+  scheduled_scan_roots: [],
+  scheduled_scan_max_load: 0,
 };
 export var SIZE_UNITS = { kb: 1024, mb: 1048576, gb: 1073741824 };

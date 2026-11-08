@@ -17,6 +17,7 @@ from __future__ import print_function
 import csv
 import hashlib
 import http.client
+import http.server
 import io
 import json
 import os
@@ -27,6 +28,7 @@ import sqlite3
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import traceback
 from urllib.parse import quote, urlencode
@@ -45,6 +47,73 @@ RISK_TEXT = (u"删除文件存在数据丢失风险，重要数据建议先备�
 RESULTS = []
 EVIDENCE = {}
 _MODULE_BTIME_SUPPORTED = True
+
+
+class WebhookReceiver(object):
+    """本地 Webhook 接收器（验证通知系统真实 POST）。"""
+
+    def __init__(self):
+        self.messages = []
+        self._lock = threading.Lock()
+        receiver = self
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_POST(self):
+                length = int(self.headers.get("Content-Length") or 0)
+                body = self.rfile.read(length) if length else b""
+                try:
+                    payload = json.loads(body.decode("utf-8"))
+                except (ValueError, UnicodeError):
+                    payload = None
+                with receiver._lock:
+                    receiver.messages.append(payload)
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(b'{"ok":true}')
+
+            def log_message(self, *args):
+                pass
+
+        self.server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+        self.thread = threading.Thread(target=self.server.serve_forever,
+                                       daemon=True)
+
+    @property
+    def url(self):
+        return "http://127.0.0.1:%d/hook" % self.server.server_port
+
+    def start(self):
+        self.thread.start()
+        return self
+
+    def stop(self):
+        try:
+            self.server.shutdown()
+            self.server.server_close()
+        except Exception:
+            pass
+
+    def wait_for(self, predicate, timeout=20.0):
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            with self._lock:
+                for item in self.messages:
+                    if isinstance(item, dict) and predicate(item):
+                        return item
+            time.sleep(0.1)
+        return None
+
+
+def _make_duplicate_dir(base, name, count, size, seed):
+    directory = os.path.join(base, name)
+    created = []
+    previous = None
+    for index in range(count):
+        path = os.path.join(directory, "%s%d.bin" % (name, index + 1))
+        previous = create_ordered(path, blob(seed, size), previous)
+        created.append(path)
+    return directory, created
 
 
 def expected_app_version():
@@ -2421,6 +2490,112 @@ def run():
               and os.path.isfile(os.path.join(trash_dir, "t3.bin")),
               "wrong=%s status=%s removed=%s"
               % (wrong_code, resp.status, removed))
+
+        # ---------------- v0046：通知系统 / 计划扫描 ----------------
+        receiver = WebhookReceiver().start()
+        try:
+            notify_dir, _notify_files = _make_duplicate_dir(
+                os.path.join(fx["share_a"], "notify"), "dupe", 2, 2048, "ntf")
+            resp = client.put_json("/api/settings", {"settings": {
+                "notify_enabled": True,
+                "notify_channels": ["webhook"],
+                "notify_events": ["scan_complete", "scan_failed",
+                                  "freed_threshold", "failure_burst"],
+                "notify_webhook_url": receiver.url,
+                "notify_timeout_sec": 5,
+            }})
+            check("NOTIFY-00", "v0046 通知设置保存（Webhook 渠道）",
+                  resp.status == 200, "status=%s" % resp.status)
+            resp = post_scan(client, [notify_dir])
+            notify_scan_id = jd(resp).get("scan_id")
+            notify_scan = (wait_scan(client, notify_scan_id)
+                           if notify_scan_id else {})
+            payload = receiver.wait_for(
+                lambda item: item.get("event") == "scan_complete"
+                and (item.get("detail") or {}).get("scan_id") == notify_scan_id,
+                timeout=25.0)
+            check("NOTIFY-01", "v0046 扫描完成自动推送 Webhook（事件/统计正确）",
+                  notify_scan.get("status") == "completed"
+                  and payload is not None
+                  and payload.get("version")
+                  and int((payload.get("detail") or {}).get("groups", 0)) >= 1,
+                  "scan=%s payload=%s"
+                  % (notify_scan.get("status"),
+                     json.dumps(payload, ensure_ascii=False)[:200]
+                     if payload else None))
+            resp = client.post_json("/api/notifications/test",
+                                    {"channel": "webhook"})
+            test_result = jd(resp).get("result") or {}
+            test_payload = receiver.wait_for(
+                lambda item: item.get("event") == "test", timeout=10.0)
+            check("NOTIFY-02", "v0046 渠道测试按钮接口真实发送",
+                  resp.status == 200 and test_result.get("ok") is True
+                  and test_payload is not None,
+                  "status=%s result=%s"
+                  % (resp.status, json.dumps(test_result, ensure_ascii=False)))
+            resp = client.get("/api/notifications")
+            notify_status = jd(resp).get("notify") or {}
+            channels = {item.get("channel"): item
+                        for item in (notify_status.get("channels") or [])}
+            check("NOTIFY-03", "v0046 /api/notifications 返回渠道可用性且不含密钥",
+                  resp.status == 200
+                  and "webhook" in channels and channels["webhook"].get("configured")
+                  and "telegram" in channels
+                  and "bot_token" not in json.dumps(notify_status).lower(),
+                  "status=%s" % resp.status)
+
+            resp = client.put_json("/api/settings", {"settings": {
+                "scheduled_scan_enabled": True,
+                "scheduled_scan_rules": ["daily 03:30", "interval 360"],
+                "scheduled_scan_roots": [notify_dir],
+                "scheduled_scan_max_load": 0,
+            }})
+            check("SCHED-00", "v0046 计划扫描设置保存",
+                  resp.status == 200, "status=%s" % resp.status)
+            resp = client.get("/api/scheduler")
+            sched = jd(resp).get("scheduler") or {}
+            check("SCHED-01", "v0046 /api/scheduler 返回到点计划与负载状态",
+                  resp.status == 200 and sched.get("enabled") is True
+                  and len(sched.get("rules") or []) == 2
+                  and all(item.get("next_run") for item in sched.get("rules") or [])
+                  and "current_load" in sched,
+                  "status=%s enabled=%s rules=%s"
+                  % (resp.status, sched.get("enabled"),
+                     len(sched.get("rules") or [])))
+            resp = client.post_json("/api/scheduler/run-now", {})
+            run_result = jd(resp).get("result") or {}
+            run_scan_id = run_result.get("scan_id")
+            run_scan = (wait_scan(client, run_scan_id)
+                        if run_scan_id else {})
+            resp = client.get("/api/scheduler")
+            sched_after = jd(resp).get("scheduler") or {}
+            check("SCHED-02", "v0046 立即执行计划扫描并记录 last_scan_id",
+                  run_result.get("ok") is True
+                  and run_scan.get("status") == "completed"
+                  and sched_after.get("last_scan_id") == run_scan_id,
+                  "result=%s scan=%s last=%s"
+                  % (json.dumps(run_result, ensure_ascii=False),
+                     run_scan.get("status"), sched_after.get("last_scan_id")))
+            resp = client.put_json("/api/settings", {"settings": {
+                "scheduled_scan_rules": ["every day 3am"]}})
+            bad_code, _details = err_code(resp)
+            check("SCHED-03", "v0046 非法计划规则被拒绝（INVALID_ARGUMENT）",
+                  resp.status == 400 and bad_code == "INVALID_ARGUMENT",
+                  "status=%s code=%s" % (resp.status, bad_code))
+            # 目录为空时复用上次完成扫描范围
+            client.put_json("/api/settings", {"settings": {
+                "scheduled_scan_roots": []}})
+            resp = client.post_json("/api/scheduler/run-now", {})
+            reuse_result = jd(resp).get("result") or {}
+            reuse_scan = (wait_scan(client, reuse_result.get("scan_id"))
+                          if reuse_result.get("scan_id") else {})
+            check("SCHED-04", "v0046 计划扫描目录为空时复用上次扫描范围",
+                  reuse_result.get("ok") is True
+                  and reuse_result.get("roots")
+                  and reuse_scan.get("status") == "completed",
+                  "result=%s" % json.dumps(reuse_result, ensure_ascii=False))
+        finally:
+            receiver.stop()
 
         # ---------------- 重启持久化 ----------------
         client.put_json("/api/settings", {"settings": {"concurrency": 3}})

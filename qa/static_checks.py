@@ -209,7 +209,9 @@ def check_backend():
                        "/api/preview/thumbs",
                        # v0045：硬链接合并 / 套件回收站
                        "/merge-plan", "/merge/", "/api/merges",
-                       "/api/trash"]
+                       "/api/trash",
+                       # v0046：通知 / 计划扫描
+                       "/api/notifications", "/api/scheduler"]
     missing = []
     for marker in expected_routes:
         if marker.startswith("/api/"):
@@ -622,6 +624,44 @@ def check_backend():
           and "protector.check(" in deletion_src
           and "protected_skipped" in deletion_src,
           "protection markers missing")
+
+    # ---- v0046：通知系统 / 计划扫描 ----
+    notify_path = os.path.join(backend, "dupcleaner", "notifications.py")
+    notify_src = read(notify_path) if os.path.isfile(notify_path) else ""
+    scheduler_path = os.path.join(backend, "dupcleaner", "scheduler.py")
+    scheduler_src = read(scheduler_path) if os.path.isfile(scheduler_path) else ""
+    services_src = read(os.path.join(backend, "dupcleaner", "services.py"))
+    check("BE-NOTIFY",
+          "通知系统：DSM/Webhook/Telegram + 扫描/删除/字幕批次事件 + 密钥不回显（v0046）",
+          os.path.isfile(notify_path)
+          and "class NotificationService" in notify_src
+          and "def scan_finished(" in notify_src
+          and "def deletion_finished(" in notify_src
+          and "def subtitle_batch_finished(" in notify_src
+          and "def test_channel(" in notify_src
+          and "DSM_NOTIFY_PATH" in conf_src
+          and "NOTIFY_CHANNELS" in conf_src
+          and "notify_telegram_bot_token" in settings_src
+          and "notifier=notification_service" in services_src
+          and "notification_service" in services_src
+          and "self.notifier.scan_finished" in scanner_src
+          and "self.notifier.deletion_finished" in deletion_src,
+          "notification markers missing")
+    check("BE-SCHEDULER",
+          "计划扫描：规则解析 + 到点触发 + 负载/忙碌跳过 + 状态持久化 + 字幕批次通知 watcher（v0046）",
+          os.path.isfile(scheduler_path)
+          and "class SchedulerService" in scheduler_src
+          and "def parse_rule(" in scheduler_src
+          and "def next_run_epoch(" in scheduler_src
+          and "def run_now(" in scheduler_src
+          and "def _watch_subtitle_groups(" in scheduler_src
+          and "SCHEDULE_MIN_INTERVAL_SEC" in conf_src
+          and "scheduled_scan_rules" in settings_src
+          and "schedule_state" in scheduler_src.lower()
+          and "scheduler_service.start()" in services_src
+          and "def _scheduler" in http_src
+          and "def _scheduler_run_now" in http_src,
+          "scheduler markers missing")
 
     # ---- v0045：硬链接合并 + 套件独立回收站 ----
     merge_path = os.path.join(backend, "dupcleaner", "merge.py")
@@ -1080,6 +1120,28 @@ def check_frontend():
           and "MERGE_REASON_LABEL" in app
           and "trash-card" in read(os.path.join(web, "styles.css")),
           "trash ui markers missing")
+    check("FE-AUTOMATION-UI",
+          "设置页「自动化」：计划规则/负载阈值 + 通知渠道/事件/阈值 + 渠道测试按钮（v0046）",
+          "setScheduledScanEnabled" in html
+          and "setScheduledScanRules" in html
+          and "setScheduledScanRoots" in html
+          and "setScheduledScanMaxLoad" in html
+          and "setNotifyEnabled" in html
+          and "setNotifyChannelWebhook" in html
+          and "setNotifyChannelTelegram" in html
+          and "setNotifyEventScanComplete" in html
+          and "setNotifyEventFreedThreshold" in html
+          and "setNotifyWebhookUrl" in html
+          and "setNotifyTelegramToken" in html
+          and "notifyTestWebhook" in html
+          and "function readAutomationSettings" in app
+          and "function fillAutomationSettings" in app
+          and "function loadAutomationStatus" in app
+          and "function testNotifyChannel" in app
+          and "/api/scheduler" in app
+          and "/api/notifications/test" in app
+          and "check-grid" in read(os.path.join(web, "styles.css")),
+          "automation ui markers missing")
 
     check("FE-RISK-TEXT", "风险提示文案与契约逐字一致（index.html）",
           RISK_TEXT in html, "risk text not found verbatim")
@@ -1123,6 +1185,8 @@ def check_frontend():
         ("/api/preview/media", "预览媒体信息"),
         ("/api/trash", "套件回收站"),
         ("/api/merges", "合并记录"),
+        ("/api/notifications", "通知系统"),
+        ("/api/scheduler", "计划扫描"),
     ]
     missing = [name for marker, name in endpoints if marker not in app]
     check("FE-ENDPOINTS", "前端覆盖契约全部 API 端点",

@@ -1,7 +1,7 @@
 # 实现契约（前后端共享，版本 1.0）
 
 > 本文件是前后端并行开发的唯一接口约定。任何一方需要改动字段，先改本文件并在团队任务中说明。
-> 产品名：**DuplicateCleaner**；显示名：**重复文件清理与字幕**；SPK 版本：**1.1.0-0045**。
+> 产品名：**DuplicateCleaner**；显示名：**重复文件清理与字幕**；SPK 版本：**1.1.0-0046**。
 > v1.1 新增内容相似度模式；相似模式字段与行为见 [SIMILARITY_CONTRACT.md](SIMILARITY_CONTRACT.md)，**精准模式规则不变**。
 
 ## 1. 仓库与写入边界
@@ -154,7 +154,7 @@ v0042 增量（升级启动稳定性）：
 ### GET /api/meta
 ```json
 {
- "app_version": "1.1.0-0045",
+ "app_version": "1.1.0-0046",
  "dsm_version": "7.2.2-72806" | "dev",
  "python_version": "3.8.16",
  "creation_time_supported": true,
@@ -270,6 +270,26 @@ v0042 增量（升级启动稳定性）：
 |---|---|---|---|
 | merge_enabled | bool | **false** | 硬链接合并总开关（不可逆操作，默认关闭；开启后仍需逐组确认 + `confirm="MERGE"`） |
 | delete_recycle_mode | "share"\|"package" | "share" | 删除去向：共享文件夹 `#recycle` / 套件独立回收站（`#duplicate-cleaner-trash`，可整组恢复） |
+
+### v0046 新增设置键（通知 / 计划扫描）
+
+> 详细语义见 [NOTIFICATION_SCHEDULE_CONTRACT.md](NOTIFICATION_SCHEDULE_CONTRACT.md)。
+
+| key | 类型 | 默认 | 说明 |
+|---|---|---|---|
+| notify_enabled | bool | false | 通知总开关 |
+| notify_channels | `dsm`\|`webhook`\|`telegram` 数组 | `["dsm"]` | 通知渠道 |
+| notify_events | 事件数组 | 全部 | `scan_complete`/`scan_failed`/`subtitle_batch_done`/`failure_burst`/`freed_threshold` |
+| notify_webhook_url | string | "" | http(s) Webhook（POST JSON） |
+| notify_telegram_bot_token | secret | "" | Telegram Bot Token（不回显；`clear_telegram_bot_token=true` 清空） |
+| notify_telegram_chat_id | string | "" | Telegram chat_id |
+| notify_fail_threshold | int | 20 | 批量失败阈值 |
+| notify_freed_bytes_threshold | int | 10 GiB | 释放空间通知阈值（字节，0=不通知） |
+| notify_timeout_sec | int | 5 | 单渠道发送超时（2..30） |
+| scheduled_scan_enabled | bool | false | 计划扫描总开关 |
+| scheduled_scan_rules | string[] | [] | `daily HH:MM` / `weekly mon,wed HH:MM` / `interval MIN`，最多 10 条 |
+| scheduled_scan_roots | string[] | [] | 绝对路径；空=复用上次完成扫描的 roots |
+| scheduled_scan_max_load | float | 0 | 1 分钟负载阈值；0=不检查 |
 
 ## 7. 扫描
 
@@ -473,6 +493,18 @@ Content-Disposition: attachment; filename="duplicate-scan-<id>.csv"
   `{removed, failed, bytes_freed, summary}`；只删 manifest 记录且位于
   `<share>/#duplicate-cleaner-trash/` 下的文件。
 
+### v0046 通知 / 计划扫描接口
+
+- `GET /api/notifications` → `{notify:{enabled,channels:[{channel,label,available,configured,detail}],
+  subscribed_channels, events, event_labels, fail_threshold, freed_bytes_threshold, timeout_sec}}`
+  （不含任何密钥/完整 Webhook URL）。
+- `POST /api/notifications/test` `{channel:"dsm"|"webhook"|"telegram"}` →
+  `{result:{channel, ok, detail}}`（同步发送测试消息；失败也返回 200 + ok:false）。
+- `GET /api/scheduler` → `{scheduler:{enabled, rules:[{rule,kind,last_run,next_run,next_run_epoch}],
+  roots, max_load, current_load, last_run, last_scan_id, last_status, last_message}}`。
+- `POST /api/scheduler/run-now` → 202 `{ok:true, result:{scan_id, roots}}`；
+  跳过时 200 `{ok:false, result:{reason:"busy"|"load"|"no_roots", message}}`。
+
 ### GET /api/logs?limit=50
 ```json
 {"ok":true,"logs":[{"name":"scan-20261101-....log","kind":"scan","size":1234,
@@ -521,6 +553,9 @@ Content-Disposition: attachment; filename="duplicate-scan-<id>.csv"
 - v0045：硬链接合并只对精准重复组、同文件系统、扫描记录一致且执行时重校验（含全量哈希）的文件生效；
   合并后同一 inode 被多路径共享，内容修改会互相影响（可“恢复为独立副本”撤销共享）；
   套件回收站恢复只使用 manifest 记录路径且不覆盖已存在文件，清理只删回收站目录内文件。
+- v0046：通知发送在后台队列中执行，失败只记审计、不影响主流程；Telegram token 与 Webhook
+  完整 URL 不写日志/审计/响应。计划扫描以 `user="scheduler"` 在后台运行，仍走同一套路径安全校验；
+  负载超阈值/已有扫描/无目录时跳过本次并记审计。
 - 回收站移动目标：`<共享文件夹根>/#recycle/@duplicate-cleaner/<YYYYMMDD-HHMMSS>/<相对路径>`，
   同名冲突加 `.dup-<n>` 后缀；跨文件系统时禁止 move，改为失败报告。
 - 审计日志必须持久化，包含扫描开始/结束、计划、逐文件删除结果。
@@ -546,4 +581,4 @@ Content-Disposition: attachment; filename="duplicate-scan-<id>.csv"
 - 后端 unittest 覆盖：statx 时间读取降级、哈希分片/限速、重复分组与三种保留策略、
   路径黑名单、删除前重校验、回收站路径生成、CSV、API 鉴权。
 - 前端可用静态检查 + 本地 dev 后端联调；QA 用 dev 模式在临时目录生成重复文件跑完整 API 流程。
-- 打包产物 `dist/DuplicateCleaner-1.1.0-0045.spk` 必须能通过 `tar -tf` 检查，包含 INFO/package.tgz/scripts/conf/ui。
+- 打包产物 `dist/DuplicateCleaner-1.1.0-0046.spk` 必须能通过 `tar -tf` 检查，包含 INFO/package.tgz/scripts/conf/ui。

@@ -1,7 +1,7 @@
 {
-  "generated_at": "2026-11-08T21:16:11+0800",
+  "generated_at": "2026-11-08T21:32:51+0800",
   "summary": {
-    "PASS": 186,
+    "PASS": 189,
     "FAIL": 0,
     "UNVERIFIED": 0
   },
@@ -28,7 +28,7 @@
       "id": "BE-FILE-COUNT",
       "name": "后端 Python 文件数",
       "status": "INFO",
-      "detail": "61"
+      "detail": "65"
     },
     {
       "id": "BE-SRC-HYGIENE",
@@ -52,7 +52,7 @@
       "id": "BE-UNITTEST-LOG",
       "name": "unittest 结果",
       "status": "INFO",
-      "detail": "Ran 566 tests in 168.997s"
+      "detail": "Ran 601 tests in 128.588s"
     },
     {
       "id": "BE-NO-AUTODELETE",
@@ -337,6 +337,18 @@
       "detail": ""
     },
     {
+      "id": "BE-NOTIFY",
+      "name": "通知系统：DSM/Webhook/Telegram + 扫描/删除/字幕批次事件 + 密钥不回显（v0046）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "BE-SCHEDULER",
+      "name": "计划扫描：规则解析 + 到点触发 + 负载/忙碌跳过 + 状态持久化 + 字幕批次通知 watcher（v0046）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
       "id": "BE-MERGE",
       "name": "硬链接合并：独立计划 + confirm=MERGE + 全量重校验 + link/rename 原子替换 + manifest 与独立副本恢复（v0045）",
       "status": "PASS",
@@ -609,6 +621,12 @@
     {
       "id": "FE-TRASH-UI",
       "name": "任务中心「回收站与合并」：套件回收站整组恢复/清理 + 合并记录（v0045）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "FE-AUTOMATION-UI",
+      "name": "设置页「自动化」：计划规则/负载阈值 + 通知渠道/事件/阈值 + 渠道测试按钮（v0046）",
       "status": "PASS",
       "detail": ""
     },
@@ -1028,7 +1046,7 @@
     },
     {
       "id": "SPK-DIST",
-      "name": "构建产物存在（DuplicateCleaner-1.1.0-0045.spk）",
+      "name": "构建产物存在（DuplicateCleaner-1.1.0-0046.spk）",
       "status": "PASS",
       "detail": ""
     },
@@ -1040,7 +1058,7 @@
     },
     {
       "id": "SPK-VERSION",
-      "name": "SPK INFO.version 与当前源码 APP_VERSION（1.1.0-0045）一致",
+      "name": "SPK INFO.version 与当前源码 APP_VERSION（1.1.0-0046）一致",
       "status": "PASS",
       "detail": ""
     },

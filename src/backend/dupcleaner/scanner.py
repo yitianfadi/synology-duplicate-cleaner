@@ -558,11 +558,13 @@ class ScanState(object):
 class ScanManager(object):
     def __init__(self, runtime_config, store, share_service, settings_manager,
                  time_reader=None, executor_factory=None,
-                 video_engine_factory=None):
+                 video_engine_factory=None, notifier=None):
         self.config = runtime_config
         self.store = store
         self.shares = share_service
         self.settings = settings_manager
+        # v0046：扫描完成/失败通知（None 时静默，测试可注入 fake）
+        self.notifier = notifier
         self._time_reader = time_reader or timeutil.read_creation_time
         self._executor_factory = executor_factory or (
             lambda workers: concurrent.futures.ThreadPoolExecutor(max_workers=workers))
@@ -1629,7 +1631,14 @@ class ScanManager(object):
                 },
             })
         except Exception:
-            pass
+            snapshot = None
+        # v0046：扫描完成/失败通知（异步入队，失败不影响收尾）
+        if snapshot is not None and action in ("scan_end", "scan_failed"):
+            try:
+                if self.notifier is not None:
+                    self.notifier.scan_finished(snapshot)
+            except Exception:
+                logger.warning(u"发送扫描通知失败", exc_info=True)
 
     def _write_log_finish(self, state):
         try:

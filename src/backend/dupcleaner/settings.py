@@ -7,6 +7,7 @@ import copy
 import os
 import re
 import threading
+import urllib.parse
 
 from . import config
 from .errors import ApiError
@@ -119,10 +120,25 @@ DEFAULT_SETTINGS = {
     # 删除后的去向：share=共享文件夹 #recycle（默认，DSM 回收站可见）；
     # package=套件独立回收站（同卷 rename，可在任务中心整组恢复/清理）。
     "delete_recycle_mode": config.RECYCLE_MODE_DEFAULT,
+    # --- v0046 通知系统 / 计划扫描（docs/NOTIFICATION_SCHEDULE_CONTRACT.md）---
+    "notify_enabled": False,
+    "notify_channels": ["dsm"],
+    "notify_events": list(config.NOTIFY_EVENTS),
+    "notify_webhook_url": "",
+    "notify_telegram_bot_token": "",
+    "notify_telegram_chat_id": "",
+    "notify_fail_threshold": config.NOTIFY_FAIL_THRESHOLD_DEFAULT,
+    "notify_freed_bytes_threshold": config.NOTIFY_FREED_THRESHOLD_DEFAULT,
+    "notify_timeout_sec": config.NOTIFY_TIMEOUT_DEFAULT,
+    "scheduled_scan_enabled": False,
+    "scheduled_scan_rules": [],
+    "scheduled_scan_roots": [],
+    "scheduled_scan_max_load": 0.0,
 }
 
 # 密钥键：GET/日志/审计/扫描结果中绝不允许出现明文
-SECRET_SETTING_KEYS = ("subtitle_asr_api_key", "subtitle_llm_api_key")
+SECRET_SETTING_KEYS = ("subtitle_asr_api_key", "subtitle_llm_api_key",
+                       "notify_telegram_bot_token")
 # 清空密钥的控制标记（PUT 时允许从 settings 或顶层同时传入）
 CLEAR_SECRET_ALIASES = {
     "subtitle_clear_asr_api_key": "subtitle_asr_api_key",
@@ -131,6 +147,9 @@ CLEAR_SECRET_ALIASES = {
     "subtitle_clear_llm_api_key": "subtitle_llm_api_key",
     "subtitle_llm_api_key_clear": "subtitle_llm_api_key",
     "clear_llm_api_key": "subtitle_llm_api_key",
+    "notify_clear_telegram_bot_token": "notify_telegram_bot_token",
+    "notify_telegram_bot_token_clear": "notify_telegram_bot_token",
+    "clear_telegram_bot_token": "notify_telegram_bot_token",
 }
 
 SETTINGS_KEYS = tuple(DEFAULT_SETTINGS)
@@ -226,6 +245,41 @@ def _check_exclude_patterns(key, value, is_regex):
             _err(u"设置 %s 第 %d 条包含非法字符" % (key, index + 1), {"key": key})
         out.append(pattern)
     return out
+
+
+def _check_choice_list(key, value, allowed, max_items=20):
+    """枚举字符串数组（渠道/事件等）。"""
+    if not isinstance(value, list):
+        _err(u"设置 %s 必须是字符串数组" % key, {"key": key})
+    if len(value) > max_items:
+        _err(u"设置 %s 最多 %d 项" % (key, max_items), {"key": key})
+    out = []
+    for item in value:
+        if not isinstance(item, str):
+            _err(u"设置 %s 的元素必须是字符串" % key, {"key": key})
+        text = item.strip()
+        if not text:
+            continue
+        if text not in allowed:
+            _err(u"设置 %s 含不支持的值: %s" % (key, text),
+                 {"key": key, "allowed": list(allowed)})
+        if text not in out:
+            out.append(text)
+    return out
+
+
+def _check_http_url(key, value):
+    """Webhook 地址：允许留空；只接受 http/https 且必须有 host。"""
+    text = _check_str(key, value, max_len=2048).strip()
+    if not text:
+        return ""
+    try:
+        parsed = urllib.parse.urlsplit(text)
+    except ValueError:
+        _err(u"设置 %s 不是合法 URL" % key, {"key": key})
+    if parsed.scheme not in ("http", "https") or not parsed.hostname:
+        _err(u"设置 %s 必须是 http(s) URL" % key, {"key": key})
+    return text
 
 
 def _check_path_list(key, value, max_items=200, max_len=1024):
@@ -545,6 +599,53 @@ def _normalize_value(key, value):
         if value not in config.RECYCLE_MODES:
             _err(u"delete_recycle_mode 只能是 share/package", {"key": key})
         return value
+    # --- v0046 通知系统 / 计划扫描 ---
+    if key == "notify_enabled":
+        return _check_bool(key, value)
+    if key == "notify_channels":
+        return _check_choice_list(key, value, config.NOTIFY_CHANNELS,
+                                  config.NOTIFY_QUEUE_MAX)
+    if key == "notify_events":
+        return _check_choice_list(key, value, config.NOTIFY_EVENTS)
+    if key == "notify_webhook_url":
+        return _check_http_url(key, value)
+    if key in ("notify_telegram_bot_token", "notify_telegram_chat_id"):
+        return _check_str(key, value, max_len=4096).strip()
+    if key == "notify_fail_threshold":
+        return _check_int(key, value, 1, 100000)
+    if key == "notify_freed_bytes_threshold":
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
+            _err(u"设置 %s 必须是数字（字节）" % key, {"key": key})
+        if value < 0 or value > 2 ** 60:
+            _err(u"设置 %s 超出范围" % key, {"key": key})
+        return int(value)
+    if key == "notify_timeout_sec":
+        return _check_int(key, value, 2, 30)
+    if key == "scheduled_scan_enabled":
+        return _check_bool(key, value)
+    if key == "scheduled_scan_rules":
+        from . import scheduler as scheduler_module
+        if not isinstance(value, list):
+            _err(u"设置 %s 必须是字符串数组" % key, {"key": key})
+        if len(value) > config.SCHEDULE_RULES_MAX:
+            _err(u"计划扫描规则最多 %d 条" % config.SCHEDULE_RULES_MAX,
+                 {"key": key})
+        out = []
+        for index, item in enumerate(value):
+            text = _check_str(key, item, max_len=config.SCHEDULE_RULE_MAX_LEN).strip()
+            if not text:
+                continue
+            try:
+                scheduler_module.parse_rule(text)
+            except scheduler_module.ScheduleRuleError as exc:
+                _err(u"第 %d 条规则无法解析：%s" % (index + 1, exc),
+                     {"key": key, "index": index})
+            out.append(text)
+        return out
+    if key == "scheduled_scan_roots":
+        return _check_path_list(key, value)
+    if key == "scheduled_scan_max_load":
+        return _check_float(key, value, 0.0, 256.0)
     if key == "skip_symlinks":
         # 无论前端传什么，符号链接一律跳过（安全强制）
         if not isinstance(value, bool):

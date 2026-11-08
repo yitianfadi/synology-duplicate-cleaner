@@ -7,9 +7,9 @@ import os
 import re
 
 APP_NAME = "DuplicateCleaner"
-APP_VERSION = "1.1.0-0045"
+APP_VERSION = "1.1.0-0046"
 DISPLAY_NAME = "重复文件清理与字幕"
-SPK_VERSION = "1.1.0-0045"
+SPK_VERSION = "1.1.0-0046"
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8787
@@ -162,6 +162,37 @@ RECYCLE_MODE_LABELS = {
     "share": u"共享文件夹回收站（#recycle）",
     "package": u"套件独立回收站（可整组恢复）",
 }
+
+# ---------------------------------------------------------------------------
+# 通知系统 / 计划扫描（v0046，docs/NOTIFICATION_SCHEDULE_CONTRACT.md）
+# ---------------------------------------------------------------------------
+NOTIFY_CHANNELS = ("dsm", "webhook", "telegram")
+NOTIFY_EVENTS = ("scan_complete", "scan_failed", "subtitle_batch_done",
+                 "failure_burst", "freed_threshold")
+NOTIFY_EVENT_LABELS = {
+    "scan_complete": u"扫描完成",
+    "scan_failed": u"扫描失败",
+    "subtitle_batch_done": u"字幕批次结束",
+    "failure_burst": u"批量失败超阈值",
+    "freed_threshold": u"释放空间达阈值",
+}
+DSM_NOTIFY_PATH = "/usr/syno/bin/synodsmnotify"
+NOTIFY_TIMEOUT_DEFAULT = 5
+NOTIFY_FAIL_THRESHOLD_DEFAULT = 20
+NOTIFY_FREED_THRESHOLD_DEFAULT = 10 * 1024 * 1024 * 1024  # 10 GiB
+NOTIFY_QUEUE_MAX = 200
+
+SCHEDULE_RULES_MAX = 10
+SCHEDULE_RULE_MAX_LEN = 120
+SCHEDULE_MIN_INTERVAL_SEC = 300
+SCHEDULE_TICK_SEC = 20
+SCHEDULE_STATE_FILE = "scheduler_state.json"
+SCHEDULE_WEEKDAY_ALIASES = {
+    "mon": 0, "tue": 1, "wed": 2, "thu": 3, "fri": 4, "sat": 5, "sun": 6,
+    "1": 0, "2": 1, "3": 2, "4": 3, "5": 4, "6": 5, "7": 6,
+}
+SCHEDULE_NOTIFY_STATE_FILE = "notify_state.json"
+NOTIFY_WATCH_SEC = 60
 
 # ---------------------------------------------------------------------------
 # 内容相似度模式常量（docs/SIMILARITY_CONTRACT.md）

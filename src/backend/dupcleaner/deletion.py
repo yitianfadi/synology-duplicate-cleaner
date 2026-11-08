@@ -303,13 +303,15 @@ class DeleteJobState(object):
 
 class DeletionManager(object):
     def __init__(self, runtime_config, store, share_service, scan_manager,
-                 settings_manager, hash_verifier=None, trash_manager=None):
+                 settings_manager, hash_verifier=None, trash_manager=None,
+                 notifier=None):
         self.config = runtime_config
         self.store = store
         self.shares = share_service
         self.scanner = scan_manager
         self.settings = settings_manager
         self.trash = trash_manager
+        self.notifier = notifier
         self._hash_verifier = hash_verifier or _fresh_hash
         self._lock = threading.RLock()
         self._plans = {}
@@ -944,6 +946,12 @@ class DeletionManager(object):
             with job.lock:
                 job.status = final_status
             self._persist_job(job, force=True)
+            # v0046：释放空间/大量失败通知（异步入队，失败不影响任务收尾）
+            try:
+                if self.notifier is not None:
+                    self.notifier.deletion_finished(job.snapshot())
+            except Exception:
+                logger.warning(u"发送删除通知失败", exc_info=True)
         except Exception as exc:  # pragma: no cover
             flush_deleted()
             self._record_trash(job, trash_entries)

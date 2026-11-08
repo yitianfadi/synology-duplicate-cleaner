@@ -1,9 +1,9 @@
 {
-  "generated_at": "2026-11-08T21:10:06+0800",
+  "generated_at": "2026-11-08T21:30:32+0800",
   "python": "3.12.9 | packaged by Anaconda, Inc. | (main, Feb  6 2025, 18:49:16) [MSC v.1929 64 bit (AMD64)]",
   "repo": "D:\\code\\zhouyi\\qunhui\\synology-duplicate-cleaner",
   "summary": {
-    "PASS": 182,
+    "PASS": 191,
     "FAIL": 0,
     "UNVERIFIED": 1
   },
@@ -11,11 +11,11 @@
     "fixture_files": 46,
     "python": "3.12.9",
     "birthtime_supported": true,
-    "backend_port": 4251,
+    "backend_port": 13061,
     "csrf_token_len": 43,
     "meta": {
       "ok": true,
-      "app_version": "1.1.0-0045",
+      "app_version": "1.1.0-0046",
       "dsm_version": "dev",
       "python_version": "3.12.9",
       "creation_time_supported": true,
@@ -144,8 +144,30 @@
         "protect_sidecar_files": true,
         "merge_enabled": false,
         "delete_recycle_mode": "share",
+        "notify_enabled": false,
+        "notify_channels": [
+          "dsm"
+        ],
+        "notify_events": [
+          "scan_complete",
+          "scan_failed",
+          "subtitle_batch_done",
+          "failure_burst",
+          "freed_threshold"
+        ],
+        "notify_webhook_url": "",
+        "notify_telegram_bot_token": "",
+        "notify_telegram_chat_id": "",
+        "notify_fail_threshold": 20,
+        "notify_freed_bytes_threshold": 10737418240,
+        "notify_timeout_sec": 5,
+        "scheduled_scan_enabled": false,
+        "scheduled_scan_rules": [],
+        "scheduled_scan_roots": [],
+        "scheduled_scan_max_load": 0.0,
         "subtitle_asr_api_key_set": false,
-        "subtitle_llm_api_key_set": false
+        "subtitle_llm_api_key_set": false,
+        "notify_telegram_bot_token_set": false
       },
       "limits": {
         "max_files": 500000,
@@ -428,6 +450,33 @@
         },
         "trash_dir_name": "#duplicate-cleaner-trash"
       },
+      "notify": {
+        "enabled": false,
+        "channels": [
+          "dsm",
+          "webhook",
+          "telegram"
+        ],
+        "events": [
+          "scan_complete",
+          "scan_failed",
+          "subtitle_batch_done",
+          "failure_burst",
+          "freed_threshold"
+        ],
+        "event_labels": {
+          "scan_complete": "扫描完成",
+          "scan_failed": "扫描失败",
+          "subtitle_batch_done": "字幕批次结束",
+          "failure_burst": "批量失败超阈值",
+          "freed_threshold": "释放空间达阈值"
+        }
+      },
+      "scheduler": {
+        "tick_sec": 20,
+        "min_interval_sec": 300,
+        "rules_max": 10
+      },
       "subtitle": {
         "supported": true,
         "batch_max_items": 500,
@@ -446,7 +495,7 @@
       }
     },
     "subtitle_enumerate_count": 0,
-    "main_scan_id": "20261108-210959-ab413c",
+    "main_scan_id": "20261108-213024-87dc54",
     "main_scan_final": "completed",
     "main_stats": {
       "files_seen": 38,
@@ -460,7 +509,7 @@
       "selectable_duplicate_files": 15,
       "selectable_reclaimable_bytes": 4403200,
       "bytes_hashed": 8753152,
-      "bytes_per_sec": 286641894,
+      "bytes_per_sec": 350271723,
       "errors": 0,
       "skipped": {
         "symlink": 0,
@@ -536,13 +585,13 @@
     },
     "main_groups_total": 12,
     "recycle_plan": {
-      "plan_id": "plan-ad2c1fd58cb9c69d",
+      "plan_id": "plan-0c6499cc9729e582",
       "count": 2,
       "bytes": 40960,
       "groups_affected": 1
     },
     "recycle_job": {
-      "job_id": "del-20261108-210959-10cd80",
+      "job_id": "del-20261108-213025-4f3b74",
       "status": "completed",
       "done": 2,
       "failed": 0,
@@ -1058,7 +1107,7 @@
       "id": "SKIP-04",
       "name": "符号链接跳过（当前环境无法创建 symlink）",
       "status": "UNVERIFIED",
-      "detail": "os.symlink failed: [WinError 1314] 客户端没有所需的特权。: 'C:\\\\Users\\\\zhouyi\\\\AppData\\\\Local\\\\Temp\\\\dupqa-u3zrkkas\\\\qa-share-a\\\\dup' -> 'C:\\\\Users\\\\zhouyi\\\\AppData\\\\Local\\\\Temp\\\\dupqa-u3zrkkas\\\\qa-share-a\\\\link_to_dup'"
+      "detail": "os.symlink failed: [WinError 1314] 客户端没有所需的特权。: 'C:\\\\Users\\\\zhouyi\\\\AppData\\\\Local\\\\Temp\\\\dupqa-6dgb057l\\\\qa-share-a\\\\dup' -> 'C:\\\\Users\\\\zhouyi\\\\AppData\\\\Local\\\\Temp\\\\dupqa-6dgb057l\\\\qa-share-a\\\\link_to_dup'"
     },
     {
       "id": "HARDLINK-01",
@@ -1609,6 +1658,60 @@
     {
       "id": "TRASH-03",
       "name": "v0045 清理回收站需“永久删除”短语且成功删除",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "NOTIFY-00",
+      "name": "v0046 通知设置保存（Webhook 渠道）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "NOTIFY-01",
+      "name": "v0046 扫描完成自动推送 Webhook（事件/统计正确）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "NOTIFY-02",
+      "name": "v0046 渠道测试按钮接口真实发送",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "NOTIFY-03",
+      "name": "v0046 /api/notifications 返回渠道可用性且不含密钥",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SCHED-00",
+      "name": "v0046 计划扫描设置保存",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SCHED-01",
+      "name": "v0046 /api/scheduler 返回到点计划与负载状态",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SCHED-02",
+      "name": "v0046 立即执行计划扫描并记录 last_scan_id",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SCHED-03",
+      "name": "v0046 非法计划规则被拒绝（INVALID_ARGUMENT）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SCHED-04",
+      "name": "v0046 计划扫描目录为空时复用上次扫描范围",
       "status": "PASS",
       "detail": ""
     },

@@ -2460,3 +2460,24 @@ input[type="checkbox"]:disabled { cursor: not-allowed; }
 }
 .trash-detail-path { font-family: var(--mono, monospace); overflow-wrap: anywhere; }
 .group-merge-btn { margin-top: 6px; }
+
+/* ==========================================================================
+   v0046：计划扫描 / 通知设置
+   ========================================================================== */
+.check-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+  margin: 4px 0 8px;
+}
+.setting-test-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--border);
+}
+.setting-test-row .muted { font-size: 12px; }
+#schedulerStatusText:empty, #notifyChannelsHint:empty { display: none; }

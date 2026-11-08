@@ -8,8 +8,10 @@ from .auth import AuthManager
 from .browse import BrowseService
 from .deletion import DeletionManager
 from .merge import MergeManager
+from .notifications import NotificationService
 from .preview import PreviewService
 from .scanner import ScanManager
+from .scheduler import SchedulerService
 from .settings import SettingsManager
 from .shares import ShareService
 from .store import Store
@@ -24,7 +26,8 @@ class Services(object):
                  share_service, browse_service, preview_service, scan_manager,
                  deletion_manager, subtitle_service=None,
                  upgrade_monitor=None, thumbnail_service=None,
-                 merge_manager=None, trash_manager=None):
+                 merge_manager=None, trash_manager=None,
+                 notification_service=None, scheduler_service=None):
         self.config = runtime_config
         self.store = store
         self.settings = settings_manager
@@ -39,6 +42,8 @@ class Services(object):
         self.thumbnails = thumbnail_service
         self.merges = merge_manager
         self.trash = trash_manager
+        self.notify = notification_service
+        self.scheduler = scheduler_service
 
     def shutdown(self, timeout=5.0):
         # 先停升级 drain 监视，避免正常退出时又把扫描暂停。
@@ -65,6 +70,16 @@ class Services(object):
                 self.subtitles.shutdown(timeout=timeout)
         except Exception:
             pass
+        try:
+            if self.scheduler is not None:
+                self.scheduler.stop(timeout=timeout)
+        except Exception:
+            pass
+        try:
+            if self.notify is not None:
+                self.notify.stop(timeout=timeout)
+        except Exception:
+            pass
         # 退出前 WAL checkpoint(TRUNCATE) 并关闭 SQLite 元数据库。
         try:
             self.store.close()
@@ -83,16 +98,25 @@ def build_services(runtime_config):
     preview_service = PreviewService(share_service)
     thumbnail_service = ThumbnailService(
         runtime_config, settings_provider=settings_manager.get)
+    # v0046：通知服务（扫描/删除/字幕批次事件）+ 计划扫描调度
+    notification_service = NotificationService(
+        runtime_config, store, settings_manager.get)
     scan_manager = ScanManager(runtime_config, store, share_service,
-                               settings_manager)
+                               settings_manager, notifier=notification_service)
     trash_manager = TrashManager(runtime_config, store, share_service)
     deletion_manager = DeletionManager(runtime_config, store, share_service,
                                        scan_manager, settings_manager,
-                                       trash_manager=trash_manager)
+                                       trash_manager=trash_manager,
+                                       notifier=notification_service)
     merge_manager = MergeManager(runtime_config, store, share_service,
                                  scan_manager, settings_manager)
     subtitle_service = SubtitleService(runtime_config, store, share_service,
                                        settings_manager.get)
+    scheduler_service = SchedulerService(
+        runtime_config, store, settings_manager.get, scan_manager,
+        notifier=notification_service,
+        subtitles_provider=lambda: subtitle_service)
+    scheduler_service.start()
     # 升级 drain 握手：preupgrade 写 <var>/upgrade.drain，后端暂停扫描后写 done。
     upgrade_monitor = UpgradeDrainMonitor(runtime_config.data_dir, scan_manager)
     upgrade_monitor.start()
@@ -100,4 +124,4 @@ def build_services(runtime_config):
                     share_service, browse_service, preview_service,
                     scan_manager, deletion_manager, subtitle_service,
                     upgrade_monitor, thumbnail_service, merge_manager,
-                    trash_manager)
+                    trash_manager, notification_service, scheduler_service)

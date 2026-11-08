@@ -999,6 +999,74 @@ python build/build_spk.py --no-icons --out-dir $env:TEMP\qa-build2
 - 套件回收站在 File Station 的可见性、整组恢复后文件/权限/mtime 是否正常；
 - 合并组在下次扫描中是否正确收缩（不应再算“可释放空间”）。
 
+## 28. 附：v0046 计划扫描与通知系统（2026-11-08）
+
+### 28.1 需求与方案
+
+- 需求（v2 文档 新增功能 1 + 全局 3）：“支持定时后台执行重复扫描，可安排低负载时段运行；
+  扫描完成后推送通知，支持 Webhook、Telegram、DSM 系统通知”；“扫描完成、字幕批次执行结束、
+  大量任务失败、释放空间达到阈值时推送 DSM 通知与 Webhook”。
+- 方案：`SchedulerService`（规则解析 + 20s tick + 负载/忙碌跳过 + 状态持久化）+
+  `NotificationService`（渠道/事件订阅 + 后台队列 + 四类触发点 + 逐渠道测试）。
+  都是标准库实现（`urllib` / `subprocess` / `threading`），不引入第三方依赖。
+
+### 28.2 实现
+
+- **计划扫描**（新 `scheduler.py`）：
+  - 规则 `daily HH:MM` / `weekly mon,wed,fri HH:MM` / `interval MIN`（5..10080 分钟），
+    保存设置时用同一解析器校验，非法返回 400；
+  - tick 到点后依次检查“已有扫描在跑 / 1 分钟 loadavg 超过阈值 / 无可用 roots”，
+    任一不满足即跳过并审计 `scheduled_scan_skipped`（不补跑）；roots 为空时复用最近一条
+    completed 扫描的 `config.roots`；
+  - 每条规则 `last_run` 持久化 `<var>/scheduler_state.json`，重启不重复触发；
+    `GET /api/scheduler` 显示下次执行/上次执行/当前负载，`POST /api/scheduler/run-now` 手动执行。
+- **通知系统**（新 `notifications.py`）：
+  - 渠道：DSM `synodsmnotify`（非 DSM 自动跳过）/ Webhook（POST JSON）/ Telegram Bot API；
+  - 事件：`scan_complete`、`scan_failed`、`subtitle_batch_done`、`failure_burst`、`freed_threshold`；
+  - 触发点：扫描收尾（`ScanManager._audit_finish`）、删除任务结束（释放空间/失败阈值）、
+    `SchedulerService` 每 60s 轮询字幕批次组并按 group_id 去重；
+  - 发送走后台单线程队列（200 条），失败只记审计不影响主流程；Telegram token 与 Webhook
+    完整 URL 不进入日志/审计/响应；`GET /api/notifications`、`POST /api/notifications/test`。
+- 设置：新增 13 个键（通知开关/渠道/事件/URL/token/chat_id/失败阈值/释放空间阈值/超时 +
+  计划开关/规则/目录/负载阈值），Telegram token 纳入 `SECRET_SETTING_KEYS`。
+- 前端：设置页新增「自动化 · 计划扫描与通知」分组（规则/目录/负载 + 渠道/事件/阈值 +
+  逐渠道测试按钮 + 状态文案），保存后与打开设置页时刷新 `/api/scheduler`、`/api/notifications`。
+
+### 28.3 验证
+
+- unittest：**601 OK（5 skipped）**（新增 `test_v0046_notify.py` 22 例、`test_v0046_scheduler.py` 13 例）。
+- static：**189 PASS / 0 FAIL / 0 UNVERIFIED**（新增 `BE-NOTIFY`、`BE-SCHEDULER`、`FE-AUTOMATION-UI`
+  + 通知/调度路由与端点覆盖）。
+- e2e：**191 PASS / 0 FAIL / 1 UNVERIFIED**（新增 `NOTIFY-00..03`（本地 Webhook 接收器真实收到
+  `scan_complete` 与测试消息）、`SCHED-00..04`（设置/状态/立即执行/非法规则/root 复用）；
+  Windows symlink 为历史 UNVERIFIED）。
+- 真实 Chromium 探针（`.uiprobe/probe_v0046.mjs` + `harness_v0046.py`）**8/8 PASS**：
+  字段齐全、状态文案、保存持久化、调度状态、测试 Webhook 真实发送并显示成功、无 console 错误；
+  截图 `.uiprobe/v0046-settings.png`。
+
+### 28.4 踩坑
+
+- e2e 的 `Client.post_json` 必须带 body，`POST /api/scheduler/run-now` 传 `{}` 才能跑；
+  第一次漏传导致 e2e 中途异常（HARNESS 项失败）。
+- 设置页 `<details>` 默认折叠，探针点击「测试 Webhook」前必须先 `group.open = true`，
+  否则 Playwright 报 element not visible。
+- 探针会持久化设置：重复跑时状态文案从“计划扫描未启用”变为“下次：…”，断言要兼容两种形态。
+- 通知 watcher 依赖字幕批次组在内存中；套件重启后已结束的旧组不会补发（避免重启即刷屏）。
+
+### 28.5 产物
+
+- `dist/DuplicateCleaner-1.1.0-0046.spk`：**39,086,080 B**
+  - SHA256 `26893c3f12976037fb4423cb0e9706b8f8272d3f4352e9fc22f009306f4a1ce3`
+  - package.tgz MD5 `66811a2f56721f4e6e3f62c6a142f989`
+- 版本 1.1.0-0046 同步 8 处；SQLite schema 仍 **v8**（调度/通知去重状态为 `<var>/` JSON）。
+
+### 28.6 真机待验证（DSM）
+
+- `synodsmnotify` 实际弹窗（套件用户权限、`@administrators` 目标、中文标题/正文截断）；
+- Webhook/Telegram 出网与超时（NAS 防火墙/代理）、Telegram chat_id 负数群组；
+- 负载阈值在 4 核 NAS 的合理取值（当前字幕任务并发 4 时 load ~9），避免计划扫描被永久跳过；
+- 计划扫描与字幕任务并发时的磁盘/CPU 占用；套件停机期间错过时间点的补跑策略。
+
 
 
 

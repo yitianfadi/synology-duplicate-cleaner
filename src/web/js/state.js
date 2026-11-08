@@ -144,6 +144,18 @@ export var IDS = ('loginView loginForm loginUsername loginPassword loginOtp logi
   'setProtectDirs setProtectDirsError setProtectNameRegex setProtectNameRegexError ' +
   'setProtectSidecarFiles ' +
   'setMergeEnabled setDeleteRecycleMode ' +
+  'settingsAutomationSummary schedulerStatusText ' +
+  'setScheduledScanEnabled setScheduledScanRules setScheduledScanRoots ' +
+  'setScheduledScanMaxLoad setScheduledScanRulesError ' +
+  'setScheduledScanRootsError ' +
+  'setNotifyEnabled setNotifyChannelDsm setNotifyChannelWebhook ' +
+  'setNotifyChannelTelegram setNotifyEventScanComplete ' +
+  'setNotifyEventScanFailed setNotifyEventSubtitleBatchDone ' +
+  'setNotifyEventFailureBurst setNotifyEventFreedThreshold ' +
+  'setNotifyWebhookUrl setNotifyTelegramToken setNotifyTelegramChatId ' +
+  'setNotifyFailThreshold setNotifyFreedGb setNotifyTimeout ' +
+  'notifyChannelsHint notifyTestDsm notifyTestWebhook notifyTestTelegram ' +
+  'notifyTestResult ' +
   'taskTabTrash taskPanelTrash trashList trashLoading trashError trashEmpty ' +
   'trashRefreshBtn trashRecycleMode trashMergeList trashMergeLoading ' +
   'trashMergeEmpty trashMergeCount ' +

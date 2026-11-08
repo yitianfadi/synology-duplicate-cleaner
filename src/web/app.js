@@ -24,7 +24,7 @@ import {
   DEFAULT_VIDEO_EXTENSIONS, DELETE_REASON_LABEL, DELETE_STATUS_LABEL,
   ERROR_FALLBACK, JOB_STATUS_LABEL, KEEP_LABEL, KEEP_MODE_LABEL,
   KEEP_RULE_LABEL, SIDECAR_MODE_LABEL, PROTECT_REASON_LABEL,
-  RECYCLE_MODE_LABEL, MERGE_REASON_LABEL, LEGACY_VIEW_ALIASES,
+  RECYCLE_MODE_LABEL, MERGE_REASON_LABEL, NOTIFY_CHANNEL_LABEL, LEGACY_VIEW_ALIASES,
   MTIME_FALLBACK_LABEL, MTIME_FALLBACK_REASONS, POLL_MS,
   SIZE_UNITS, SOURCE_INFO, STAGE_LABEL, STATUS_BADGE, STATUS_LABEL,
   SUBTITLE_ACTIVE_STATUS, SUBTITLE_LANGUAGES, SUBTITLE_OUTPUT_KIND_LABEL,
@@ -9491,7 +9491,11 @@ import {
     // v0044：删除白名单
     protectExtensions: { input: 'setProtectExtensions', error: 'setProtectExtensionsError' },
     protectDirs: { input: 'setProtectDirs', error: 'setProtectDirsError' },
-    protectNameRegex: { input: 'setProtectNameRegex', error: 'setProtectNameRegexError' }
+    protectNameRegex: { input: 'setProtectNameRegex', error: 'setProtectNameRegexError' },
+    // v0046：计划扫描 / 通知
+    scheduledScanRules: { input: 'setScheduledScanRules', error: 'setScheduledScanRulesError' },
+    scheduledScanRoots: { input: 'setScheduledScanRoots', error: 'setScheduledScanRootsError' },
+    notifyWebhookUrl: { input: 'setNotifyWebhookUrl', error: 'setNotifyWebhookUrlError' }
   };
 
   function bytesToMbValue(bytes) {
@@ -9564,6 +9568,23 @@ import {
       }
       setText(els.settingsSubtitleSummary, subBits.join(' · '));
     }
+    if (els.settingsAutomationSummary) {
+      var autoBits = [];
+      autoBits.push(els.setScheduledScanEnabled && els.setScheduledScanEnabled.checked
+        ? '计划扫描开（' + textToLines(els.setScheduledScanRules
+          ? els.setScheduledScanRules.value : '').length + ' 条规则）'
+        : '计划扫描关');
+      if (els.setNotifyEnabled && els.setNotifyEnabled.checked) {
+        var channels = [];
+        if (els.setNotifyChannelDsm && els.setNotifyChannelDsm.checked) { channels.push('DSM'); }
+        if (els.setNotifyChannelWebhook && els.setNotifyChannelWebhook.checked) { channels.push('Webhook'); }
+        if (els.setNotifyChannelTelegram && els.setNotifyChannelTelegram.checked) { channels.push('Telegram'); }
+        autoBits.push('通知开（' + (channels.length ? channels.join('/') : '未选渠道') + '）');
+      } else {
+        autoBits.push('通知关');
+      }
+      setText(els.settingsAutomationSummary, autoBits.join(' · '));
+    }
     if (els.settingsStorageSummary) {
       var storageBits = [els.setRecycleDefault && els.setRecycleDefault.checked ? '默认回收站' : '默认永久删除'];
       storageBits.push(els.setAllowCtime && els.setAllowCtime.checked ? '允许 ctime 降级' : 'ctime 降级关闭');
@@ -9572,7 +9593,201 @@ import {
     }
     if (els.settingsOverview) {
       setText(els.settingsOverview,
-        '共 5 组设置：扫描 / 相似 / 视频 / 云端字幕 / 存储 · 修改后点击底部“保存设置”生效');
+        '共 6 组设置：扫描 / 自动化 / 相似 / 视频 / 云端字幕 / 存储 · 修改后点击底部“保存设置”生效');
+    }
+  }
+
+  // ==================== v0046 计划扫描 / 通知 ====================
+  function fillAutomationSettings(settings) {
+    settings = settings || {};
+    if (els.setScheduledScanEnabled) {
+      els.setScheduledScanEnabled.checked = settings.scheduled_scan_enabled === true;
+    }
+    if (els.setScheduledScanRules) {
+      els.setScheduledScanRules.value = linesToText(settings.scheduled_scan_rules);
+    }
+    if (els.setScheduledScanRoots) {
+      els.setScheduledScanRoots.value = linesToText(settings.scheduled_scan_roots);
+    }
+    if (els.setScheduledScanMaxLoad) {
+      var load = Number(settings.scheduled_scan_max_load);
+      els.setScheduledScanMaxLoad.value =
+        String(isFinite(load) && load > 0 ? load : 0);
+    }
+    if (els.setNotifyEnabled) { els.setNotifyEnabled.checked = settings.notify_enabled === true; }
+    var channels = Array.isArray(settings.notify_channels)
+      ? settings.notify_channels : DEFAULT_SETTINGS.notify_channels;
+    if (els.setNotifyChannelDsm) { els.setNotifyChannelDsm.checked = channels.indexOf('dsm') !== -1; }
+    if (els.setNotifyChannelWebhook) { els.setNotifyChannelWebhook.checked = channels.indexOf('webhook') !== -1; }
+    if (els.setNotifyChannelTelegram) { els.setNotifyChannelTelegram.checked = channels.indexOf('telegram') !== -1; }
+    var events = Array.isArray(settings.notify_events)
+      ? settings.notify_events : DEFAULT_SETTINGS.notify_events;
+    if (els.setNotifyEventScanComplete) { els.setNotifyEventScanComplete.checked = events.indexOf('scan_complete') !== -1; }
+    if (els.setNotifyEventScanFailed) { els.setNotifyEventScanFailed.checked = events.indexOf('scan_failed') !== -1; }
+    if (els.setNotifyEventSubtitleBatchDone) { els.setNotifyEventSubtitleBatchDone.checked = events.indexOf('subtitle_batch_done') !== -1; }
+    if (els.setNotifyEventFailureBurst) { els.setNotifyEventFailureBurst.checked = events.indexOf('failure_burst') !== -1; }
+    if (els.setNotifyEventFreedThreshold) { els.setNotifyEventFreedThreshold.checked = events.indexOf('freed_threshold') !== -1; }
+    if (els.setNotifyWebhookUrl) { els.setNotifyWebhookUrl.value = settings.notify_webhook_url || ''; }
+    // 安全：Bot Token 永不回填明文
+    if (els.setNotifyTelegramToken) { els.setNotifyTelegramToken.value = ''; }
+    if (els.setNotifyTelegramChatId) { els.setNotifyTelegramChatId.value = settings.notify_telegram_chat_id || ''; }
+    if (els.setNotifyFailThreshold) {
+      els.setNotifyFailThreshold.value = String(parseInt(settings.notify_fail_threshold, 10) || 20);
+    }
+    if (els.setNotifyFreedGb) {
+      var bytes = Number(settings.notify_freed_bytes_threshold) || 0;
+      els.setNotifyFreedGb.value = String(Math.round(bytes / 1073741824 * 100) / 100);
+    }
+    if (els.setNotifyTimeout) {
+      els.setNotifyTimeout.value = String(parseInt(settings.notify_timeout_sec, 10) || 5);
+    }
+    updateSettingsSummaries();
+  }
+
+  function automationRuleValid(rule) {
+    return /^daily\s+\d{1,2}:\d{2}$/i.test(rule)
+      || /^weekly\s+[a-z0-9,\s]+\s+\d{1,2}:\d{2}$/i.test(rule)
+      || /^interval\s+\d{1,5}$/i.test(rule);
+  }
+
+  function readAutomationSettings(settings, errors) {
+    settings.scheduled_scan_enabled = !!(els.setScheduledScanEnabled
+      && els.setScheduledScanEnabled.checked);
+    var rules = textToLines(els.setScheduledScanRules ? els.setScheduledScanRules.value : '');
+    if (rules.length > 10) {
+      errors.scheduledScanRules = '计划扫描规则最多 10 条。';
+    } else {
+      var badRule = '';
+      rules.forEach(function (rule) {
+        if (!badRule && !automationRuleValid(rule)) { badRule = rule; }
+      });
+      if (badRule) {
+        errors.scheduledScanRules = '无法解析规则：' + badRule
+          + '（示例：daily 03:30 / weekly mon,wed 04:00 / interval 360）';
+      } else {
+        settings.scheduled_scan_rules = rules;
+      }
+    }
+    var roots = textToLines(els.setScheduledScanRoots ? els.setScheduledScanRoots.value : '');
+    var badRoot = '';
+    roots.forEach(function (item) {
+      if (!badRoot && !isAbsolutePath(item)) { badRoot = item; }
+    });
+    if (badRoot) {
+      errors.scheduledScanRoots = '计划扫描目录必须是绝对路径：' + badRoot;
+    } else {
+      settings.scheduled_scan_roots = roots;
+    }
+    var maxLoad = parseFloat(els.setScheduledScanMaxLoad
+      ? els.setScheduledScanMaxLoad.value : '0');
+    if (!isFinite(maxLoad) || maxLoad < 0 || maxLoad > 256) {
+      errors.scheduledScanMaxLoad = '负载阈值需在 0..256 之间（0 = 不检查）。';
+    } else {
+      settings.scheduled_scan_max_load = Math.round(maxLoad * 100) / 100;
+    }
+    settings.notify_enabled = !!(els.setNotifyEnabled && els.setNotifyEnabled.checked);
+    var channels = [];
+    if (els.setNotifyChannelDsm && els.setNotifyChannelDsm.checked) { channels.push('dsm'); }
+    if (els.setNotifyChannelWebhook && els.setNotifyChannelWebhook.checked) { channels.push('webhook'); }
+    if (els.setNotifyChannelTelegram && els.setNotifyChannelTelegram.checked) { channels.push('telegram'); }
+    settings.notify_channels = channels;
+    var events = [];
+    if (els.setNotifyEventScanComplete && els.setNotifyEventScanComplete.checked) { events.push('scan_complete'); }
+    if (els.setNotifyEventScanFailed && els.setNotifyEventScanFailed.checked) { events.push('scan_failed'); }
+    if (els.setNotifyEventSubtitleBatchDone && els.setNotifyEventSubtitleBatchDone.checked) { events.push('subtitle_batch_done'); }
+    if (els.setNotifyEventFailureBurst && els.setNotifyEventFailureBurst.checked) { events.push('failure_burst'); }
+    if (els.setNotifyEventFreedThreshold && els.setNotifyEventFreedThreshold.checked) { events.push('freed_threshold'); }
+    settings.notify_events = events;
+    var webhook = els.setNotifyWebhookUrl ? els.setNotifyWebhookUrl.value.trim() : '';
+    if (webhook && !/^https?:\/\/[^\/\s]+/i.test(webhook)) {
+      errors.notifyWebhookUrl = 'Webhook 必须是 http(s) 地址。';
+    } else {
+      settings.notify_webhook_url = webhook;
+    }
+    if (els.setNotifyTelegramToken) {
+      settings.notify_telegram_bot_token = els.setNotifyTelegramToken.value.trim();
+    }
+    if (els.setNotifyTelegramChatId) {
+      settings.notify_telegram_chat_id = els.setNotifyTelegramChatId.value.trim();
+    }
+    var failThreshold = parseInt(els.setNotifyFailThreshold
+      ? els.setNotifyFailThreshold.value : '', 10);
+    if (!isFinite(failThreshold) || failThreshold < 1 || failThreshold > 100000) {
+      errors.notifyFailThreshold = '批量失败阈值需在 1..100000 之间。';
+    } else {
+      settings.notify_fail_threshold = failThreshold;
+    }
+    var freedGb = parseFloat(els.setNotifyFreedGb ? els.setNotifyFreedGb.value : '0');
+    if (!isFinite(freedGb) || freedGb < 0) {
+      errors.notifyFreedGb = '释放空间阈值必须是非负数字（GB）。';
+    } else {
+      settings.notify_freed_bytes_threshold = Math.round(freedGb * 1073741824);
+    }
+    var timeout = parseInt(els.setNotifyTimeout ? els.setNotifyTimeout.value : '', 10);
+    if (!isFinite(timeout) || timeout < 2 || timeout > 30) {
+      errors.notifyTimeoutSec = '通知发送超时需在 2..30 秒之间。';
+    } else {
+      settings.notify_timeout_sec = timeout;
+    }
+  }
+
+  async function loadAutomationStatus() {
+    if (els.schedulerStatusText) {
+      try {
+        var res = await api('/api/scheduler', { timeout: 10000 });
+        var sched = (res && res.scheduler) || {};
+        var bits = [];
+        if (!sched.enabled) {
+          bits.push('计划扫描未启用');
+        } else if (Array.isArray(sched.rules) && sched.rules.length) {
+          bits.push('下次：' + sched.rules.map(function (item) {
+            return item.rule + ' → ' + (item.next_run || '—');
+          }).join('；'));
+        } else {
+          bits.push('计划扫描已启用但未配置规则');
+        }
+        if (sched.last_run) {
+          bits.push('上次 ' + sched.last_run + '（' + (sched.last_status || '—') + '）');
+        }
+        if (sched.current_load !== null && sched.current_load !== undefined) {
+          bits.push('当前 1 分钟负载 ' + sched.current_load);
+        }
+        setText(els.schedulerStatusText, bits.join(' · '));
+      } catch (err) {
+        setText(els.schedulerStatusText, '计划扫描状态不可用：' + errorMessage(err, '加载失败'));
+      }
+    }
+    if (els.notifyChannelsHint) {
+      try {
+        var res2 = await api('/api/notifications', { timeout: 10000 });
+        var notify = (res2 && res2.notify) || {};
+        var labels = (notify.channels || []).map(function (item) {
+          var stateText = item.available ? (item.configured ? '可用' : '未配置') : '不可用';
+          return item.label + '：' + stateText;
+        });
+        setText(els.notifyChannelsHint, labels.join('；') || '通知渠道状态未知');
+      } catch (err2) {
+        setText(els.notifyChannelsHint, '通知渠道状态不可用：' + errorMessage(err2, '加载失败'));
+      }
+    }
+  }
+
+  async function testNotifyChannel(channel) {
+    if (els.notifyTestResult) {
+      setText(els.notifyTestResult, '正在测试 ' + (NOTIFY_CHANNEL_LABEL[channel] || channel) + '…');
+    }
+    try {
+      var res = await api('/api/notifications/test', {
+        method: 'POST', body: { channel: channel }, timeout: 20000
+      });
+      var result = (res && res.result) || {};
+      setText(els.notifyTestResult,
+        (NOTIFY_CHANNEL_LABEL[channel] || channel) + '：'
+        + (result.ok ? '发送成功' : ('失败 - ' + (result.detail || '未知错误'))));
+    } catch (err) {
+      setText(els.notifyTestResult,
+        (NOTIFY_CHANNEL_LABEL[channel] || channel) + '：测试失败 - '
+        + errorMessage(err, '请求失败'));
     }
   }
 
@@ -9672,6 +9887,8 @@ import {
       els.setDeleteRecycleMode.value =
         settings.delete_recycle_mode === 'package' ? 'package' : 'share';
     }
+    // v0046：计划扫描 / 通知
+    fillAutomationSettings(settings);
     if (els.setScanMode) { els.setScanMode.value = settings.scan_mode === 'similar' ? 'similar' : 'exact'; }
     if (els.setSimilarityThreshold) {
       var threshold = parseInt(settings.similarity_threshold, 10);
@@ -9736,6 +9953,7 @@ import {
       if (els.settingsSimilarityDetails) { setHidden(els.settingsSimilarityDetails, !simSupported); }
       fillSettingsForm(state.settings || DEFAULT_SETTINGS);
       setHidden(els.settingsLoading, true);
+      loadAutomationStatus();
     } catch (err) {
       setHidden(els.settingsLoading, true);
       setText(els.settingsLoadError, errorMessage(err, '加载设置失败，请稍后重试。'));
@@ -9864,6 +10082,8 @@ import {
       ? !!els.setMergeEnabled.checked : false;
     settings.delete_recycle_mode = (els.setDeleteRecycleMode
       && els.setDeleteRecycleMode.value === 'package') ? 'package' : 'share';
+    // v0046：计划扫描 / 通知
+    readAutomationSettings(settings, errors);
     return { settings: settings, errors: errors, valid: Object.keys(errors).length === 0 };
   }
 
@@ -9926,6 +10146,7 @@ import {
       state.settingsLoaded = true;
       state.recycleDefault = state.settings ? state.settings.recycle_default !== false : state.recycleDefault;
       toast('设置已保存。', 'success');
+      loadAutomationStatus();
     } catch (err) {
       var fieldErrors = videoFieldErrorsFromApi(err);
       if (fieldErrors) {
@@ -10003,6 +10224,19 @@ import {
       });
     }
     bindSubtitleProbeEvents();
+    // v0046：通知渠道测试按钮
+    [['notifyTestDsm', 'dsm'], ['notifyTestWebhook', 'webhook'],
+     ['notifyTestTelegram', 'telegram']].forEach(function (pair) {
+      var button = byId(pair[0]);
+      if (button) {
+        button.addEventListener('click', function () { testNotifyChannel(pair[1]); });
+      }
+    });
+    if (els.setScheduledScanRules) {
+      els.setScheduledScanRules.addEventListener('change', function () {
+        if (els.setScheduledScanEnabled) { els.setScheduledScanEnabled.checked = true; }
+      });
+    }
   }
 
   // ==================== 18. 启动 ====================

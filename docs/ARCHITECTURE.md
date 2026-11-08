@@ -1,7 +1,7 @@
 # 整体方案架构
 
 > 项目：**重复文件清理与字幕（Duplicate Cleaner & Subtitles）** · 群晖 DSM 7.x SPK 套件
-> 版本：1.1.0-0045
+> 版本：1.1.0-0046
 > 原则：**先扫描、出报告、人工确认、二次确认、可回收、全程审计**。任何情况下都不自动静默删除。
 
 ## 1. 目标与边界
@@ -513,6 +513,37 @@ Linux 的 `st_ctime` 是 **inode 状态变更时间**，不是创建时间，复
   - 整组恢复：原位置已存在则跳过（绝不覆盖），逐条 rename 回原路径；
   - 永久清理：需 `confirm` + “永久删除”短语，只删除 manifest 记录且位于回收站目录下的文件。
 - 计划时快照 `recycle_mode`；执行期间不跟随设置变化。
+
+## 16. 通知系统与计划扫描（v0046）
+
+> 详细契约见 [NOTIFICATION_SCHEDULE_CONTRACT.md](NOTIFICATION_SCHEDULE_CONTRACT.md)。
+
+### 16.1 通知（`notifications.py`）
+
+- `NotificationService`：设置驱动（`notify_enabled`/`notify_channels`/`notify_events`），
+  发送走后台单线程队列（200 条上限），不阻塞扫描/删除/字幕线程；队列满丢弃并审计。
+- 渠道：DSM `synodsmnotify @administrators`（不存在则自动跳过）、Webhook（POST JSON，含
+  event/title/message/level/timestamp/version/detail）、Telegram Bot API。
+- 触发点：扫描完成/失败（`ScanManager._audit_finish`）、删除任务结束的释放空间/失败阈值
+  （`DeletionManager._run_job`）、字幕批次结束/批量失败（`SchedulerService` watcher 轮询
+  `batch_group_overview`，按 group_id 去重持久化到 `<var>/notify_state.json`）。
+- 安全：token 只从设置读取；日志/审计/响应只记录 event/channel/level/error，Webhook 只留
+  scheme+host+path；`public_settings` 对 token 置空并给 `*_set` 标记。
+
+### 16.2 计划扫描（`scheduler.py`）
+
+- 规则：`daily HH:MM` / `weekly mon,wed,fri HH:MM` / `interval MIN`（5..10080），设置保存时校验。
+- 线程每 20 秒 tick：按规则 `last_run`（持久化 `<var>/scheduler_state.json`）计算下一次；
+  到点后依次检查“是否已有扫描/负载阈值/可用 roots”，任何一项不满足都跳过本次并审计
+  （`scheduled_scan_skipped`），不补跑；满足则 `ScanManager.start_scan(..., user="scheduler")`。
+- roots 为空时复用最近一条 completed 扫描的 `config.roots`；同一规则两次触发至少间隔 300s。
+- `POST /api/scheduler/run-now` 复用同一套检查，便于用户手动验证。
+
+### 16.3 前端
+
+- 设置页「自动化 · 计划扫描与通知」分组：规则/目录/负载阈值 + 渠道/事件/阈值/Webhook/Telegram，
+  以及逐渠道测试按钮；状态（下次执行/上次执行/当前负载、渠道可用性）在打开设置与保存后刷新。
+
 
 
 

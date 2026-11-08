@@ -179,6 +179,9 @@ CREATE INDEX idx_media_probe_cache_used ON media_probe_cache(last_used);
   媒体信息内存缓存 200 条（不落盘）。缩略图缓存可随时删除，只影响下次预览速度。
 - v0045 硬链接合并清单 `<var>/merges/<job_id>.json` 与套件回收站清单 `<var>/trash/<job_id>.json`
   为普通 JSON 文件（原子写），**不进数据库**；列表/明细/恢复/清理按需读取，文件不存在即视为记录失效。
+- v0046 计划扫描状态 `<var>/scheduler_state.json`（每条规则 last_run/last_scan_id）与字幕批次
+  通知去重 `<var>/notify_state.json`（group_id → notified_epoch，最多 500 条）为普通 JSON，
+  **不进数据库**；删除后最多导致一次重复通知/一次重复触发（规则按 last_run 计算）。
 
 ## 2. Store 兼容 API
 

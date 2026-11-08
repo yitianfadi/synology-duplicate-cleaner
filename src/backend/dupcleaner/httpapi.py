@@ -214,6 +214,14 @@ class Api(object):
              self._trash_restore, False),
             ("POST", re.compile(r"^/api/trash/(?P<trash_id>[^/]+)/purge$"),
              self._trash_purge, False),
+            # v0046：通知系统 / 计划扫描
+            ("GET", re.compile(r"^/api/notifications$"),
+             self._notifications, False),
+            ("POST", re.compile(r"^/api/notifications/test$"),
+             self._notification_test, False),
+            ("GET", re.compile(r"^/api/scheduler$"), self._scheduler, False),
+            ("POST", re.compile(r"^/api/scheduler/run-now$"),
+             self._scheduler_run_now, False),
             ("GET", re.compile(r"^/api/preview$"), self._preview, False),
             # v0044：预览增强（缩略图 / 媒体信息 / 缩略图时间点清单）
             ("GET", re.compile(r"^/api/preview/thumb$"), self._preview_thumb, False),
@@ -451,6 +459,18 @@ class Api(object):
                 "modes": list(config.RECYCLE_MODES),
                 "labels": dict(config.RECYCLE_MODE_LABELS),
                 "trash_dir_name": config.TRASH_DIR_NAME,
+            },
+            # v0046：通知 / 计划扫描能力
+            "notify": {
+                "enabled": bool(self.services.settings.get().get("notify_enabled")),
+                "channels": list(config.NOTIFY_CHANNELS),
+                "events": list(config.NOTIFY_EVENTS),
+                "event_labels": dict(config.NOTIFY_EVENT_LABELS),
+            },
+            "scheduler": {
+                "tick_sec": config.SCHEDULE_TICK_SEC,
+                "min_interval_sec": config.SCHEDULE_MIN_INTERVAL_SEC,
+                "rules_max": config.SCHEDULE_RULES_MAX,
             },
             # v0028 目录批量字幕能力（docs/SUBTITLE_BATCH_CONTRACT.md）
             "subtitle": {
@@ -1163,6 +1183,33 @@ class Api(object):
         payload = {"ok": True}
         payload.update(result)
         return json_response(payload)
+
+    # ------------------------------------------------------------------
+    # v0046：通知系统 / 计划扫描
+    # ------------------------------------------------------------------
+    def _notifications(self, request, session, params):
+        return json_response({"ok": True,
+                              "notify": self.services.notify.status()})
+
+    def _notification_test(self, request, session, params):
+        body = _json_body(request)
+        channel = body.get("channel") if isinstance(body, dict) else None
+        if not isinstance(channel, str) or not channel:
+            raise invalid(u"必须提供 channel（dsm/webhook/telegram）")
+        if channel not in config.NOTIFY_CHANNELS:
+            raise invalid(u"未知渠道: %s" % channel)
+        return json_response({"ok": True,
+                              "result": self.services.notify.test_channel(channel)})
+
+    def _scheduler(self, request, session, params):
+        return json_response({"ok": True,
+                              "scheduler": self.services.scheduler.status()})
+
+    def _scheduler_run_now(self, request, session, params):
+        result = self.services.scheduler.run_now(user=session.user)
+        status = 202 if result.get("ok") else 200
+        return json_response({"ok": bool(result.get("ok")), "result": result},
+                             status=status)
 
     # ------------------------------------------------------------------
     # 预览 / 日志
