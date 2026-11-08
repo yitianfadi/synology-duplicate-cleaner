@@ -1067,6 +1067,71 @@ python build/build_spk.py --no-icons --out-dir $env:TEMP\qa-build2
 - 负载阈值在 4 核 NAS 的合理取值（当前字幕任务并发 4 时 load ~9），避免计划扫描被永久跳过；
 - 计划扫描与字幕任务并发时的磁盘/CPU 占用；套件停机期间错过时间点的补跑策略。
 
+## 29. 附：v0047 相似视频识别增强（2026-11-08）
+
+### 29.1 需求与方案
+
+- 需求（v2 文档 新增功能 2）：“强化视频帧相似比对能力，识别源片一致、压制版本不同的视频文件”。
+- 评估结论（[REQUIREMENTS_V2_ASSESSMENT.md](../docs/REQUIREMENTS_V2_ASSESSMENT.md) §2.4/§3.3）：
+  “不同剪辑版本”不可承诺；可实现的是对**同源不同压制**更稳（黑边/分辨率/编码/片头剪切），
+  并给出**可解释的置信度分档**，把“可能相似”交人工复核。
+- 方案：帧指纹 v2（全帧 + 内容裁剪）、多组合 DTW + ±3 帧时间轴偏移对齐、可选音频包络签名、
+  置信度分档（same_source/likely_same/possible）。
+
+### 29.2 实现
+
+- **边缘裁剪指纹**（`gray_content_crop`）：按行/列亮度均值检测内容 bbox 裁掉黑边后放大回 32×32
+  再算 pHash；纯黑/内容过小时回退中心 80% 裁剪。每帧同时保留全帧与裁剪两个指纹
+  （`frame_hashes` / `frame_hashes_center`），指纹版本 v2，`VIDEO_ALGO_VERSION=video-v2` 使旧缓存失效。
+- **时间轴偏移对齐**（`offset_aligned_stats`）：±3 帧、重叠 ≥0.8，按 `0.7*avg+0.3*overlap` 打分；
+  与全帧/裁剪/交叉 DTW 一起取最优（`pair_score_enhanced`）。
+- **音频包络签名**（可选、默认关）：ffmpeg 解 180s 单声道 8kHz PCM → 120 桶 RMS → 0..255 签名；
+  相似度=零均值归一化互相关；静音/采样不足不参与加权；失败 open；缓存独立 key。
+- **置信度分档**（`confidence_band`）：组内取最低配对分数（保守）→ ≥95 same_source、≥85 likely_same、
+  其余 possible；结果带 `video_confidence_label`、`video_max/min/avg_score`、`video_match_method`、
+  `video_center_used`、`video_audio_used/score`、`video_duration_delta_sec`。
+- 设置新增 4 键：`video_center_crop_enabled`、`video_offset_align_enabled`、
+  `video_audio_signature_enabled`、`video_audio_weight`（0–0.5，与 ASR 权重合计 ≤0.5）。
+- 前端：视频设置新增开关/权重（音频权重随开关置灰）；结果页视频组新增置信度（蓝/绿/黄）、
+  `边缘裁剪`、`时间轴对齐`、`音频辅助 · N%` 徽标与“组内时长差”。
+
+### 29.3 验证
+
+- unittest：**626 OK（5 skipped）**（新增 `test_v0047_video.py` 25 例：内容裁剪去黑边、偏移对齐、
+  增强配对、置信度分档、音频签名生成/相似度/静音、分组音频加权、引擎级签名缓存与失败 open、
+  设置校验、扫描结果字段）。
+- static：**191 PASS / 0 FAIL / 0 UNVERIFIED**（新增 `BE-VIDEO-V2`、`FE-VIDEO-V2`）。
+- e2e：**193 PASS / 0 FAIL / 1 UNVERIFIED**（新增 `VIDEO-01`：真实 ffmpeg 生成“同源重编码 +
+  带黑边”样例，验证组字段与命中；`VIDEO-02`：音频权重越界 400；Windows symlink 为历史 UNVERIFIED）。
+- 真实 Chromium 探针（`.uiprobe/probe_v0047.mjs` + `harness_v0047.py`）**7/7 PASS**：
+  真实 ffmpeg 扫描、组字段、设置字段/置灰、结果页徽标渲染、无 console 错误；
+  截图 `.uiprobe/v0047-settings.png`。
+- 实测样例（64×64 testsrc 3s，抽样 5 帧）：同源重编码 96–97 分；带黑边版本全帧仅 66 分，
+  边缘裁剪后 93–94 分；音频签名 100 分（同源正弦）→ 分组置信度 `likely_same`。
+
+### 29.4 踩坑
+
+- **不能用 `_run` 把 PCM 写 stdout**：`_run` 是“轮询后 communicate”，Windows 匿名管道缓冲区小，
+  ffmpeg 写满即被阻塞 → 每次都超时。改为写临时文件再读入（180s@8kHz 约 2.8MB）。
+- 合成“同源不同压制”e2e 样例时，若两次编码参数相同会得到**字节一致**文件 → 被精准组先吃掉，
+  视频候选只剩 1 个 → 0 组；必须显式改 `-crf/-preset` 生成不同字节。
+- 增益指标验证：原全帧方案对黑边版本只有 66 分（<80 阈值），边缘裁剪后 93 分——这正是本版要解决的场景。
+- 音频签名对纯正弦/静音样本区分度有限；真实内容仍需真机验证（见 29.6）。
+
+### 29.5 产物
+
+- `dist/DuplicateCleaner-1.1.0-0047.spk`：**39,096,320 B**
+  - SHA256 `ce03b857bde5f5f6969934954c8c7e7a37affda53e33aa9605768309b54519be`
+  - package.tgz MD5 `504a7e9c74946682c5ca9fd544bd91d4`
+- 版本 1.1.0-0047 同步 8 处；SQLite schema 仍 **v8**（视频指纹/音频签名缓存为独立 SQLite 文件）。
+
+### 29.6 真机待验证
+
+- 真实影视库：H.264/H.265、不同码率/分辨率、上下黑边、片头片尾差几秒的命中率与耗时；
+  音频签名对“国配/原声/无音轨”版本的区分与误判率；置信度分档与人工复核体验。
+- 首扫重算所有视频指纹的一次性 CPU 开销（建议低峰时段）；`<var>/cache/video.sqlite` 体积增长。
+- 极端误判场景：大段黑屏/片头字幕卡、同模板不同内容视频。
+
 
 
 

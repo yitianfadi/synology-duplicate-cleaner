@@ -2654,8 +2654,25 @@ class ScanManager(object):
             asr_weight = float(options.get("video_asr_weight")
                                if options.get("video_asr_weight") is not None
                                else config.ASR_DEFAULT_WEIGHT)
+        audio_weight = 0.0
+        if options.get("video_audio_signature_enabled"):
+            try:
+                audio_weight = float(options.get("video_audio_weight")
+                                     if options.get("video_audio_weight") is not None
+                                     else config.VIDEO_AUDIO_WEIGHT_DEFAULT)
+            except (TypeError, ValueError):
+                audio_weight = config.VIDEO_AUDIO_WEIGHT_DEFAULT
         clusters = video_similarity.build_video_groups(
-            entries, threshold, asr_weight=asr_weight)
+            entries, threshold, asr_weight=asr_weight,
+            audio_weight=audio_weight,
+            use_center=bool(options.get("video_center_crop_enabled", True)),
+            use_offset=bool(options.get("video_offset_align_enabled", True)))
+        with state.lock:
+            stats = state.stats
+            stats["video_audio_used"] = sum(
+                1 for entry in entries
+                if (entry.get("analysis") or {}).get(
+                    "audio_signature_status") == "ok")
         result = []
         for cluster in clusters:
             indices = list(cluster.get("indices") or [])
@@ -2675,6 +2692,15 @@ class ScanManager(object):
                 "entries": [entries[index] for index in indices],
                 "scores": local_scores,
                 "details": local_details,
+                # v0047：置信度档位 / 分数统计 / 匹配方法（供结果页展示与删除提示）
+                "confidence": cluster.get("confidence"),
+                "confidence_label": cluster.get("confidence_label"),
+                "max_score": cluster.get("max_score"),
+                "min_score": cluster.get("min_score"),
+                "avg_score": cluster.get("avg_score"),
+                "method": cluster.get("method") or "dtw",
+                "center_used": bool(cluster.get("center_used")),
+                "audio_used": bool(cluster.get("audio_used")),
             })
         self._set_progress(state, "video", 0.973,
                            u"视频视觉分析完成：%d 组" % len(result))
@@ -3003,6 +3029,9 @@ class ScanManager(object):
                     float(analysis.get("duration") or 0)))
                 file_info["video_low_confidence"] = bool(
                     analysis.get("low_confidence"))
+                audio_status = analysis.get("audio_signature_status") or "disabled"
+                file_info["video_audio_status"] = audio_status
+                file_info["video_audio_used"] = audio_status == "ok"
                 file_info["similarity_score"] = 0
                 files.append(file_info)
             self._media_probe_for_group(state, files)
@@ -3019,6 +3048,9 @@ class ScanManager(object):
                     file_info["similarity_score"] = 100
                     file_info["video_asr_used"] = False
                     file_info["video_text_score"] = 0
+                    file_info["video_match_method"] = "keeper"
+                    file_info["video_center_used"] = False
+                    file_info["video_audio_score"] = 0
                 else:
                     score = scores.get((min(keeper, position),
                                         max(keeper, position)))
@@ -3029,6 +3061,15 @@ class ScanManager(object):
                     file_info["video_text_score"] = (
                         int(pair_detail.get("text_score") or 0)
                         if asr_used else 0)
+                    # v0047：匹配方法 / 中心裁剪 / 音频签名（只存分数，不存签名）
+                    file_info["video_match_method"] = (
+                        pair_detail.get("method") or "dtw")
+                    file_info["video_center_used"] = bool(
+                        pair_detail.get("center_used"))
+                    audio_used = bool(pair_detail.get("audio_used"))
+                    file_info["video_audio_score"] = (
+                        int(pair_detail.get("audio_score") or 0)
+                        if audio_used else 0)
                 file_info["is_keep"] = position == keeper
                 # 视频组默认不勾选，但允许一键全选批量删除
                 file_info["default_selected"] = False
@@ -3054,6 +3095,16 @@ class ScanManager(object):
                               for item in asr_files)) / len(asr_files)))
                 keeper_file["video_asr_used"] = True
                 keeper_file["video_text_score"] = 100
+            # v0047：音频签名分数（只对实际参与加权的配对取均值）
+            audio_pair_scores = [
+                int(item.get("video_audio_score") or 0)
+                for item in files
+                if not item["is_keep"] and item.get("video_audio_used")
+                and int(item.get("video_audio_score") or 0) > 0]
+            group_audio_score = (int(round(
+                float(sum(audio_pair_scores)) / len(audio_pair_scores)))
+                if audio_pair_scores else 0)
+            durations = [int(item.get("video_duration") or 0) for item in files]
             groups.append({
                 "hash": "",
                 "algo": "",
@@ -3062,6 +3113,24 @@ class ScanManager(object):
                 "video_asr_used": bool(group_asr_used),
                 "video_text_score": group_text_score,
                 "video_similarity_score": group_score,
+                # v0047：置信度档位 / 分数统计 / 匹配方法（黑边裁剪 / 时间轴偏移）
+                "video_confidence": cluster.get("confidence") or "possible",
+                "video_confidence_label": cluster.get("confidence_label") or "",
+                "video_max_score": int(cluster.get("max_score")
+                                       if cluster.get("max_score") is not None
+                                       else group_score),
+                "video_min_score": int(cluster.get("min_score")
+                                       if cluster.get("min_score") is not None
+                                       else group_score),
+                "video_avg_score": int(cluster.get("avg_score")
+                                       if cluster.get("avg_score") is not None
+                                       else group_score),
+                "video_match_method": cluster.get("method") or "dtw",
+                "video_center_used": bool(cluster.get("center_used")),
+                "video_audio_used": bool(cluster.get("audio_used")),
+                "video_audio_score": group_audio_score,
+                "video_duration_delta_sec": (max(durations) - min(durations)
+                                             if durations else 0),
                 "video_fingerprint": keeper_file.get("video_fingerprint") or "",
                 "video_sample_frames": max(
                     int(item.get("video_sample_frames") or 0)

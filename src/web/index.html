@@ -6,8 +6,8 @@
 <meta name="color-scheme" content="light">
 <meta name="referrer" content="same-origin">
 <title>重复文件清理与字幕 · Duplicate Cleaner &amp; Subtitles</title>
-<link rel="icon" href="./assets/favicon.svg?v=1.1.0-0046" type="image/svg+xml">
-<link rel="stylesheet" href="./styles.css?v=1.1.0-0046">
+<link rel="icon" href="./assets/favicon.svg?v=1.1.0-0047" type="image/svg+xml">
+<link rel="stylesheet" href="./styles.css?v=1.1.0-0047">
 </head>
 <body>
 <a class="skip-link" href="#main">跳到主要内容</a>
@@ -1303,6 +1303,15 @@
               <label class="check"><input id="setVideoCache" type="checkbox" checked>启用持久化视频指纹缓存</label>
             </div>
             <div class="field field-wide">
+              <label class="check"><input id="setVideoCenterCrop" type="checkbox" checked>启用边缘裁剪指纹（自动裁掉黑边/黑边上下，提升不同压制版本命中率）</label>
+              <label class="check"><input id="setVideoOffsetAlign" type="checkbox" checked>启用时间轴偏移对齐（片头/片尾剪切导致整体错位时仍可匹配）</label>
+              <label class="check"><input id="setVideoAudioSignature" type="checkbox">启用音频包络签名（可选，额外一次 ffmpeg 解码；默认关闭）</label>
+              <label for="setVideoAudioWeight">音频签名权重（0–0.5，仅在启用音频签名时生效）</label>
+              <input id="setVideoAudioWeight" type="number" min="0" max="0.5" step="0.05" value="0.2">
+              <p class="field-error" id="setVideoAudioWeightError" role="alert" hidden></p>
+              <p class="hint">音频签名只比较音量包络（不可还原内容），用于识别“换配音/无音轨”以及画面相同但音轨不同的版本；视觉与音频权重合计上限 0.5，阈值仍由上方相似度阈值决定。</p>
+            </div>
+            <div class="field field-wide">
               <span class="field-label" id="setVideoExtLabel">允许视频相似的后缀</span>
               <div id="setVideoExtList" class="ext-chip-grid" role="group" aria-labelledby="setVideoExtLabel"></div>
               <p class="field-error" id="setVideoExtError" role="alert" hidden></p>
@@ -1682,6 +1691,6 @@
   <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.6" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M12 10.8v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="12" cy="7.6" r="1.05" fill="currentColor"/></symbol>
 </svg>
 
-<script type="module" src="./app.js?v=1.1.0-0046"></script>
+<script type="module" src="./app.js?v=1.1.0-0047"></script>
 </body>
 </html>

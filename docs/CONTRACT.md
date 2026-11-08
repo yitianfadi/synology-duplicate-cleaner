@@ -1,7 +1,7 @@
 # 实现契约（前后端共享，版本 1.0）
 
 > 本文件是前后端并行开发的唯一接口约定。任何一方需要改动字段，先改本文件并在团队任务中说明。
-> 产品名：**DuplicateCleaner**；显示名：**重复文件清理与字幕**；SPK 版本：**1.1.0-0046**。
+> 产品名：**DuplicateCleaner**；显示名：**重复文件清理与字幕**；SPK 版本：**1.1.0-0047**。
 > v1.1 新增内容相似度模式；相似模式字段与行为见 [SIMILARITY_CONTRACT.md](SIMILARITY_CONTRACT.md)，**精准模式规则不变**。
 
 ## 1. 仓库与写入边界
@@ -154,7 +154,7 @@ v0042 增量（升级启动稳定性）：
 ### GET /api/meta
 ```json
 {
- "app_version": "1.1.0-0046",
+ "app_version": "1.1.0-0047",
  "dsm_version": "7.2.2-72806" | "dev",
  "python_version": "3.8.16",
  "creation_time_supported": true,
@@ -290,6 +290,20 @@ v0042 增量（升级启动稳定性）：
 | scheduled_scan_rules | string[] | [] | `daily HH:MM` / `weekly mon,wed HH:MM` / `interval MIN`，最多 10 条 |
 | scheduled_scan_roots | string[] | [] | 绝对路径；空=复用上次完成扫描的 roots |
 | scheduled_scan_max_load | float | 0 | 1 分钟负载阈值；0=不检查 |
+
+### v0047 新增设置键（相似视频增强）
+
+> 详细语义见 [VIDEO_MATCHING_V2_CONTRACT.md](VIDEO_MATCHING_V2_CONTRACT.md)。
+
+| key | 类型 | 默认 | 说明 |
+|---|---|---|---|
+| video_center_crop_enabled | bool | true | 边缘裁剪指纹（自动裁黑边）参与比对 |
+| video_offset_align_enabled | bool | true | 时间轴偏移对齐（±3 帧）参与比对 |
+| video_audio_signature_enabled | bool | false | 音频包络签名（额外一次 ffmpeg 解码） |
+| video_audio_weight | float | 0.2 | 音频签名权重（0–0.5；与 ASR 权重合计 ≤0.5） |
+
+视频组/文件结果新增字段见契约文档 §3（`video_confidence`、`video_match_method`、
+`video_center_used`、`video_audio_used`/`video_audio_score`、`video_duration_delta_sec` 等）。
 
 ## 7. 扫描
 
@@ -581,4 +595,4 @@ Content-Disposition: attachment; filename="duplicate-scan-<id>.csv"
 - 后端 unittest 覆盖：statx 时间读取降级、哈希分片/限速、重复分组与三种保留策略、
   路径黑名单、删除前重校验、回收站路径生成、CSV、API 鉴权。
 - 前端可用静态检查 + 本地 dev 后端联调；QA 用 dev 模式在临时目录生成重复文件跑完整 API 流程。
-- 打包产物 `dist/DuplicateCleaner-1.1.0-0046.spk` 必须能通过 `tar -tf` 检查，包含 INFO/package.tgz/scripts/conf/ui。
+- 打包产物 `dist/DuplicateCleaner-1.1.0-0047.spk` 必须能通过 `tar -tf` 检查，包含 INFO/package.tgz/scripts/conf/ui。

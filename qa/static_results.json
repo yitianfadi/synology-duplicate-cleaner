@@ -1,7 +1,7 @@
 {
-  "generated_at": "2026-11-08T21:32:51+0800",
+  "generated_at": "2026-11-08T21:57:29+0800",
   "summary": {
-    "PASS": 189,
+    "PASS": 191,
     "FAIL": 0,
     "UNVERIFIED": 0
   },
@@ -28,7 +28,7 @@
       "id": "BE-FILE-COUNT",
       "name": "后端 Python 文件数",
       "status": "INFO",
-      "detail": "65"
+      "detail": "66"
     },
     {
       "id": "BE-SRC-HYGIENE",
@@ -52,7 +52,7 @@
       "id": "BE-UNITTEST-LOG",
       "name": "unittest 结果",
       "status": "INFO",
-      "detail": "Ran 601 tests in 128.588s"
+      "detail": "Ran 626 tests in 134.464s"
     },
     {
       "id": "BE-NO-AUTODELETE",
@@ -333,6 +333,12 @@
     {
       "id": "BE-PROTECT",
       "name": "删除白名单：目录/后缀/文件名/视频附属文件保护，扫描期标记 + 计划与执行前按当前设置重算（v0044）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "BE-VIDEO-V2",
+      "name": "相似视频增强：边缘裁剪指纹 + 时间轴偏移对齐 + 音频包络签名 + 置信度分档（v0047）",
       "status": "PASS",
       "detail": ""
     },
@@ -627,6 +633,12 @@
     {
       "id": "FE-AUTOMATION-UI",
       "name": "设置页「自动化」：计划规则/负载阈值 + 通知渠道/事件/阈值 + 渠道测试按钮（v0046）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "FE-VIDEO-V2",
+      "name": "视频设置：边缘裁剪/时间轴对齐/音频签名开关与权重 + 结果页置信度/方法/音频徽标（v0047）",
       "status": "PASS",
       "detail": ""
     },
@@ -1046,7 +1058,7 @@
     },
     {
       "id": "SPK-DIST",
-      "name": "构建产物存在（DuplicateCleaner-1.1.0-0046.spk）",
+      "name": "构建产物存在（DuplicateCleaner-1.1.0-0047.spk）",
       "status": "PASS",
       "detail": ""
     },
@@ -1058,7 +1070,7 @@
     },
     {
       "id": "SPK-VERSION",
-      "name": "SPK INFO.version 与当前源码 APP_VERSION（1.1.0-0046）一致",
+      "name": "SPK INFO.version 与当前源码 APP_VERSION（1.1.0-0047）一致",
       "status": "PASS",
       "detail": ""
     },

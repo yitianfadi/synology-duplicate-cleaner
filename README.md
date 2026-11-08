@@ -28,6 +28,7 @@
 - 🗑️ **套件独立回收站（v0045）**：删除去向可选共享文件夹 `#recycle` 或套件独立回收站（`#duplicate-cleaner-trash`，同卷 rename）；按删除批次记录清单，可在任务中心**整组恢复**或输入“永久删除”清理
 - ⏰ **计划扫描（v0046）**：`daily 03:30` / `weekly mon,wed 04:00` / `interval 360` 规则后台定时扫描；可设 1 分钟负载阈值，负载超标或有扫描在跑时自动跳过；扫描范围可固定或复用上次
 - 🔔 **通知系统（v0046）**：扫描完成/失败、字幕批次结束、批量失败超阈值、单次释放空间达阈值时推送 **DSM 系统通知 / Webhook / Telegram**；设置页可逐渠道发送测试，Token 不回显
+- 🎞️ **相似视频增强（v0047）**：边缘裁剪指纹（自动去黑边）+ 时间轴偏移对齐（片头片尾剪切仍可匹配）+ 可选音频包络签名（识别换配音/无音轨），并按组给出**置信度分档**（极可能同源 / 很可能同源 / 可能相似）与匹配方法
 - 📊 分组报告：路径、大小、完整哈希、创建时间、修改时间、匹配类型、相似度；保留项高亮；可预览、导出 CSV
 - ⏱️ **字幕步骤时间线（v0038）**：任务详情记录排队/媒体探测/音频提取+识别/翻译/写盘的开始、结束与耗时，并可展开每个 ASR 分片、每个翻译批次的明细；任务列表显示总耗时，便于定位慢在哪一步
 - ⚡ **分片音频预取（v0040）**：每个字幕任务只预读 1 片音频——识别当前分片时后台先抽下一分片，让 NAS 的 FFmpeg 与云端 ASR 重叠，单任务明显更快；设置页可关闭（默认开启），暂停/取消/错误码语义与串行实现完全一致
@@ -50,7 +51,7 @@
 ```bash
 python build/fetch_ffmpeg.py   # 首次构建：下载两个架构的静态 FFmpeg 到 vendor/ffmpeg/
 python build/build_spk.py
-# 生成 dist/DuplicateCleaner-1.1.0-0046.spk
+# 生成 dist/DuplicateCleaner-1.1.0-0047.spk
 ```
 
 构建机需要 Python 3.8+；FFmpeg 二进制不提交到 Git，首次构建需运行 `build/fetch_ffmpeg.py`。重新生成图标需要 Pillow（仓库已带 PNG，可 `--no-icons`）。
@@ -58,7 +59,7 @@ python build/build_spk.py
 ### 2. 安装到 DSM
 
 1. DSM 套件中心先安装 **Python3**（3.8+）。
-2. 套件中心 → 手动安装 → 选择 `dist/DuplicateCleaner-1.1.0-0046.spk`。
+2. 套件中心 → 手动安装 → 选择 `dist/DuplicateCleaner-1.1.0-0047.spk`。
 3. 启动套件；从 DSM 主菜单打开“重复文件清理与字幕”，或访问 `http://<NAS>:8787/`。
 4. 使用 administrators 组账号登录。
 5. 按页面黄色“权限提示”给 `duplicatecleaner` 系统内部用户授权目标共享文件夹（读取；删除副本需读取/写入）。
@@ -114,6 +115,7 @@ python qa/bench_search.py
 - [预览增强与删除白名单契约](docs/PREVIEW_PROTECTION_CONTRACT.md)：缩略图/媒体信息/并排对比、保护后缀/目录/正则/附属文件（v0044）
 - [硬链接合并与套件回收站契约](docs/MERGE_TRASH_CONTRACT.md)：合并语义/限制/计划与恢复、独立回收站 manifest 与整组恢复（v0045）
 - [通知系统与计划扫描契约](docs/NOTIFICATION_SCHEDULE_CONTRACT.md)：规则格式/负载与忙碌跳过、渠道与事件、触发点与安全边界（v0046）
+- [相似视频识别增强契约](docs/VIDEO_MATCHING_V2_CONTRACT.md)：指纹 v2/边缘裁剪/时间轴对齐/音频签名/置信度分档（v0047）
 - [扫描暂停/升级 drain 契约](docs/RESUME_CONTRACT.md)：暂停断点、升级前 drain、重启后手动继续
 - [v2 需求可行性评估](docs/REQUIREMENTS_V2_ASSESSMENT.md)：需求逐条可行性（能做到/需改法/做不到）与分批实施计划
 - [QA 验收报告](qa/REPORT.md)：需求逐项对照与测试证据
@@ -173,6 +175,7 @@ dist/               构建产物（.spk 与 SHA256）
 - 套件独立回收站（v0045）：文件移动到共享文件夹根下 `#duplicate-cleaner-trash/`（同卷 rename）；恢复时原位置已有同名文件会跳过、**绝不覆盖**；清理需要输入“永久删除”且只删除清单记录的文件。
 - 计划扫描（v0046）：后台轮询调度（标准库无 cron/inotify）；触发时若已有扫描、负载超过阈值或无可用目录则**跳过本次**（不补跑）；规则时间使用套件所在时区。
 - 通知（v0046）：DSM 通知需要 `synodsmnotify`（非 DSM 环境自动跳过）；Webhook/Telegram 需要 NAS 能访问外网；Telegram Bot Token 保存后不回显，日志/审计不记录 token。
+- 相似视频（v0047）：不承诺识别“不同剪辑版本”；边缘裁剪/偏移对齐/音频签名只能提高同源不同压制的命中率，最终仍需人工复核（置信度分档仅作参考）。升级到 v0047 后首次扫描会一次性重算视频指纹（算法版本升级），可用低峰时段执行。
 - ES modules 需要通过后端 HTTP 访问页面（`http://<NAS>:8787/`），不能直接双击 `web/index.html`（浏览器 `file://` 模块 CORS 限制）。
 
 ## License

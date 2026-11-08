@@ -7,9 +7,9 @@ import os
 import re
 
 APP_NAME = "DuplicateCleaner"
-APP_VERSION = "1.1.0-0046"
+APP_VERSION = "1.1.0-0047"
 DISPLAY_NAME = "重复文件清理与字幕"
-SPK_VERSION = "1.1.0-0046"
+SPK_VERSION = "1.1.0-0047"
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8787
@@ -195,6 +195,36 @@ SCHEDULE_NOTIFY_STATE_FILE = "notify_state.json"
 NOTIFY_WATCH_SEC = 60
 
 # ---------------------------------------------------------------------------
+# 相似视频识别增强（v0047，docs/VIDEO_MATCHING_V2_CONTRACT.md）
+# ---------------------------------------------------------------------------
+# 帧指纹版本：v1=仅全帧 pHash；v2=全帧 + 中心裁剪 pHash + 时间轴偏移对齐。
+VIDEO_FINGERPRINT_VERSION = 2
+VIDEO_CENTER_CROP_RATIO = 0.8
+VIDEO_CONTENT_BLACK_THRESHOLD = 18
+VIDEO_CONTENT_MIN_RATIO = 0.5
+VIDEO_OFFSET_MAX_SHIFT = 3
+VIDEO_OFFSET_MIN_OVERLAP = 0.8
+# 置信度分档（按“非保留项与保留项”的最终分数；从高到低匹配）
+VIDEO_CONFIDENCE_BANDS = (
+    ("same_source", 95),
+    ("likely_same", 85),
+    ("possible", 0),
+)
+VIDEO_CONFIDENCE_LABELS = {
+    "same_source": u"极可能同源（仅编码/封装不同）",
+    "likely_same": u"很可能同源",
+    "possible": u"可能相似（建议人工复核）",
+}
+# 音频指纹（可选）：RMS 包络签名，识别“换配音/无音轨”比视觉更敏感
+VIDEO_AUDIO_SIGNATURE_ENABLED_DEFAULT = False
+VIDEO_AUDIO_WEIGHT_DEFAULT = 0.2
+VIDEO_AUDIO_RATE = 8000
+VIDEO_AUDIO_SECONDS = 180
+VIDEO_AUDIO_BUCKETS = 120
+VIDEO_AUDIO_TIMEOUT_SEC = 120
+VIDEO_AUDIO_SIGNATURE_VERSION = 1
+
+# ---------------------------------------------------------------------------
 # 内容相似度模式常量（docs/SIMILARITY_CONTRACT.md）
 # ---------------------------------------------------------------------------
 DEFAULT_SIMILARITY_EXTENSIONS = (
@@ -237,7 +267,7 @@ DEFAULT_VIDEO_EXTENSIONS = (
     ".mp4", ".mkv", ".mov", ".avi", ".flv", ".wmv", ".webm", ".m4v",
     ".ts", ".mpg", ".mpeg",
 )
-VIDEO_ALGO_VERSION = "video-v1"
+VIDEO_ALGO_VERSION = "video-v2"
 VIDEO_CACHE_FILENAME = "video_cache.sqlite3"
 VIDEO_CACHE_MAX_ENTRIES = 20000
 VIDEO_FRAME_SIZE = 32

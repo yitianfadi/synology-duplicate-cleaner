@@ -55,6 +55,11 @@ DEFAULT_SETTINGS = {
     "video_max_file_mb": config.VIDEO_DEFAULT_MAX_FILE_MB,
     "video_timeout_sec": config.VIDEO_DEFAULT_TIMEOUT_SEC,
     "video_cache": True,
+    # --- v0047 相似视频增强：中心裁剪指纹 / 时间轴偏移对齐 / 音频包络签名 ---
+    "video_center_crop_enabled": True,
+    "video_offset_align_enabled": True,
+    "video_audio_signature_enabled": config.VIDEO_AUDIO_SIGNATURE_ENABLED_DEFAULT,
+    "video_audio_weight": config.VIDEO_AUDIO_WEIGHT_DEFAULT,
     # --- 可选 ASR 语音辅助（外部命令；默认关闭，不内置模型/不联网）---
     "video_asr_enabled": False,
     "video_asr_command": "",
@@ -472,7 +477,9 @@ def _normalize_value(key, value):
         return _check_int(key, value, 1, 1024)
     if key == "similarity_allow_binary":
         return _check_bool(key, value)
-    if key in ("video_similarity_enabled", "video_cache"):
+    if key in ("video_similarity_enabled", "video_cache",
+               "video_center_crop_enabled", "video_offset_align_enabled",
+               "video_audio_signature_enabled"):
         return _check_bool(key, value)
     if key == "video_extensions":
         return _check_ext_list(key, value)
@@ -513,6 +520,8 @@ def _normalize_value(key, value):
         # 实际执行使用 shlex.split + 参数数组，绝不经过 shell。
         return _check_str(key, value, max_len=4096)
     if key == "video_asr_weight":
+        return _check_float(key, value, 0.0, 0.5)
+    if key == "video_audio_weight":
         return _check_float(key, value, 0.0, 0.5)
     if key == "video_asr_timeout_sec":
         return _check_int(key, value, 30, 1800)

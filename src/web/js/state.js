@@ -96,6 +96,8 @@ export var IDS = ('loginView loginForm loginUsername loginPassword loginOtp logi
   'setVideoIntervalError setVideoConcurrency setVideoConcurrencyError setVideoHwaccel setVideoHwaccelError setVideoHwaccelHint ' +
   'setVideoFfmpegPath setVideoFfmpegPathError setVideoFfmpegHint setVideoMaxMb setVideoMaxFileError ' +
   'setVideoTimeout setVideoTimeoutError setVideoCache setVideoExtList setVideoExtError ' +
+  'setVideoCenterCrop setVideoOffsetAlign setVideoAudioSignature setVideoAudioWeight ' +
+  'setVideoAudioWeightError ' +
   'videoAsrSection videoAsrStatusBadge videoAsrStatusHint videoAsrEnabled videoAsrFields videoAsrCommand ' +
   'videoAsrCommandError videoAsrWeight videoAsrWeightError videoAsrTimeout videoAsrTimeoutError ' +
   'videoAsrMaxSec videoAsrMaxSecError setVideoAsrStatusBadge setVideoAsrStatusHint ' +

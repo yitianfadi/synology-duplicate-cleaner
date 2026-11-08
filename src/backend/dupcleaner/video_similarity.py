@@ -197,6 +197,283 @@ def frame_similarity(hash_a, hash_b):
     return 1.0 - hamming / 64.0
 
 
+def gray_center_crop(gray, ratio=None):
+    """从 32×32 灰度帧取中心裁剪区域，再最近邻放大回 32×32（v0047）。
+
+    用于抵消上下黑边/左右黑边（不同压制版本的 padding 不同）导致的指纹差异；
+    纯整数运算，不引入额外 ffmpeg 调用。
+    """
+    size = config.VIDEO_FRAME_SIZE
+    if len(gray) != size * size:
+        raise ValueError("gray frame must be %d bytes" % (size * size))
+    try:
+        ratio = float(ratio if ratio is not None
+                      else config.VIDEO_CENTER_CROP_RATIO)
+    except (TypeError, ValueError):
+        ratio = config.VIDEO_CENTER_CROP_RATIO
+    ratio = max(0.5, min(1.0, ratio))
+    side = max(8, int(round(size * ratio)))
+    if side >= size:
+        return bytes(gray)
+    offset = (size - side) // 2
+    result = bytearray(size * size)
+    for y in range(size):
+        source_y = offset + min(side - 1, int(y * side / size))
+        row_start = source_y * size + offset
+        row = gray[row_start:row_start + side]
+        for x in range(size):
+            result[y * size + x] = row[min(side - 1, int(x * side / size))]
+    return bytes(result)
+
+
+def gray_content_crop(gray, black_threshold=None, min_ratio=None):
+    """检测并裁掉四周黑边后放大回 32×32（v0047“边缘裁剪”指纹）。
+
+    真实压制版本常带不同宽高比黑边/上下黑边，ffmpeg pad 后指纹差异大；
+    这里按行/列亮度均值检测内容 bbox（>= 阈值视为有内容），裁掉黑边后
+    最近邻放大回 32×32。检测不到合理 bbox（纯黑/内容过小）时退回中心裁剪。
+    """
+    size = config.VIDEO_FRAME_SIZE
+    if len(gray) != size * size:
+        raise ValueError("gray frame must be %d bytes" % (size * size))
+    try:
+        threshold = int(black_threshold if black_threshold is not None
+                        else config.VIDEO_CONTENT_BLACK_THRESHOLD)
+    except (TypeError, ValueError):
+        threshold = config.VIDEO_CONTENT_BLACK_THRESHOLD
+    try:
+        min_ratio = float(min_ratio if min_ratio is not None
+                          else config.VIDEO_CONTENT_MIN_RATIO)
+    except (TypeError, ValueError):
+        min_ratio = config.VIDEO_CONTENT_MIN_RATIO
+    rows = []
+    for y in range(size):
+        row = gray[y * size:(y + 1) * size]
+        rows.append(sum(row) / float(size))
+    columns = []
+    for x in range(size):
+        total = 0
+        for y in range(size):
+            total += gray[y * size + x]
+        columns.append(total / float(size))
+    top = 0
+    while top < size and rows[top] <= threshold:
+        top += 1
+    bottom = size - 1
+    while bottom > top and rows[bottom] <= threshold:
+        bottom -= 1
+    left = 0
+    while left < size and columns[left] <= threshold:
+        left += 1
+    right = size - 1
+    while right > left and columns[right] <= threshold:
+        right -= 1
+    height = bottom - top + 1
+    width = right - left + 1
+    if (top >= size or bottom < top or left >= size or right < left
+            or height < size * min_ratio or width < size * min_ratio):
+        return gray_center_crop(gray)
+    if (top, bottom, left, right) == (0, size - 1, 0, size - 1):
+        return bytes(gray)
+    result = bytearray(size * size)
+    for y in range(size):
+        source_y = top + min(height - 1, int(y * height / size))
+        row_start = source_y * size + left
+        for x in range(size):
+            source_x = left + min(width - 1, int(x * width / size))
+            result[y * size + x] = gray[row_start + (source_x - left)]
+    return bytes(result)
+
+
+def phash_from_gray_pair(gray):
+    """返回 (full_hash, content_hash)；content 用于黑边/裁剪鲁棒比对（v0047）。"""
+    return phash_from_gray(gray), phash_from_gray(gray_content_crop(gray))
+
+
+def _filtered_frames(frames):
+    try:
+        return [int(value) for value in (frames or [])]
+    except (TypeError, ValueError):  # pragma: no cover - 缓存脏数据兜底
+        return []
+
+
+def offset_aligned_stats(frames_a, frames_b, max_shift=None,
+                         min_overlap=None):
+    """时间轴整体偏移对齐（v0047）：尝试 -N..N 帧位移，返回 (avg, overlap, shift)。
+
+    适合“片头/片尾被剪切、采样网格整体错位”的同源视频；overlap 低于阈值
+    （默认 0.8）的位移不参与比较。
+    """
+    frames_a = _filtered_frames(frames_a)
+    frames_b = _filtered_frames(frames_b)
+    n, m = len(frames_a), len(frames_b)
+    if not n or not m:
+        return 0.0, 0.0, 0
+    try:
+        max_shift = int(max_shift if max_shift is not None
+                        else config.VIDEO_OFFSET_MAX_SHIFT)
+    except (TypeError, ValueError):
+        max_shift = config.VIDEO_OFFSET_MAX_SHIFT
+    try:
+        min_overlap = float(min_overlap if min_overlap is not None
+                            else config.VIDEO_OFFSET_MIN_OVERLAP)
+    except (TypeError, ValueError):
+        min_overlap = config.VIDEO_OFFSET_MIN_OVERLAP
+    best = (0.0, 0.0, 0)
+    for shift in range(-max_shift, max_shift + 1):
+        start_a = max(0, shift)
+        start_b = max(0, -shift)
+        count = min(n - start_a, m - start_b)
+        if count <= 0:
+            continue
+        overlap = float(count) / float(min(n, m))
+        if overlap < min_overlap:
+            continue
+        total = 0.0
+        for index in range(count):
+            total += frame_similarity(frames_a[start_a + index],
+                                      frames_b[start_b + index])
+        avg = total / count
+        score = 0.7 * avg + 0.3 * overlap
+        if score > 0.7 * best[0] + 0.3 * best[1]:
+            best = (avg, overlap, shift)
+    return best
+
+
+def pair_score_enhanced(frames_a_full, frames_a_center, frames_b_full,
+                        frames_b_center, threshold=0, use_center=True,
+                        use_offset=True):
+    """v0047 增强配对：全帧/中心裁剪多组合 DTW + 时间轴偏移对齐，取最优。
+
+    返回 (score, avg, coverage, method, center_used) 或 None。method 为
+    "dtw" / "offset"；覆盖不足（<VIDEO_MIN_COVERAGE）返回 None。
+    """
+    variants = [(frames_a_full, frames_b_full)]
+    if use_center:
+        variants.extend([
+            (frames_a_center, frames_b_center),
+            (frames_a_full, frames_b_center),
+            (frames_a_center, frames_b_full),
+        ])
+    best = None  # (score01, avg, coverage, method, center_used)
+    for index, (first, second) in enumerate(variants):
+        first = _filtered_frames(first)
+        second = _filtered_frames(second)
+        if not first or not second:
+            continue
+        avg, coverage = dtw_stats(first, second)
+        if coverage < config.VIDEO_MIN_COVERAGE:
+            continue
+        score = 0.7 * avg + 0.3 * coverage
+        center_used = index in (1, 2, 3)
+        if best is None or score > best[0]:
+            best = (score, avg, coverage, "dtw", center_used)
+    if use_offset:
+        offset_variants = [(_filtered_frames(frames_a_full),
+                            _filtered_frames(frames_b_full), False)]
+        if use_center:
+            offset_variants.append((_filtered_frames(frames_a_center),
+                                    _filtered_frames(frames_b_center), True))
+        for first, second, center_used in offset_variants:
+            if not first or not second:
+                continue
+            avg, overlap, _shift = offset_aligned_stats(first, second)
+            if overlap < config.VIDEO_MIN_COVERAGE:
+                continue
+            score = 0.7 * avg + 0.3 * overlap
+            if best is None or score > best[0]:
+                best = (score, avg, overlap, "offset", center_used)
+    if best is None:
+        return None
+    score = int(round(100.0 * best[0]))
+    if score < int(threshold or 0):
+        return None
+    return (score, best[1], best[2], best[3], bool(best[4]))
+
+
+def confidence_band(score, bands=None):
+    """按分数映射置信度档位（v0047）；返回 (key, label)。"""
+    try:
+        score = int(score or 0)
+    except (TypeError, ValueError):
+        score = 0
+    bands = bands or config.VIDEO_CONFIDENCE_BANDS
+    for key, minimum in bands:
+        if score >= int(minimum):
+            return key, config.VIDEO_CONFIDENCE_LABELS.get(key, key)
+    return "possible", config.VIDEO_CONFIDENCE_LABELS.get("possible", u"可能相似")
+
+
+def audio_signature_from_pcm(pcm, buckets=None, rate=None):
+    """从 s16le 单声道 PCM 计算 RMS 包络签名（v0047，替代真实音频指纹）。
+
+    返回 0..255 的整数数组；签名只用于相似度比较，不可还原音频内容。
+    """
+    try:
+        buckets = int(buckets or config.VIDEO_AUDIO_BUCKETS)
+    except (TypeError, ValueError):
+        buckets = config.VIDEO_AUDIO_BUCKETS
+    buckets = max(8, min(600, buckets))
+    data = bytes(pcm or b"")
+    sample_count = len(data) // 2
+    if sample_count < buckets:
+        return []
+    try:
+        import array
+        samples = array.array("h")
+        samples.frombytes(data[:sample_count * 2])
+    except (ValueError, ImportError):  # pragma: no cover
+        return []
+    chunk = max(1, sample_count // buckets)
+    values = []
+    for index in range(buckets):
+        start = index * chunk
+        end = min(sample_count, start + chunk)
+        if end <= start:
+            values.append(0)
+            continue
+        total = 0
+        for position in range(start, end):
+            value = samples[position]
+            total += value * value
+        values.append(int(math.sqrt(total / float(end - start))))
+    peak = max(values) or 1
+    return [int(round(value * 255.0 / peak)) for value in values]
+
+
+def audio_signature_similarity(signature_a, signature_b):
+    """音频包络签名相似度（0..100）：零均值归一化互相关。
+
+    长度不同时按较短长度截断（采样秒数/桶数一致时无影响）。
+    """
+    try:
+        first = [float(value) for value in (signature_a or [])]
+        second = [float(value) for value in (signature_b or [])]
+    except (TypeError, ValueError):
+        return None
+    count = min(len(first), len(second))
+    if count < 8:
+        return None
+    first = first[:count]
+    second = second[:count]
+    mean_a = sum(first) / count
+    mean_b = sum(second) / count
+    numerator = 0.0
+    denom_a = 0.0
+    denom_b = 0.0
+    for index in range(count):
+        value_a = first[index] - mean_a
+        value_b = second[index] - mean_b
+        numerator += value_a * value_b
+        denom_a += value_a * value_a
+        denom_b += value_b * value_b
+    if denom_a <= 0 or denom_b <= 0:
+        # 静音签名（无语音/无人声）无法比较 → 不给分
+        return None
+    correlation = numerator / math.sqrt(denom_a * denom_b)
+    return int(round(max(0.0, min(1.0, correlation)) * 100.0))
+
+
 def prefilter_similarity(frames_a, frames_b):
     """视频指纹初筛：按相对位置对齐的帧平均相似度。"""
     if not frames_a or not frames_b:
@@ -282,14 +559,23 @@ def duration_ratio_allowed(duration_a, duration_b):
             <= config.VIDEO_DURATION_RATIO_MAX)
 
 
-def build_video_groups(items, threshold, asr_weight=0.0):
-    """安全团分组：任意两两分数 >= 阈值。items 需含 analysis.frame_hashes。
+def build_video_groups(items, threshold, asr_weight=0.0, audio_weight=0.0,
+                       use_center=True, use_offset=True):
+    """安全团分组（v0047 增强）：任意两两分数 >= 阈值。
 
-    若双方都有 ASR 文本签名且 asr_weight>0，则 pair 分数 =
-    round(visual*(1-w) + text*w)，与视觉分数一起参与阈值判断与安全团校验。
+    - 视觉：全帧/中心裁剪多组合 DTW + 时间轴偏移对齐，取最优（抵消黑边/片头剪切）；
+    - 可选 ASR 文本签名与音频包络签名加权（两者权重之和上限 0.5）；
+    - 每个簇附置信度档位（same_source / likely_same / possible）与分数统计。
+    items 需含 analysis.frame_hashes；可选 frame_hashes_center / asr_signature /
+    audio_signature。
     """
     threshold = max(0, min(100, int(threshold)))
     asr_weight = max(0.0, min(0.5, float(asr_weight or 0.0)))
+    audio_weight = max(0.0, min(0.5, float(audio_weight or 0.0)))
+    if asr_weight + audio_weight > 0.5:
+        scale = 0.5 / (asr_weight + audio_weight)
+        asr_weight *= scale
+        audio_weight *= scale
     count = len(items)
     pairs = {}
     pair_details = {}
@@ -303,22 +589,50 @@ def build_video_groups(items, threshold, asr_weight=0.0):
                 continue
             frames_a = first.get("frame_hashes") or []
             frames_b = second.get("frame_hashes") or []
-            if prefilter_similarity(frames_a, frames_b) < 0.25:
+            center_a = first.get("frame_hashes_center") or []
+            center_b = second.get("frame_hashes_center") or []
+            prefilter = prefilter_similarity(frames_a, frames_b)
+            if center_a and center_b:
+                prefilter = max(prefilter,
+                                prefilter_similarity(center_a, center_b))
+            if prefilter < 0.25:
                 continue
-            visual = pair_score(frames_a, frames_b, 0)
+            visual = pair_score_enhanced(
+                frames_a, center_a, frames_b, center_b, 0,
+                use_center=bool(use_center and center_a and center_b),
+                use_offset=bool(use_offset))
             if visual is None:
                 continue
-            base_score = int(visual[0])
+            base_score, _avg, _coverage, method, center_used = visual
+            base_score = int(base_score)
             text_score = None
             asr_used = False
-            final_score = base_score
+            audio_score = None
+            audio_used = False
+            weighted = []
             signature_a = first.get("asr_signature")
             signature_b = second.get("asr_signature")
             if asr_weight > 0 and signature_a and signature_b:
                 text_score = similarity.minhash_similarity_percent(
                     signature_a, signature_b)
-                asr_used = True
-                final_score = combine_scores(base_score, text_score, asr_weight)
+                if text_score is not None:
+                    weighted.append((float(text_score), asr_weight))
+                    asr_used = True
+            if audio_weight > 0:
+                audio_score = audio_signature_similarity(
+                    first.get("audio_signature"),
+                    second.get("audio_signature"))
+                if audio_score is not None:
+                    weighted.append((float(audio_score), audio_weight))
+                    audio_used = True
+            final_score = base_score
+            if weighted:
+                weight_total = sum(item[1] for item in weighted)
+                weighted_mean = (sum(item[0] * item[1] for item in weighted)
+                                 / weight_total)
+                final_score = int(round(
+                    base_score * (1.0 - weight_total)
+                    + weighted_mean * weight_total))
             if final_score < threshold:
                 continue
             pairs[(left, right)] = final_score
@@ -326,6 +640,10 @@ def build_video_groups(items, threshold, asr_weight=0.0):
                 "base": base_score,
                 "text_score": text_score,
                 "asr_used": asr_used,
+                "audio_score": audio_score,
+                "audio_used": audio_used,
+                "method": method,
+                "center_used": bool(center_used),
             }
     groups = []
     group_of = {}
@@ -382,12 +700,34 @@ def build_video_groups(items, threshold, asr_weight=0.0):
                 scores[key] = pairs.get(key)
                 details[key] = pair_details.get(key) or {
                     "base": pairs.get(key), "text_score": None,
-                    "asr_used": False,
+                    "asr_used": False, "audio_score": None,
+                    "audio_used": False, "method": "dtw",
+                    "center_used": False,
                 }
-        clusters.append({"indices": members, "scores": scores,
-                         "details": details})
+        member_scores = [value for value in scores.values()
+                         if value is not None]
+        band_key, band_label = confidence_band(min(member_scores)
+                                               if member_scores else 0)
+        clusters.append({
+            "indices": members,
+            "scores": scores,
+            "details": details,
+            "confidence": band_key,
+            "confidence_label": band_label,
+            "max_score": max(member_scores) if member_scores else 0,
+            "min_score": min(member_scores) if member_scores else 0,
+            "avg_score": int(round(sum(member_scores)
+                                   / max(1, len(member_scores)))),
+            "center_used": any(bool(item.get("center_used"))
+                               for item in details.values()),
+            "method": next((item.get("method") for item in details.values()
+                            if item.get("method")), "dtw"),
+            "audio_used": any(bool(item.get("audio_used"))
+                              for item in details.values()),
+        })
+    clusters.sort(key=lambda item: (-int(item.get("min_score") or 0),
+                                    item["indices"]))
     return clusters
-
 
 def compute_n_eff(duration, sample_frames, max_interval):
     duration = max(0.0, float(duration))
@@ -754,6 +1094,40 @@ class FFmpegTool(object):
                 or os.path.getsize(out_path) <= 0):
             detail = stderr.decode("utf-8", "replace").strip()[-300:]
             raise VideoSkip("decode", detail or "audio remux failed")
+
+    def extract_audio_pcm(self, path, seconds, rate, timeout, stop_check=None):
+        """抽取 s16le 单声道 PCM（v0047 音频包络签名用）。
+
+        注意：**不能直接把 PCM 写到 stdout**——`_run` 采用“轮询后 communicate”的模式，
+        Windows 匿名管道缓冲区较小，ffmpeg 写满就会被阻塞导致超时。这里先写临时文件
+        再读入内存（180s@8kHz 约 2.8MB），读完即删。
+        音频缺失/解码失败抛 VideoSkip('audio', ...)，由调用方降级为“无音频签名”。
+        """
+        try:
+            seconds = max(1.0, float(seconds))
+            rate = max(8000, min(48000, int(rate)))
+        except (TypeError, ValueError):
+            seconds, rate = float(config.VIDEO_AUDIO_SECONDS), config.VIDEO_AUDIO_RATE
+        tempdir = tempfile.mkdtemp(prefix="dc-audio-pcm-")
+        output = os.path.join(tempdir, "audio.s16le")
+        try:
+            args = ["-nostdin", "-hide_banner", "-loglevel", "error",
+                    "-threads", "1", "-i", path,
+                    "-t", "%.1f" % seconds, "-vn", "-ac", "1",
+                    "-ar", str(rate), "-f", "s16le", "-y", output]
+            code, _stdout, stderr = self._run(args, timeout, stop_check)
+            if code != 0 or not os.path.isfile(output):
+                detail = stderr.decode("utf-8", "replace").strip()[-300:]
+                raise VideoSkip("audio", detail or ("audio pcm exit=%s" % code))
+            with open(output, "rb") as handle:
+                data = handle.read()
+            if not data:
+                raise VideoSkip("audio", u"音频采样为空")
+            return data
+        except OSError as exc:
+            raise VideoSkip("audio", u"读取音频采样失败: %s" % exc)
+        finally:
+            shutil.rmtree(tempdir, ignore_errors=True)
 
     def extract_silence_mp3(self, out_path, seconds=1.0, timeout=15.0):
         """用 lavfi anullsrc 生成指定秒数的 16kHz 单声道静音 MP3。
@@ -1231,6 +1605,7 @@ class VideoEngine(object):
         self.cache = cache
         self.ffmpeg_used = 0
         self.asr_used = 0
+        self.audio_used = 0
         self._lock = threading.RLock()
 
     def ensure_cache(self, options):
@@ -1314,6 +1689,7 @@ class VideoEngine(object):
         hw_label, hw_flag, hw_fallback = hwaccel_for_mode(
             hwaccel_mode, self.ffmpeg.hwaccels())
         frames = []
+        center_frames = []
         software_fallback = False
         batch_size = self._frame_batch_size(options)
         timestamps = [(index + 0.5) * duration / n_eff
@@ -1375,20 +1751,26 @@ class VideoEngine(object):
                     raws.append(raw)
             for raw in raws:
                 try:
-                    digest = phash_from_gray(raw)
+                    full_digest, center_digest = phash_from_gray_pair(raw)
                 except ValueError as exc:
                     self._cache_failure(cache, key, "decode", str(exc))
                     raise VideoSkip("decode", str(exc))
-                frames.append(digest)
+                frames.append(full_digest)
+                center_frames.append(center_digest)
             index += len(batch_ts)
         hex_frames = ["%016x" % value for value in frames]
-        fingerprint = "v1:%d:%s" % (n_eff, "".join(hex_frames))
+        hex_center = ["%016x" % value for value in center_frames]
+        fingerprint = "v2:%d:%s" % (n_eff, "".join(hex_frames))
         result = {
             "duration": float(duration),
             "n_eff": int(n_eff),
             "frame_hashes": frames,
+            "frame_hashes_center": center_frames,
             "frame_hex": hex_frames,
+            "frame_hex_center": hex_center,
             "fingerprint": fingerprint,
+            "fingerprint_version": int(config.VIDEO_FINGERPRINT_VERSION),
+            "center_crop_ratio": float(config.VIDEO_CENTER_CROP_RATIO),
             "hwaccel": hw_label,
             "hwaccel_mode": hwaccel_mode,
             "hwaccel_fallback": bool(hw_fallback or software_fallback),
@@ -1409,9 +1791,27 @@ class VideoEngine(object):
     # 可选 ASR 辅助（失败 open：绝不因 ASR 失败而让视频分析失败）
     # ------------------------------------------------------------------
     def analyze(self, path, options, stop_check=None):
-        """视觉分析 + 可选 ASR 文本签名（只产出签名，绝不返回转写文本）。"""
+        """视觉分析 + 可选音频包络签名 + 可选 ASR 文本签名（均不返回文本）。"""
         visual = self._analyze_visual(path, options, stop_check)
         identity = fsutil_identity(path)
+        # v0047：可选音频包络签名（失败 open：不影响视觉结果）
+        audio_info = {"audio_signature_status": "disabled",
+                      "audio_signature": None, "audio_cache_hit": False}
+        if identity is not None and options.get("video_audio_signature_enabled"):
+            try:
+                audio_info = self._analyze_audio_signature(
+                    path, identity, options, self.ensure_cache(options),
+                    stop_check)
+            except VideoStopped:
+                raise
+            except Exception:  # pragma: no cover - 防御性兜底
+                audio_info = {"audio_signature_status": "failed",
+                              "audio_signature": None,
+                              "audio_cache_hit": False}
+        visual.update(audio_info)
+        if audio_info.get("audio_signature_status") == "ok":
+            with self._lock:
+                self.audio_used += 1
         asr_info = {"asr_status": "disabled", "asr_signature": None,
                     "asr_cache_hit": False}
         if identity is not None and options.get("video_asr_enabled"):
@@ -1435,6 +1835,76 @@ class VideoEngine(object):
             with self._lock:
                 self.asr_used += 1
         return visual
+
+    def _audio_signature_key(self, identity):
+        return "audio-v%d|%d|%d|%d|%d|%d" % (
+            config.VIDEO_AUDIO_SIGNATURE_VERSION,
+            int(identity["size"]), int(identity["mtime_ns"]),
+            int(identity["inode"]), int(identity["dev"]),
+            int(config.VIDEO_AUDIO_BUCKETS))
+
+    def _analyze_audio_signature(self, path, identity, options, cache,
+                                 stop_check=None):
+        """可选音频包络签名（v0047）：ffmpeg 解 PCM → 分桶 RMS → 0..255 签名。
+
+        结果缓存（<var>/cache/video.sqlite）；任何失败都降级为 status=failed，
+        绝不影响视觉分析或删除安全。
+        """
+        result = {"audio_signature_status": "disabled",
+                  "audio_signature": None, "audio_cache_hit": False}
+        if not options.get("video_audio_signature_enabled"):
+            return result
+        if not self.ffmpeg.available():
+            result["audio_signature_status"] = "unavailable"
+            return result
+        key = self._audio_signature_key(identity)
+        if cache is not None:
+            cached = cache.get(key)
+            if isinstance(cached, dict):
+                if cached.get("failed"):
+                    result["audio_signature_status"] = "failed"
+                    result["audio_signature_detail"] = cached.get("detail") or ""
+                    return result
+                signature = cached.get("signature")
+                if isinstance(signature, list) and len(signature) >= 8:
+                    result["audio_signature_status"] = "ok"
+                    result["audio_signature"] = signature
+                    result["audio_cache_hit"] = True
+                    return result
+        timeout = float(options.get("video_timeout_sec")
+                        or config.VIDEO_DEFAULT_TIMEOUT_SEC)
+        if self.timeout_cap:
+            timeout = min(timeout, float(self.timeout_cap))
+        timeout = min(timeout, float(config.VIDEO_AUDIO_TIMEOUT_SEC))
+        try:
+            pcm = self.ffmpeg.extract_audio_pcm(
+                path, config.VIDEO_AUDIO_SECONDS, config.VIDEO_AUDIO_RATE,
+                timeout, stop_check)
+        except VideoStopped:
+            raise
+        except VideoSkip as exc:
+            if cache is not None:
+                cache.put(key, {"failed": True, "reason": "audio",
+                                "detail": exc.detail or ""})
+            result["audio_signature_status"] = "failed"
+            result["audio_signature_detail"] = exc.detail or ""
+            return result
+        signature = audio_signature_from_pcm(
+            pcm, config.VIDEO_AUDIO_BUCKETS, config.VIDEO_AUDIO_RATE)
+        if len(signature) < 8:
+            if cache is not None:
+                cache.put(key, {"failed": True, "reason": "empty",
+                                "detail": u"音频采样不足"})
+            result["audio_signature_status"] = "failed"
+            result["audio_signature_detail"] = u"音频采样不足"
+            return result
+        if cache is not None:
+            cache.put(key, {"signature": signature})
+        with self._lock:
+            self.ffmpeg_used += 1
+        result["audio_signature_status"] = "ok"
+        result["audio_signature"] = signature
+        return result
 
     def _asr_temp_root(self):
         directory = os.path.join(self.config.data_dir, "tmp")

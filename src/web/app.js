@@ -24,7 +24,8 @@ import {
   DEFAULT_VIDEO_EXTENSIONS, DELETE_REASON_LABEL, DELETE_STATUS_LABEL,
   ERROR_FALLBACK, JOB_STATUS_LABEL, KEEP_LABEL, KEEP_MODE_LABEL,
   KEEP_RULE_LABEL, SIDECAR_MODE_LABEL, PROTECT_REASON_LABEL,
-  RECYCLE_MODE_LABEL, MERGE_REASON_LABEL, NOTIFY_CHANNEL_LABEL, LEGACY_VIEW_ALIASES,
+  RECYCLE_MODE_LABEL, MERGE_REASON_LABEL, NOTIFY_CHANNEL_LABEL,
+  VIDEO_CONFIDENCE_LABEL, VIDEO_CONFIDENCE_CLASS, LEGACY_VIEW_ALIASES,
   MTIME_FALLBACK_LABEL, MTIME_FALLBACK_REASONS, POLL_MS,
   SIZE_UNITS, SOURCE_INFO, STAGE_LABEL, STATUS_BADGE, STATUS_LABEL,
   SUBTITLE_ACTIVE_STATUS, SUBTITLE_LANGUAGES, SUBTITLE_OUTPUT_KIND_LABEL,
@@ -1631,6 +1632,11 @@ import {
     if (!els.setVideoFields) { return; }
     var canUse = state.video && state.video.supported !== false && state.video.available !== false;
     els.setVideoFields.disabled = !(canUse && els.setVideoEnabled && els.setVideoEnabled.checked);
+    // v0047：未启用音频签名时权重输入置灰（值仍保留）
+    if (els.setVideoAudioWeight) {
+      els.setVideoAudioWeight.disabled = !(els.setVideoAudioSignature
+        && els.setVideoAudioSignature.checked);
+    }
   }
 
   function setVideoNumberValue(input, value, fallback, min, max) {
@@ -1676,6 +1682,22 @@ import {
     if (els.setVideoFfmpegPath) { els.setVideoFfmpegPath.value = settings.ffmpeg_path || ''; }
     if (els.setVideoHwaccel) { renderVideoHwaccelOptions(els.setVideoHwaccel, settings.video_hwaccel || 'auto'); }
     if (els.setVideoCache) { els.setVideoCache.checked = settings.video_cache !== false; }
+    // v0047：边缘裁剪 / 时间轴偏移 / 音频签名
+    if (els.setVideoCenterCrop) {
+      els.setVideoCenterCrop.checked = settings.video_center_crop_enabled !== false;
+    }
+    if (els.setVideoOffsetAlign) {
+      els.setVideoOffsetAlign.checked = settings.video_offset_align_enabled !== false;
+    }
+    if (els.setVideoAudioSignature) {
+      els.setVideoAudioSignature.checked = settings.video_audio_signature_enabled === true;
+    }
+    if (els.setVideoAudioWeight) {
+      var audioWeight = Number(settings.video_audio_weight);
+      els.setVideoAudioWeight.value = String(
+        isFinite(audioWeight) && audioWeight >= 0 ? audioWeight : 0.2);
+    }
+    updateSettingsVideoFieldsState();
     var selected = (Array.isArray(settings.video_extensions) && settings.video_extensions.length)
       ? settings.video_extensions : cap.extensions;
     renderExtChips(els.setVideoExtList, cap.extensions, selected, null);
@@ -1747,6 +1769,22 @@ import {
     else { settings.ffmpeg_path = ffmpegPath.value; }
     settings.video_hwaccel = readHwaccelSelect(els.setVideoHwaccel);
     settings.video_cache = !!(els.setVideoCache && els.setVideoCache.checked);
+    // v0047：边缘裁剪 / 时间轴偏移 / 音频签名
+    settings.video_center_crop_enabled = els.setVideoCenterCrop
+      ? !!els.setVideoCenterCrop.checked : true;
+    settings.video_offset_align_enabled = els.setVideoOffsetAlign
+      ? !!els.setVideoOffsetAlign.checked : true;
+    settings.video_audio_signature_enabled = !!(els.setVideoAudioSignature
+      && els.setVideoAudioSignature.checked);
+    var audioWeightRaw = String(els.setVideoAudioWeight
+      ? els.setVideoAudioWeight.value : '').trim();
+    var audioWeight = parseFloat(audioWeightRaw);
+    if (audioWeightRaw === '' || !isFinite(audioWeight)
+        || audioWeight < 0 || audioWeight > 0.5) {
+      errors.videoAudioWeight = '音频签名权重需在 0–0.5 之间。';
+    } else {
+      settings.video_audio_weight = Math.round(audioWeight * 100) / 100;
+    }
     var ext = readExtChips(els.setVideoExtList);
     if (!ext.length) { errors.videoExt = '请至少选择一种视频后缀。'; } else { settings.video_extensions = ext; }
     readAsrSettings(settings, errors);
@@ -4498,6 +4536,41 @@ import {
       }));
     }
     if (lowConfidence) { badges.push(el('span', { className: 'badge low-confidence-badge', text: '低置信度' })); }
+    // v0047：置信度档位 / 边缘裁剪 / 时间轴对齐 / 音频辅助
+    var confidenceKey = group.video_confidence;
+    if (confidenceKey) {
+      var confidenceLabel = group.video_confidence_label
+        || VIDEO_CONFIDENCE_LABEL[confidenceKey] || confidenceKey;
+      badges.push(el('span', {
+        className: 'badge ' + (VIDEO_CONFIDENCE_CLASS[confidenceKey] || 'badge-gray')
+          + ' video-confidence-badge',
+        attrs: { title: '置信度按组内最低配对分数分档：' + confidenceLabel },
+        text: confidenceLabel
+      }));
+    }
+    if (group.video_center_used) {
+      badges.push(el('span', {
+        className: 'badge badge-gray',
+        attrs: { title: '已使用边缘裁剪指纹（自动裁掉黑边）参与比对' },
+        text: '边缘裁剪'
+      }));
+    }
+    if (group.video_match_method === 'offset') {
+      badges.push(el('span', {
+        className: 'badge badge-gray',
+        attrs: { title: '使用时间轴偏移对齐（片头/片尾剪切导致整体错位）' },
+        text: '时间轴对齐'
+      }));
+    }
+    if (group.video_audio_used) {
+      var audioScore = Number(group.video_audio_score);
+      badges.push(el('span', {
+        className: 'badge badge-gray',
+        attrs: { title: '音频包络签名参与评分（只比音量包络，不还原内容）' },
+        text: '音频辅助' + (isFinite(audioScore) && audioScore > 0
+          ? ' · ' + Math.round(audioScore) + '%' : '')
+      }));
+    }
     if (!batchAllowed) { badges.push(el('span', { className: 'badge badge-gray', text: '禁止批量删除' })); }
     var asrUsed = group.video_asr_used === true || group.asr_used === true;
     if (asrUsed) {
@@ -4533,6 +4606,12 @@ import {
       if (asrTextScore !== null) { asrText += ' · 文本分 ' + Math.round(asrTextScore) + '%'; }
       if (asrWeight !== null) { asrText += ' · 权重 ' + Math.round(asrWeight * 100) + '%'; }
       subItems.push(el('span', { className: 'asr-score-note', text: asrText }));
+    }
+    if (Number(group.video_duration_delta_sec) > 3) {
+      subItems.push(el('span', {
+        className: 'muted',
+        text: '组内时长差 ' + fmtVideoDuration(group.video_duration_delta_sec)
+      }));
     }
     if (fallback) {
       subItems.push(el('span', { className: 'keep-source-note', text: '保留依据：修改时间（mtime）' }));
@@ -9474,6 +9553,7 @@ import {
     videoAsrWeight: { input: 'setVideoAsrWeight', error: 'setVideoAsrWeightError' },
     videoAsrTimeout: { input: 'setVideoAsrTimeout', error: 'setVideoAsrTimeoutError' },
     videoAsrMaxSec: { input: 'setVideoAsrMaxSec', error: 'setVideoAsrMaxSecError' },
+    videoAudioWeight: { input: 'setVideoAudioWeight', error: 'setVideoAudioWeightError' },
     subtitleAsrBaseUrl: { input: 'subtitleAsrBaseUrl', error: 'subtitleAsrBaseUrlError' },
     subtitleAsrModel: { input: 'subtitleAsrModel', error: 'subtitleAsrModelError' },
     subtitleAsrTimeout: { input: 'subtitleAsrTimeout', error: 'subtitleAsrTimeoutError' },
@@ -9556,6 +9636,16 @@ import {
         videoBits.push('硬解 ' + videoHwaccelLabel(videoEffective.label));
         if (vcap.hwaccelFallback) { videoBits.push('显式模式不支持，回退软件'); }
       }
+      var v2Bits = [];
+      if (els.setVideoCenterCrop && els.setVideoCenterCrop.checked) { v2Bits.push('边缘裁剪'); }
+      if (els.setVideoOffsetAlign && els.setVideoOffsetAlign.checked) { v2Bits.push('时间轴对齐'); }
+      if (els.setVideoAudioSignature && els.setVideoAudioSignature.checked) {
+        var audioWeightValue = Number(els.setVideoAudioWeight
+          ? els.setVideoAudioWeight.value : 0);
+        v2Bits.push('音频辅助 ' + (isFinite(audioWeightValue)
+          ? Math.round(audioWeightValue * 100) : 0) + '%');
+      }
+      if (v2Bits.length) { videoBits.push(v2Bits.join(' / ')); }
       setText(els.settingsVideoSummary, videoBits.join(' · '));
     }
     if (els.settingsSubtitleSummary) {
@@ -10182,6 +10272,12 @@ import {
       });
     }
     if (els.setVideoExtList) { els.setVideoExtList.addEventListener('change', clearSettingsErrors); }
+    if (els.setVideoAudioSignature) {
+      els.setVideoAudioSignature.addEventListener('change', function () {
+        updateSettingsVideoFieldsState();
+        clearSettingsErrors();
+      });
+    }
     if (els.setVideoAsrEnabled) {
       els.setVideoAsrEnabled.addEventListener('change', function () {
         updateAsrFieldsState();

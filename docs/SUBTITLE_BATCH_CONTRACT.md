@@ -326,7 +326,7 @@ CREATE TABLE IF NOT EXISTS subtitle_batches (
 
 ## 12. 版本与兼容
 
-- 版本 **1.1.0-0046**（v0039 起含任务队列视图与批次组总览，v0040 起含分片音频预取，v0041 起任务行补 `eta_seconds` 与进度显示修复，v0042 起启动加载提速与升级启动稳定性，v0043 起重复扫描侧增量缓存/保留规则/排除规则，v0044 起预览缩略图/并排对比与删除白名单，v0045 起硬链接合并与套件独立回收站，v0046 起计划扫描与通知系统，字幕侧行为不变），需同步 8 处：`README.md`、`build/build_spk.py`、`docs/ARCHITECTURE.md`、`docs/CONTRACT.md`、`docs/SPK_PACKAGING.md`、`spk/INFO`、`src/backend/dupcleaner/config.py`、`src/web/index.html`（含 `app.js?v=` 查询串）。
+- 版本 **1.1.0-0047**（v0039 起含任务队列视图与批次组总览，v0040 起含分片音频预取，v0041 起任务行补 `eta_seconds` 与进度显示修复，v0042 起启动加载提速与升级启动稳定性，v0043 起重复扫描侧增量缓存/保留规则/排除规则，v0044 起预览缩略图/并排对比与删除白名单，v0045 起硬链接合并与套件独立回收站，v0046 起计划扫描与通知系统，v0047 起相似视频识别增强，字幕侧行为不变），需同步 8 处：`README.md`、`build/build_spk.py`、`docs/ARCHITECTURE.md`、`docs/CONTRACT.md`、`docs/SPK_PACKAGING.md`、`spk/INFO`、`src/backend/dupcleaner/config.py`、`src/web/index.html`（含 `app.js?v=` 查询串）。
 - 现有 `POST /api/subtitles` 行为不变（新字段均为可选）；旧任务记录可读；旧 SPK 升级后数据目录与包 ID 不变。
 - 文档同步：本文件、`docs/SUBTITLE_CONTRACT.md`（新增 §13 指向本文件）、`docs/ARCHITECTURE.md`（字幕页与批次服务）。
 
@@ -515,6 +515,7 @@ CREATE TABLE IF NOT EXISTS subtitle_batches (
 - 版本 1.1.0-0044；本次改动为预览缩略图/媒体信息/并排对比与删除白名单，**字幕侧接口/行为/数据结构不变**（schema 仍 v8）。
 - 版本 1.1.0-0045；本次改动为硬链接合并与套件独立回收站，**字幕侧接口/行为/数据结构不变**（schema 仍 v8）。
 - 版本 1.1.0-0046；本次改动为计划扫描与通知系统（新增扫描/字幕批次事件通知钩子），**字幕任务接口/行为/数据结构不变**（schema 仍 v8）。
+- 版本 1.1.0-0047；本次改动为相似视频识别增强（视频指纹/配对/设置），**字幕任务接口/行为/数据结构不变**（schema 仍 v8）。
 
 
 

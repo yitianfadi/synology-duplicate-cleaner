@@ -2597,6 +2597,111 @@ def run():
         finally:
             receiver.stop()
 
+        # ---------------- v0047：相似视频识别增强（真实 ffmpeg） ----------------
+        real_ffmpeg = shutil.which("ffmpeg")
+        if not real_ffmpeg:
+            record("VIDEO-01", "v0047 视频组置信度/裁剪/音频字段（真实 ffmpeg）",
+                   "UNVERIFIED", "PATH 中没有 ffmpeg")
+            record("VIDEO-02", "v0047 音频签名权重校验", "UNVERIFIED",
+                   "PATH 中没有 ffmpeg")
+        else:
+            videos_dir = os.path.join(fx["share_a"], "videos")
+            generated = os.path.join(fx["share_a"], "vidgen")
+            try:
+                os.makedirs(generated, exist_ok=True)
+
+                def _gen_video(name, source="testsrc", extra_filter=None,
+                               audio=True, extra_args=None):
+                    output = os.path.join(generated, name)
+                    command = [real_ffmpeg, "-y", "-nostdin", "-hide_banner",
+                               "-loglevel", "error", "-f", "lavfi",
+                               "-i", "%s=duration=3:size=64x64:rate=5" % source]
+                    if audio:
+                        command += ["-f", "lavfi", "-i",
+                                    "sine=frequency=440:duration=3"]
+                    if extra_filter:
+                        command += ["-vf", extra_filter]
+                    if extra_args:
+                        command += list(extra_args)
+                    command += ["-pix_fmt", "yuv420p", "-shortest", output]
+                    subprocess.run(command, stdout=subprocess.PIPE,
+                                   stderr=subprocess.PIPE, timeout=120)
+                    return output
+
+                base_path = _gen_video("base.mp4")
+                reencode_path = _gen_video(
+                    "reencode.mp4",
+                    extra_args=["-c:v", "libx264", "-crf", "35",
+                                "-preset", "veryfast"])
+                letterbox_path = _gen_video(
+                    "letterbox.mp4",
+                    extra_filter="scale=48:48,pad=64:64:8:8:black")
+                if not all(os.path.isfile(path) for path in
+                           (base_path, reencode_path, letterbox_path)):
+                    record("VIDEO-01", "v0047 视频组置信度/裁剪/音频字段（真实 ffmpeg）",
+                           "UNVERIFIED", "ffmpeg 无法生成样例视频")
+                else:
+                    def _read(path):
+                        with open(path, "rb") as handle:
+                            return handle.read()
+                    create_ordered(os.path.join(videos_dir, "a1.mp4"),
+                                   _read(base_path))
+                    create_ordered(os.path.join(videos_dir, "b1.mp4"),
+                                   _read(reencode_path))
+                    create_ordered(os.path.join(videos_dir, "c1.mp4"),
+                                   _read(letterbox_path))
+                    resp = post_scan(client, [videos_dir], options={
+                        "video_similarity_enabled": True,
+                        "video_sample_frames": 5,
+                        "video_max_sample_interval_sec": 300,
+                        "video_similarity_threshold": 80,
+                        "video_concurrency": 1,
+                        "video_hwaccel": "off",
+                        "video_max_file_mb": 64,
+                        "video_timeout_sec": 60,
+                        "video_center_crop_enabled": True,
+                        "video_offset_align_enabled": True,
+                        "video_audio_signature_enabled": True,
+                        "video_audio_weight": 0.2,
+                    })
+                    video_scan_id = jd(resp).get("scan_id")
+                    video_scan = (wait_scan(client, video_scan_id, timeout=300)
+                                  if video_scan_id else {})
+                    video_groups, _video_total, _ = (
+                        fetch_groups(client, video_scan_id)
+                        if video_scan_id else ([], 0, None))
+                    video_groups = [item for item in video_groups
+                                    if item.get("match_type") == "video"]
+                    group = video_groups[0] if video_groups else {}
+                    files = group.get("files") or []
+                    check("VIDEO-01",
+                          "v0047 视频组带置信度/匹配方法/音频字段，且不同压制版本可命中",
+                          video_scan.get("status") == "completed"
+                          and len(video_groups) >= 1
+                          and group.get("video_confidence") in
+                          ("same_source", "likely_same", "possible")
+                          and bool(group.get("video_confidence_label"))
+                          and int(group.get("video_max_score") or 0) >= 80
+                          and group.get("video_match_method") in ("dtw", "offset")
+                          and group.get("video_audio_used") is True
+                          and len(files) >= 2
+                          and all("video_match_method" in item for item in files),
+                          "status=%s groups=%s conf=%s max=%s method=%s audio=%s files=%s"
+                          % (video_scan.get("status"), len(video_groups),
+                             group.get("video_confidence"),
+                             group.get("video_max_score"),
+                             group.get("video_match_method"),
+                             group.get("video_audio_used"), len(files)))
+            except (OSError, subprocess.SubprocessError) as exc:
+                record("VIDEO-01", "v0047 视频组置信度/裁剪/音频字段（真实 ffmpeg）",
+                       "UNVERIFIED", "生成样例视频失败: %s" % exc)
+        resp = client.put_json("/api/settings", {
+            "settings": {"video_audio_weight": 0.8}})
+        bad_code, _details = err_code(resp)
+        check("VIDEO-02", "v0047 音频签名权重越界被拒绝（0–0.5）",
+              resp.status == 400 and bad_code == "INVALID_ARGUMENT",
+              "status=%s code=%s" % (resp.status, bad_code))
+
         # ---------------- 重启持久化 ----------------
         client.put_json("/api/settings", {"settings": {"concurrency": 3}})
         backend.stop()

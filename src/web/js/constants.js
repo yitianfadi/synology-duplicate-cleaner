@@ -74,6 +74,10 @@ export var DEFAULT_VIDEO_SETTINGS = {
   video_max_file_mb: 8192,
   video_timeout_sec: 180,
   video_cache: true,
+  video_center_crop_enabled: true,
+  video_offset_align_enabled: true,
+  video_audio_signature_enabled: false,
+  video_audio_weight: 0.2,
   video_asr_enabled: false,
   video_asr_command: '',
   video_asr_weight: 0.15,
@@ -115,6 +119,15 @@ export var MERGE_REASON_LABEL = {
   MANUAL_KEEP_REQUIRED: '需人工确认保留项', IS_KEEPER: '是保留项',
   PROTECTED: '受删除白名单保护', NOT_FOUND: '文件不存在',
   FILE_CHANGED: '文件已被修改', HASH_MISMATCH: '哈希不一致'
+};
+// v0047：相似视频置信度档位（与后端 config.VIDEO_CONFIDENCE_BANDS 对应）
+export var VIDEO_CONFIDENCE_LABEL = {
+  same_source: '极可能同源（仅编码/封装不同）',
+  likely_same: '很可能同源',
+  possible: '可能相似（建议人工复核）'
+};
+export var VIDEO_CONFIDENCE_CLASS = {
+  same_source: 'badge-blue', likely_same: 'badge-green', possible: 'badge-amber'
 };
 // v0046：通知渠道 / 事件标签（与后端 config 对应）
 export var NOTIFY_CHANNEL_LABEL = {
@@ -249,6 +262,8 @@ export var DEFAULT_SETTINGS = {
   video_sample_frames: 20, video_max_sample_interval_sec: 300, video_similarity_threshold: 90,
   video_concurrency: 1, video_hwaccel: 'auto', video_max_file_mb: 8192,
   video_timeout_sec: 180, video_cache: true,
+  video_center_crop_enabled: true, video_offset_align_enabled: true,
+  video_audio_signature_enabled: false, video_audio_weight: 0.2,
   video_asr_enabled: false, video_asr_command: '', video_asr_weight: 0.15,
   video_asr_timeout_sec: 300, video_asr_max_sec: 600,
   subtitle_enabled: false,

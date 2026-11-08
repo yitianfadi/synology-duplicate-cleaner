@@ -182,6 +182,9 @@ CREATE INDEX idx_media_probe_cache_used ON media_probe_cache(last_used);
 - v0046 计划扫描状态 `<var>/scheduler_state.json`（每条规则 last_run/last_scan_id）与字幕批次
   通知去重 `<var>/notify_state.json`（group_id → notified_epoch，最多 500 条）为普通 JSON，
   **不进数据库**；删除后最多导致一次重复通知/一次重复触发（规则按 last_run 计算）。
+- v0047 视频指纹缓存沿用 `<var>/cache/video.sqlite`（独立 SQLite 文件）：`VIDEO_ALGO_VERSION`
+  从 `video-v1` 升到 `video-v2` 后旧记录不再命中（一次性重算）；音频签名单独 key（`audio-v1|...`）。
+  缓存可随时删除，代价是下次扫描重新抽帧。
 
 ## 2. Store 兼容 API
 

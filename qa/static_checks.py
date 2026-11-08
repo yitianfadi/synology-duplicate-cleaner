@@ -237,7 +237,7 @@ def check_backend():
                        "select", "queue", "math", "decimal", "calendar", "codecs",
                        "heapq", "mimetypes", "tests", "stringprep", "encodings",
                        "zipfile", "zlib", "html", "PIL", "logging.handlers", "sqlite3",
-                       "xml", "builtins", "fnmatch")
+                       "xml", "builtins", "fnmatch", "array")
     for path in py_files:
         rel = os.path.relpath(path, REPO)
         src = read(path)
@@ -624,6 +624,27 @@ def check_backend():
           and "protector.check(" in deletion_src
           and "protected_skipped" in deletion_src,
           "protection markers missing")
+
+    # ---- v0047：相似视频识别增强 ----
+    video_src = read(os.path.join(backend, "dupcleaner", "video_similarity.py"))
+    check("BE-VIDEO-V2",
+          "相似视频增强：边缘裁剪指纹 + 时间轴偏移对齐 + 音频包络签名 + 置信度分档（v0047）",
+          "VIDEO_FINGERPRINT_VERSION" in conf_src
+          and "def gray_content_crop(" in video_src
+          and "def phash_from_gray_pair(" in video_src
+          and "frame_hashes_center" in video_src
+          and "def offset_aligned_stats(" in video_src
+          and "def pair_score_enhanced(" in video_src
+          and "def confidence_band(" in video_src
+          and "def audio_signature_from_pcm(" in video_src
+          and "def audio_signature_similarity(" in video_src
+          and "def extract_audio_pcm(" in video_src
+          and "def _analyze_audio_signature(" in video_src
+          and "video_audio_signature_enabled" in settings_src
+          and "video_confidence_label" in scanner_src
+          and "video_audio_score" in scanner_src
+          and "video_match_method" in scanner_src,
+          "video v2 markers missing")
 
     # ---- v0046：通知系统 / 计划扫描 ----
     notify_path = os.path.join(backend, "dupcleaner", "notifications.py")
@@ -1142,6 +1163,23 @@ def check_frontend():
           and "/api/notifications/test" in app
           and "check-grid" in read(os.path.join(web, "styles.css")),
           "automation ui markers missing")
+    check("FE-VIDEO-V2",
+          "视频设置：边缘裁剪/时间轴对齐/音频签名开关与权重 + 结果页置信度/方法/音频徽标（v0047）",
+          "setVideoCenterCrop" in html
+          and "setVideoOffsetAlign" in html
+          and "setVideoAudioSignature" in html
+          and "setVideoAudioWeight" in html
+          and "VIDEO_CONFIDENCE_LABEL" in app
+          and "VIDEO_CONFIDENCE_CLASS" in app
+          and "video_confidence" in app
+          and "边缘裁剪" in app
+          and "时间轴对齐" in app
+          and "音频辅助" in app
+          and "video_audio_score" in app
+          and "video_duration_delta_sec" in app
+          and "video_audio_signature_enabled" in
+          read(os.path.join(web, "js", "constants.js")),
+          "video v2 ui markers missing")
 
     check("FE-RISK-TEXT", "风险提示文案与契约逐字一致（index.html）",
           RISK_TEXT in html, "risk text not found verbatim")

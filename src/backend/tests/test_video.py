@@ -587,7 +587,9 @@ class RealFFmpegIntegrationTest(unittest.TestCase):
             self.assertGreater(analysis["duration"], 0)
             self.assertEqual(len(analysis["frame_hashes"]),
                              analysis["n_eff"])
-            self.assertTrue(analysis["fingerprint"].startswith("v1:"))
+            self.assertTrue(analysis["fingerprint"].startswith("v2:"))
+            self.assertEqual(len(analysis["frame_hashes_center"]),
+                             analysis["n_eff"])
         finally:
             shutil.rmtree(tmpdir, ignore_errors=True)
 
@@ -802,7 +804,7 @@ class VideoScanTest(FakeFFmpegBase):
         self.assertGreaterEqual(group["similarity_score"], 90)
         self.assertEqual(group["video_similarity_score"],
                          group["similarity_score"])
-        self.assertTrue(group["video_fingerprint"].startswith("v1:"))
+        self.assertTrue(group["video_fingerprint"].startswith("v2:"))
         self.assertEqual(group["video_sample_frames"], 5)
         self.assertEqual(group["video_hwaccel"], "vaapi")
         self.assertEqual(group["video_duration"], 121)
@@ -815,7 +817,7 @@ class VideoScanTest(FakeFFmpegBase):
         for file_info in group["files"]:
             self.assertEqual(file_info["match_type"], "video")
             self.assertFalse(file_info["default_selected"])
-            self.assertTrue(file_info["video_fingerprint"].startswith("v1:"))
+            self.assertTrue(file_info["video_fingerprint"].startswith("v2:"))
             self.assertGreater(file_info["video_sample_frames"], 0)
             self.assertEqual(file_info["video_hwaccel"], "vaapi")
             self.assertEqual(file_info["hash"], "")
