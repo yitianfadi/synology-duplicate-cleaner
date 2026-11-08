@@ -1263,6 +1263,61 @@ python build/build_spk.py --no-icons --out-dir $env:TEMP\qa-build2
 | 任务检索/权限向导/日志增强 | v0049 | 筛选批量、只读体检+指引、日志检索导出 |
 | 评估结论中“做不到/需改法”的项 | — | ACL 一键配置（改体检+指引）；增量“仅比对新增”改缓存复用；不同剪辑版本不承诺；实时监控用轮询 |
 
+## 32. 附：v0050 字幕批量取消 / 强制删除 / 任务明细增强（2026-11-08）
+
+### 32.1 问题与根因
+
+1. **取消剩余提示“请求超时” + 执行中变多**：旧 `cancel_batch_group` 逐任务 `cancel()`，
+   持全局锁、`deque.remove` O(n²)、逐任务 JSON/SQLite/审计；几千任务 >20s，前端 20s 超时；
+   每取消一个 `notify_all()`，worker 会抢跑尚未取消的队列任务 → 执行中变多；运行中任务要等
+   分片/请求结束才真正取消。
+2. **批次总览不能删除任务**：只有内部 `_remove_group_locked`（保留上限清理用），无公开接口。
+3. **任务明细不能取消剩下的全部任务**：只有组头部“取消剩余”，且走上面的长耗时逻辑。
+4. **任务明细需手动点“加载更多”**：无滚动自动加载。
+5. **已取消任务混在失败中**：`JOB_FILTERS` 无 cancelled，“失败”页签查 `failed,cancelled`。
+
+### 32.2 实现
+
+- **两阶段批量取消**（`subtitles.py`）：阶段 A 一把锁零写盘标记 + 一次性重建队列 + 单次唤醒；
+  阶段 B 后台线程批量持久化，每 100 个更新 `cancel_state.persisted`，完成写 group JSON 并聚合
+  审计；进行中取消幂等；`pending_cancel.json` 启动恢复（`_recover_pending_cancels`）。
+- **接口**：`POST /cancel` 大批次组返回 202 + `cancel_state`（小批次组仍同步返回 group 兼容）；
+  `POST /cancel-remaining {scope:all|filter}`；`POST /delete {force}`：终态同步删、进行中默认 409、
+  `force=true` 先取消，后台等待任务停止（含残留 running 兜底）后删除并审计。
+- **前端**（`subtitle-page.js`）：总览每项删除/强制取消并删除；批次操作禁用 + “取消中…”/进度；
+  任务明细“取消剩余（N）/取消当前筛选（N）”；`IntersectionObserver` 下滑自动加载（200px 预加载，
+  保留按钮回退）；`cancelled` 独立页签与计数；运行中任务“取消中”徽标。
+- 配置：`SUBTITLE_CANCEL_WAIT_SEC=2.0`、`SUBTITLE_DELETE_WAIT_SEC=3600`、
+  `SUBTITLE_CANCEL_PERSIST_BATCH=100`；schema 仍 v8。
+
+### 32.3 验证
+
+- unittest：**666 OK（5 skipped）**（新增 `test_v0050_subtitle_cancel.py` 7 例：同步取消/幂等/
+  运行中 cancelling/筛选取消/终态删除/强制删除/重启恢复）。
+- static：**197 PASS / 0 FAIL / 0 UNVERIFIED**（新增 `BE-SUBTITLE-CANCEL`、
+  `FE-SUBTITLE-CANCEL-DELETE`）。
+- e2e：**207 PASS / 0 FAIL / 1 UNVERIFIED**（新增 CANC-01/02、DETAIL-01；Windows symlink 历史项）。
+- 真实 Chromium 探针（`.uiprobe/probe_v0050.mjs`）**8/8 PASS**：总览删除按钮、明细批量取消按钮 +
+  已取消页签 + 自动加载哨兵、cancelled 请求、下滑自动加载、取消 202 进度、/delete 请求、无 console 错误；
+  截图 `.uiprobe/v0050-cancel.png`。
+- 真机待验证：几千任务组取消的实际耗时与持久化进度；强制删除等待运行中分片的时长；DSM 上
+  IntersectionObserver 滚动加载体验。
+
+### 32.4 踩坑
+
+- 批量取消必须在锁内一次性重建队列，否则 worker 会抢跑（原“执行中变多”的根因）。
+- 202 响应需要前端把 `cancel_state` 暂存到 group 上，否则轮询前按钮/进度不更新。
+- 删除进行中组必须等 `active==0`，且要兜底“无 worker 持有的 running”（重启残留）。
+- e2e 不要往共享根提前写测试文件：会影响后续扫描统计（本次 dummy 文件曾导致 STATS/SAFETY 失败）。
+- Playwright 确认框按钮要限定 `#modalRoot button`，否则可能匹配到背后的同名按钮被遮罩拦截。
+
+### 32.5 产物
+
+- `dist/DuplicateCleaner-1.1.0-0050.spk`：**39,127,040 B**
+  - SHA256 `3c7b8a68bf7e426398cff2a47626e5702e2f0b7590395b2aeb1b836a8a4c3c94`
+  - package.tgz MD5 `0e1e6943421d95c0eab78cf1f26e7fa0`
+- 版本 1.1.0-0050 同步 8 处；SQLite schema 仍 **v8**。
+
 
 
 

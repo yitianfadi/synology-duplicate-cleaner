@@ -1,7 +1,7 @@
 # 整体方案架构
 
 > 项目：**重复文件清理与字幕（Duplicate Cleaner & Subtitles）** · 群晖 DSM 7.x SPK 套件
-> 版本：1.1.0-0049
+> 版本：1.1.0-0050
 > 原则：**先扫描、出报告、人工确认、二次确认、可回收、全程审计**。任何情况下都不自动静默删除。
 
 ## 1. 目标与边界
@@ -595,6 +595,25 @@ Linux 的 `st_ctime` 是 **inode 状态变更时间**，不是创建时间，复
 - **日志增强**：`/api/logs/search` 遍历日志文件（单文件 512KB、最多 500 个）按文件名/内容匹配
   并同时过滤审计；`/api/logs/export` 生成可读文本；前端日志页新增检索与导出。
 - 任务行/详情已有错误信息与失败分类（v0041/v0048），本版补检索与批量操作入口。
+
+## 20. 字幕批量取消 / 强制删除（v0050）
+
+> 契约见 [SUBTITLE_BATCH_CONTRACT.md](SUBTITLE_BATCH_CONTRACT.md) §13。
+
+- **问题**：旧 `cancel_batch_group` 逐任务 `cancel()`：持全局锁 + `deque.remove` O(n²) + 逐任务 JSON/SQLite/审计；
+  几千任务 >20s，前端 20s 超时报“请求超时”；每取消一个 `notify_all()` 会让 worker 抢跑未取消的队列任务，
+  表现为“执行中变多”。
+- **两阶段取消**：
+  - 阶段 A（`_request_group_cancel`，一把锁、零写盘）：设置 `cancel_event`；queued/paused 直接 cancelled；
+    running/translating 保留状态并标记 `cancelling`；一次性重建队列移除全部目标，只 `notify_all()` 一次。
+  - 阶段 B（`_persist_group_cancel` 后台线程）：锁外批量写 job JSON/SQLite，每 100 个更新
+    `cancel_state.persisted`，完成后写 group JSON 并聚合计审计 `subtitle_group_cancel`。
+  - 幂等：进行中的 `cancel_state` 直接复用；`pending_cancel.json` 在启动时恢复（`_recover_pending_cancels`）。
+- **删除**：`delete_batch_group` 终态同步删除；进行中默认 409，`force=true` 先取消，后台等待所有任务停止
+  （含残留 running 兜底）后调用 `_remove_group_locked` 清理 job/批次/组 JSON+SQLite+队列，审计
+  `subtitle_group_delete`。
+- **前端**：批次总览每项删除（进行中=强制取消并删除）；任务明细“取消剩余/取消当前筛选”+ `cancel_state`
+  进度；`IntersectionObserver` 下滑自动加载；已取消任务独立页签；运行中取消显示“取消中”徽标。
 
 
 

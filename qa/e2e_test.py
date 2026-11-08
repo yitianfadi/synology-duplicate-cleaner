@@ -2748,6 +2748,32 @@ def run():
               resp.status == 400 and bad_code2 == "INVALID_ARGUMENT",
               "status=%s code=%s" % (resp.status, bad_code2))
 
+        # ---------------- v0050：批量取消 / 强制删除 / 已取消筛选 ----------------
+        resp = client.post_json(
+            "/api/subtitles/batch-groups/grp-20260101-000000-abcdef/cancel-remaining",
+            {"scope": "all"})
+        code, _ = err_code(resp)
+        check("CANC-01", "v0050 未知批次组取消剩余返回 404",
+              resp.status == 404 and code == "NOT_FOUND",
+              "status=%s code=%s" % (resp.status, code))
+
+        resp = client.post_json(
+            "/api/subtitles/batch-groups/grp-20260101-000000-abcdef/delete",
+            {"force": True})
+        code, _ = err_code(resp)
+        check("CANC-02", "v0050 未知批次组删除返回 404",
+              resp.status == 404 and code == "NOT_FOUND",
+              "status=%s code=%s" % (resp.status, code))
+
+        resp = client.get(q("/api/subtitles", status="cancelled", limit=20))
+        data = jd(resp)
+        check("DETAIL-01", "v0050 任务明细支持单独筛选 cancelled",
+              resp.status == 200 and isinstance(data.get("jobs"), list)
+              and all(item.get("status") == "cancelled"
+                      for item in (data.get("jobs") or [])),
+              "status=%s data=%s" % (resp.status,
+                                     repr(data.get("jobs"))[:120]))
+
         # ---------------- v0049：任务检索/批量操作/权限体检/日志检索 ----------------
         resp = client.get("/api/subtitles?limit=20&q=movie&suffix=.mp4"
                           "&directory=/volume1/media&status=done")

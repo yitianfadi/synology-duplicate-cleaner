@@ -6,8 +6,8 @@
 <meta name="color-scheme" content="light">
 <meta name="referrer" content="same-origin">
 <title>重复文件清理与字幕 · Duplicate Cleaner &amp; Subtitles</title>
-<link rel="icon" href="./assets/favicon.svg?v=1.1.0-0049" type="image/svg+xml">
-<link rel="stylesheet" href="./styles.css?v=1.1.0-0049">
+<link rel="icon" href="./assets/favicon.svg?v=1.1.0-0050" type="image/svg+xml">
+<link rel="stylesheet" href="./styles.css?v=1.1.0-0050">
 </head>
 <body>
 <a class="skip-link" href="#main">跳到主要内容</a>
@@ -813,8 +813,15 @@
           <button type="button" class="btn btn-ghost btn-sm" data-jobs-filter="queued" aria-pressed="false">排队</button>
           <button type="button" class="btn btn-ghost btn-sm" data-jobs-filter="done" aria-pressed="false">已完成</button>
           <button type="button" class="btn btn-ghost btn-sm" data-jobs-filter="failed" aria-pressed="false">失败</button>
+          <button type="button" class="btn btn-ghost btn-sm" data-jobs-filter="cancelled" aria-pressed="false">已取消</button>
+        </div>
+        <div class="subtitle-jobs-bulk" id="subtitleJobsBulk">
+          <button type="button" class="btn btn-ghost btn-sm" id="subtitleJobsCancelRemainingBtn">取消剩余</button>
+          <button type="button" class="btn btn-ghost btn-sm" id="subtitleJobsCancelFilterBtn">取消当前筛选</button>
+          <span class="muted" id="subtitleJobsBulkHint"></span>
         </div>
         <div id="subtitleGroupJobs" class="subtitle-batch-list"></div>
+        <div id="subtitleGroupJobsSentinel" class="load-more-sentinel" aria-hidden="true"></div>
         <div class="load-more-row">
           <button type="button" class="btn btn-ghost" id="subtitleGroupJobsMoreBtn" hidden>加载更多任务</button>
           <span class="muted" id="subtitleGroupJobsMoreStatus"></span>
@@ -1833,6 +1840,6 @@
   <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.6" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M12 10.8v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="12" cy="7.6" r="1.05" fill="currentColor"/></symbol>
 </svg>
 
-<script type="module" src="./app.js?v=1.1.0-0049"></script>
+<script type="module" src="./app.js?v=1.1.0-0050"></script>
 </body>
 </html>

@@ -320,6 +320,13 @@ class Api(object):
                 r"^/api/subtitles/batch-groups/(?P<group_id>[^/]+)/"
                 r"(?P<action>pause|resume|cancel|retry)$"),
              self._subtitle_group_control, False),
+            # v0050：任务明细“取消剩余/取消当前筛选” + 删除（强制取消后删除）
+            ("POST", re.compile(
+                r"^/api/subtitles/batch-groups/(?P<group_id>[^/]+)/cancel-remaining$"),
+             self._subtitle_group_cancel_remaining, False),
+            ("POST", re.compile(
+                r"^/api/subtitles/batch-groups/(?P<group_id>[^/]+)/delete$"),
+             self._subtitle_group_delete, False),
             ("GET", re.compile(
                 r"^/api/subtitles/batches/(?P<batch_id>[^/]+)$"),
              self._subtitle_batch_get, False),
@@ -1188,8 +1195,35 @@ class Api(object):
         handler = handlers.get(action)
         if handler is None:
             raise invalid(u"未知的批次组操作")
+        # v0050：大批次组取消返回 202 + 取消进度，前端轮询而不是死等 20s
+        if action == "cancel":
+            result = handler(params["group_id"])
+            if isinstance(result, dict) and result.get("cancelling"):
+                payload = {"ok": True}
+                payload.update(result)
+                return json_response(payload, status=202)
+            return json_response({"ok": True, "group": result})
         return json_response({"ok": True,
                               "group": handler(params["group_id"])})
+
+    def _subtitle_group_cancel_remaining(self, request, session, params):
+        service = self._require_subtitle_admin(session)
+        body = _json_body(request)
+        result = service.cancel_group_remaining(params["group_id"], body)
+        payload = {"ok": True}
+        payload.update(result)
+        return json_response(payload,
+                             status=202 if result.get("cancelling") else 200)
+
+    def _subtitle_group_delete(self, request, session, params):
+        service = self._require_subtitle_admin(session)
+        body = _json_body(request)
+        force = body.get("force") is True if isinstance(body, dict) else False
+        result = service.delete_batch_group(params["group_id"], force=force)
+        payload = {"ok": True}
+        payload.update(result)
+        return json_response(payload,
+                             status=202 if result.get("deleting") else 200)
 
     # ------------------------------------------------------------------
     # 扫描

@@ -1,7 +1,7 @@
 # 实现契约（前后端共享，版本 1.0）
 
 > 本文件是前后端并行开发的唯一接口约定。任何一方需要改动字段，先改本文件并在团队任务中说明。
-> 产品名：**DuplicateCleaner**；显示名：**重复文件清理与字幕**；SPK 版本：**1.1.0-0049**。
+> 产品名：**DuplicateCleaner**；显示名：**重复文件清理与字幕**；SPK 版本：**1.1.0-0050**。
 > v1.1 新增内容相似度模式；相似模式字段与行为见 [SIMILARITY_CONTRACT.md](SIMILARITY_CONTRACT.md)，**精准模式规则不变**。
 
 ## 1. 仓库与写入边界
@@ -154,7 +154,7 @@ v0042 增量（升级启动稳定性）：
 ### GET /api/meta
 ```json
 {
- "app_version": "1.1.0-0049",
+ "app_version": "1.1.0-0050",
  "dsm_version": "7.2.2-72806" | "dev",
  "python_version": "3.8.16",
  "creation_time_supported": true,
@@ -548,6 +548,20 @@ Content-Disposition: attachment; filename="duplicate-scan-<id>.csv"
   last_result, watched_files}}`；`POST /api/subtitles/watch/scan` → 202 `{result}`。
 - `POST /api/subtitles/{job_id}/priority` `{top:true}` 或 `{priority:0..1000}` → `{job}`。
 
+### v0050 批次组取消/删除接口
+
+- `POST /api/subtitles/batch-groups/{group_id}/cancel`：小批次组 200 `{ok, group}`；
+  大批次组 **202** `{ok, cancelling:true, requested, cancel_state}`（前端轮询组快照）。
+- `POST /api/subtitles/batch-groups/{group_id}/cancel-remaining`
+  `{scope:"all"|"filter", status?, q?, suffix?, directory?}` → 200/202，语义同批量取消。
+- `POST /api/subtitles/batch-groups/{group_id}/delete` `{force:bool}`：
+  - 终态组 → 200 `{deleted:true}`；
+  - 进行中且 `force=false` → 409 `GROUP_ACTIVE`；
+  - 进行中且 `force=true` → 202 `{deleting:true, phase:"cancelling", cancel_state, delete_state}`，
+    任务全部停止后自动删除，组 GET 返回 404 表示完成。
+- 任务明细 `GET /api/subtitles?group_id=&status=cancelled` 单独筛选已取消；组快照新增
+  `cancel_state`、`delete_state`、`counts.cancelling`，任务快照新增 `cancelling`。
+
 ### v0049 任务检索 / 批量操作 / 权限体检 / 日志检索接口
 
 - `GET /api/subtitles` 新增检索参数：`q`（路径/任务ID/消息）、`suffix`、`directory`、
@@ -636,4 +650,4 @@ Content-Disposition: attachment; filename="duplicate-scan-<id>.csv"
 - 后端 unittest 覆盖：statx 时间读取降级、哈希分片/限速、重复分组与三种保留策略、
   路径黑名单、删除前重校验、回收站路径生成、CSV、API 鉴权。
 - 前端可用静态检查 + 本地 dev 后端联调；QA 用 dev 模式在临时目录生成重复文件跑完整 API 流程。
-- 打包产物 `dist/DuplicateCleaner-1.1.0-0049.spk` 必须能通过 `tar -tf` 检查，包含 INFO/package.tgz/scripts/conf/ui。
+- 打包产物 `dist/DuplicateCleaner-1.1.0-0050.spk` 必须能通过 `tar -tf` 检查，包含 INFO/package.tgz/scripts/conf/ui。

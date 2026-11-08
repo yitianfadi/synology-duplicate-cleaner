@@ -46,9 +46,10 @@ var GROUP_STATUS_BADGE = {
 };
 
 // v0034：任务明细状态筛选（'active' 由后端映射为 running+translating）
-var JOB_FILTERS = ['all', 'active', 'queued', 'done', 'failed'];
+var JOB_FILTERS = ['all', 'active', 'queued', 'done', 'failed', 'cancelled'];
 var JOB_FILTER_LABEL = {
-  all: '全部', active: '执行中', queued: '排队', done: '已完成', failed: '失败'
+  all: '全部', active: '执行中', queued: '排队', done: '已完成',
+  failed: '失败', cancelled: '已取消'
 };
 
 var page = {
@@ -73,6 +74,9 @@ var page = {
   },
   // v0034：任务明细状态筛选（all/active/queued/done/failed）
   jobsFilter: 'all',
+  // v0050：正在强制取消并删除的组、取消进度
+  deletingGroup: null,
+  cancelState: null,
   timer: null,
   polling: false,
   restoring: false,
@@ -682,7 +686,7 @@ function fmtEtaSeconds(seconds) {
   return '约 ' + days + ' 天' + (hours > 0 ? ' ' + hours + ' 小时' : '');
 }
 
-/** 组内任务计数（与筛选按钮一一对应；全部取组总数，失败含已取消）。 */
+/** 组内任务计数（与筛选按钮一一对应；v0050：失败与已取消分开统计）。 */
 function groupJobFilterCounts(group) {
   var counts = group && group.counts ? group.counts : {};
   var running = (Number(counts.running) || 0) + (Number(counts.translating) || 0);
@@ -691,7 +695,8 @@ function groupJobFilterCounts(group) {
     active: running,
     queued: Number(counts.queued) || 0,
     done: Number(counts.done) || 0,
-    failed: (Number(counts.failed) || 0) + (Number(counts.cancelled) || 0)
+    failed: Number(counts.failed) || 0,
+    cancelled: Number(counts.cancelled) || 0
   };
 }
 
@@ -721,6 +726,7 @@ function renderGroup() {
   renderJobsFilter();
   renderJobsActive();
   renderGroupJobs();
+  renderJobsBulk();
   renderGroupActions();
 }
 
@@ -743,6 +749,7 @@ function renderGroupHead() {
   var bar = q('subtitleGroupBar');
   if (bar) { bar.setAttribute('aria-valuenow', String(pct)); }
   var running = (Number(counts.running) || 0) + (Number(counts.translating) || 0);
+  var cancellingCount = Number(counts.cancelling) || 0;
   var remaining = Math.max(0, total - finished);
   var missing = Number(group.missing) || 0;
   var countsText = '完成 ' + fmtInt(counts.done) + ' · 失败 ' + fmtInt(counts.failed)
@@ -750,6 +757,18 @@ function renderGroupHead() {
     + ' · 排队 ' + fmtInt(counts.queued) + ' · 运行 ' + fmtInt(running)
     + ' · 剩余 ' + fmtInt(remaining) + ' · 批次 ' + fmtInt(batchCount)
     + (missing > 0 ? ' · 缺失 ' + fmtInt(missing) : '');
+  // v0050：批量取消/强制删除进度（取消中任务仍可能处于 running 到分片边界）
+  var cancelState = group.cancel_state || page.cancelState || null;
+  var deleteState = group.delete_state || null;
+  if (cancellingCount > 0) {
+    countsText += ' · 取消中 ' + fmtInt(cancellingCount);
+  }
+  if (deleteState && !deleteState.done) {
+    countsText += ' · 正在取消并删除…';
+  } else if (cancelState && !cancelState.done) {
+    countsText += ' · 取消进度 ' + fmtInt(cancelState.persisted || 0)
+      + '/' + fmtInt(cancelState.requested || 0);
+  }
   // v0034：非终态组展示预计剩余（后端 eta_seconds，样本不足为 null）
   if (!isGroupTerminal(group.status) && typeof group.eta_seconds === 'number') {
     var etaText = fmtEtaSeconds(group.eta_seconds);
@@ -1011,6 +1030,10 @@ function renderJobRow(job) {
   if (job.skipped) {
     badges.push(el('span', { className: 'badge badge-gray', text: '已跳过' }));
   }
+  if (job.cancelling) {
+    // v0050：已请求取消，等待当前分片/请求结束
+    badges.push(el('span', { className: 'badge badge-amber', text: '取消中' }));
+  }
   if (job.warning === 'OUTPUT_NOT_WRITABLE') {
     badges.push(el('span', {
       className: 'badge badge-amber', text: '字幕未写回（可下载）',
@@ -1076,12 +1099,17 @@ function renderGroupActions() {
   var counts = group.counts || {};
   var terminal = isGroupTerminal(group.status);
   var active = (Number(counts.queued) || 0) + (Number(counts.running) || 0)
-    + (Number(counts.translating) || 0);
+    + (Number(counts.translating) || 0) + (Number(counts.paused) || 0);
+  var cancelState = group.cancel_state || page.cancelState || null;
+  var deleteState = group.delete_state || null;
+  var busyCancelling = !!((cancelState && !cancelState.done)
+    || (deleteState && !deleteState.done));
   function actionBtn(label, action, primary) {
     var btn = el('button', {
       className: 'btn ' + (primary ? 'btn-primary' : 'btn-ghost') + ' btn-sm',
       attrs: { type: 'button' }, text: label
     });
+    if (busyCancelling && action !== 'retry') { btn.disabled = true; }
     btn.addEventListener('click', function () { groupAction(action, btn); });
     box.appendChild(btn);
   }
@@ -1092,10 +1120,23 @@ function renderGroupActions() {
     actionBtn('继续', 'resume', true);
   }
   if (!terminal) {
-    actionBtn('取消剩余', 'cancel', false);
+    actionBtn(busyCancelling
+      ? '取消中…'
+      : ('取消剩余（' + fmtInt(active) + '）'), 'cancel', false);
   }
   if ((Number(counts.failed) || 0) + (Number(counts.cancelled) || 0) > 0) {
     actionBtn('重试失败项', 'retry', false);
+  }
+  // v0050：删除批次组（进行中需强制取消后删除）
+  if (!busyCancelling) {
+    var deleteBtn = el('button', {
+      className: 'btn btn-danger-ghost btn-sm', attrs: { type: 'button' },
+      text: terminal ? '删除批次组' : '强制取消并删除'
+    });
+    deleteBtn.addEventListener('click', function () {
+      deleteGroup(group.group_id, !terminal, deleteBtn);
+    });
+    box.appendChild(deleteBtn);
   }
   // v0035：组内存在「只做了 ASR、没翻译」的已完成任务时，提供组级补翻译入口
   var translatable = group.translatable || {};
@@ -1131,10 +1172,114 @@ function renderGroupActions() {
 }
 
 // ---------------------------------------------------------------------------
-// 批次组：任务明细分页加载（GET /api/subtitles?group_id=&offset=&limit=&status=）
-// mode: 'reset' 从头加载 / 'more' 追加下一页 / 'refresh' 刷新已加载区间
-// v0034：非「全部」筛选时附带 status 参数，total 为过滤后数量
+// v0050：任务明细“取消剩余/取消当前筛选” + 下滑自动加载更多
 // ---------------------------------------------------------------------------
+function renderJobsBulk() {
+  var group = page.group;
+  var remainingBtn = q('subtitleJobsCancelRemainingBtn');
+  var filterBtn = q('subtitleJobsCancelFilterBtn');
+  var hint = q('subtitleJobsBulkHint');
+  if (!remainingBtn || !group) { return; }
+  var counts = group.counts || {};
+  var remaining = (Number(counts.queued) || 0) + (Number(counts.running) || 0)
+    + (Number(counts.translating) || 0) + (Number(counts.paused) || 0);
+  var filterKey = page.jobsFilter || 'all';
+  var filterCounts = groupJobFilterCounts(group);
+  var filterCount = filterKey === 'all' ? remaining
+    : (filterKey === 'queued' ? Number(counts.queued) || 0
+      : filterKey === 'active'
+        ? (Number(counts.running) || 0) + (Number(counts.translating) || 0)
+        : Number(counts[filterKey]) || 0);
+  var cancelState = group.cancel_state || page.cancelState || null;
+  var deleteState = group.delete_state || null;
+  var busy = !!((cancelState && !cancelState.done)
+    || (deleteState && !deleteState.done));
+  remainingBtn.textContent = busy
+    ? '取消中…' : ('取消剩余（' + fmtInt(remaining) + '）');
+  remainingBtn.disabled = busy || remaining <= 0;
+  filterBtn.textContent = filterKey === 'all'
+    ? '取消当前筛选'
+    : ('取消当前筛选（' + fmtInt(filterCount) + '）');
+  filterBtn.disabled = busy || filterCount <= 0;
+  if (hint) {
+    if (deleteState && !deleteState.done) {
+      setText(hint, '正在取消并删除批次组，任务停止后自动删除…');
+    } else if (cancelState && !cancelState.done) {
+      setText(hint, '取消进度：已处理 ' + fmtInt(cancelState.persisted || 0)
+        + '/' + fmtInt(cancelState.requested || 0));
+    } else {
+      setText(hint, '');
+    }
+  }
+}
+
+async function cancelJobsRemaining(scope) {
+  var group = page.group;
+  if (!group || !group.group_id) { return; }
+  var label = scope === 'filter' ? '取消当前筛选内的任务？' : '取消该批次组全部剩余任务？';
+  var ok = await confirmDialog({
+    title: label,
+    message: '正在执行的任务会等当前分片/请求结束后停止（显示“取消中”），不会写坏字幕文件。',
+    confirmText: '取消任务', danger: true
+  });
+  if (!ok) { return; }
+  var body = { scope: scope };
+  if (scope === 'filter') {
+    var filterKey = page.jobsFilter || 'all';
+    if (filterKey !== 'all') { body.status = filterKey; }
+  }
+  try {
+    var result = await api('/api/subtitles/batch-groups/'
+      + encodeURIComponent(group.group_id) + '/cancel-remaining', {
+      method: 'POST', body: body, timeout: 30000
+    });
+    if (result && result.cancelling) {
+      page.cancelState = result.cancel_state || null;
+      if (page.group) { page.group.cancel_state = result.cancel_state || null; }
+      toast('已提交取消：' + fmtInt(result.requested || 0) + ' 个任务正在停止…',
+        'info', 7000);
+      renderJobsBulk();
+      renderGroupActions();
+      startPolling();
+    } else {
+      toast('没有需要取消的任务。', 'info', 4000);
+    }
+  } catch (err) {
+    toast(errorMessage(err, '批量取消失败，请稍后重试。'), 'error', 6000);
+  }
+}
+
+function setupJobsAutoLoad() {
+  var sentinel = q('subtitleGroupJobsSentinel');
+  if (!sentinel) { return; }
+  if ('IntersectionObserver' in window) {
+    if (page.jobsObserver) { page.jobsObserver.disconnect(); }
+    page.jobsObserver = new IntersectionObserver(function (entries) {
+      entries.forEach(function (entry) {
+        if (!entry.isIntersecting) { return; }
+        maybeLoadMoreJobs();
+      });
+    }, { root: null, rootMargin: '200px 0px', threshold: 0 });
+    page.jobsObserver.observe(sentinel);
+  } else {
+    window.addEventListener('scroll', maybeLoadMoreJobs, { passive: true });
+  }
+}
+
+function maybeLoadMoreJobs() {
+  var group = page.group;
+  var jobs = page.jobs;
+  if (!group || !group.group_id || jobs.loading) { return; }
+  if (jobs.items.length >= jobsTotal()) { return; }
+  var sentinel = q('subtitleGroupJobsSentinel');
+  if (sentinel) {
+    var rect = sentinel.getBoundingClientRect();
+    if (rect.top > (window.innerHeight || 0) + 200) { return; }
+  }
+  loadGroupJobs('more');
+}
+
+
 async function loadGroupJobs(mode) {
   var group = page.group;
   if (!group || !group.group_id) { return; }
@@ -1171,8 +1316,8 @@ async function loadGroupJobs(mode) {
   var seq = jobs.seq + 1;
   jobs.seq = seq;
   var filterKey = page.jobsFilter || 'all';
-  // v0034：失败页签包含已取消任务（后端支持逗号组合 status）；其余页签一一对应。
-  var statusParam = filterKey === 'failed' ? 'failed,cancelled' : filterKey;
+  // v0050：失败与已取消分开筛选（不再把 cancelled 合并进 failed）
+  var statusParam = filterKey;
   renderGroupJobs();
   try {
     var url = '/api/subtitles?group_id=' + encodeURIComponent(group.group_id)
@@ -1196,6 +1341,8 @@ async function loadGroupJobs(mode) {
     if (page.jobs === jobs && jobs.seq === seq) {
       jobs.loading = false;
       renderGroupJobs();
+      renderJobsBulk();
+      maybeLoadMoreJobs();
     }
   }
 }
@@ -1284,7 +1431,23 @@ function renderGroupOverviewItem(group) {
   button.addEventListener('click', function () {
     selectGroup(group.group_id);
   });
-  return button;
+  // v0050：总览项支持删除（进行中 = 强制取消并删除）
+  var wrapper = el('div', { className: 'subtitle-group-overview-item' });
+  wrapper.appendChild(button);
+  var deleting = isDeletingGroup(group.group_id);
+  var active = !isGroupTerminal(status);
+  var deleteBtn = el('button', {
+    className: 'btn btn-danger-ghost btn-sm subtitle-group-delete-btn',
+    attrs: { type: 'button' },
+    text: deleting ? '删除中…' : (active ? '强制取消并删除' : '删除')
+  });
+  if (deleting) { deleteBtn.disabled = true; }
+  deleteBtn.addEventListener('click', function (event) {
+    event.stopPropagation();
+    deleteGroup(group.group_id, active, deleteBtn);
+  });
+  wrapper.appendChild(deleteBtn);
+  return wrapper;
 }
 
 async function loadGroupOverview() {
@@ -1382,6 +1545,11 @@ async function pollGroup() {
       page.group = result.group;
       saveLastGroupId(result.group.group_id);
       renderGroup();
+      var deleteState = result.group.delete_state || null;
+      if (deleteState && deleteState.done && deleteState.error) {
+        page.deletingGroup = null;
+        toast('删除失败：' + deleteState.error, 'error', 8000);
+      }
       var sig = groupSignature(result.group);
       if (page.jobs.refreshKey !== sig && !page.jobs.loading) {
         page.jobs.refreshKey = sig;
@@ -1391,6 +1559,11 @@ async function pollGroup() {
   } catch (err) {
     if (page.group !== group) { return; }
     if (err && err.status === 404) {
+      if (isDeletingGroup(group.group_id)) {
+        toast('批次组已强制取消并删除。', 'success', 6000);
+        afterGroupDeleted(group.group_id);
+        return;
+      }
       // 批次组已被清理：清掉恢复锚点并收起进度卡，避免每次进视图反复 404
       clearLastGroupId();
       stopPolling();
@@ -1404,7 +1577,8 @@ async function pollGroup() {
   }
   // 视图切换后 stopSubtitlePagePolling 会置 polling=false：本轮响应仍更新界面，但不再续期
   if (!page.polling) { return; }
-  if (page.group && !isGroupTerminal(page.group.status)) {
+  var stillDeleting = page.group && isDeletingGroup(page.group.group_id);
+  if (page.group && (!isGroupTerminal(page.group.status) || stillDeleting)) {
     if (!page.timer) { page.timer = setTimeout(pollGroup, POLL_MS); }
   } else {
     notifyGroupFinished();
@@ -1439,11 +1613,39 @@ function notifyGroupFinished() {
 async function groupAction(action, button) {
   var group = page.group;
   if (!group || !group.group_id) { return; }
+  var counts = group.counts || {};
+  var active = (Number(counts.queued) || 0) + (Number(counts.running) || 0)
+    + (Number(counts.translating) || 0) + (Number(counts.paused) || 0);
+  if (action === 'cancel') {
+    var ok = await confirmDialog({
+      title: '取消剩余任务？',
+      message: '将取消该批次组剩余 ' + fmtInt(active) + ' 个任务。正在执行的任务会等当前分片/请求结束后停止（状态显示“取消中”），不会半途写坏字幕文件。',
+      confirmText: '取消剩余',
+      danger: true
+    });
+    if (!ok) { return; }
+  }
   setBusy(button, true, '处理中…');
   try {
     var result = await api('/api/subtitles/batch-groups/'
       + encodeURIComponent(group.group_id) + '/' + action,
-      { method: 'POST', timeout: 20000 });
+      { method: 'POST', timeout: 30000 });
+    // v0050：大组立即返回 202 + 取消进度，前端轮询而不是死等
+    if (result && result.cancelling) {
+      page.notified = false;
+      page.cancelState = result.cancel_state || null;
+      if (page.group) {
+        page.group.cancel_state = result.cancel_state || null;
+        if (result.delete_state) { page.group.delete_state = result.delete_state; }
+      }
+      if (result.delete_state) { page.deletingGroup = group.group_id; }
+      toast(result.delete_state
+        ? '已提交强制取消，任务全部停止后自动删除批次组…'
+        : '已提交取消，正在停止剩余任务…', 'info', 8000);
+      renderGroup();
+      startPolling();
+      return;
+    }
     if (result && result.group) {
       page.notified = false;
       page.group = result.group;
@@ -1454,6 +1656,9 @@ async function groupAction(action, button) {
         startPolling();
       }
       loadGroupJobs('reset');
+      if (action === 'cancel') {
+        toast('批次组已取消。', 'info', 5000);
+      }
     }
   } catch (err) {
     toast(errorMessage(err, '批次组操作失败。'), 'error');
@@ -1461,6 +1666,62 @@ async function groupAction(action, button) {
     setBusy(button, false);
     renderGroupActions();
   }
+}
+
+// ---------------------------------------------------------------------------
+// v0050：删除批次组（进行中 = 强制取消 + 等待任务停止后删除）
+// ---------------------------------------------------------------------------
+function isDeletingGroup(groupId) {
+  return page.deletingGroup && page.deletingGroup === groupId;
+}
+
+async function deleteGroup(groupId, force, button) {
+  if (!groupId) { return; }
+  var ok = await confirmDialog({
+    title: force ? '强制取消并删除批次组？' : '删除批次组？',
+    message: force
+      ? '该组仍有任务在执行：将先批量取消，等所有任务停止后删除组记录与任务文件（含临时分片/字幕产物，不可恢复）。'
+      : '将删除批次组记录、批次记录与任务文件（含任务目录中的临时产物，不可恢复）。',
+    confirmText: force ? '强制取消并删除' : '删除',
+    danger: true
+  });
+  if (!ok) { return; }
+  if (button) { setBusy(button, true, '处理中…'); }
+  try {
+    var result = await api('/api/subtitles/batch-groups/'
+      + encodeURIComponent(groupId) + '/delete', {
+      method: 'POST', body: { force: !!force }, timeout: 30000
+    });
+    if (result && result.deleting) {
+      page.deletingGroup = groupId;
+      if (page.group && page.group.group_id === groupId) {
+        page.group.delete_state = result.delete_state || null;
+        renderGroup();
+      }
+      toast('已提交强制取消，任务全部停止后自动删除批次组…', 'info', 8000);
+      startPolling();
+      await loadGroupOverview();
+    } else if (result && result.deleted) {
+      toast('批次组已删除。', 'success', 5000);
+      afterGroupDeleted(groupId);
+    }
+  } catch (err) {
+    toast(errorMessage(err, '删除批次组失败。'), 'error', 6000);
+  } finally {
+    if (button) { setBusy(button, false); }
+  }
+}
+
+function afterGroupDeleted(groupId) {
+  if (page.group && page.group.group_id === groupId) {
+    stopPolling();
+    clearLastGroupId();
+    page.group = null;
+    page.notified = true;
+    renderGroup();
+  }
+  if (isDeletingGroup(groupId)) { page.deletingGroup = null; }
+  loadGroupOverview();
 }
 
 // ---------------------------------------------------------------------------
@@ -1693,6 +1954,20 @@ export function initSubtitlePage() {
   if (jobsMoreBtn) {
     jobsMoreBtn.addEventListener('click', function () { loadGroupJobs('more'); });
   }
+  // v0050：任务明细批量取消 + 下滑自动加载更多
+  var remainBtn = q('subtitleJobsCancelRemainingBtn');
+  if (remainBtn) {
+    remainBtn.addEventListener('click', function () {
+      cancelJobsRemaining('all');
+    });
+  }
+  var cancelFilterBtn = q('subtitleJobsCancelFilterBtn');
+  if (cancelFilterBtn) {
+    cancelFilterBtn.addEventListener('click', function () {
+      cancelJobsRemaining('filter');
+    });
+  }
+  setupJobsAutoLoad();
   // v0034：任务明细状态筛选页签
   var jobsFilterBox = q('subtitleJobsFilter');
   if (jobsFilterBox) {

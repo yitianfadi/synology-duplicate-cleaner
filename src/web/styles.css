@@ -2542,3 +2542,23 @@ input[type="checkbox"]:disabled { cursor: not-allowed; }
 }
 .permission-path { overflow-wrap: anywhere; max-width: 100%; }
 .permission-guidance { margin: 0 0 4px 8px; }
+
+/* ==========================================================================
+   v0050：批次组删除 / 任务明细批量取消 / 自动加载更多
+   ========================================================================== */
+.subtitle-group-overview-item {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.subtitle-group-overview-item .subtitle-group-item { flex: 1 1 auto; }
+.subtitle-group-delete-btn { flex: 0 0 auto; }
+.subtitle-jobs-bulk {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin: 6px 0 8px;
+}
+.load-more-sentinel { height: 1px; width: 100%; }

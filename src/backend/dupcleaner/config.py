@@ -7,9 +7,9 @@ import os
 import re
 
 APP_NAME = "DuplicateCleaner"
-APP_VERSION = "1.1.0-0049"
+APP_VERSION = "1.1.0-0050"
 DISPLAY_NAME = "重复文件清理与字幕"
-SPK_VERSION = "1.1.0-0049"
+SPK_VERSION = "1.1.0-0050"
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8787
@@ -275,6 +275,11 @@ SUBTITLE_WATCH_STATE_FILE = "subtitle_watch_state.json"
 SUBTITLE_WATCH_STATE_MAX = 5000
 SUBTITLE_PRIORITY_MANUAL_TOP = 1000
 SUBTITLE_ETA_SAMPLE_LIMIT = 20
+# v0050：批量取消/强制删除（异步持久化，避免请求超时与 worker 抢跑）
+SUBTITLE_CANCEL_WAIT_SEC = 2.0
+SUBTITLE_DELETE_WAIT_SEC = 3600
+SUBTITLE_CANCEL_PERSIST_BATCH = 100
+SUBTITLE_CANCEL_PENDING_FILE = "pending_cancel.json"
 
 # ---------------------------------------------------------------------------
 # 内容相似度模式常量（docs/SIMILARITY_CONTRACT.md）

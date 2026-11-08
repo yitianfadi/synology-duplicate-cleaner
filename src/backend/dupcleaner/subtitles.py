@@ -1046,6 +1046,10 @@ class SubtitleJob(object):
                 "warning": self.warning,
                 "translation_partial": bool(self.translation_partial),
                 "paused": self.status == STATUS_PAUSED,
+                # v0050：取消请求已发出、等待当前分片/请求结束
+                "cancelling": bool(
+                    self.status in (STATUS_RUNNING, STATUS_TRANSLATING)
+                    and self.cancel_event.is_set()),
                 "resumable": bool(self.resumable),
                 "chunk_index": int(self.chunk_index),
                 "chunk_total": int(self.chunk_total),
@@ -1405,6 +1409,11 @@ class SubtitleService(object):
         self._stopping = False
         # v0032：单任务 LRU 的惰性开关（大批次组注册时避免 O(n²) 扫描）。
         self._trim_needed = False
+        # v0050：批量取消/强制删除的异步状态（<var>/subtitles/pending_cancel.json 持久化）
+        self._cancel_states = {}
+        self._delete_states = {}
+        self._cancel_threads = {}
+        self._cancel_file = os.path.join(self._root, "pending_cancel.json")
         self._load_jobs()
         try:
             with self._lock:
@@ -1546,6 +1555,8 @@ class SubtitleService(object):
             else:
                 job.resumable = False
             self._jobs[job.job_id] = job
+        # v0050：上次进程退出时有未完成的批量取消/强制删除 → 先恢复，再把任务放回队列
+        self._recover_pending_cancels()
         # 按优先级 + 创建时间恢复队列（v0048：目录优先级生效）
         for job in sorted(queued_jobs, key=lambda item: (
                 -int(getattr(item, "priority", 0) or 0),
@@ -2971,6 +2982,19 @@ class SubtitleService(object):
         status = self._derive_status(counts, total)
         if batch_ids and not batches:
             status = STATUS_FAILED
+        # v0050：取消中数量 + 取消/强制删除进度（供任务明细与总览展示）
+        cancelling = sum(
+            1 for item in group_jobs
+            if item.status in ACTIVE_LIST_STATUSES and item.cancel_event.is_set())
+        if cancelling:
+            counts["cancelling"] = cancelling
+        group_id = record.get("group_id")
+        cancel_state = self._cancel_states.get(group_id)
+        if cancel_state is None:
+            cancel_state = record.get("cancel_state")
+        delete_state = self._delete_states.get(group_id)
+        if delete_state is None:
+            delete_state = record.get("delete_state")
         active_jobs = [item for item in group_jobs
                        if item.status in ACTIVE_LIST_STATUSES]
         active_jobs.sort(key=lambda item: item.created_epoch)
@@ -2983,6 +3007,9 @@ class SubtitleService(object):
             "progress": int(round(100.0 * finished / total)) if total else 0,
             "counts": counts,
             "missing": missing,
+            # v0050：取消/强制删除进度
+            "cancel_state": dict(cancel_state) if cancel_state else None,
+            "delete_state": dict(delete_state) if delete_state else None,
             # v0035：可补翻译统计（count=仅 ASR 的 done；partial=部分译文可重译）
             "translatable": translatable,
             # v0034：执行中任务明细（最多 10 条）+ 剩余时间估算 + 当前并发数。
@@ -3193,6 +3220,7 @@ class SubtitleService(object):
             "user": user,
             "options": options,
             "batch_ids": batch_ids,
+            "job_ids": [job.job_id for job in prepared],
             "rejected": rejected,
             "duplicates": duplicates,
         }
@@ -3259,14 +3287,374 @@ class SubtitleService(object):
         return self._group_snapshot(record)
 
     def cancel_batch_group(self, group_id):
-        record, batch_ids = self._group_batch_ids(group_id)
-        for batch_id in batch_ids:
+        """v0050：异步批量取消（先内存原子标记，再后台批量持久化）。
+
+        小批次组在 SUBTITLE_CANCEL_WAIT_SEC 内完成时返回组快照（兼容旧调用）；
+        大批次组立即返回 ``{"cancelling": True, "cancel_state": ...}``，避免前端
+        20s 超时；重复调用幂等（进行中的任务直接返回同一状态）。
+        """
+        record, targets = self._target_group_jobs(group_id, scope="all")
+        if not targets:
+            existing = self._cancel_states.get(group_id)
+            if (existing and not existing.get("done")
+                    and not existing.get("error")):
+                return {"cancelling": True,
+                        "requested": int(existing.get("requested") or 0),
+                        "cancel_state": dict(existing)}
+            return self._group_snapshot(record)
+        state = self._request_group_cancel(group_id, targets, source="cancel")
+        deadline = time.time() + config.SUBTITLE_CANCEL_WAIT_SEC
+        while time.time() < deadline:
+            if state.get("done") or state.get("error"):
+                return self._group_snapshot(self._load_group_record(group_id))
+            time.sleep(0.02)
+        return {"cancelling": True, "requested": int(state.get("requested") or 0),
+                "cancel_state": dict(state)}
+
+    def _group_job_ids(self, record):
+        """组的任务 ID 列表：新记录直接取 job_ids；旧记录回退读 batch 记录。"""
+        ids = record.get("job_ids")
+        if isinstance(ids, list) and ids:
+            return [item for item in ids if isinstance(item, str)]
+        result = []
+        for batch_id in record.get("batch_ids") or []:
             try:
-                self.cancel_batch(batch_id)
+                batch_record = self._load_batch_record(batch_id)
             except (ApiError, SubtitleError):
                 continue
-        self._save_group_record(record)
-        return self._group_snapshot(record)
+            result.extend(item for item in (batch_record.get("job_ids") or [])
+                          if isinstance(item, str))
+        return result
+
+    def _target_group_jobs(self, group_id, scope="all", status=None, q=None,
+                           suffix=None, directory=None):
+        """按范围取组内“非终态”任务（scope=all 全部剩余；filter 当前筛选）。"""
+        record = self._load_group_record(group_id)
+        job_ids = self._group_job_ids(record)
+        statuses = self._status_set(status) if scope == "filter" else None
+        with self._lock:
+            jobs = [self._jobs[job_id] for job_id in job_ids
+                    if job_id in self._jobs]
+        result = []
+        for job in jobs:
+            if job.status in FINISHED_STATUSES:
+                continue
+            if job.skipped:
+                continue
+            if scope == "filter":
+                if statuses is not None and job.status not in statuses:
+                    continue
+                if not self._matches_filters(job, q=q, suffix=suffix,
+                                             directory=directory,
+                                             category=None):
+                    continue
+            result.append(job)
+        return record, result
+
+    def _request_group_cancel(self, group_id, jobs, source="cancel"):
+        """阶段 A：一把锁内标记 + 一次性移出队列 + 单次唤醒；阶段 B 后台写盘。"""
+        affected_ids = [job.job_id for job in jobs]
+        active_count = 0
+        with self._lock:
+            existing = self._cancel_states.get(group_id)
+            if existing and not existing.get("done") and not existing.get("error"):
+                return existing
+            now = time.time()
+            for job in jobs:
+                job.cancel_event.set()
+                job.pause_event.clear()
+                job.updated_epoch = now
+                if job.status in (STATUS_QUEUED, STATUS_PAUSED):
+                    job.status = STATUS_CANCELLED
+                    job.message = u"任务已取消"
+                    job.resumable = False
+                    job.finished_epoch = now
+                    self._timeline_close(job, "cancelled")
+                else:
+                    active_count += 1
+                    job.message = u"正在取消任务"
+            # 一次性重建队列：避免 deque.remove 的 O(n²) 与“每取消一个就唤醒 worker”
+            if affected_ids:
+                affected = set(affected_ids)
+                self._queue = deque(item for item in self._queue
+                                    if item not in affected)
+            self._cond.notify_all()
+            state = {
+                "group_id": group_id,
+                "source": source,
+                "requested": len(affected_ids),
+                "cancelling": active_count,
+                "persisted": 0,
+                "failed": 0,
+                "done": False,
+                "error": "",
+                "started_epoch": now,
+                "finished_epoch": None,
+            }
+            self._cancel_states[group_id] = state
+        self._save_pending_cancels()
+        thread = threading.Thread(
+            target=self._persist_group_cancel,
+            args=(group_id, affected_ids), name="dc-cancel-" + group_id,
+            daemon=True)
+        self._cancel_threads[group_id] = thread
+        thread.start()
+        return state
+
+    def _persist_group_cancel(self, group_id, job_ids):
+        """阶段 B：锁外批量持久化取消状态（每 N 个更新一次进度），聚合计一次审计。"""
+        state = self._cancel_states.get(group_id)
+        if state is None:
+            return
+        failed = 0
+        try:
+            for index, job_id in enumerate(job_ids):
+                job = self._jobs.get(job_id)
+                if job is not None:
+                    try:
+                        self._persist(job)
+                    except Exception:
+                        failed += 1
+                if (index + 1) % config.SUBTITLE_CANCEL_PERSIST_BATCH == 0:
+                    state["persisted"] = index + 1
+                    state["failed"] = failed
+                    self._save_group_cancel_state(group_id, state)
+            state["persisted"] = len(job_ids)
+            state["failed"] = failed
+            state["done"] = True
+            state["finished_epoch"] = time.time()
+        except Exception as exc:  # pragma: no cover - 防御性兜底
+            state["error"] = str(exc)
+            state["finished_epoch"] = time.time()
+        self._save_group_cancel_state(group_id, state)
+        self._save_pending_cancels()
+        self.store.audit("subtitle_group_cancel", "", {
+            "group_id": group_id,
+            "source": state.get("source"),
+            "requested": int(state.get("requested") or 0),
+            "persisted": int(state.get("persisted") or 0),
+            "failed": int(state.get("failed") or 0),
+            "cancelling": int(state.get("cancelling") or 0),
+        })
+
+    def _save_group_cancel_state(self, group_id, state):
+        try:
+            record = self._load_group_record(group_id)
+        except (ApiError, SubtitleError):
+            return
+        record["cancel_state"] = dict(state)
+        try:
+            self._save_group_record(record)
+        except (ApiError, OSError):
+            pass
+
+    def cancel_group_remaining(self, group_id, payload):
+        """v0050：任务明细“取消剩余/取消当前筛选”。"""
+        if not isinstance(payload, dict):
+            raise invalid(u"请求体必须是 JSON 对象")
+        scope = payload.get("scope") or "all"
+        if scope not in ("all", "filter"):
+            raise invalid(u"scope 只能是 all 或 filter")
+        record, targets = self._target_group_jobs(
+            group_id, scope=scope,
+            status=payload.get("status"),
+            q=payload.get("q"),
+            suffix=payload.get("suffix"),
+            directory=payload.get("directory"))
+        if not targets:
+            existing = self._cancel_states.get(group_id)
+            if (existing and not existing.get("done")
+                    and not existing.get("error")):
+                return {"cancelling": True,
+                        "requested": int(existing.get("requested") or 0),
+                        "cancel_state": dict(existing)}
+            return {"cancelling": False, "requested": 0,
+                    "message": u"没有需要取消的任务"}
+        state = self._request_group_cancel(group_id, targets,
+                                           source="remaining" if scope == "all"
+                                           else "filter")
+        return {"cancelling": True, "requested": int(state.get("requested") or 0),
+                "cancel_state": dict(state)}
+
+    def delete_batch_group(self, group_id, force=False):
+        """v0050：删除批次组记录与任务文件。
+
+        - 已结束：同步删除；
+        - 进行中：默认 409；force=True 时先批量取消，等所有任务结束后再删除
+          （后台线程执行，返回 202 供前端轮询）。
+        """
+        record = self._load_group_record(group_id)
+        snapshot = self._group_snapshot(record)
+        counts = snapshot.get("counts") or {}
+        active = (int(counts.get(STATUS_QUEUED) or 0)
+                  + int(counts.get(STATUS_RUNNING) or 0)
+                  + int(counts.get(STATUS_TRANSLATING) or 0)
+                  + int(counts.get(STATUS_PAUSED) or 0))
+        if active <= 0:
+            self._delete_group_now(record)
+            return {"deleted": True, "group_id": group_id}
+        if not force:
+            raise ApiError(
+                "GROUP_ACTIVE",
+                u"该批次组仍在执行，请先取消，或使用“强制取消并删除”",
+                status=409)
+        existing = self._delete_states.get(group_id)
+        if existing and not existing.get("done") and not existing.get("error"):
+            payload = {"deleting": True, "phase": existing.get("phase"),
+                       "delete_state": dict(existing)}
+            cancel_state = self._cancel_states.get(group_id)
+            if cancel_state:
+                payload["cancel_state"] = dict(cancel_state)
+            return payload
+        _, targets = self._target_group_jobs(group_id, scope="all")
+        cancel_state = self._request_group_cancel(group_id, targets,
+                                                  source="delete")
+        state = {
+            "group_id": group_id,
+            "phase": "cancelling",
+            "started_epoch": time.time(),
+            "done": False,
+            "error": "",
+        }
+        with self._lock:
+            self._delete_states[group_id] = state
+        self._save_pending_cancels()
+        thread = threading.Thread(target=self._delete_group_after_cancel,
+                                  args=(group_id,),
+                                  name="dc-delete-" + group_id, daemon=True)
+        self._cancel_threads["delete:" + group_id] = thread
+        thread.start()
+        return {"deleting": True, "phase": "cancelling",
+                "cancel_state": dict(cancel_state),
+                "delete_state": dict(state)}
+
+    def _delete_group_after_cancel(self, group_id):
+        state = self._delete_states.get(group_id)
+        if state is None:
+            return
+        deadline = time.time() + config.SUBTITLE_DELETE_WAIT_SEC
+        try:
+            while time.time() < deadline:
+                cancel_state = self._cancel_states.get(group_id) or {}
+                if (cancel_state.get("done") or cancel_state.get("error")):
+                    with self._lock:
+                        jobs = [job for job in self._jobs.values()
+                                if job.group_id == group_id]
+                        active = [job for job in jobs
+                                  if job.status in ACTIVE_LIST_STATUSES
+                                  or job.status == STATUS_PAUSED
+                                  or job.status == STATUS_QUEUED]
+                        # 没有真实 worker 持有的 running 是重启/异常残留：直接落地取消
+                        stale = [job for job in active
+                                 if job.status in (STATUS_RUNNING,
+                                                   STATUS_TRANSLATING)
+                                 and job.job_id not in self._active_ids]
+                        for job in stale:
+                            job.status = STATUS_CANCELLED
+                            job.finished_epoch = time.time()
+                            job.message = u"任务已取消"
+                            job.resumable = False
+                    for job in stale:
+                        self._persist(job)
+                    active = [job for job in active if job not in stale]
+                    if not active:
+                        break
+                time.sleep(0.2)
+            else:
+                state["error"] = u"等待任务停止超时，未删除（可稍后重试）"
+                state["done"] = True
+                self._save_pending_cancels()
+                return
+            record = self._load_group_record(group_id)
+            self._delete_group_now(record)
+            state["phase"] = "done"
+            state["done"] = True
+        except (ApiError, SubtitleError, OSError) as exc:
+            state["error"] = getattr(exc, "message", str(exc))
+            state["done"] = True
+        finally:
+            self._save_pending_cancels()
+
+    def _delete_group_now(self, record):
+        group_id = record.get("group_id")
+        with self._lock:
+            job_ids = set(self._group_job_ids(record))
+            if job_ids:
+                self._queue = deque(item for item in self._queue
+                                    if item not in job_ids)
+            self._remove_group_locked(record)
+            self._cancel_states.pop(group_id, None)
+            self._delete_states.pop(group_id, None)
+        self.store.audit("subtitle_group_delete", "", {
+            "group_id": group_id, "jobs": len(job_ids)})
+        self._save_pending_cancels()
+
+    def _save_pending_cancels(self):
+        """把未完成的批量取消/强制删除写入小文件，供重启后恢复。"""
+        with self._lock:
+            cancels = {gid: dict(state) for gid, state
+                       in self._cancel_states.items()
+                       if not state.get("done") and not state.get("error")}
+            deletes = {gid: dict(state) for gid, state
+                       in self._delete_states.items()
+                       if not state.get("done")}
+        data = {"cancels": cancels, "deletes": deletes}
+        try:
+            if not cancels and not deletes:
+                if os.path.isfile(self._cancel_file):
+                    os.unlink(self._cancel_file)
+                return
+            os.makedirs(self._root, exist_ok=True)
+            temporary = self._cancel_file + ".tmp"
+            with open(temporary, "w", encoding="utf-8") as handle:
+                json.dump(data, handle, ensure_ascii=False)
+                handle.flush()
+            os.replace(temporary, self._cancel_file)
+        except OSError:  # pragma: no cover
+            pass
+
+    def _recover_pending_cancels(self):
+        """重启恢复：未完成的批量取消先标 cancelled，强制删除的组直接清理。"""
+        try:
+            with open(self._cancel_file, "r", encoding="utf-8") as handle:
+                data = json.load(handle)
+        except (OSError, ValueError, UnicodeError):
+            return
+        cancels = data.get("cancels") or {}
+        deletes = data.get("deletes") or {}
+        for group_id in list(cancels.keys()) + [gid for gid in deletes.keys()
+                                                if gid not in cancels]:
+            try:
+                record = self._load_group_record(group_id)
+            except (ApiError, SubtitleError):
+                continue
+            jobs = [self._jobs[job_id] for job_id in self._group_job_ids(record)
+                    if job_id in self._jobs]
+            for job in jobs:
+                if job.status in FINISHED_STATUSES:
+                    continue
+                with self._lock:
+                    job.cancel_event.set()
+                    job.pause_event.clear()
+                    job.status = STATUS_CANCELLED
+                    job.message = u"任务已取消"
+                    job.resumable = False
+                    job.updated_epoch = time.time()
+                self._persist(job)
+            state = dict(cancels.get(group_id) or {})
+            state.update({"done": True, "persisted": len(jobs),
+                          "finished_epoch": time.time()})
+            self._save_group_cancel_state(group_id, state)
+            if group_id in deletes:
+                try:
+                    record = self._load_group_record(group_id)
+                    self._remove_group_locked(record)
+                except (ApiError, SubtitleError, OSError):
+                    pass
+        try:
+            os.unlink(self._cancel_file)
+        except OSError:
+            pass
 
     def retry_batch_group(self, group_id):
         record, batch_ids = self._group_batch_ids(group_id)
@@ -3433,6 +3821,7 @@ class SubtitleService(object):
             "user": user,
             "options": dict(options),
             "batch_ids": batch_ids,
+            "job_ids": [job.job_id for job in jobs],
             "rejected": [],
             "duplicates": [],
         }
@@ -3601,13 +3990,16 @@ class SubtitleService(object):
 
     def _remove_group_locked(self, record):
         group_id = record.get("group_id")
+        removed_ids = set()
         for batch_id in record.get("batch_ids") or []:
             try:
                 batch_record = self._load_batch_record(batch_id)
             except (ApiError, SubtitleError):
                 batch_record = None
             for job_id in (batch_record or {}).get("job_ids") or []:
+                removed_ids.add(job_id)
                 self._jobs.pop(job_id, None)
+                self._active_ids.discard(job_id)
                 self._remove_job_files(job_id)
                 try:
                     os.unlink(self._job_json(job_id))
@@ -3617,6 +4009,10 @@ class SubtitleService(object):
                     self.store.delete_subtitle_job(job_id)
                 except Exception:
                     pass
+        # v0050：删除组时把任务从队列一次性移除（避免残留队列引用）
+        if removed_ids:
+            self._queue = deque(item for item in self._queue
+                                if item not in removed_ids)
             try:
                 os.unlink(self._batch_json(batch_id))
             except OSError:

@@ -632,6 +632,24 @@ def check_backend():
           and "protected_skipped" in deletion_src,
           "protection markers missing")
 
+    # ---- v0050：字幕批量取消/强制删除/自动加载 ----
+    check("BE-SUBTITLE-CANCEL",
+          "字幕批次组批量取消/强制删除/取消剩余（v0050）",
+          "def _request_group_cancel(" in subtitles_src
+          and "def _persist_group_cancel(" in subtitles_src
+          and "def cancel_group_remaining(" in subtitles_src
+          and "def delete_batch_group(" in subtitles_src
+          and "def _recover_pending_cancels(" in subtitles_src
+          and "pending_cancel.json" in subtitles_src
+          and '"cancelling": bool(' in subtitles_src
+          and "cancel_state" in subtitles_src
+          and "delete_state" in subtitles_src
+          and "cancel-remaining" in http_src
+          and "batch-groups/(?P<group_id>[^/]+)/delete" in http_src
+          and "def _subtitle_group_cancel_remaining(" in http_src
+          and "def _subtitle_group_delete(" in http_src,
+          "subtitle cancel/delete backend markers missing")
+
     # ---- v0049：任务检索/批量操作 + 权限体检 + 日志检索 ----
     perm_path = os.path.join(backend, "dupcleaner", "permissions.py")
     perm_src = read(perm_path) if os.path.isfile(perm_path) else ""
@@ -1264,6 +1282,21 @@ def check_frontend():
           read(os.path.join(web, "js", "constants.js"))
           and "subtitle-failure-item" in read(os.path.join(web, "styles.css")),
           "subtitle v2 ui markers missing")
+    check("FE-SUBTITLE-CANCEL-DELETE",
+          "批次总览删除/强制删除、任务明细取消剩余与筛选、已取消页签、下滑自动加载（v0050）",
+          "subtitleGroupOverviewList" in html
+          and "subtitleJobsCancelRemainingBtn" in html
+          and "subtitleJobsCancelFilterBtn" in html
+          and 'data-jobs-filter="cancelled"' in html
+          and "subtitleGroupJobsSentinel" in html
+          and "cancelled: '已取消'" in subtitle_page_src
+          and "function cancelJobsRemaining" in subtitle_page_src
+          and "function deleteGroup" in subtitle_page_src
+          and "IntersectionObserver" in subtitle_page_src
+          and "setupJobsAutoLoad" in subtitle_page_src
+          and "/cancel-remaining" in subtitle_page_src
+          and "/delete" in subtitle_page_src,
+          "subtitle cancel/delete ui markers missing")
     check("FE-TASKCENTER-V2",
           "任务检索筛选/批量选择取消重试置顶 + 日志检索导出 + 权限体检面板（v0049）",
           "subtitleJobSearch" in html

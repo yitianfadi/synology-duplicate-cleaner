@@ -326,7 +326,7 @@ CREATE TABLE IF NOT EXISTS subtitle_batches (
 
 ## 12. 版本与兼容
 
-- 版本 **1.1.0-0049**（v0039 起含任务队列视图与批次组总览，v0040 起含分片音频预取，v0041 起任务行补 `eta_seconds` 与进度显示修复，v0042 起启动加载提速与升级启动稳定性，v0043 起重复扫描侧增量缓存/保留规则/排除规则，v0044 起预览缩略图/并排对比与删除白名单，v0045 起硬链接合并与套件独立回收站，v0046 起计划扫描与通知系统，v0047 起相似视频识别增强，v0048 起字幕失败分类/自动重试/资源管控/音轨/目录监控，v0049 起任务检索批量/权限体检/日志增强），需同步 8 处：`README.md`、`build/build_spk.py`、`docs/ARCHITECTURE.md`、`docs/CONTRACT.md`、`docs/SPK_PACKAGING.md`、`spk/INFO`、`src/backend/dupcleaner/config.py`、`src/web/index.html`（含 `app.js?v=` 查询串）。
+- 版本 **1.1.0-0050**（v0039 起含任务队列视图与批次组总览，v0040 起含分片音频预取，v0041 起任务行补 `eta_seconds` 与进度显示修复，v0042 起启动加载提速与升级启动稳定性，v0043 起重复扫描侧增量缓存/保留规则/排除规则，v0044 起预览缩略图/并排对比与删除白名单，v0045 起硬链接合并与套件独立回收站，v0046 起计划扫描与通知系统，v0047 起相似视频识别增强，v0048 起字幕失败分类/自动重试/资源管控/音轨/目录监控，v0049 起任务检索批量/权限体检/日志增强，v0050 起批量取消异步化/强制删除/任务明细取消剩余与自动加载/已取消独立筛选），需同步 8 处：`README.md`、`build/build_spk.py`、`docs/ARCHITECTURE.md`、`docs/CONTRACT.md`、`docs/SPK_PACKAGING.md`、`spk/INFO`、`src/backend/dupcleaner/config.py`、`src/web/index.html`（含 `app.js?v=` 查询串）。
 - 现有 `POST /api/subtitles` 行为不变（新字段均为可选）；旧任务记录可读；旧 SPK 升级后数据目录与包 ID 不变。
 - 文档同步：本文件、`docs/SUBTITLE_CONTRACT.md`（新增 §13 指向本文件）、`docs/ARCHITECTURE.md`（字幕页与批次服务）。
 
@@ -518,6 +518,10 @@ CREATE TABLE IF NOT EXISTS subtitle_batches (
 - 版本 1.1.0-0047；本次改动为相似视频识别增强（视频指纹/配对/设置），**字幕任务接口/行为/数据结构不变**（schema 仍 v8）。
 - 版本 1.1.0-0048；本次改动为字幕失败分类/自动重试/失败清单/负载与优先级/音轨选择/目录监控（任务 payload 增加 audio_track、priority、attempt、failure_category 等字段，**兼容旧 JSON**；schema 仍 v8）。
 - 版本 1.1.0-0049；本次改动为任务检索筛选、批量操作、权限体检与日志检索（接口与 UI 增强，**任务数据结构不变**；schema 仍 v8）。
+- 版本 1.1.0-0050；本次改动为批量取消异步化、批次组强制删除、任务明细“取消剩余/取消当前筛选”、下滑自动加载、已取消任务独立筛选（group JSON 增加 `cancel_state/delete_state/job_ids`，**兼容旧记录**；schema 仍 v8）。
+  - `POST /cancel` 大批次组立即返回 **202** `{cancelling:true, requested, cancel_state}`；小批次组 2s 内完成仍返回旧 `{group}` 形状。
+  - 新增 `POST /api/subtitles/batch-groups/{id}/cancel-remaining`（`scope=all|filter`）与 `POST .../delete`（`force=true` 时先取消、全部停止后删除，202）。
+  - 任务明细 `status=cancelled` 独立筛选；“失败”不再包含已取消。
 
 
 
