@@ -2702,6 +2702,52 @@ def run():
               resp.status == 400 and bad_code == "INVALID_ARGUMENT",
               "status=%s code=%s" % (resp.status, bad_code))
 
+        # ---------------- v0048：字幕 ASR 优化（失败清单/监控/校验） ----------------
+        resp = client.get("/api/subtitles/failures?limit=20")
+        failures = jd(resp)
+        check("SUBF-01", "v0048 失败清单接口返回分类/可重试信息",
+              resp.status == 200
+              and isinstance(failures.get("items"), list)
+              and isinstance(failures.get("categories"), dict)
+              and isinstance(failures.get("category_labels"), dict)
+              and isinstance(failures.get("retryable_categories"), list),
+              "status=%s keys=%s" % (resp.status, sorted(failures.keys())[:8]))
+        resp = client.get("/api/subtitles/failures/export?limit=20")
+        check("SUBF-02", "v0048 失败清单可导出 CSV（带表头）",
+              resp.status == 200
+              and "text/csv" in resp.header("content-type")
+              and u"任务ID" in resp.text()
+              and u"失败分类" in resp.text(),
+              "status=%s type=%s"
+              % (resp.status, resp.header("content-type")))
+        resp = client.get("/api/subtitles/watch")
+        watch = jd(resp).get("watch") or {}
+        check("SUBF-03", "v0048 字幕目录监控状态接口",
+              resp.status == 200 and "enabled" in watch
+              and isinstance(watch.get("dirs"), list)
+              and "interval_sec" in watch,
+              "status=%s watch=%s"
+              % (resp.status, json.dumps(watch, ensure_ascii=False)[:150]))
+        resp = client.post_json("/api/subtitles/watch/scan", {})
+        result = jd(resp).get("result") or {}
+        check("SUBF-04", "v0048 手动触发监控扫描返回结果摘要",
+              resp.status == 202 and isinstance(result.get("enqueued"), int)
+              and isinstance(result.get("errors"), list),
+              "status=%s result=%s"
+              % (resp.status, json.dumps(result, ensure_ascii=False)[:150]))
+        resp = client.put_json("/api/settings", {
+            "settings": {"subtitle_audio_track": "99"}})
+        bad_code, _details = err_code(resp)
+        check("SUBF-05", "v0048 非法音轨序号被拒绝（INVALID_ARGUMENT）",
+              resp.status == 400 and bad_code == "INVALID_ARGUMENT",
+              "status=%s code=%s" % (resp.status, bad_code))
+        resp = client.put_json("/api/settings", {
+            "settings": {"subtitle_watch_interval_sec": 30}})
+        bad_code2, _details2 = err_code(resp)
+        check("SUBF-06", "v0048 监控间隔过小被拒绝（60 秒下限）",
+              resp.status == 400 and bad_code2 == "INVALID_ARGUMENT",
+              "status=%s code=%s" % (resp.status, bad_code2))
+
         # ---------------- 重启持久化 ----------------
         client.put_json("/api/settings", {"settings": {"concurrency": 3}})
         backend.stop()

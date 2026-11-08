@@ -1,7 +1,7 @@
 # 实现契约（前后端共享，版本 1.0）
 
 > 本文件是前后端并行开发的唯一接口约定。任何一方需要改动字段，先改本文件并在团队任务中说明。
-> 产品名：**DuplicateCleaner**；显示名：**重复文件清理与字幕**；SPK 版本：**1.1.0-0047**。
+> 产品名：**DuplicateCleaner**；显示名：**重复文件清理与字幕**；SPK 版本：**1.1.0-0048**。
 > v1.1 新增内容相似度模式；相似模式字段与行为见 [SIMILARITY_CONTRACT.md](SIMILARITY_CONTRACT.md)，**精准模式规则不变**。
 
 ## 1. 仓库与写入边界
@@ -154,7 +154,7 @@ v0042 增量（升级启动稳定性）：
 ### GET /api/meta
 ```json
 {
- "app_version": "1.1.0-0047",
+ "app_version": "1.1.0-0048",
  "dsm_version": "7.2.2-72806" | "dev",
  "python_version": "3.8.16",
  "creation_time_supported": true,
@@ -304,6 +304,23 @@ v0042 增量（升级启动稳定性）：
 
 视频组/文件结果新增字段见契约文档 §3（`video_confidence`、`video_match_method`、
 `video_center_used`、`video_audio_used`/`video_audio_score`、`video_duration_delta_sec` 等）。
+
+### v0048 新增设置键（字幕 ASR 优化）
+
+> 详细语义见 [SUBTITLE_ASR_V2_CONTRACT.md](SUBTITLE_ASR_V2_CONTRACT.md)。
+
+| key | 类型 | 默认 | 说明 |
+|---|---|---|---|
+| subtitle_auto_retry_enabled | bool | true | 可恢复错误自动重试 |
+| subtitle_auto_retry_max | int | 1 | 自动重试次数上限（0–3） |
+| subtitle_no_speech_skip | bool | true | 无语音标记为已跳过（不重试/不占队列） |
+| subtitle_max_load | float | 0 | 1 分钟负载阈值；超过时字幕队列暂不取任务 |
+| subtitle_dir_priorities | string[] | [] | 目录优先级（越靠前越高） |
+| subtitle_audio_track | string | "" | 默认音轨（auto 或 0–31） |
+| subtitle_audio_track_language | string | "" | 默认音轨语言（jpn/chi/eng…） |
+| subtitle_watch_enabled | bool | false | 目录监控开关 |
+| subtitle_watch_dirs | string[] | [] | 监控目录 |
+| subtitle_watch_interval_sec | int | 300 | 监控扫描间隔（60–86400） |
 
 ## 7. 扫描
 
@@ -519,6 +536,18 @@ Content-Disposition: attachment; filename="duplicate-scan-<id>.csv"
 - `POST /api/scheduler/run-now` → 202 `{ok:true, result:{scan_id, roots}}`；
   跳过时 200 `{ok:false, result:{reason:"busy"|"load"|"no_roots", message}}`。
 
+### v0048 字幕失败清单 / 音轨 / 监控 / 优先级接口
+
+- `GET /api/subtitles/failures` → `{total, items[], categories{}, category_labels,
+  retryable_categories}`（支持 `limit/group_id/category/include_skipped`）。
+- `GET /api/subtitles/failures/export` → CSV（UTF-8 BOM）下载。
+- `POST /api/subtitles/failures/retry` `{job_ids?, group_id?, category?, force?}` →
+  `{requeued, skipped:[{job_id,reason,category}], selected}`。
+- `POST /api/subtitles/audio-tracks` `{path}` → `{audio:{path, has_audio, duration, tracks[]}}`。
+- `GET /api/subtitles/watch` → `{watch:{enabled, dirs, interval_sec, last_scan_at,
+  last_result, watched_files}}`；`POST /api/subtitles/watch/scan` → 202 `{result}`。
+- `POST /api/subtitles/{job_id}/priority` `{top:true}` 或 `{priority:0..1000}` → `{job}`。
+
 ### GET /api/logs?limit=50
 ```json
 {"ok":true,"logs":[{"name":"scan-20261101-....log","kind":"scan","size":1234,
@@ -595,4 +624,4 @@ Content-Disposition: attachment; filename="duplicate-scan-<id>.csv"
 - 后端 unittest 覆盖：statx 时间读取降级、哈希分片/限速、重复分组与三种保留策略、
   路径黑名单、删除前重校验、回收站路径生成、CSV、API 鉴权。
 - 前端可用静态检查 + 本地 dev 后端联调；QA 用 dev 模式在临时目录生成重复文件跑完整 API 流程。
-- 打包产物 `dist/DuplicateCleaner-1.1.0-0047.spk` 必须能通过 `tar -tf` 检查，包含 INFO/package.tgz/scripts/conf/ui。
+- 打包产物 `dist/DuplicateCleaner-1.1.0-0048.spk` 必须能通过 `tar -tf` 检查，包含 INFO/package.tgz/scripts/conf/ui。

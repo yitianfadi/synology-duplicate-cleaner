@@ -16,6 +16,7 @@ from .settings import SettingsManager
 from .shares import ShareService
 from .store import Store
 from .subtitles import SubtitleService
+from .subtitle_watch import SubtitleWatchService
 from .thumbnails import ThumbnailService
 from .trash import TrashManager
 from .upgrade import UpgradeDrainMonitor
@@ -27,7 +28,8 @@ class Services(object):
                  deletion_manager, subtitle_service=None,
                  upgrade_monitor=None, thumbnail_service=None,
                  merge_manager=None, trash_manager=None,
-                 notification_service=None, scheduler_service=None):
+                 notification_service=None, scheduler_service=None,
+                 subtitle_watch_service=None):
         self.config = runtime_config
         self.store = store
         self.settings = settings_manager
@@ -44,6 +46,7 @@ class Services(object):
         self.trash = trash_manager
         self.notify = notification_service
         self.scheduler = scheduler_service
+        self.subtitle_watch = subtitle_watch_service
 
     def shutdown(self, timeout=5.0):
         # 先停升级 drain 监视，避免正常退出时又把扫描暂停。
@@ -73,6 +76,11 @@ class Services(object):
         try:
             if self.scheduler is not None:
                 self.scheduler.stop(timeout=timeout)
+        except Exception:
+            pass
+        try:
+            if self.subtitle_watch is not None:
+                self.subtitle_watch.stop(timeout=timeout)
         except Exception:
             pass
         try:
@@ -112,6 +120,11 @@ def build_services(runtime_config):
                                  scan_manager, settings_manager)
     subtitle_service = SubtitleService(runtime_config, store, share_service,
                                        settings_manager.get)
+    # v0048：字幕目录监控（新增视频自动入队）
+    subtitle_watch_service = SubtitleWatchService(
+        runtime_config, store, settings_manager.get,
+        subtitle_service=subtitle_service)
+    subtitle_watch_service.start()
     scheduler_service = SchedulerService(
         runtime_config, store, settings_manager.get, scan_manager,
         notifier=notification_service,
@@ -124,4 +137,5 @@ def build_services(runtime_config):
                     share_service, browse_service, preview_service,
                     scan_manager, deletion_manager, subtitle_service,
                     upgrade_monitor, thumbnail_service, merge_manager,
-                    trash_manager, notification_service, scheduler_service)
+                    trash_manager, notification_service, scheduler_service,
+                    subtitle_watch_service)

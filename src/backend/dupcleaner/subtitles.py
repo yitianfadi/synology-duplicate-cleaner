@@ -126,6 +126,84 @@ class SubtitlePaused(Exception):
 
 
 # ---------------------------------------------------------------------------
+# v0048：失败分类 / 音轨选择 / 优先级 工具函数
+# ---------------------------------------------------------------------------
+def failure_category(code, message=u""):
+    """把错误码/消息归入失败分类（audio_extract/no_speech/timeout/...）。"""
+    code = str(code or "").upper()
+    category = config.SUBTITLE_FAILURE_CODE_CATEGORY.get(code)
+    if category:
+        return category
+    text = (message or u"").lower()
+    rules = (
+        (u"permission", "permission"),
+        (u"denied", "permission"),
+        (u"权限", "permission"),
+        (u"no audio", "audio_extract"),
+        (u"无音轨", "audio_extract"),
+        (u"没有音轨", "audio_extract"),
+        (u"timeout", "timeout"),
+        (u"timed out", "timeout"),
+        (u"超时", "timeout"),
+        (u"network", "network"),
+        (u"connect", "network"),
+        (u"网络", "network"),
+        (u"no speech", "no_speech"),
+        (u"未识别", "no_speech"),
+        (u"无语音", "no_speech"),
+    )
+    for needle, candidate in rules:
+        if needle in text:
+            return candidate
+    return "unknown"
+
+
+def failure_retryable(category):
+    return (category or "").lower() in config.SUBTITLE_RETRYABLE_CATEGORIES
+
+
+def normalize_audio_track(value):
+    """音轨序号：None/''/'auto' → None；0..31 的整数或数字串。"""
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        raise ValueError("audio_track must be an integer")
+    if isinstance(value, int):
+        track = value
+    else:
+        text = str(value).strip().lower()
+        if not text or text in ("auto", "default"):
+            return None
+        if not text.isdigit():
+            raise ValueError("audio_track must be an integer")
+        track = int(text)
+    if track < config.SUBTITLE_AUDIO_TRACK_HEADER or track > config.SUBTITLE_AUDIO_TRACK_MAX_INDEX:
+        raise ValueError("audio_track out of range")
+    return track
+
+
+def normalize_audio_language(value):
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text or text.lower() in ("auto", "default"):
+        return None
+    if len(text) > 16 or not re.match(r"^[A-Za-z]{2,8}([_-][A-Za-z0-9]{1,8})?$", text):
+        raise ValueError("invalid audio language")
+    return text
+
+
+def _median(values):
+    values = sorted(float(item) for item in (values or []) if item is not None)
+    if not values:
+        return None
+    middle = len(values) // 2
+    if len(values) % 2:
+        return values[middle]
+    return (values[middle - 1] + values[middle]) / 2.0
+
+
+# ---------------------------------------------------------------------------
 # 文本 / 字幕工具
 # ---------------------------------------------------------------------------
 
@@ -707,7 +785,8 @@ class SubtitleJob(object):
     def __init__(self, job_id, path, language, translate, target_lang, user,
                  source=SOURCE_ASR, output_mode=None, skip_existing=True,
                  batch_id=None, group_id=None, audio_source=None,
-                 source_job_id=None):
+                 source_job_id=None, audio_track=None,
+                 audio_track_language=None, priority=0, source_watch=False):
         self.job_id = job_id
         self.path = path
         self.language = language
@@ -725,6 +804,17 @@ class SubtitleJob(object):
         self.audio_source = (audio_source
                              if audio_source in config.SUBTITLE_AUDIO_SOURCES
                              else config.SUBTITLE_DEFAULT_AUDIO_SOURCE)
+        # v0048：音轨选择（None=自动；运行时解析成 ffmpeg -map）
+        self.audio_track = audio_track
+        self.audio_track_language = audio_track_language
+        self.audio_map = None
+        # v0048：队列优先级（越大越先执行）/ 自动重试次数 / 失败分类
+        self.priority = int(priority or 0)
+        self.attempt = 0
+        self.failure_category = None
+        self.retryable = False
+        # v0048：目录监控自动加入的任务（只用于 UI 标识）
+        self.source_watch = bool(source_watch)
         # v0035 补翻译：仅翻译任务记录源任务 ID（源任务目录 original.srt 为源文本）
         self.source_job_id = (source_job_id
                               if isinstance(source_job_id, str) and source_job_id
@@ -935,6 +1025,15 @@ class SubtitleJob(object):
                 "batch_id": self.batch_id,
                 "group_id": self.group_id,
                 "audio_source": self.audio_source,
+                # v0048：音轨 / 优先级 / 自动重试 / 失败分类 / 监控来源
+                "audio_track": self.audio_track,
+                "audio_track_language": self.audio_track_language,
+                "audio_map": self.audio_map,
+                "priority": int(self.priority or 0),
+                "attempt": int(self.attempt or 0),
+                "failure_category": self.failure_category,
+                "retryable": bool(self.retryable),
+                "source_watch": bool(self.source_watch),
                 # v0035：补翻译任务指向源任务；普通任务为 None
                 "source_job_id": self.source_job_id,
                 "created_at": timeutil.iso_local(self.created_epoch),
@@ -989,6 +1088,14 @@ class SubtitleJob(object):
             "group_id": self.group_id,
             "audio_source": self.audio_source,
             "source_job_id": self.source_job_id,
+            # v0048：音轨 / 优先级 / 自动重试 / 失败分类
+            "audio_track": self.audio_track,
+            "audio_track_language": self.audio_track_language,
+            "priority": int(self.priority or 0),
+            "attempt": int(self.attempt or 0),
+            "failure_category": self.failure_category,
+            "retryable": bool(self.retryable),
+            "source_watch": bool(self.source_watch),
             "created_epoch": self.created_epoch,
             "updated_epoch": self.updated_epoch,
             "error": self.error,
@@ -1025,7 +1132,14 @@ class SubtitleJob(object):
                   batch_id=record.get("batch_id"),
                   group_id=record.get("group_id"),
                   audio_source=record.get("audio_source"),
-                  source_job_id=record.get("source_job_id"))
+                  source_job_id=record.get("source_job_id"),
+                  audio_track=record.get("audio_track"),
+                  audio_track_language=record.get("audio_track_language"),
+                  priority=int(record.get("priority") or 0),
+                  source_watch=bool(record.get("source_watch")))
+        job.attempt = int(record.get("attempt") or 0)
+        job.failure_category = record.get("failure_category")
+        job.retryable = bool(record.get("retryable"))
         job.status = record.get("status") or STATUS_FAILED
         job.stage = record.get("stage") or "audio"
         job.progress = int(record.get("progress") or 0)
@@ -1284,6 +1398,8 @@ class SubtitleService(object):
         self._jobs = {}
         self._queue = deque()
         self._active_ids = set()
+        # v0048：最近完成任务的实际耗时（用于 ETA 校准）
+        self._duration_samples = deque(maxlen=config.SUBTITLE_ETA_SAMPLE_LIMIT)
         self._workers = []       # 当前生效的 worker 线程
         self._retiring = set()   # 调小并发后待退出的线程（跑完当前任务退出）
         self._stopping = False
@@ -1430,11 +1546,14 @@ class SubtitleService(object):
             else:
                 job.resumable = False
             self._jobs[job.job_id] = job
-        # 按创建时间升序恢复队列：与运行期 FIFO 一致，最早提交的任务先跑。
-        for job in sorted(queued_jobs, key=lambda item: item.created_epoch):
+        # 按优先级 + 创建时间恢复队列（v0048：目录优先级生效）
+        for job in sorted(queued_jobs, key=lambda item: (
+                -int(getattr(item, "priority", 0) or 0),
+                item.created_epoch)):
             if job.job_id in self._queue:
                 continue
-            self._queue.append(job.job_id)
+            with self._lock:
+                self._enqueue_locked(job)
 
     def _persist(self, job):
         with job.lock:
@@ -1685,6 +1804,28 @@ class SubtitleService(object):
             # 单视频 / 非批次组任务（批次总览里的“单任务排队”入口）
             "single_active_count": sum(1 for item in active
                                        if not getattr(item, "group_id", None)),
+            # v0048：负载阈值管控状态（队列因负载暂停时给出原因与当前负载）
+            "load_guard": self._load_guard_state(),
+        }
+
+    def _load_guard_state(self):
+        try:
+            settings = self._settings() or {}
+            threshold = float(settings.get("subtitle_max_load") or 0)
+        except Exception:  # pragma: no cover
+            threshold = 0.0
+        try:
+            load1 = round(float(os.getloadavg()[0]), 2)
+        except (AttributeError, OSError):
+            load1 = None
+        blocked = bool(threshold > 0 and load1 is not None and load1 > threshold)
+        return {
+            "enabled": threshold > 0,
+            "threshold": threshold,
+            "load1": load1,
+            "blocked": blocked,
+            "reason": u"当前负载 %.2f 超过阈值 %.2f，字幕队列已暂停取任务"
+                      % (load1, threshold) if blocked else "",
         }
 
     def counts(self):
@@ -1692,12 +1833,240 @@ class SubtitleService(object):
         with self._lock:
             jobs = list(self._jobs.values())
         by_status = {}
+        by_category = {}
         for job in jobs:
             status = job.status or "unknown"
             by_status[status] = by_status.get(status, 0) + 1
+            if status == STATUS_FAILED:
+                category = job.failure_category or "unknown"
+                by_category[category] = by_category.get(category, 0) + 1
         active = sum(by_status.get(status, 0) for status in ACTIVE_STATUSES)
         return {"active": active, "total": len(jobs),
-                "by_status": by_status}
+                "by_status": by_status,
+                "failed_by_category": by_category,
+                "load_guard": self._load_guard_state()}
+
+    # ------------------------------------------------------------------
+    # v0048：音轨选择 / 失败清单 / 批量重试 / 优先级
+    # ------------------------------------------------------------------
+    def _resolve_audio_map(self, job, probe):
+        """把 job.audio_track / audio_track_language 解析为 ffmpeg -map。"""
+        streams = probe.get("audio_streams") or []
+        track = getattr(job, "audio_track", None)
+        language = getattr(job, "audio_track_language", None)
+        if track is None and not language:
+            job.audio_map = None
+            return None
+        if not streams:
+            raise SubtitleError("AUDIO_TRACK_NOT_FOUND", u"未找到可用音轨")
+        ordinal = None
+        if language:
+            needle = str(language).lower().replace("_", "-")
+            for index, stream in enumerate(streams):
+                stream_lang = str((stream or {}).get("language") or "").lower()
+                stream_lang = stream_lang.replace("_", "-")
+                if stream_lang and (stream_lang == needle
+                                    or stream_lang.startswith(needle + "-")):
+                    ordinal = index
+                    break
+            if ordinal is None:
+                raise SubtitleError(
+                    "AUDIO_TRACK_NOT_FOUND",
+                    u"未找到语言为 %s 的音轨（共 %d 条）"
+                    % (language, len(streams)))
+        else:
+            if isinstance(track, bool) or not isinstance(track, int):
+                raise SubtitleError("AUDIO_TRACK_NOT_FOUND", u"音轨序号非法")
+            if track < 0 or track >= len(streams):
+                raise SubtitleError(
+                    "AUDIO_TRACK_NOT_FOUND",
+                    u"音轨序号 %d 超出范围（共 %d 条）" % (track, len(streams)))
+            ordinal = track
+        job.audio_map = "0:a:%d" % int(ordinal)
+        return job.audio_map
+
+    def audio_tracks(self, path):
+        """列出视频音轨（供“手动指定音轨”选择器使用；不读取音频内容）。"""
+        if not isinstance(path, str) or not path.strip():
+            raise invalid(u"path 不能为空")
+        self.shares.validate_file(path)
+        settings = self._settings() or {}
+        if not self.ffmpeg.available():
+            raise SubtitleError("FFMPEG_UNAVAILABLE", u"未找到 FFmpeg")
+        timeout = float(settings.get("subtitle_asr_timeout_sec") or 300)
+        probe = self.ffmpeg.probe_media(path, min(timeout, 60.0))
+        streams = probe.get("audio_streams") or []
+        tracks = []
+        for index, stream in enumerate(streams):
+            stream = stream or {}
+            tracks.append({
+                "index": index,
+                "stream_index": stream.get("index"),
+                "codec": stream.get("codec") or "",
+                "language": stream.get("language") or "",
+                "title": stream.get("title") or "",
+                "channels": stream.get("channels"),
+                "default": bool(stream.get("default")),
+            })
+        return {
+            "path": path,
+            "has_audio": bool(streams),
+            "duration": probe.get("duration"),
+            "tracks": tracks,
+        }
+
+    def failures(self, limit=200, group_id=None, category=None,
+                 include_skipped=False):
+        """失败清单（v0048）：按分类/批次组过滤，附尝试次数与可重试标记。"""
+        try:
+            limit = max(1, min(int(limit or 200),
+                               config.SUBTITLE_FAILURE_LIST_LIMIT))
+        except (TypeError, ValueError):
+            limit = 200
+        if category is not None and category not in config.SUBTITLE_FAILURE_CATEGORIES:
+            raise invalid(u"失败分类非法")
+        with self._lock:
+            jobs = list(self._jobs.values())
+        items = []
+        for job in jobs:
+            if job.status != STATUS_FAILED:
+                continue
+            if category is not None and (job.failure_category or "unknown") != category:
+                continue
+            if group_id is not None and job.group_id != group_id:
+                continue
+            if job.skipped and not include_skipped:
+                continue
+            items.append(job.snapshot())
+        items.sort(key=lambda item: item.get("finished_at") or "",
+                   reverse=True)
+        categories = {}
+        for job in jobs:
+            if job.status != STATUS_FAILED:
+                continue
+            key = job.failure_category or "unknown"
+            categories[key] = categories.get(key, 0) + 1
+        return {
+            "total": len(items),
+            "items": items[:limit],
+            "categories": categories,
+            "category_labels": dict(config.SUBTITLE_FAILURE_CATEGORY_LABELS),
+            "retryable_categories": list(config.SUBTITLE_RETRYABLE_CATEGORIES),
+        }
+
+    def failures_export_rows(self, limit=None):
+        """导出失败清单（CSV 用）：只含可安全展示的字段。"""
+        data = self.failures(limit=limit or config.SUBTITLE_FAILURE_LIST_LIMIT,
+                             include_skipped=True)
+        rows = []
+        for item in data["items"]:
+            error = item.get("error") or {}
+            rows.append({
+                "job_id": item.get("job_id"),
+                "path": item.get("path"),
+                "status": item.get("status"),
+                "category": item.get("failure_category") or "unknown",
+                "code": error.get("code") or "",
+                "message": item.get("message") or "",
+                "attempt": item.get("attempt") or 0,
+                "retryable": bool(item.get("retryable")),
+                "skipped": bool(item.get("skipped")),
+                "created_at": item.get("created_at") or "",
+                "finished_at": item.get("finished_at") or "",
+                "group_id": item.get("group_id") or "",
+                "batch_id": item.get("batch_id") or "",
+            })
+        return rows
+
+    def retry_failures(self, user, job_ids=None, group_id=None, category=None,
+                       force=False):
+        """批量重试失败任务（v0048）。
+
+        - 显式 job_ids：默认只重试可恢复分类；force=true 时连 no_speech/权限类也重试；
+        - group_id/category：按过滤条件批量重试（自动跳过不可重试项）。
+        """
+        with self._lock:
+            jobs = list(self._jobs.values())
+        selected = []
+        if isinstance(job_ids, list) and job_ids:
+            wanted = set(str(item) for item in job_ids)
+            for job in jobs:
+                if job.job_id in wanted:
+                    selected.append(job)
+        else:
+            if category is not None and category not in config.SUBTITLE_FAILURE_CATEGORIES:
+                raise invalid(u"失败分类非法")
+            for job in jobs:
+                if job.status != STATUS_FAILED:
+                    continue
+                if group_id is not None and job.group_id != group_id:
+                    continue
+                if category is not None and (job.failure_category or "unknown") != category:
+                    continue
+                selected.append(job)
+        requeued = 0
+        skipped = []
+        for job in selected:
+            if job.status != STATUS_FAILED:
+                skipped.append({"job_id": job.job_id, "reason": "NOT_FAILED"})
+                continue
+            if job.skipped and not force:
+                skipped.append({"job_id": job.job_id, "reason": "SKIPPED_NO_SPEECH"})
+                continue
+            if not job.retryable and not force:
+                skipped.append({"job_id": job.job_id,
+                                "reason": "NOT_RETRYABLE",
+                                "category": job.failure_category or "unknown"})
+                continue
+            with self._lock:
+                job.cancel_event.clear()
+                job.pause_event.clear()
+                job.status = STATUS_QUEUED
+                job.stage = "audio"
+                job.progress = 0
+                job.message = u"重新排队等待执行"
+                job.error = None
+                job.skipped = False
+                job.warning = None
+                job.resumable = True
+                job.attempt = 0
+                job.failure_category = None
+                job.updated_epoch = time.time()
+                self._enqueue_locked(job)
+                self._cond.notify_all()
+            self._persist(job)
+            self.store.audit("subtitle_retry", user or "", {
+                "job_id": job.job_id, "batch": "failures",
+                "force": bool(force)})
+            requeued += 1
+        if requeued:
+            self._ensure_worker()
+        return {"requeued": requeued, "skipped": skipped,
+                "selected": len(selected)}
+
+    def set_priority(self, job_id, top=False, priority=None):
+        """调整队列优先级：top=true 置顶（1000），或显式 0..1000。"""
+        job = self._get_job(job_id)
+        if top:
+            value = config.SUBTITLE_PRIORITY_MANUAL_TOP
+        else:
+            if isinstance(priority, bool) or not isinstance(priority, int):
+                raise invalid(u"priority 必须是整数")
+            value = max(0, min(priority, config.SUBTITLE_PRIORITY_MANUAL_TOP))
+        with self._lock:
+            job.priority = value
+            job.updated_epoch = time.time()
+            if job.status == STATUS_QUEUED and job.job_id in self._queue:
+                try:
+                    self._queue.remove(job.job_id)
+                except ValueError:
+                    pass
+                self._enqueue_locked(job)
+                self._cond.notify_all()
+            self._persist(job)
+        self.store.audit("subtitle_priority", job.user, {
+            "job_id": job.job_id, "priority": value, "top": bool(top)})
+        return job.snapshot()
 
     def get_file(self, job_id, name):
         self._get_job(job_id)
@@ -2001,11 +2370,83 @@ class SubtitleService(object):
             raise invalid(u"skip_existing 必须是布尔值")
 
         job_id = make_job_id()
+        # v0048：音轨选择（payload 覆盖设置默认）+ 目录优先级
+        try:
+            audio_track = normalize_audio_track(
+                payload.get("audio_track", settings.get("subtitle_audio_track")))
+        except ValueError:
+            raise invalid(u"音轨序号非法（0–31 或 auto）")
+        try:
+            audio_language = normalize_audio_language(
+                payload.get("audio_track_language",
+                            settings.get("subtitle_audio_track_language")))
+        except ValueError:
+            raise invalid(u"音轨语言标签非法（如 jpn/chi/eng）")
+        priority = payload.get("priority")
+        if priority is None:
+            priority = self._dir_priority(os.path.normpath(path))
+        else:
+            if isinstance(priority, bool) or not isinstance(priority, int):
+                raise invalid(u"priority 必须是整数")
+            priority = max(0, min(priority, config.SUBTITLE_PRIORITY_MANUAL_TOP))
         return SubtitleJob(job_id, os.path.normpath(path), language, translate,
                            target_lang, user, source=source,
                            output_mode=output_mode,
                            skip_existing=skip_existing, batch_id=batch_id,
-                           audio_source=settings.get("subtitle_audio_source"))
+                           audio_source=settings.get("subtitle_audio_source"),
+                           audio_track=audio_track,
+                           audio_track_language=audio_language,
+                           priority=priority,
+                           source_watch=payload.get("source_watch") is True)
+
+    def _dir_priority(self, path):
+        """目录优先级：settings.subtitle_dir_priorities 中越靠前优先级越高。"""
+        if not path:
+            return 0
+        try:
+            settings = self._settings() or {}
+        except Exception:  # pragma: no cover
+            return 0
+        directories = [item for item in
+                       (settings.get("subtitle_dir_priorities") or [])
+                       if isinstance(item, str) and item.strip()]
+        if not directories:
+            return 0
+        target = fsutil.path_key(path)
+        for index, directory in enumerate(directories):
+            try:
+                key = fsutil.path_key(directory.rstrip("/\\"))
+            except (ApiError, OSError):
+                continue
+            if target == key or target.startswith(key + os.sep):
+                return len(directories) - index
+        return 0
+
+    def _enqueue_locked(self, job):
+        """按“优先级降序 + 提交时间升序”插入队列（调用方需持有 self._lock）。"""
+        job_id = job.job_id
+        if job_id in self._queue:
+            return
+        priority = -int(getattr(job, "priority", 0) or 0)
+        created = float(getattr(job, "created_epoch", 0) or 0)
+        position = len(self._queue)
+        for index, existing_id in enumerate(self._queue):
+            existing = self._jobs.get(existing_id)
+            if existing is None:
+                continue
+            if priority < -int(getattr(existing, "priority", 0) or 0):
+                position = index
+                break
+            if (priority == -int(getattr(existing, "priority", 0) or 0)
+                    and created < float(getattr(existing, "created_epoch", 0) or 0)):
+                position = index
+                break
+        self._queue.insert(position, job_id)
+
+    def _enqueue(self, job):
+        with self._lock:
+            self._enqueue_locked(job)
+            self._cond.notify_all()
 
     def _skip_message(self, job):
         """已有目标 srt 且 skip_existing 时返回提示文案；否则 None。"""
@@ -2034,7 +2475,7 @@ class SubtitleService(object):
         if enqueue:
             with self._lock:
                 self._jobs[job.job_id] = job
-                self._queue.append(job.job_id)
+                self._enqueue_locked(job)
                 self._trim_jobs_locked()
         else:
             with self._lock:
@@ -2073,7 +2514,8 @@ class SubtitleService(object):
 
         base = {}
         for key in ("language", "translate", "target_lang", "source",
-                    "output_mode", "skip_existing"):
+                    "output_mode", "skip_existing", "audio_track",
+                    "audio_track_language", "source_watch"):
             if key in payload:
                 base[key] = payload[key]
         active_keys = self._active_path_keys()
@@ -2220,7 +2662,7 @@ class SubtitleService(object):
                 job.finished_epoch = None
                 job.updated_epoch = time.time()
                 if job.job_id not in self._queue:
-                    self._queue.append(job.job_id)
+                    self._enqueue_locked(job)
                 self._cond.notify_all()
             self._persist(job)
             requeued += 1
@@ -2324,45 +2766,64 @@ class SubtitleService(object):
             }
 
     def _eta_seconds(self, jobs, total):
-        """v0034：按墙钟吞吐估算剩余秒数（不能按单任务 lifetime 估算）。
+        """任务剩余时间估算（v0034 墙钟吞吐 + v0048 校准）。
 
-        任务在串行队列里会排队等待，lifetime 包含排队时间；n 个任务顺序完成时
-        平均 lifetime ≈ n/2 × 单任务耗时，会严重放大 ETA。因此以组内最早
-        created_epoch 为起点计算真实吞吐：
-
-            per_job = (now - earliest_created) / processed
-            eta = per_job * remaining / concurrency
-
-        processed 只统计“已终态且非 skipped”的任务（skipped 不消耗时间），
-        但起点用组内所有任务的最早 created_epoch。processed<3 或 elapsed<=0
-        或时间数据异常时返回 None，避免不可信 ETA。
+        v0034：per_job=(now-earliest)/processed，eta=per_job*remaining/concurrency。
+        v0048：当有 ≥3 个完成任务的“实际执行耗时”样本时，改用样本中位耗时估计
+        排队任务，并对执行中任务按 `elapsed*(100-progress)/progress` 修正，
+        避免长任务/慢任务把整体 ETA 拉偏。
         """
         try:
             processed = 0
             finished = 0
             earliest = None
+            active = []
             for job in jobs:
                 with job.lock:
                     created = float(job.created_epoch or 0)
+                    status = job.status
+                    progress = int(job.progress or 0)
+                    started = job.started_epoch
                 if created <= 0:
                     return None
                 if earliest is None or created < earliest:
                     earliest = created
-                if job.status not in FINISHED_STATUSES:
-                    continue
-                finished += 1
-                if getattr(job, "skipped", False):
-                    continue
-                processed += 1
+                if status in FINISHED_STATUSES:
+                    finished += 1
+                    if getattr(job, "skipped", False):
+                        continue
+                    processed += 1
+                elif status in (STATUS_RUNNING, STATUS_TRANSLATING):
+                    active.append((started, progress))
+            remaining = int(total) - finished
+            concurrency = max(1, int(self.concurrency or 1))
+            baseline = _median(list(self._duration_samples))
+            if baseline is not None and processed >= 1 and len(
+                    self._duration_samples) >= 3:
+                if remaining <= 0:
+                    return 0
+                now = time.time()
+                active_remaining = 0.0
+                for started, progress in active:
+                    if started and progress > 0:
+                        elapsed = max(0.0, now - float(started))
+                        active_remaining += max(
+                            0.0, elapsed * (100.0 - progress) / progress)
+                    else:
+                        active_remaining += baseline
+                queued_remaining = max(0, remaining - len(active))
+                eta = active_remaining + (
+                    baseline * queued_remaining / concurrency)
+                return int(round(max(0.0, eta)))
             if earliest is None or processed < 3:
                 return None
             elapsed = time.time() - earliest
             if elapsed <= 0:
                 return None
-            remaining = int(total) - finished
             if remaining <= 0:
                 return 0
-            concurrency = max(1, int(self.concurrency or 1))
+            if elapsed <= 0:
+                return None
             eta = int(round(elapsed / processed * remaining / concurrency))
             return eta if eta >= 0 else None
         except (TypeError, ValueError, OverflowError):
@@ -2565,7 +3026,8 @@ class SubtitleService(object):
 
         base = {}
         for key in ("language", "translate", "target_lang", "source",
-                    "output_mode", "skip_existing"):
+                    "output_mode", "skip_existing", "audio_track",
+                    "audio_track_language", "source_watch"):
             if key in payload:
                 base[key] = payload[key]
         active_keys = self._active_path_keys()
@@ -3524,7 +3986,7 @@ class SubtitleService(object):
                 job.status = STATUS_QUEUED
                 job.message = u"排队等待继续"
                 if job.job_id not in self._queue:
-                    self._queue.append(job.job_id)
+                    self._enqueue_locked(job)
                 self._cond.notify_all()
             self._persist(job)
         self.store.audit("subtitle_resume", job.user, {
@@ -3605,6 +4067,18 @@ class SubtitleService(object):
                     self._retiring.discard(me)
                     self._cond.notify_all()
                     return
+                # v0048：资源管控——负载超过阈值时保留队列不取任务
+                while self._queue and not self._stopping:
+                    guard = self._load_guard_state()
+                    if not guard.get("blocked"):
+                        break
+                    self._cond.wait(timeout=2.0)
+                    if me in self._retiring:
+                        self._retiring.discard(me)
+                        self._cond.notify_all()
+                        return
+                if not self._queue:
+                    continue
                 job_id = self._queue.popleft()
                 self._active_ids.add(job_id)
             job = self._jobs.get(job_id)
@@ -3658,7 +4132,7 @@ class SubtitleService(object):
                 if (job.status in ACTIVE_STATUSES
                         and job.job_id not in self._queue):
                     job.status = STATUS_QUEUED
-                    self._queue.append(job.job_id)
+                    self._enqueue_locked(job)
                     self._cond.notify_all()
                 return
             job.resumable = True
@@ -3706,14 +4180,62 @@ class SubtitleService(object):
         except video_similarity.VideoStopped:
             self.cancel(job.job_id)
         except video_similarity.VideoTimeout:
-            self._fail(job, "TIMEOUT", u"音频提取超时")
+            self._handle_failure(job, "TIMEOUT", u"音频提取超时")
         except SubtitleError as exc:
-            self._fail(job, exc.code, exc.message)
+            self._handle_failure(job, exc.code, exc.message)
         except Exception:
             if os.environ.get("DUP_SUBTITLE_DEBUG") == "1":
                 import traceback
                 traceback.print_exc()
-            self._fail(job, "INTERNAL_ERROR", u"字幕生成失败，请稍后重试")
+            self._handle_failure(job, "INTERNAL_ERROR",
+                                 u"字幕生成失败，请稍后重试")
+
+    # ------------------------------------------------------------------
+    # v0048：失败分类 / 智能重试 / 会话级资源统计
+    # ------------------------------------------------------------------
+    def _handle_failure(self, job, code, message):
+        """统一失败处理：分类 → 可恢复错误自动重试 → 否则标记失败。"""
+        category = failure_category(code, message)
+        retryable = failure_retryable(category)
+        settings = self._settings() or {}
+        auto = settings.get("subtitle_auto_retry_enabled") is True
+        try:
+            max_attempts = int(settings.get("subtitle_auto_retry_max") or 0)
+        except (TypeError, ValueError):
+            max_attempts = 0
+        max_attempts = max(0, min(max_attempts, config.SUBTITLE_AUTO_RETRY_MAX_LIMIT))
+        with job.lock:
+            attempt = int(job.attempt or 0)
+            status = job.status
+        if (auto and retryable and attempt < max_attempts
+                and status not in (STATUS_CANCELLED, STATUS_DONE)):
+            with self._lock:
+                job.attempt = attempt + 1
+                job.status = STATUS_QUEUED
+                job.stage = "audio"
+                job.progress = 0
+                job.message = u"自动重试（%d/%d）：%s" % (
+                    job.attempt, max_attempts, message)
+                job.error = None
+                job.resumable = True
+                job.failure_category = category
+                job.retryable = True
+                job.updated_epoch = time.time()
+                self._timeline_close(job, "retry", finished=False)
+                self._enqueue_locked(job)
+                self._cond.notify_all()
+            self._persist(job)
+            self.store.audit("subtitle_retry_auto", job.user, {
+                "job_id": job.job_id, "code": code, "category": category,
+                "attempt": int(job.attempt), "max": max_attempts})
+            return
+        skipped = (category == "no_speech"
+                   and settings.get("subtitle_no_speech_skip") is not False)
+        display = message
+        if skipped:
+            display = u"%s（无语音，已跳过，不参与自动重试）" % message
+        self._fail(job, code, display, category=category,
+                   retryable=retryable, skipped=skipped)
 
     def _finish_done(self, job, files, outputs, output_errors, warning,
                      partial, progress_message, extra_audit=None):
@@ -3738,6 +4260,7 @@ class SubtitleService(object):
                      outputs=list(outputs or []),
                      output_errors=list(output_errors or []),
                      warning=warning)
+        self._record_duration(job)
         self.store.audit("subtitle_done", job.user, audit)
         for item in (outputs or []):
             self.store.audit("subtitle_output", job.user, {
@@ -3763,6 +4286,8 @@ class SubtitleService(object):
         if not probe.get("has_audio"):
             raise SubtitleError("NO_AUDIO",
                                 u"视频没有音轨（no_audio），无法生成字幕")
+        # v0048：解析音轨选择（序号/语言标签 → ffmpeg -map）
+        self._resolve_audio_map(job, probe)
         duration = probe.get("duration")
         if not duration or duration <= 0:
             raise SubtitleError("NO_DURATION", u"无法读取视频时长")
@@ -3876,14 +4401,37 @@ class SubtitleService(object):
                           partial, u"字幕翻译完成",
                           extra_audit={"source_srt": source_srt})
 
-    def _fail(self, job, code, message):
+    def _record_duration(self, job):
+        """v0048：记录完成任务的实际耗时样本（用于 ETA 校准）。"""
+        try:
+            with job.lock:
+                started = job.started_epoch
+                finished = job.finished_epoch or time.time()
+            if started is None:
+                return
+            duration = float(finished) - float(started)
+            if duration > 0:
+                self._duration_samples.append(duration)
+        except (TypeError, ValueError, OverflowError):  # pragma: no cover
+            pass
+
+    def _fail(self, job, code, message, category=None, retryable=None,
+              skipped=False):
         with job.lock:
             job.resumable = False
+            job.failure_category = category or failure_category(code, message)
+            job.retryable = (failure_retryable(job.failure_category)
+                             if retryable is None else bool(retryable))
         self._timeline_close(job, "failed")
         self._update(job, status=STATUS_FAILED, message=message,
-                     error={"code": code, "message": message})
+                     error={"code": code, "message": message},
+                     skipped=bool(skipped or job.skipped))
+        self._record_duration(job)
         self.store.audit("subtitle_failed", job.user, {
-            "job_id": job.job_id, "code": code})
+            "job_id": job.job_id, "code": code,
+            "category": job.failure_category,
+            "retryable": bool(job.retryable),
+            "skipped": bool(job.skipped)})
 
     def _chunk_plan(self, job, duration, chunk_sec):
         """读取已有分片计划；没有则为整个任务创建 pending 分片行（可重启恢复）。"""
@@ -3956,7 +4504,8 @@ class SubtitleService(object):
             counter[0] += 1
             try:
                 self.ffmpeg.extract_audio_mp3(
-                    job.path, path, chunk_start, chunk_length, timeout, check)
+                    job.path, path, chunk_start, chunk_length, timeout, check,
+                    track_map=job.audio_map)
             except video_similarity.VideoStopped:
                 raise SubtitleCancelled()
             try:
@@ -4001,7 +4550,8 @@ class SubtitleService(object):
             counter[0] += 1
             try:
                 self.ffmpeg.extract_audio_remux(
-                    job.path, path, chunk_start, chunk_length, timeout, check)
+                    job.path, path, chunk_start, chunk_length, timeout, check,
+                    track_map=job.audio_map)
             except video_similarity.VideoStopped:
                 raise SubtitleCancelled()
             try:

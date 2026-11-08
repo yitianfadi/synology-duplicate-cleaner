@@ -1132,6 +1132,72 @@ python build/build_spk.py --no-icons --out-dir $env:TEMP\qa-build2
 - 首扫重算所有视频指纹的一次性 CPU 开销（建议低峰时段）；`<var>/cache/video.sqlite` 体积增长。
 - 极端误判场景：大段黑屏/片头字幕卡、同模板不同内容视频。
 
+## 30. 附：v0048 字幕 ASR 模块优化（2026-11-08）
+
+### 30.1 需求与方案
+
+- 需求（v2 文档 字幕 ASR 模块）：失败智能重试与归类、无语音过滤、失败清单导出/批量重识别、
+  CPU/负载阈值暂停队列、队列优先级（手动置顶/目录优先级）、ETA 优化、音轨选择，以及
+  **视频目录监控自动入队**。
+- 方案：在既有 `SubtitleService` 上增加失败分类/自动重试/失败清单；worker 取任务前负载检查；
+  队列改为“优先级降序 + 创建时间”插入；ETA 用实际耗时中位数校准；音轨选择贯穿
+  probe → `-map` → mp3/remux/预取；新增 `SubtitleWatchService` 轮询监控目录并自动提交任务。
+
+### 30.2 实现
+
+- **失败分类**（`failure_category`）：9 类（audio_extract/no_speech/timeout/unsupported_stream/
+  permission/network/provider/internal/unknown），错误码映射 + 消息关键字兜底；`_handle_failure`
+  统一处理自动重试与失败标记；`no_speech` 在开关开启时 `skipped=true`（不重试、不占队列）。
+- **自动重试**：`subtitle_auto_retry_enabled`/`subtitle_auto_retry_max`（0–3）；可恢复分类且
+  未达上限时回 `queued`（保留 ASR 分片缓存），审计 `subtitle_retry_auto`。
+- **失败清单**：`GET /api/subtitles/failures`、`.../failures/export`（CSV BOM）、
+  `POST .../failures/retry`（job_ids/group_id/category/force）；任务中心「失败任务」面板
+  支持分类过滤、单条/批量/强制重试。
+- **资源管控**：`subtitle_max_load` 超过阈值时 worker 保留队列（每 2 秒复查），`load_guard`
+  状态随 `counts()`/`queue_snapshot()` 返回。
+- **优先级**：任务 `priority`；`subtitle_dir_priorities` 提交时计算；`POST .../priority {top:true}`
+  置顶；队列与重启恢复均按优先级排序。
+- **ETA**：最近 20 个非跳过任务实际耗时中位数；执行中任务按进度估算剩余，再叠加排队任务。
+- **音轨选择**：任务 `audio_track`/`audio_track_language` → `0:a:<ordinal>`；`audio_tracks()`
+  查询接口 + 任务详情「查询音轨」；抽音频三处（NAS mp3 / 服务器 remux / 预取）统一带 `-map`。
+- **目录监控**（新 `subtitle_watch.py`）：30s tick + 配置间隔；按 `(size,mtime_ns)` 去重
+  （`<var>/subtitle_watch_state.json`）；每轮 ≤20 个；`user="watcher"` 自动提交，翻译开关沿用
+  `subtitle_translate_enabled`；`GET /api/subtitles/watch` + `POST .../watch/scan`。
+- 设置/前端：10 个新键；设置页「云端字幕」新增自动重试/跳过/负载/目录优先级/音轨/监控；
+  任务中心新增失败面板与置顶按钮。
+
+### 30.3 验证
+
+- unittest：**642 OK（5 skipped）**（新增 `test_v0048_subtitles_v2.py` 16 例）。
+- static：**193 PASS / 0 FAIL / 0 UNVERIFIED**（新增 `BE-SUBTITLE-V2`、`FE-SUBTITLE-V2` + 路由）。
+- e2e：**199 PASS / 0 FAIL / 1 UNVERIFIED**（新增 `SUBF-01..06`：失败清单/CSV/监控状态与扫描/
+  非法音轨/监控间隔；Windows symlink 历史项）。
+- 真实 Chromium 探针（`.uiprobe/probe_v0048.mjs`）**6/6 PASS**：设置字段齐全、保存持久化、
+  失败面板可见且含导出入口、无 console 错误；截图 `.uiprobe/v0048-settings.png`。
+- 兼容性：旧任务 JSON 无新字段时按默认值加载（audio_track=None/priority=0/attempt=0）。
+
+### 30.4 踩坑
+
+- `_eta_seconds` 新分支必须保持旧语义：样本不足/创建时间在未来时返回 None（单元测试抓到两次）。
+- 失败清单 CSV 表头是中文，e2e 最初按 `job_id` 断言失败，改为校验「任务ID/失败分类」。
+- 目录监控 `scan_once` 默认尊重开关；设置页「立即扫描」用 `force=True`，否则用户会误以为按钮无效。
+- 监控提交结果的 `jobs` 可能是整数（计数）也可能是列表，入队数需要兼容两种形状。
+- 负载阈值在 Windows 调试环境无 `os.getloadavg` → 视为不限制（真机 DSM 有效）。
+
+### 30.5 产物
+
+- `dist/DuplicateCleaner-1.1.0-0048.spk`：**39,106,560 B**
+  - SHA256 `aa13edb449eb14e3e5dc65297739e241de6b136682519a46b681ede75caae491`
+  - package.tgz MD5 `8e638d186ac8eef947baceb04891da85`
+- 版本 1.1.0-0048 同步 8 处；SQLite schema 仍 **v8**（监控状态为 `<var>/` JSON）。
+
+### 30.6 真机待验证
+
+- DSM 负载阈值与字幕并发（4 核 NAS 当前字幕并发 4 时 load ~9）的实际取舍；
+- 音轨选择对国配/原声/多音轨 mkv 的识别与 `-map` 兼容性（服务器 remux 模式）；
+- 目录监控自动入队 + 翻译流程、`skip_existing` 去重、误报（新文件拷贝/重命名）处理；
+- 失败清单 CSV 在 Excel 中的中文显示（UTF-8 BOM）；自动重试对网络抖动的实际收益。
+
 
 
 

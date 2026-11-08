@@ -4,6 +4,8 @@
 from __future__ import absolute_import
 
 import json
+import csv
+import io
 import logging
 import os
 import platform
@@ -254,6 +256,22 @@ class Api(object):
              self._subtitle_queue, False),
             ("GET", re.compile(r"^/api/subtitles/batch-groups$"),
              self._subtitle_group_overview, False),
+            # v0048：失败清单/导出/批量重试、音轨列表、目录监控、优先级
+            # （必须放在 /api/subtitles/{job_id} 通用路由之前）
+            ("GET", re.compile(r"^/api/subtitles/failures$"),
+             self._subtitle_failures, False),
+            ("GET", re.compile(r"^/api/subtitles/failures/export$"),
+             self._subtitle_failures_export, False),
+            ("POST", re.compile(r"^/api/subtitles/failures/retry$"),
+             self._subtitle_failures_retry, False),
+            ("POST", re.compile(r"^/api/subtitles/audio-tracks$"),
+             self._subtitle_audio_tracks, False),
+            ("GET", re.compile(r"^/api/subtitles/watch$"),
+             self._subtitle_watch, False),
+            ("POST", re.compile(r"^/api/subtitles/watch/scan$"),
+             self._subtitle_watch_scan, False),
+            ("POST", re.compile(r"^/api/subtitles/(?P<job_id>[^/]+)/priority$"),
+             self._subtitle_priority, False),
             ("GET", re.compile(r"^/api/subtitles/(?P<job_id>[^/]+)$"),
              self._get_subtitle, False),
             ("POST", re.compile(
@@ -483,6 +501,18 @@ class Api(object):
                 # v0034：字幕并发上限/缺省值（设置 subtitle_concurrency）
                 "concurrency_max": config.SUBTITLE_CONCURRENCY_MAX,
                 "default_concurrency": config.SUBTITLE_DEFAULT_CONCURRENCY,
+                # v0048：失败分类 / 自动重试 / 音轨 / 目录监控
+                "failure_categories": list(config.SUBTITLE_FAILURE_CATEGORIES),
+                "failure_category_labels": dict(
+                    config.SUBTITLE_FAILURE_CATEGORY_LABELS),
+                "retryable_categories": list(
+                    config.SUBTITLE_RETRYABLE_CATEGORIES),
+                "auto_retry_max": config.SUBTITLE_AUTO_RETRY_MAX_LIMIT,
+                "audio_track_max": config.SUBTITLE_AUDIO_TRACK_MAX_INDEX,
+                "watch_interval_min": config.SUBTITLE_WATCH_MIN_INTERVAL,
+                "watch": (self.services.subtitle_watch.status()
+                          if getattr(self.services, "subtitle_watch", None)
+                          else {"enabled": False}),
             },
         })
 
@@ -851,6 +881,101 @@ class Api(object):
         payload = {"ok": True}
         payload.update(snapshot)
         return json_response(payload)
+
+    # ------------------------------------------------------------------
+    # v0048：字幕失败清单 / 批量重试 / 音轨 / 目录监控 / 优先级
+    # ------------------------------------------------------------------
+    def _subtitle_failures(self, request, session, params):
+        service = self._require_subtitle_admin(session)
+        result = service.failures(
+            limit=_query_int(request, "limit", 200),
+            group_id=request.query_last("group_id") or None,
+            category=request.query_last("category") or None,
+            include_skipped=_query_bool(request, "include_skipped", False))
+        payload = {"ok": True}
+        payload.update(result)
+        return json_response(payload)
+
+    def _subtitle_failures_export(self, request, session, params):
+        service = self._require_subtitle_admin(session)
+        rows = service.failures_export_rows(
+            limit=_query_int(request, "limit", 500))
+        headers = [
+            ("job_id", u"任务ID"), ("path", u"文件路径"),
+            ("category", u"失败分类"), ("code", u"错误码"),
+            ("message", u"错误信息"), ("attempt", u"重试次数"),
+            ("retryable", u"可重试"), ("skipped", u"已跳过"),
+            ("created_at", u"创建时间"), ("finished_at", u"结束时间"),
+            ("group_id", u"批次组"), ("batch_id", u"批次"),
+        ]
+        buffer = io.StringIO()
+        writer = csv.writer(buffer)
+        writer.writerow([label for _key, label in headers])
+        for row in rows:
+            writer.writerow([row.get(key) if not isinstance(row.get(key), bool)
+                             else ("1" if row.get(key) else "0")
+                             for key, _label in headers])
+        body = (u"\ufeff" + buffer.getvalue()).encode("utf-8")
+        filename = "subtitle-failures-%s.csv" % time.strftime("%Y%m%d-%H%M%S")
+        return Response(
+            status=200, content_type="text/csv; charset=utf-8", body=body,
+            headers={
+                "Content-Disposition": 'attachment; filename="%s"' % filename,
+                "Cache-Control": "no-store",
+            })
+
+    def _subtitle_failures_retry(self, request, session, params):
+        service = self._require_subtitle_admin(session)
+        body = _json_body(request)
+        if not isinstance(body, dict):
+            raise invalid(u"请求体必须是 JSON 对象")
+        result = service.retry_failures(
+            session.user,
+            job_ids=body.get("job_ids") if isinstance(body.get("job_ids"), list) else None,
+            group_id=body.get("group_id") if isinstance(body.get("group_id"), str) else None,
+            category=body.get("category") if isinstance(body.get("category"), str) else None,
+            force=body.get("force") is True)
+        payload = {"ok": True}
+        payload.update(result)
+        return json_response(payload)
+
+    def _subtitle_audio_tracks(self, request, session, params):
+        service = self._require_subtitle_admin(session)
+        body = _json_body(request)
+        path = body.get("path") if isinstance(body, dict) else None
+        if not isinstance(path, str) or not path.strip():
+            raise invalid(u"必须提供视频路径 path")
+        return json_response({"ok": True, "audio": service.audio_tracks(path)})
+
+    def _subtitle_watch(self, request, session, params):
+        self._require_subtitle_admin(session)
+        service = getattr(self.services, "subtitle_watch", None)
+        if service is None:
+            raise ApiError("NOT_SUPPORTED", u"字幕目录监控不可用")
+        return json_response({"ok": True, "watch": service.status()})
+
+    def _subtitle_watch_scan(self, request, session, params):
+        self._require_subtitle_admin(session)
+        service = getattr(self.services, "subtitle_watch", None)
+        if service is None:
+            raise ApiError("NOT_SUPPORTED", u"字幕目录监控不可用")
+        return json_response({"ok": True,
+                              "result": service.scan_once(force=True)},
+                             status=202)
+
+    def _subtitle_priority(self, request, session, params):
+        service = self._require_subtitle_admin(session)
+        body = _json_body(request)
+        if not isinstance(body, dict):
+            raise invalid(u"请求体必须是 JSON 对象")
+        priority = body.get("priority")
+        if isinstance(priority, bool) or (
+                priority is not None and not isinstance(priority, int)):
+            raise invalid(u"priority 必须是整数")
+        job = service.set_priority(
+            params["job_id"], top=body.get("top") is True,
+            priority=priority)
+        return json_response({"ok": True, "job": job})
 
     def _subtitle_control(self, request, session, params):
         service = self._require_subtitle_admin(session)

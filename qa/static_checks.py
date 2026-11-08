@@ -211,7 +211,10 @@ def check_backend():
                        "/merge-plan", "/merge/", "/api/merges",
                        "/api/trash",
                        # v0046：通知 / 计划扫描
-                       "/api/notifications", "/api/scheduler"]
+                       "/api/notifications", "/api/scheduler",
+                       # v0048：字幕失败/音轨/监控
+                       "/api/subtitles/failures", "/api/subtitles/audio-tracks",
+                       "/api/subtitles/watch"]
     missing = []
     for marker in expected_routes:
         if marker.startswith("/api/"):
@@ -408,7 +411,7 @@ def check_backend():
           "重启后 queued 任务重新入队并自动拉起 worker（不判 SERVICE_RESTART 丢失队列）",
           "queued_jobs" in subtitles_src
           and "for job in sorted(queued_jobs" in subtitles_src
-          and "self._queue.append(job.job_id)" in subtitles_src
+          and "_enqueue_locked(job)" in subtitles_src
           and "if self._queue:" in subtitles_src
           and "self._ensure_worker()" in subtitles_src,
           "restart queue resume markers missing")
@@ -624,6 +627,34 @@ def check_backend():
           and "protector.check(" in deletion_src
           and "protected_skipped" in deletion_src,
           "protection markers missing")
+
+    # ---- v0048：字幕失败分类/自动重试/资源管控/优先级/音轨/目录监控 ----
+    watch_path = os.path.join(backend, "dupcleaner", "subtitle_watch.py")
+    watch_src = read(watch_path) if os.path.isfile(watch_path) else ""
+    check("BE-SUBTITLE-V2",
+          "字幕 ASR 优化：失败分类/自动重试/失败清单导出/负载管控/优先级/音轨选择/目录监控（v0048）",
+          "SUBTITLE_FAILURE_CATEGORIES" in conf_src
+          and "SUBTITLE_RETRYABLE_CATEGORIES" in conf_src
+          and "def failure_category(" in subtitles_src
+          and "def _handle_failure(" in subtitles_src
+          and "def failures(" in subtitles_src
+          and "def retry_failures(" in subtitles_src
+          and "def set_priority(" in subtitles_src
+          and "def audio_tracks(" in subtitles_src
+          and "def _resolve_audio_map(" in subtitles_src
+          and "def _load_guard_state(" in subtitles_src
+          and "_duration_samples" in subtitles_src
+          and "track_map=job.audio_map" in subtitles_src
+          and "subtitle_auto_retry_enabled" in settings_src
+          and "subtitle_watch_dirs" in settings_src
+          and os.path.isfile(watch_path)
+          and "class SubtitleWatchService" in watch_src
+          and "def scan_once(" in watch_src
+          and "SubtitleWatchService(" in read(os.path.join(backend, "dupcleaner", "services.py"))
+          and "subtitles/failures" in http_src
+          and "subtitles/audio-tracks" in http_src
+          and "subtitles/watch" in http_src,
+          "subtitle v2 markers missing")
 
     # ---- v0047：相似视频识别增强 ----
     video_src = read(os.path.join(backend, "dupcleaner", "video_similarity.py"))
@@ -1180,6 +1211,30 @@ def check_frontend():
           and "video_audio_signature_enabled" in
           read(os.path.join(web, "js", "constants.js")),
           "video v2 ui markers missing")
+    check("FE-SUBTITLE-V2",
+          "字幕设置：自动重试/负载阈值/目录优先级/音轨/目录监控 + 失败清单导出/批量重试/置顶（v0048）",
+          "setSubtitleAutoRetry" in html
+          and "setSubtitleAutoRetryMax" in html
+          and "setSubtitleNoSpeechSkip" in html
+          and "setSubtitleMaxLoad" in html
+          and "setSubtitleDirPriorities" in html
+          and "setSubtitleAudioTrack" in html
+          and "setSubtitleWatchEnabled" in html
+          and "subtitleFailuresList" in html
+          and "subtitleFailuresExportBtn" in html
+          and "subtitleFailuresRetryBtn" in html
+          and "subtitleWatchScanBtn" in html
+          and "function loadSubtitleFailures" in app
+          and "function subtitleFailuresRetry" in app
+          and "function subtitleSetPriority" in app
+          and "function loadSubtitleWatchStatus" in app
+          and "function subtitleWatchScan" in app
+          and "/api/subtitles/failures" in app
+          and "/api/subtitles/watch/scan" in app
+          and "SUBTITLE_FAILURE_LABEL" in
+          read(os.path.join(web, "js", "constants.js"))
+          and "subtitle-failure-item" in read(os.path.join(web, "styles.css")),
+          "subtitle v2 ui markers missing")
 
     check("FE-RISK-TEXT", "风险提示文案与契约逐字一致（index.html）",
           RISK_TEXT in html, "risk text not found verbatim")
@@ -1225,6 +1280,9 @@ def check_frontend():
         ("/api/merges", "合并记录"),
         ("/api/notifications", "通知系统"),
         ("/api/scheduler", "计划扫描"),
+        ("/api/subtitles/failures", "字幕失败清单"),
+        ("/api/subtitles/audio-tracks", "字幕音轨列表"),
+        ("/api/subtitles/watch", "字幕目录监控"),
     ]
     missing = [name for marker, name in endpoints if marker not in app]
     check("FE-ENDPOINTS", "前端覆盖契约全部 API 端点",

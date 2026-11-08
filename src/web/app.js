@@ -25,7 +25,7 @@ import {
   ERROR_FALLBACK, JOB_STATUS_LABEL, KEEP_LABEL, KEEP_MODE_LABEL,
   KEEP_RULE_LABEL, SIDECAR_MODE_LABEL, PROTECT_REASON_LABEL,
   RECYCLE_MODE_LABEL, MERGE_REASON_LABEL, NOTIFY_CHANNEL_LABEL,
-  VIDEO_CONFIDENCE_LABEL, VIDEO_CONFIDENCE_CLASS, LEGACY_VIEW_ALIASES,
+  VIDEO_CONFIDENCE_LABEL, VIDEO_CONFIDENCE_CLASS, SUBTITLE_FAILURE_LABEL, LEGACY_VIEW_ALIASES,
   MTIME_FALLBACK_LABEL, MTIME_FALLBACK_REASONS, POLL_MS,
   SIZE_UNITS, SOURCE_INFO, STAGE_LABEL, STATUS_BADGE, STATUS_LABEL,
   SUBTITLE_ACTIVE_STATUS, SUBTITLE_LANGUAGES, SUBTITLE_OUTPUT_KIND_LABEL,
@@ -352,7 +352,7 @@ import {
     options = options || {};
     tab = normalizeTaskTab(tab);
     if (tab === 'history') { loadHistory(); }
-    else if (tab === 'subtitles') { loadSubtitleJobs(); }
+    else if (tab === 'subtitles') { loadSubtitleJobs(); loadSubtitleFailures(); }
     else if (tab === 'deletions') { loadDeletionJobs(); }
     else if (tab === 'trash') { loadTrashPanel(); }
     else if (tab === 'logs') { loadLogs(); }
@@ -2161,6 +2161,34 @@ import {
     setVideoNumberValue(els.setSubtitleJobLimit, s.subtitle_job_limit, 200, 20, 1000);
     // v0034/v0037：同时执行的字幕任务数（1..4，默认 1 串行；保存后立即生效，无需重启）
     setVideoNumberValue(els.setSubtitleConcurrency, s.subtitle_concurrency, 1, 1, 4);
+    // v0048：自动重试 / 负载阈值 / 目录优先级 / 音轨 / 目录监控
+    if (els.setSubtitleAutoRetry) {
+      els.setSubtitleAutoRetry.checked = s.subtitle_auto_retry_enabled !== false;
+    }
+    setVideoNumberValue(els.setSubtitleAutoRetryMax, s.subtitle_auto_retry_max, 1, 0, 3);
+    if (els.setSubtitleNoSpeechSkip) {
+      els.setSubtitleNoSpeechSkip.checked = s.subtitle_no_speech_skip !== false;
+    }
+    if (els.setSubtitleMaxLoad) {
+      var maxLoad = Number(s.subtitle_max_load);
+      els.setSubtitleMaxLoad.value = String(isFinite(maxLoad) && maxLoad > 0 ? maxLoad : 0);
+    }
+    if (els.setSubtitleDirPriorities) {
+      els.setSubtitleDirPriorities.value = linesToText(s.subtitle_dir_priorities);
+    }
+    if (els.setSubtitleAudioTrack) {
+      els.setSubtitleAudioTrack.value = s.subtitle_audio_track || '';
+    }
+    if (els.setSubtitleAudioTrackLanguage) {
+      els.setSubtitleAudioTrackLanguage.value = s.subtitle_audio_track_language || '';
+    }
+    if (els.setSubtitleWatchEnabled) {
+      els.setSubtitleWatchEnabled.checked = s.subtitle_watch_enabled === true;
+    }
+    if (els.setSubtitleWatchDirs) {
+      els.setSubtitleWatchDirs.value = linesToText(s.subtitle_watch_dirs);
+    }
+    setVideoNumberValue(els.setSubtitleWatchInterval, s.subtitle_watch_interval_sec, 300, 60, 86400);
     if (els.subtitleAsrApiKey) { els.subtitleAsrApiKey.value = ''; }
     if (els.subtitleLlmApiKey) { els.subtitleLlmApiKey.value = ''; }
     if (els.subtitleClearAsrKey) { els.subtitleClearAsrKey.checked = false; }
@@ -2249,6 +2277,68 @@ import {
     // v0034/v0037：字幕并发任务数（1..4，默认 1；保存后立即生效，无需重启套件）
     var subtitleConcurrency = readSubtitleInt(els.setSubtitleConcurrency, 1, 4, '字幕并发任务数', errors, 'setSubtitleConcurrency');
     if (subtitleConcurrency !== null) { settings.subtitle_concurrency = subtitleConcurrency; }
+    // v0048：自动重试 / 负载阈值 / 目录优先级 / 音轨 / 目录监控
+    settings.subtitle_auto_retry_enabled = !!(els.setSubtitleAutoRetry
+      && els.setSubtitleAutoRetry.checked);
+    var autoRetryMax = readSubtitleInt(els.setSubtitleAutoRetryMax, 0, 3,
+      '自动重试次数上限', errors, 'setSubtitleAutoRetryMax');
+    if (autoRetryMax !== null) { settings.subtitle_auto_retry_max = autoRetryMax; }
+    settings.subtitle_no_speech_skip = !!(els.setSubtitleNoSpeechSkip
+      && els.setSubtitleNoSpeechSkip.checked);
+    var maxLoadRaw = String(els.setSubtitleMaxLoad ? els.setSubtitleMaxLoad.value : '0').trim();
+    var maxLoad = parseFloat(maxLoadRaw || '0');
+    if (!isFinite(maxLoad) || maxLoad < 0 || maxLoad > 256) {
+      errors.subtitleMaxLoad = '负载阈值需在 0–256 之间（0 = 不限制）。';
+    } else {
+      settings.subtitle_max_load = Math.round(maxLoad * 100) / 100;
+    }
+    var dirPriorities = textToLines(els.setSubtitleDirPriorities
+      ? els.setSubtitleDirPriorities.value : '');
+    var badDirPriority = '';
+    dirPriorities.forEach(function (item) {
+      if (!badDirPriority && !isAbsolutePath(item)) { badDirPriority = item; }
+    });
+    if (badDirPriority) {
+      errors.subtitleDirPriorities = '目录优先级必须是绝对路径：' + badDirPriority;
+    } else if (dirPriorities.length > 50) {
+      errors.subtitleDirPriorities = '目录优先级最多 50 条。';
+    } else {
+      settings.subtitle_dir_priorities = dirPriorities;
+    }
+    var audioTrack = String(els.setSubtitleAudioTrack
+      ? els.setSubtitleAudioTrack.value : '').trim().toLowerCase();
+    if (!audioTrack || audioTrack === 'auto' || audioTrack === 'default') {
+      settings.subtitle_audio_track = '';
+    } else if (!/^\d+$/.test(audioTrack) || parseInt(audioTrack, 10) > 31) {
+      errors.subtitleAudioTrack = '默认音轨只能是 auto 或 0–31 的序号。';
+    } else {
+      settings.subtitle_audio_track = audioTrack;
+    }
+    var audioLang = String(els.setSubtitleAudioTrackLanguage
+      ? els.setSubtitleAudioTrackLanguage.value : '').trim();
+    if (audioLang && !/^[A-Za-z]{2,8}([_-][A-Za-z0-9]{1,8})?$/.test(audioLang)) {
+      errors.subtitleAudioTrackLanguage = '音轨语言标签需形如 jpn / chi / eng / zh-CN。';
+    } else {
+      settings.subtitle_audio_track_language = audioLang;
+    }
+    settings.subtitle_watch_enabled = !!(els.setSubtitleWatchEnabled
+      && els.setSubtitleWatchEnabled.checked);
+    var watchDirs = textToLines(els.setSubtitleWatchDirs
+      ? els.setSubtitleWatchDirs.value : '');
+    var badWatchDir = '';
+    watchDirs.forEach(function (item) {
+      if (!badWatchDir && !isAbsolutePath(item)) { badWatchDir = item; }
+    });
+    if (badWatchDir) {
+      errors.subtitleWatchDirs = '监控目录必须是绝对路径：' + badWatchDir;
+    } else if (watchDirs.length > 50) {
+      errors.subtitleWatchDirs = '监控目录最多 50 条。';
+    } else {
+      settings.subtitle_watch_dirs = watchDirs;
+    }
+    var watchInterval = readSubtitleInt(els.setSubtitleWatchInterval, 60, 86400,
+      '监控扫描间隔', errors, 'setSubtitleWatchInterval');
+    if (watchInterval !== null) { settings.subtitle_watch_interval_sec = watchInterval; }
     if (els.setSubtitleOutputMode) {
       settings.subtitle_output_mode = els.setSubtitleOutputMode.value === 'download_only'
         ? 'download_only' : 'alongside_video';
@@ -7264,6 +7354,204 @@ import {
     }, delay);
   }
 
+  // ==================== v0048：字幕失败清单 / 优先级 / 目录监控 ====================
+  function subtitleFailureLabel(key, data) {
+    var labels = (data && data.category_labels)
+      || (state.meta && state.meta.subtitle
+        && state.meta.subtitle.failure_category_labels) || {};
+    return labels[key] || SUBTITLE_FAILURE_LABEL[key] || key || '未知错误';
+  }
+
+  async function loadSubtitleFailures() {
+    if (!els.subtitleFailuresList) { return; }
+    setHidden(els.subtitleFailuresLoading, false);
+    setHidden(els.subtitleFailuresEmpty, true);
+    var category = els.subtitleFailureFilter ? els.subtitleFailureFilter.value : '';
+    var includeSkipped = !!(els.subtitleFailureIncludeSkipped
+      && els.subtitleFailureIncludeSkipped.checked);
+    var query = '/api/subtitles/failures?limit=200';
+    if (category) { query += '&category=' + encodeURIComponent(category); }
+    if (includeSkipped) { query += '&include_skipped=1'; }
+    try {
+      var res = await api(query, { timeout: 15000 });
+      setHidden(els.subtitleFailuresLoading, true);
+      renderSubtitleFailures(res || {});
+      populateSubtitleFailureFilter(res && res.categories);
+    } catch (err) {
+      setHidden(els.subtitleFailuresLoading, true);
+      setHidden(els.subtitleFailuresEmpty, false);
+      if (els.subtitleFailuresHint) {
+        setText(els.subtitleFailuresHint,
+          errorMessage(err, '加载失败任务失败，请稍后重试。'));
+      }
+    }
+  }
+
+  function populateSubtitleFailureFilter(categories) {
+    if (!els.subtitleFailureFilter || els.subtitleFailureFilter.dataset.filled === '1') {
+      return;
+    }
+    var keys = categories ? Object.keys(categories) : [];
+    if (!keys.length) { return; }
+    keys.forEach(function (key) {
+      var option = el('option', { attrs: { value: key },
+        text: subtitleFailureLabel(key) + '（' + categories[key] + '）' });
+      els.subtitleFailureFilter.appendChild(option);
+    });
+    els.subtitleFailureFilter.dataset.filled = '1';
+  }
+
+  function renderSubtitleFailures(data) {
+    if (!els.subtitleFailuresList) { return; }
+    clear(els.subtitleFailuresList);
+    var items = data.items || [];
+    setHidden(els.subtitleFailuresEmpty, items.length > 0);
+    if (els.subtitleFailuresCount) {
+      setText(els.subtitleFailuresCount,
+        items.length ? '共 ' + fmtInt(data.total || items.length) + ' 个' : '');
+    }
+    if (els.subtitleFailuresHint) {
+      setText(els.subtitleFailuresHint, items.length
+        ? '可恢复错误可批量重试；“无语音/权限/码流”类默认不重试'
+        : '');
+    }
+    items.forEach(function (job) {
+      var card = el('div', { className: 'subtitle-failure-item' });
+      var category = job.failure_category || 'unknown';
+      var head = el('div', { className: 'subtitle-failure-head' }, [
+        el('span', { className: 'badge badge-amber',
+                     text: subtitleFailureLabel(category, data) }),
+        el('span', { className: 'subtitle-job-path',
+                     attrs: { title: job.path || '' },
+                     text: job.path || '（无路径）' })
+      ]);
+      var bits = [];
+      var error = job.error || {};
+      if (error.code) { bits.push('错误码 ' + error.code); }
+      if (job.attempt) { bits.push('已重试 ' + job.attempt + ' 次'); }
+      if (job.retryable) { bits.push('可重试'); }
+      if (job.skipped) { bits.push('无语音已跳过'); }
+      if (job.finished_at) { bits.push('失败于 ' + job.finished_at); }
+      card.appendChild(head);
+      card.appendChild(el('div', { className: 'subtitle-failure-meta' }, [
+        el('span', { text: job.message || error.message || '' }),
+        el('span', { className: 'muted', text: bits.join(' · ') })
+      ]));
+      var actions = el('div', { className: 'subtitle-failure-actions' });
+      var retryBtn = el('button', {
+        className: 'btn btn-primary btn-sm', attrs: { type: 'button' }, text: '重试'
+      });
+      retryBtn.addEventListener('click', function () {
+        subtitleRetryJob(job, false);
+      });
+      actions.appendChild(retryBtn);
+      var forceBtn = el('button', {
+        className: 'btn btn-ghost btn-sm', attrs: { type: 'button' }, text: '强制重试'
+      });
+      forceBtn.addEventListener('click', function () {
+        subtitleRetryJob(job, true);
+      });
+      actions.appendChild(forceBtn);
+      card.appendChild(actions);
+      els.subtitleFailuresList.appendChild(card);
+    });
+  }
+
+  async function subtitleFailuresRetry(force) {
+    var category = els.subtitleFailureFilter
+      ? els.subtitleFailureFilter.value : '';
+    var body = { force: !!force };
+    if (category) { body.category = category; }
+    try {
+      var res = await api('/api/subtitles/failures/retry', {
+        method: 'POST', body: body, timeout: 30000
+      });
+      var skipped = (res && res.skipped) || [];
+      toast('已重新排队 ' + fmtInt((res && res.requeued) || 0) + ' 个任务'
+        + (skipped.length ? '，跳过 ' + fmtInt(skipped.length) + ' 个' : ''),
+        'success', 5000);
+      await loadSubtitleFailures();
+      await loadSubtitleJobs({ silent: true });
+    } catch (err) {
+      toast(errorMessage(err, '批量重试失败，请稍后重试。'), 'error', 6000);
+    }
+  }
+
+  async function subtitleRetryJob(job, force) {
+    try {
+      var res = await api('/api/subtitles/failures/retry', {
+        method: 'POST', body: { job_ids: [job.job_id], force: !!force },
+        timeout: 30000
+      });
+      if ((res && res.requeued) > 0) {
+        toast('已重新排队该任务。', 'success', 3000);
+      } else {
+        var skipped = ((res && res.skipped) || [])[0] || {};
+        toast('未能重试：' + (skipped.reason || '不可重试'), 'info', 5000);
+      }
+      await loadSubtitleFailures();
+      await loadSubtitleJobs({ silent: true });
+    } catch (err) {
+      toast(errorMessage(err, '重试失败，请稍后重试。'), 'error', 6000);
+    }
+  }
+
+  async function subtitleSetPriority(job, button) {
+    if (button) { setBusy(button, true); }
+    try {
+      await api('/api/subtitles/' + encodePath(job.job_id) + '/priority', {
+        method: 'POST', body: { top: true }, timeout: 15000
+      });
+      toast('已置顶该字幕任务。', 'success', 3000);
+      await loadSubtitleJobs({ silent: true });
+    } catch (err) {
+      toast(errorMessage(err, '置顶失败，请稍后重试。'), 'error', 5000);
+    } finally {
+      if (button) { setBusy(button, false); }
+    }
+  }
+
+  async function loadSubtitleWatchStatus() {
+    if (!els.subtitleWatchStatus) { return; }
+    try {
+      var res = await api('/api/subtitles/watch', { timeout: 10000 });
+      var watch = (res && res.watch) || {};
+      var bits = [watch.enabled ? '监控已启用' : '监控未启用',
+                  '目录 ' + ((watch.dirs || []).length) + ' 个',
+                  '间隔 ' + (watch.interval_sec || 0) + ' 秒'];
+      if (watch.last_scan_at) {
+        bits.push('上次扫描 ' + watch.last_scan_at
+          + (watch.last_result && watch.last_result.enqueued
+            ? '（入队 ' + watch.last_result.enqueued + '）' : ''));
+      }
+      setText(els.subtitleWatchStatus, bits.join(' · '));
+    } catch (err) {
+      setText(els.subtitleWatchStatus,
+        '监控状态不可用：' + errorMessage(err, '加载失败'));
+    }
+  }
+
+  async function subtitleWatchScan() {
+    var button = els.subtitleWatchScanBtn;
+    if (button) { setBusy(button, true); }
+    try {
+      var res = await api('/api/subtitles/watch/scan', {
+        method: 'POST', body: {}, timeout: 90000
+      });
+      var result = (res && res.result) || {};
+      var errors = result.errors || [];
+      toast('监控扫描：入队 ' + fmtInt(result.enqueued || 0)
+        + '，跳过 ' + fmtInt(result.skipped || 0)
+        + (errors.length ? ('；' + errors[0]) : ''), 'success', 6000);
+      await loadSubtitleWatchStatus();
+      await loadSubtitleJobs({ silent: true });
+    } catch (err) {
+      toast(errorMessage(err, '监控扫描失败，请稍后重试。'), 'error', 6000);
+    } finally {
+      if (button) { setBusy(button, false); }
+    }
+  }
+
   async function loadSubtitleJobs(options) {
     options = options || {};
     if (!els.subtitleJobsList || state.subtitleJobs.loading) { return; }
@@ -7678,6 +7966,12 @@ import {
       cancelPausedBtn.addEventListener('click', function () { subtitleJobAction(job, 'cancel', cancelPausedBtn); });
       actions.appendChild(cancelPausedBtn);
     } else if (status === 'queued') {
+      // v0048：队列任务可置顶（手动优先级）
+      var queuedTopBtn = el('button', {
+        className: 'btn btn-ghost btn-sm', attrs: { type: 'button' }, text: '置顶'
+      });
+      queuedTopBtn.addEventListener('click', function () { subtitleSetPriority(job, queuedTopBtn); });
+      actions.appendChild(queuedTopBtn);
       var queuedPauseBtn = el('button', {
         className: 'btn btn-ghost btn-sm', attrs: { type: 'button' }, text: '暂停'
       });
@@ -7699,6 +7993,17 @@ import {
       });
       cancelBtn.addEventListener('click', function () { subtitleJobAction(job, 'cancel', cancelBtn); });
       actions.appendChild(cancelBtn);
+    }
+    if (status === 'failed') {
+      // v0048：失败任务可重试；无语音/不可重试分类需“强制重试”
+      var retryBtn = el('button', {
+        className: 'btn btn-primary btn-sm', attrs: { type: 'button' },
+        text: job.retryable ? '重试' : '强制重试'
+      });
+      retryBtn.addEventListener('click', function () {
+        subtitleRetryJob(job, !job.retryable || job.skipped);
+      });
+      actions.appendChild(retryBtn);
     }
     item.appendChild(actions);
     return item;
@@ -8063,6 +8368,33 @@ import {
     }
   }
 
+  async function subtitleShowAudioTracks(job, button) {
+    if (button) { setBusy(button, true); }
+    try {
+      var res = await api('/api/subtitles/audio-tracks', {
+        method: 'POST', body: { path: job.path }, timeout: 30000
+      });
+      var tracks = (res && res.audio && res.audio.tracks) || [];
+      if (!tracks.length) {
+        toast('未检测到音轨。', 'info', 5000);
+        return;
+      }
+      var lines = tracks.map(function (track) {
+        var bits = ['#' + track.index];
+        if (track.language) { bits.push('[' + track.language + ']'); }
+        if (track.title) { bits.push(track.title); }
+        if (track.codec) { bits.push(track.codec); }
+        if (track.channels) { bits.push(track.channels + 'ch'); }
+        return bits.join(' ');
+      });
+      toast('音轨：' + lines.join('；'), 'info', 10000);
+    } catch (err) {
+      toast(errorMessage(err, '查询音轨失败，请稍后重试。'), 'error', 6000);
+    } finally {
+      if (button) { setBusy(button, false); }
+    }
+  }
+
   function buildSubtitleJobDetailFooter(job) {
     var status = job.status || 'queued';
     var buttons = [];
@@ -8088,6 +8420,16 @@ import {
     // v0035：详情 footer 同样提供补翻译入口（done 且缺译文时才出现）
     if (subtitleJobTranslatable(job)) {
       buttons.push(buildSubtitleTranslateButton(job, { large: true }));
+    }
+    // v0048：查询音轨（用于手动指定音轨/排查配音轨）
+    if (job.path && job.source !== 'existing_srt') {
+      var audioTracksBtn = el('button', {
+        className: 'btn btn-ghost', attrs: { type: 'button' }, text: '查询音轨'
+      });
+      audioTracksBtn.addEventListener('click', function () {
+        subtitleShowAudioTracks(job, audioTracksBtn);
+      });
+      buttons.push(audioTracksBtn);
     }
     buttons.push(el('button', {
       className: 'btn btn-ghost', attrs: { type: 'button' }, text: '关闭',
@@ -8855,6 +9197,35 @@ import {
     if (els.subtitleJobsRefreshBtn) {
       els.subtitleJobsRefreshBtn.addEventListener('click', function () { loadSubtitleJobs(); });
     }
+    // v0048：失败任务面板 / 目录监控按钮
+    if (els.subtitleFailuresRefreshBtn) {
+      els.subtitleFailuresRefreshBtn.addEventListener('click', function () {
+        loadSubtitleFailures();
+      });
+    }
+    if (els.subtitleFailureFilter) {
+      els.subtitleFailureFilter.addEventListener('change', function () {
+        loadSubtitleFailures();
+      });
+    }
+    if (els.subtitleFailureIncludeSkipped) {
+      els.subtitleFailureIncludeSkipped.addEventListener('change', function () {
+        loadSubtitleFailures();
+      });
+    }
+    if (els.subtitleFailuresRetryBtn) {
+      els.subtitleFailuresRetryBtn.addEventListener('click', function () {
+        subtitleFailuresRetry(false);
+      });
+    }
+    if (els.subtitleFailuresRetryForceBtn) {
+      els.subtitleFailuresRetryForceBtn.addEventListener('click', function () {
+        subtitleFailuresRetry(true);
+      });
+    }
+    if (els.subtitleWatchScanBtn) {
+      els.subtitleWatchScanBtn.addEventListener('click', subtitleWatchScan);
+    }
     if (els.deletionJobsRefreshBtn) {
       els.deletionJobsRefreshBtn.addEventListener('click', function () { loadDeletionJobs(); });
     }
@@ -9565,6 +9936,14 @@ import {
     subtitleTranslateBatchSize: { input: 'subtitleTranslateBatchSize', error: 'subtitleTranslateBatchSizeError' },
     setSubtitleJobLimit: { input: 'setSubtitleJobLimit', error: 'setSubtitleJobLimitError' },
     setSubtitleConcurrency: { input: 'setSubtitleConcurrency', error: 'setSubtitleConcurrencyError' },
+    // v0048：字幕自动重试 / 负载 / 目录优先级 / 音轨 / 监控
+    setSubtitleAutoRetryMax: { input: 'setSubtitleAutoRetryMax', error: 'setSubtitleAutoRetryMaxError' },
+    subtitleMaxLoad: { input: 'setSubtitleMaxLoad', error: 'setSubtitleMaxLoadError' },
+    subtitleDirPriorities: { input: 'setSubtitleDirPriorities', error: 'setSubtitleDirPrioritiesError' },
+    subtitleAudioTrack: { input: 'setSubtitleAudioTrack', error: 'setSubtitleAudioTrackError' },
+    subtitleAudioTrackLanguage: { input: 'setSubtitleAudioTrackLanguage', error: 'setSubtitleAudioTrackLanguageError' },
+    subtitleWatchDirs: { input: 'setSubtitleWatchDirs', error: 'setSubtitleWatchDirsError' },
+    setSubtitleWatchInterval: { input: 'setSubtitleWatchInterval', error: 'setSubtitleWatchIntervalError' },
     // v0043：排除规则（增量扫描无独立校验错误）
     excludeNameRegex: { input: 'setExcludeNameRegex', error: 'setExcludeNameRegexError' },
     excludeNameGlob: { input: 'setExcludeNameGlob', error: 'setExcludeNameGlobError' },
@@ -9655,6 +10034,19 @@ import {
       else {
         subBits.push(sub.enabled ? '已启用' : '默认关闭');
         if (sub.enabled) { subBits.push(sub.asrKeySet ? 'ASR Key 已配置' : 'ASR Key 未配置'); }
+      }
+      // v0048：自动重试 / 负载阈值 / 目录监控
+      subBits.push(els.setSubtitleAutoRetry && els.setSubtitleAutoRetry.checked
+        ? '自动重试 ≤' + (els.setSubtitleAutoRetryMax
+          ? els.setSubtitleAutoRetryMax.value : '0') + ' 次'
+        : '自动重试关');
+      var subLoad = Number(els.setSubtitleMaxLoad ? els.setSubtitleMaxLoad.value : 0);
+      if (isFinite(subLoad) && subLoad > 0) {
+        subBits.push('负载阈值 ' + subLoad);
+      }
+      if (els.setSubtitleWatchEnabled && els.setSubtitleWatchEnabled.checked) {
+        subBits.push('目录监控开（' + textToLines(els.setSubtitleWatchDirs
+          ? els.setSubtitleWatchDirs.value : '').length + ' 个目录）');
       }
       setText(els.settingsSubtitleSummary, subBits.join(' · '));
     }
@@ -10044,6 +10436,7 @@ import {
       fillSettingsForm(state.settings || DEFAULT_SETTINGS);
       setHidden(els.settingsLoading, true);
       loadAutomationStatus();
+      loadSubtitleWatchStatus();
     } catch (err) {
       setHidden(els.settingsLoading, true);
       setText(els.settingsLoadError, errorMessage(err, '加载设置失败，请稍后重试。'));

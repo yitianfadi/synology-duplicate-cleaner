@@ -6,8 +6,8 @@
 <meta name="color-scheme" content="light">
 <meta name="referrer" content="same-origin">
 <title>重复文件清理与字幕 · Duplicate Cleaner &amp; Subtitles</title>
-<link rel="icon" href="./assets/favicon.svg?v=1.1.0-0047" type="image/svg+xml">
-<link rel="stylesheet" href="./styles.css?v=1.1.0-0047">
+<link rel="icon" href="./assets/favicon.svg?v=1.1.0-0048" type="image/svg+xml">
+<link rel="stylesheet" href="./styles.css?v=1.1.0-0048">
 </head>
 <body>
 <a class="skip-link" href="#main">跳到主要内容</a>
@@ -865,6 +865,35 @@
           <div id="subtitleJobsList" class="subtitle-jobs-list"></div>
           <p class="hint">任务进行中或队列中有任务时会自动刷新；「即将执行」按真实队列顺序显示；切换到其他标签后停止轮询，避免后台请求。</p>
         </section>
+        <section class="card subtitle-failures-panel" id="subtitleFailuresPanel" aria-labelledby="subtitleFailuresHeading">
+          <div class="card-head">
+            <h2 id="subtitleFailuresHeading">失败任务（分类 / 导出 / 批量重试）</h2>
+            <span class="muted" id="subtitleFailuresCount"></span>
+            <button type="button" class="btn btn-ghost btn-sm" id="subtitleFailuresRefreshBtn">
+              <svg class="icon" aria-hidden="true"><use href="#i-refresh"></use></svg>刷新
+            </button>
+          </div>
+          <div class="form-grid">
+            <div class="field">
+              <label for="subtitleFailureFilter">失败分类</label>
+              <select id="subtitleFailureFilter">
+                <option value="">全部失败</option>
+              </select>
+            </div>
+            <div class="field">
+              <label class="check"><input id="subtitleFailureIncludeSkipped" type="checkbox">包含“无语音已跳过”</label>
+            </div>
+          </div>
+          <div class="settings-actions-row">
+            <a class="btn btn-ghost btn-sm" id="subtitleFailuresExportBtn" href="/api/subtitles/failures/export" download>导出失败清单 CSV</a>
+            <button type="button" class="btn btn-primary btn-sm" id="subtitleFailuresRetryBtn">批量重试（可恢复错误）</button>
+            <button type="button" class="btn btn-ghost btn-sm" id="subtitleFailuresRetryForceBtn">强制重试全部</button>
+            <span class="muted" id="subtitleFailuresHint"></span>
+          </div>
+          <div class="state-box" id="subtitleFailuresLoading" hidden><span class="spinner" aria-hidden="true"></span>正在加载失败任务…</div>
+          <div class="state-box state-empty" id="subtitleFailuresEmpty" hidden>暂无失败任务。</div>
+          <div id="subtitleFailuresList" class="subtitle-failures-list"></div>
+        </section>
       </div>
 
       <div class="task-panel" id="taskPanelDeletions" role="tabpanel" aria-labelledby="taskTabDeletions" data-task-panel="deletions" tabindex="0" hidden>
@@ -1458,6 +1487,37 @@
                 <p class="field-error" id="setSubtitleConcurrencyError" role="alert" hidden></p>
               </div>
               <div class="field field-wide">
+                <label class="check"><input id="setSubtitleAutoRetry" type="checkbox" checked>可恢复错误自动重试（超时 / 网络 / 云端服务 / 内部错误）</label>
+                <label for="setSubtitleAutoRetryMax">自动重试次数上限（0–3，默认 1）</label>
+                <input id="setSubtitleAutoRetryMax" type="number" inputmode="numeric" min="0" max="3" step="1" value="1">
+                <p class="field-error" id="setSubtitleAutoRetryMaxError" role="alert" hidden></p>
+                <label class="check"><input id="setSubtitleNoSpeechSkip" type="checkbox" checked>无语音视频标记为“已跳过”（不自动重试、不占队列）</label>
+                <label for="setSubtitleMaxLoad">负载阈值（1 分钟 loadavg，0 = 不限制；超过时字幕队列暂不取新任务）</label>
+                <input id="setSubtitleMaxLoad" type="number" min="0" max="256" step="0.5" value="0">
+                <p class="field-error" id="setSubtitleMaxLoadError" role="alert" hidden></p>
+                <label for="setSubtitleDirPriorities">目录优先级（每行一个绝对路径，越靠前越优先；同目录任务按此排队）</label>
+                <textarea id="setSubtitleDirPriorities" rows="2" placeholder="/volume1/media/movies"></textarea>
+                <p class="field-error" id="setSubtitleDirPrioritiesError" role="alert" hidden></p>
+                <label for="setSubtitleAudioTrack">默认音轨（auto 或 0–31 序号）</label>
+                <input id="setSubtitleAudioTrack" type="text" placeholder="auto" autocomplete="off" spellcheck="false">
+                <p class="field-error" id="setSubtitleAudioTrackError" role="alert" hidden></p>
+                <label for="setSubtitleAudioTrackLanguage">默认音轨语言标签（如 jpn / chi / eng，留空 = 按序号或自动）</label>
+                <input id="setSubtitleAudioTrackLanguage" type="text" placeholder="jpn" autocomplete="off" spellcheck="false">
+                <p class="field-error" id="setSubtitleAudioTrackLanguageError" role="alert" hidden></p>
+                <p class="hint">指定后只提取该音轨送 ASR，避免误识别配音轨；单任务可在提交时覆盖。</p>
+              </div>
+              <div class="field field-wide">
+                <label class="check"><input id="setSubtitleWatchEnabled" type="checkbox">启用视频目录监控（新增视频自动加入字幕队列并翻译）</label>
+                <label for="setSubtitleWatchDirs">监控目录（每行一个绝对路径）</label>
+                <textarea id="setSubtitleWatchDirs" rows="2" placeholder="/volume1/media/inbox"></textarea>
+                <p class="field-error" id="setSubtitleWatchDirsError" role="alert" hidden></p>
+                <label for="setSubtitleWatchInterval">扫描间隔（秒，60–86400，默认 300）</label>
+                <input id="setSubtitleWatchInterval" type="number" inputmode="numeric" min="60" max="86400" step="30" value="300">
+                <p class="field-error" id="setSubtitleWatchIntervalError" role="alert" hidden></p>
+                <p class="hint" id="subtitleWatchStatus"></p>
+                <button type="button" class="btn btn-ghost btn-sm" id="subtitleWatchScanBtn">立即扫描监控目录</button>
+              </div>
+              <div class="field field-wide">
                 <label class="check"><input id="subtitleTranslateEnabled" type="checkbox">生成译文（需要配置 LLM API Key）</label>
                 <p class="hint">翻译只处理字幕文本，不改时间轴；部分批次失败会回退原文并标记。</p>
               </div>
@@ -1691,6 +1751,6 @@
   <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.6" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M12 10.8v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="12" cy="7.6" r="1.05" fill="currentColor"/></symbol>
 </svg>
 
-<script type="module" src="./app.js?v=1.1.0-0047"></script>
+<script type="module" src="./app.js?v=1.1.0-0048"></script>
 </body>
 </html>

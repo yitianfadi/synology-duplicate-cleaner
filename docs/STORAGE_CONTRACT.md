@@ -185,6 +185,9 @@ CREATE INDEX idx_media_probe_cache_used ON media_probe_cache(last_used);
 - v0047 视频指纹缓存沿用 `<var>/cache/video.sqlite`（独立 SQLite 文件）：`VIDEO_ALGO_VERSION`
   从 `video-v1` 升到 `video-v2` 后旧记录不再命中（一次性重算）；音频签名单独 key（`audio-v1|...`）。
   缓存可随时删除，代价是下次扫描重新抽帧。
+- v0048 字幕目录监控状态 `<var>/subtitle_watch_state.json`（path_key → size/mtime/queued_epoch，
+  最多 5000 条）为普通 JSON，**不进数据库**；删除后监控会重新扫描并可能重复提交（`skip_existing`
+  会再次跳过已有字幕）。
 
 ## 2. Store 兼容 API
 

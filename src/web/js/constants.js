@@ -126,6 +126,13 @@ export var VIDEO_CONFIDENCE_LABEL = {
   likely_same: '很可能同源',
   possible: '可能相似（建议人工复核）'
 };
+// v0048：字幕失败分类标签（与后端 config.SUBTITLE_FAILURE_CATEGORY_LABELS 对应）
+export var SUBTITLE_FAILURE_LABEL = {
+  audio_extract: '音频提取失败', no_speech: '无语音/无字幕内容',
+  timeout: '超时', unsupported_stream: '码流/音轨不支持',
+  permission: '权限异常', network: '网络异常', provider: '云端服务错误',
+  internal: '内部错误', unknown: '未知错误'
+};
 export var VIDEO_CONFIDENCE_CLASS = {
   same_source: 'badge-blue', likely_same: 'badge-green', possible: 'badge-amber'
 };
@@ -297,6 +304,17 @@ export var DEFAULT_SETTINGS = {
   subtitle_job_limit: 200,
   // v0034/v0037：同时执行的字幕任务数（1..4，默认 1 串行；保存后立即生效，无需重启）
   subtitle_concurrency: 1,
+  // v0048：字幕失败分类/自动重试/资源管控/优先级/音轨/目录监控
+  subtitle_auto_retry_enabled: true,
+  subtitle_auto_retry_max: 1,
+  subtitle_no_speech_skip: true,
+  subtitle_max_load: 0,
+  subtitle_dir_priorities: [],
+  subtitle_audio_track: '',
+  subtitle_audio_track_language: '',
+  subtitle_watch_enabled: false,
+  subtitle_watch_dirs: [],
+  subtitle_watch_interval_sec: 300,
   // v0043：增量扫描 / 保留规则链 / 排除规则（与后端 settings.DEFAULT_SETTINGS 对齐）
   incremental_scan: true,
   keep_rules: [],

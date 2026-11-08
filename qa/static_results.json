@@ -1,7 +1,7 @@
 {
-  "generated_at": "2026-11-08T21:57:29+0800",
+  "generated_at": "2026-11-08T22:15:41+0800",
   "summary": {
-    "PASS": 191,
+    "PASS": 193,
     "FAIL": 0,
     "UNVERIFIED": 0
   },
@@ -28,7 +28,7 @@
       "id": "BE-FILE-COUNT",
       "name": "后端 Python 文件数",
       "status": "INFO",
-      "detail": "66"
+      "detail": "68"
     },
     {
       "id": "BE-SRC-HYGIENE",
@@ -52,7 +52,7 @@
       "id": "BE-UNITTEST-LOG",
       "name": "unittest 结果",
       "status": "INFO",
-      "detail": "Ran 626 tests in 134.464s"
+      "detail": "Ran 642 tests in 157.086s"
     },
     {
       "id": "BE-NO-AUTODELETE",
@@ -333,6 +333,12 @@
     {
       "id": "BE-PROTECT",
       "name": "删除白名单：目录/后缀/文件名/视频附属文件保护，扫描期标记 + 计划与执行前按当前设置重算（v0044）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "BE-SUBTITLE-V2",
+      "name": "字幕 ASR 优化：失败分类/自动重试/失败清单导出/负载管控/优先级/音轨选择/目录监控（v0048）",
       "status": "PASS",
       "detail": ""
     },
@@ -639,6 +645,12 @@
     {
       "id": "FE-VIDEO-V2",
       "name": "视频设置：边缘裁剪/时间轴对齐/音频签名开关与权重 + 结果页置信度/方法/音频徽标（v0047）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "FE-SUBTITLE-V2",
+      "name": "字幕设置：自动重试/负载阈值/目录优先级/音轨/目录监控 + 失败清单导出/批量重试/置顶（v0048）",
       "status": "PASS",
       "detail": ""
     },
@@ -1058,7 +1070,7 @@
     },
     {
       "id": "SPK-DIST",
-      "name": "构建产物存在（DuplicateCleaner-1.1.0-0047.spk）",
+      "name": "构建产物存在（DuplicateCleaner-1.1.0-0048.spk）",
       "status": "PASS",
       "detail": ""
     },
@@ -1070,7 +1082,7 @@
     },
     {
       "id": "SPK-VERSION",
-      "name": "SPK INFO.version 与当前源码 APP_VERSION（1.1.0-0047）一致",
+      "name": "SPK INFO.version 与当前源码 APP_VERSION（1.1.0-0048）一致",
       "status": "PASS",
       "detail": ""
     },

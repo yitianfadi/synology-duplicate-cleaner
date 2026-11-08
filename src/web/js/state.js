@@ -119,6 +119,19 @@ export var IDS = ('loginView loginForm loginUsername loginPassword loginOtp logi
   'subtitleAsrModelsBtn subtitleAsrModelPicker subtitleAsrModelsHint subtitleAsrTestBtn subtitleAsrTestResult ' +
   'subtitleLlmModelsBtn subtitleLlmModelPicker subtitleLlmModelsHint subtitleLlmTestBtn subtitleLlmTestResult ' +
   'setSubtitleOutputMode setSubtitleSkipExisting setSubtitleJobLimit setSubtitleJobLimitError ' +
+  'setSubtitleAutoRetry setSubtitleAutoRetryMax setSubtitleAutoRetryMaxError ' +
+  'setSubtitleNoSpeechSkip setSubtitleMaxLoad setSubtitleMaxLoadError ' +
+  'setSubtitleDirPriorities setSubtitleDirPrioritiesError ' +
+  'setSubtitleAudioTrack setSubtitleAudioTrackLanguage ' +
+  'setSubtitleWatchEnabled setSubtitleWatchDirs setSubtitleWatchDirsError ' +
+  'setSubtitleWatchInterval setSubtitleWatchIntervalError ' +
+  'subtitleWatchStatus subtitleWatchScanBtn ' +
+  'subtitleFailuresPanel subtitleFailuresHeading subtitleFailuresCount ' +
+  'subtitleFailuresRefreshBtn subtitleFailureFilter ' +
+  'subtitleFailureIncludeSkipped subtitleFailuresExportBtn ' +
+  'subtitleFailuresRetryBtn subtitleFailuresRetryForceBtn ' +
+  'subtitleFailuresHint subtitleFailuresLoading subtitleFailuresEmpty ' +
+  'subtitleFailuresList ' +
   'setSubtitleConcurrency setSubtitleConcurrencyError ' +
   'setSubtitleTranslateOutputs setSubtitleTranslateOutputsError ' +
   'subtitleGroupCurrent subtitleJobsFilter subtitleJobsActive ' +

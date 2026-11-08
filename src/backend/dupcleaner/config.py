@@ -7,9 +7,9 @@ import os
 import re
 
 APP_NAME = "DuplicateCleaner"
-APP_VERSION = "1.1.0-0047"
+APP_VERSION = "1.1.0-0048"
 DISPLAY_NAME = "重复文件清理与字幕"
-SPK_VERSION = "1.1.0-0047"
+SPK_VERSION = "1.1.0-0048"
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8787
@@ -223,6 +223,58 @@ VIDEO_AUDIO_SECONDS = 180
 VIDEO_AUDIO_BUCKETS = 120
 VIDEO_AUDIO_TIMEOUT_SEC = 120
 VIDEO_AUDIO_SIGNATURE_VERSION = 1
+
+# ---------------------------------------------------------------------------
+# 字幕 ASR 模块优化（v0048，docs/SUBTITLE_ASR_V2_CONTRACT.md）
+# ---------------------------------------------------------------------------
+SUBTITLE_FAILURE_CATEGORIES = (
+    "audio_extract", "no_speech", "timeout", "unsupported_stream",
+    "permission", "network", "provider", "internal", "unknown",
+)
+SUBTITLE_FAILURE_CATEGORY_LABELS = {
+    "audio_extract": u"音频提取失败",
+    "no_speech": u"无语音/无字幕内容",
+    "timeout": u"超时",
+    "unsupported_stream": u"码流/音轨不支持",
+    "permission": u"权限异常",
+    "network": u"网络异常",
+    "provider": u"云端服务错误",
+    "internal": u"内部错误",
+    "unknown": u"未知错误",
+}
+# 可自动重试的分类（no_speech/permission/unsupported 不重试，避免无效排队）
+SUBTITLE_RETRYABLE_CATEGORIES = ("timeout", "network", "provider", "internal")
+SUBTITLE_FAILURE_CODE_CATEGORY = {
+    "NO_AUDIO": "audio_extract",
+    "AUDIO_TOO_LARGE": "audio_extract",
+    "AUDIO_TRACK_NOT_FOUND": "unsupported_stream",
+    "NO_SPEECH": "no_speech",
+    "NO_DURATION": "unsupported_stream",
+    "INVALID_VIDEO": "unsupported_stream",
+    "SOURCE_SRT_MISSING": "unsupported_stream",
+    "TIMEOUT": "timeout",
+    "PROVIDER_TIMEOUT": "timeout",
+    "NETWORK_ERROR": "network",
+    "PROVIDER_NETWORK_ERROR": "network",
+    "HTTP_ERROR": "provider",
+    "PROVIDER_HTTP_ERROR": "provider",
+    "FFMPEG_UNAVAILABLE": "internal",
+    "INTERNAL_ERROR": "internal",
+    "PERMISSION_DENIED": "permission",
+    "SUBTITLE_DISABLED": "internal",
+    "CLOUD_CONFIRM_REQUIRED": "internal",
+}
+SUBTITLE_AUTO_RETRY_MAX_DEFAULT = 1
+SUBTITLE_AUTO_RETRY_MAX_LIMIT = 3
+SUBTITLE_FAILURE_LIST_LIMIT = 500
+SUBTITLE_AUDIO_TRACK_MAX_INDEX = 31
+SUBTITLE_AUDIO_TRACK_HEADER = 0
+SUBTITLE_WATCH_INTERVAL_DEFAULT = 300
+SUBTITLE_WATCH_MIN_INTERVAL = 60
+SUBTITLE_WATCH_STATE_FILE = "subtitle_watch_state.json"
+SUBTITLE_WATCH_STATE_MAX = 5000
+SUBTITLE_PRIORITY_MANUAL_TOP = 1000
+SUBTITLE_ETA_SAMPLE_LIMIT = 20
 
 # ---------------------------------------------------------------------------
 # 内容相似度模式常量（docs/SIMILARITY_CONTRACT.md）

@@ -102,6 +102,17 @@ DEFAULT_SETTINGS = {
     # v0034/v0037：同时执行的字幕任务数（默认 1 = 串行，与历史行为一致）；
     # 保存设置后立即生效（动态调整 worker，无需重启套件）。
     "subtitle_concurrency": config.SUBTITLE_DEFAULT_CONCURRENCY,
+    # --- v0048 字幕失败分类/自动重试/资源管控/优先级/音轨/监控 ---
+    "subtitle_auto_retry_enabled": True,
+    "subtitle_auto_retry_max": config.SUBTITLE_AUTO_RETRY_MAX_DEFAULT,
+    "subtitle_no_speech_skip": True,
+    "subtitle_max_load": 0.0,
+    "subtitle_dir_priorities": [],
+    "subtitle_audio_track": "",
+    "subtitle_audio_track_language": "",
+    "subtitle_watch_enabled": False,
+    "subtitle_watch_dirs": [],
+    "subtitle_watch_interval_sec": config.SUBTITLE_WATCH_INTERVAL_DEFAULT,
     # --- v0043 增量扫描 / 保留策略规则链 / 排除规则（docs/INCREMENTAL_SCAN_CONTRACT.md）---
     # 跨扫描哈希缓存：内容未变（dev/inode/size/mtime_ns 一致）不重算哈希。
     "incremental_scan": config.INCREMENTAL_SCAN_ENABLED_DEFAULT,
@@ -577,6 +588,36 @@ def _normalize_value(key, value):
         return value
     if key == "subtitle_concurrency":
         return _check_int(key, value, 1, config.SUBTITLE_CONCURRENCY_MAX)
+    # --- v0048 字幕失败分类/自动重试/资源管控/优先级/音轨/监控 ---
+    if key in ("subtitle_auto_retry_enabled", "subtitle_no_speech_skip",
+               "subtitle_watch_enabled"):
+        return _check_bool(key, value)
+    if key == "subtitle_auto_retry_max":
+        return _check_int(key, value, 0, config.SUBTITLE_AUTO_RETRY_MAX_LIMIT)
+    if key == "subtitle_max_load":
+        return _check_float(key, value, 0.0, 256.0)
+    if key == "subtitle_dir_priorities":
+        return _check_path_list(key, value, max_items=50)
+    if key == "subtitle_audio_track":
+        text = _check_str(key, value, max_len=8).strip().lower()
+        if not text or text in ("auto", "default"):
+            return ""
+        if not text.isdigit() or int(text) > config.SUBTITLE_AUDIO_TRACK_MAX_INDEX:
+            _err(u"subtitle_audio_track 只能是 auto 或 0–%d 的序号"
+                 % config.SUBTITLE_AUDIO_TRACK_MAX_INDEX, {"key": key})
+        return text
+    if key == "subtitle_audio_track_language":
+        text = _check_str(key, value, max_len=16).strip()
+        if not text:
+            return ""
+        if not re.match(r"^[A-Za-z]{2,8}([_-][A-Za-z0-9]{1,8})?$", text):
+            _err(u"subtitle_audio_track_language 需形如 jpn/chi/eng 或 zh-CN",
+                 {"key": key})
+        return text
+    if key == "subtitle_watch_dirs":
+        return _check_path_list(key, value, max_items=50)
+    if key == "subtitle_watch_interval_sec":
+        return _check_int(key, value, config.SUBTITLE_WATCH_MIN_INTERVAL, 86400)
     # --- v0043 增量扫描 / 保留规则链 / 排除规则 ---
     if key == "incremental_scan":
         return _check_bool(key, value)

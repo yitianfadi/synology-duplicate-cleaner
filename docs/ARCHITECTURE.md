@@ -1,7 +1,7 @@
 # 整体方案架构
 
 > 项目：**重复文件清理与字幕（Duplicate Cleaner & Subtitles）** · 群晖 DSM 7.x SPK 套件
-> 版本：1.1.0-0047
+> 版本：1.1.0-0048
 > 原则：**先扫描、出报告、人工确认、二次确认、可回收、全程审计**。任何情况下都不自动静默删除。
 
 ## 1. 目标与边界
@@ -557,6 +557,28 @@ Linux 的 `st_ctime` 是 **inode 状态变更时间**，不是创建时间，复
 - 置信度分档 `confidence_band`：≥95 `same_source`、≥85 `likely_same`、其余 `possible`；
   组级取最低配对分数（保守），结果页以徽标展示，并显示匹配方法/是否裁剪/音频分。
 - 分组算法（安全团：任意两两分数 ≥ 阈值）与删除安全校验不变；`video_low_confidence` 等原字段保留。
+
+## 18. 字幕 ASR 模块优化（v0048）
+
+> 详细契约见 [SUBTITLE_ASR_V2_CONTRACT.md](SUBTITLE_ASR_V2_CONTRACT.md)。
+
+- **失败分类**：`failure_category(code, message)` 映射到 audio_extract/no_speech/timeout/
+  unsupported_stream/permission/network/provider/internal/unknown；`_handle_failure` 统一处理。
+- **自动重试**：可恢复分类且 `attempt < subtitle_auto_retry_max` 时回 `queued`（保留分片缓存），
+  审计 `subtitle_retry_auto`；no_speech 标记 skipped 不重试，避免无效排队。
+- **失败清单**：`failures()` / `failures_export_rows()` / `retry_failures()`（支持 force），
+  任务中心「失败任务」面板 + CSV 导出。
+- **资源管控**：`subtitle_max_load` > 0 时 worker 取任务前检查 loadavg，超标保留队列
+  （`load_guard` 状态随 counts/queue_snapshot 返回）。
+- **优先级**：任务 `priority`，队列按“优先级降序 + 创建时间”插入；`set_priority(top)`：
+  `subtitle_dir_priorities` 在提交时计算目录优先级。
+- **ETA**：最近 20 个非跳过任务实际耗时中位数校准；执行中任务按 `elapsed*(100-progress)/progress`
+  估算剩余，再叠加排队任务。
+- **音轨选择**：任务 `audio_track`/`audio_track_language` → `probe_media` 解析为 `0:a:<n>`，
+  抽音频（NAS mp3 / 服务器 remux / 预取）统一带 `-map`；`audio_tracks()` 供 UI 查询。
+- **目录监控**（新 `subtitle_watch.py`）：30 秒 tick + 配置间隔扫描监控目录，按
+  `(size, mtime_ns)` 去重（`<var>/subtitle_watch_state.json`），每轮最多入队 20 个，
+  以 `user="watcher"` 提交批量任务，翻译开关用 `subtitle_translate_enabled`。
 
 
 

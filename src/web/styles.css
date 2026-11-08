@@ -2481,3 +2481,25 @@ input[type="checkbox"]:disabled { cursor: not-allowed; }
 }
 .setting-test-row .muted { font-size: 12px; }
 #schedulerStatusText:empty, #notifyChannelsHint:empty { display: none; }
+
+/* ==========================================================================
+   v0048：字幕失败清单 / 目录监控
+   ========================================================================== */
+.subtitle-failures-list { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+.subtitle-failure-item {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  background: #fff;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.subtitle-failure-head { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.subtitle-failure-meta {
+  display: flex; flex-direction: column; gap: 2px;
+  font-size: 12px; color: var(--muted); overflow-wrap: anywhere;
+}
+.subtitle-failure-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.settings-actions-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 8px 0; }
+.settings-actions-row .muted { font-size: 12px; }
