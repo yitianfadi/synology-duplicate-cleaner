@@ -1,7 +1,7 @@
 # 实现契约（前后端共享，版本 1.0）
 
 > 本文件是前后端并行开发的唯一接口约定。任何一方需要改动字段，先改本文件并在团队任务中说明。
-> 产品名：**DuplicateCleaner**；显示名：**重复文件清理与字幕**；SPK 版本：**1.1.0-0041**。
+> 产品名：**DuplicateCleaner**；显示名：**重复文件清理与字幕**；SPK 版本：**1.1.0-0042**。
 > v1.1 新增内容相似度模式；相似模式字段与行为见 [SIMILARITY_CONTRACT.md](SIMILARITY_CONTRACT.md)，**精准模式规则不变**。
 
 ## 1. 仓库与写入边界
@@ -121,6 +121,12 @@ v0041 增量（任务行进度信息与预计剩余）：
 - 前端展示：任务行顺序为 `阶段 · 分块 x/y · 步骤消息 · 已耗时 · 预计剩余 · 译文 · 创建`，「来源」移到行尾弱化；详情网格新增「耗时」「预计剩余」。
 - 无新增接口/错误码；SQLite schema 仍 v7，无数据迁移。
 
+v0042 增量（升级启动稳定性）：
+- **启动加载提速**：字幕任务启动加载时，DB 已确认存在的任务**不再打开/解析对应 JSON 文件**（NAS 上 7500+ 任务时这一步原先要 20s+）；只有 DB 缺失的任务才回退读 JSON 并回写 DB。终态任务（done/failed/cancelled）启动时不再查询 ASR 分片缓存。语义不变（DB 优先、JSON 兜底）。
+- **启动健康检查放宽**：`start-stop-status` 的健康检查由 15s 放宽到 90s，失败时清理残留进程/端口后重试一次；进程仍存活但未通过健康检查时返回成功（避免 DSM 把升级判成“启动失败”并要求【修复】）；字节码缓存写到 `<var>/pycache`，全过程追加 `var/log/start.log`。
+- `postupgrade` 在 root 身份运行时补 `chown -R duplicatecleaner:duplicatecleaner <var>`，防止升级后数据目录属主变化导致无法启动。
+- 无新增接口/错误码；SQLite schema 仍 v7，无数据迁移。
+
 
 
 ## 4. 认证
@@ -148,7 +154,7 @@ v0041 增量（任务行进度信息与预计剩余）：
 ### GET /api/meta
 ```json
 {
- "app_version": "1.1.0-0041",
+ "app_version": "1.1.0-0042",
  "dsm_version": "7.2.2-72806" | "dev",
  "python_version": "3.8.16",
  "creation_time_supported": true,
@@ -421,4 +427,4 @@ Content-Disposition: attachment; filename="duplicate-scan-<id>.csv"
 - 后端 unittest 覆盖：statx 时间读取降级、哈希分片/限速、重复分组与三种保留策略、
   路径黑名单、删除前重校验、回收站路径生成、CSV、API 鉴权。
 - 前端可用静态检查 + 本地 dev 后端联调；QA 用 dev 模式在临时目录生成重复文件跑完整 API 流程。
-- 打包产物 `dist/DuplicateCleaner-1.1.0-0041.spk` 必须能通过 `tar -tf` 检查，包含 INFO/package.tgz/scripts/conf/ui。
+- 打包产物 `dist/DuplicateCleaner-1.1.0-0042.spk` 必须能通过 `tar -tf` 检查，包含 INFO/package.tgz/scripts/conf/ui。

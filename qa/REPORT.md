@@ -773,6 +773,53 @@ python build/build_spk.py --no-icons --out-dir $env:TEMP\qa-build2
 - 运行中任务行应出现「已耗时 10 分 49 秒 · 预计剩余 X」，`来源：云端 ASR 生成` 在行尾以灰色小字显示。
 - 任务详情弹窗进度条同样应为填充状态，网格里出现「耗时」「预计剩余」两行。
 
+## 24. 附：v0042 升级后「无法启动 → 点修复」根治（2026-11-08）
+
+### 24.1 现场现象（用户截图 + NAS 实测）
+
+- 套件中心「需要注意的事项」：*无法启动“重复文件清理与字幕”。请稍后再试一次，或联系套件开发人员。*，状态「停用」，需点【修复】才能恢复。
+- NAS（DSM 7.4.1 / x86_64 / Python 3.8.15）实测：
+  - `synopkg status` → `start_failed`（status_code 272，"failed to start on previous startup"）。
+  - `/var/log/packages/DuplicateCleaner.log`：`Begin start-stop-status start` → `failed to become healthy` → `End start-stop-status start ret=[1]`（14:08:02→14:08:23，约 21s）。
+  - 数据规模：字幕任务 **7540** 个（JSON 文件 7540 个）、排队 **4672** 个；`subtitles/jobs` 解析实测 **20.9s**。
+  - `build_services` 实测 **27.0s**（DB 读取仅 0.5s，其余为 JSON 解析 + 逐任务分片查询 + 队列恢复）。
+  - `start-stop-status` 健康检查窗口 ≈ **18–21s**（30 次 × 0.5s + 每次探测子进程开销）→ 永远等不到健康 → 返回 1 → DSM 判定升级失败。
+
+### 24.2 根因
+
+1. `_load_jobs` 即使 DB 里已有全部任务记录，仍会 `json.load` **每一个** 任务 JSON（解析发生在“是否已在 records”判断之前）→ 7500 个文件约 21s。
+2. `start-stop-status` 健康检查只有 15s，慢盘/大库（数千任务）的首次启动必然超时。
+3. 升级时 `postinst` 删除 `__pycache__`，且字节码缓存写在套件目录，首次启动还要全量编译。
+
+### 24.3 修复（v0042）
+
+- `_load_jobs`：文件名即 job_id（`_job_json`），**DB 已命中时跳过文件读取/解析**；只有 DB 缺失的任务才读 JSON 并回写 DB（兜底语义不变）。终态任务（done/failed/cancelled）启动时不再查询 ASR 分片缓存。
+- `start-stop-status`：健康检查 **15s → 90s**；失败清理残留进程/端口后**重试一次**；进程存活但未通过检查时返回成功（避免把升级判成失败）；`PYTHONPYCACHEPREFIX=<var>/pycache`；全过程写 `<var>/log/start.log`。
+- `postupgrade`：root 身份下补 `chown -R duplicatecleaner:duplicatecleaner <var>`，并创建 `pycache` 目录。
+
+### 24.4 验证
+
+- 本地：unittest **459 OK（6 skipped）**；static **PASS=169 / FAIL=0**（新增 `BE-SUBTITLE-LOAD-FAST`、`SPK-HEALTH-TIMEOUT`）；e2e **157 PASS / 0 FAIL / 1 UNVERIFIED**；web modules **22/22**；web smoke **8/8**。
+- 新增单测 `SubtitleLoadJobsTest` 3 例：DB 命中不再打开 JSON、仅 JSON 任务仍恢复并回写 DB、终态任务不查分片缓存。
+- **NAS 真机**（直接 `synopkg install` 覆盖升级到 0042）：
+  - `synopkg install` 返回 `success=true`，脚本 preupgrade/preinst/postinst/postupgrade/**start 全部 code 0**，`status=running`，安装总耗时 82s。
+  - `start.log`：首次 `started in 47s (attempt 1)`（冷缓存首启）；`synopkg restart` 第二次 **`started in 3s`**。
+  - `build_services` 由 **27.0s → 2.5s**。
+  - 真机 UI 探针（Playwright 登录 NAS 套件）：任务行进度条 fill/bar 比例 = `aria-valuenow`（2% 场景实测一致）、meta 顺序「提取音频 · 分块 0/9 · 正在提取音频 · 已耗时 59 秒 · 创建 … · 来源：云端 ASR 生成」（来源在行尾灰色小字）、无页面异常（仅登录前 `/api/auth/me` 401，属正常引导）。
+
+### 24.5 产物
+
+- `dist/DuplicateCleaner-1.1.0-0042.spk`：39,014,400 B
+  - SHA256 `f769f08e74868a8037220003cff1c153aea09940ac4518715c09e349b50866a1`
+  - package.tgz MD5 `9e18308eb7731ac2fa90c6ba51f0645a`
+- 版本 1.1.0-0042 同步 8 处；SQLite schema 不变（仍 v7），无数据迁移。
+
+### 24.6 后续观察
+
+- 下次升级安装后确认：套件中心不再出现「无法启动」，`/var/packages/DuplicateCleaner/var/log/start.log` 有 `started in Ns` 记录。
+- 若某次首启仍 >90s（例如数据量继续增长），`start.log` 会记录失败前后端日志尾部；届时可再评估把任务 JSON 目录或分片查询进一步批量化。
+
+
 
 
 

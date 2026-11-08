@@ -1335,7 +1335,12 @@ class SubtitleService(object):
         return os.path.join(self._jobs_dir, job_id + ".json")
 
     def _load_jobs(self):
-        """DB 优先加载；字幕 JSON 文件保留为任务目录事实源/兜底。"""
+        """DB 优先加载；字幕 JSON 文件保留为任务目录事实源/兜底。
+
+        v0042：DB 已确认存在的任务不再打开/解析对应 JSON。NAS 上 7500+ 任务时，
+        逐个 json.load 要 20s 以上，而升级后 DSM 只等十几秒健康检查，会把升级
+        判成“启动失败”（现场表现为每次升级后都要点一次【修复】）。
+        """
         records = {}
         try:
             # v0032：批次组可达 20000 个任务，启动时需全部恢复（组快照依赖完整 job 集合）
@@ -1351,6 +1356,10 @@ class SubtitleService(object):
             names = []
         for name in names:
             if not name.endswith(".json"):
+                continue
+            # 文件名即 job_id（_job_json），DB 已有该任务时无需读取文件内容。
+            stem = name[:-5]
+            if stem in records and JOB_ID_RE.match(stem):
                 continue
             path = os.path.join(self._jobs_dir, name)
             try:
@@ -1373,10 +1382,15 @@ class SubtitleService(object):
         queued_jobs = []
         for job_id, record in records.items():
             job = SubtitleJob.from_record(record)
-            try:
-                chunks = self.store.load_subtitle_chunks(job.job_id)
-            except Exception:
-                chunks = []
+            # v0042：只有可能继续执行的任务才需要查 ASR 分片缓存；
+            # 终态任务（done/failed/cancelled）的分片信息不再影响任何行为。
+            chunks = []
+            if job.status in (STATUS_QUEUED, STATUS_RUNNING,
+                              STATUS_TRANSLATING, STATUS_PAUSED):
+                try:
+                    chunks = self.store.load_subtitle_chunks(job.job_id)
+                except Exception:
+                    chunks = []
             done_chunks = sum(1 for item in chunks
                               if item.get("status") == CHUNK_DONE)
             if chunks:

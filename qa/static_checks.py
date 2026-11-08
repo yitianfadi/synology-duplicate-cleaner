@@ -227,7 +227,7 @@ def check_backend():
                        "select", "queue", "math", "decimal", "calendar", "codecs",
                        "heapq", "mimetypes", "tests", "stringprep", "encodings",
                        "zipfile", "zlib", "html", "PIL", "logging.handlers", "sqlite3",
-                       "xml")
+                       "xml", "builtins")
     for path in py_files:
         rel = os.path.relpath(path, REPO)
         src = read(path)
@@ -502,7 +502,15 @@ def check_backend():
           and prefetch_test_ok,
           "subtitle audio prefetch markers missing")
 
-    # ---- v0041：预计剩余时间（ASR 分片均值 / 翻译批次均值，样本不足 None）----
+    # ---- v0042：升级启动性能（DB 命中时不再逐个解析任务 JSON）----
+    load_test_ok = ("class SubtitleLoadJobsTest" in read(
+        os.path.join(backend, "tests", "test_subtitles.py")))
+    check("BE-SUBTITLE-LOAD-FAST",
+          "启动加载：DB 已有任务时不再解析 JSON、终态任务不查分片缓存（v0042，根治升级后判启动失败）",
+          "if stem in records and JOB_ID_RE.match(stem):" in subtitles_src
+          and "只有可能继续执行的任务才需要查 ASR 分片缓存" in subtitles_src
+          and load_test_ok,
+          "subtitle load-fast markers missing")
     eta_test_ok = ("class SubtitleEtaTest" in read(
         os.path.join(backend, "tests", "test_subtitles.py")))
     check("BE-SUBTITLE-ETA",
@@ -1250,6 +1258,14 @@ def check_spk_source():
           "nice/ionice missing")
     check("SPK-HEALTH", "启动脚本等待 /api/healthz 健康检查",
           "/api/healthz" in start_script, "healthz missing")
+    check("SPK-HEALTH-TIMEOUT",
+          "健康检查放宽到 90s、失败清理后重试一次并写 start.log（v0042：升级不再被判启动失败）",
+          "HEALTH_TIMEOUT_SECONDS=90" in start_script
+          and 'wait_healthy "$HEALTH_TIMEOUT_SECONDS"' in start_script
+          and 'while [ "$_attempt" -le 2 ]' in start_script
+          and "PYTHONPYCACHEPREFIX" in start_script
+          and "START_LOG" in start_script,
+          "health timeout / retry / pycache markers missing")
     check("SPK-PY-DETECT", "preinst 检测 Python3 且要求 3.8+",
           "3, 8" in read(os.path.join(scripts, "preinst"))
           and "Python" in read(os.path.join(scripts, "preinst")),

@@ -1,11 +1,14 @@
 # -*- coding: utf-8 -*-
 """云端字幕测试：fake ffmpeg + fake OpenAI 兼容 HTTP 服务（无真实网络）。"""
 
+import builtins
 import http.server
 import json
 import os
 import re
+import shutil
 import sys
+import tempfile
 import threading
 import time
 import unittest
@@ -2260,3 +2263,111 @@ class SubtitleEtaTest(unittest.TestCase):
             self._add_chunk(job, 0)
             self.assertIsNone(job.eta_seconds(), status)
             self.assertIsNone(job.snapshot()["eta_seconds"], status)
+
+
+class SubtitleLoadJobsTest(unittest.TestCase):
+    """v0042：启动加载性能与兜底语义（DB 命中时不再解析任务 JSON）。"""
+
+    def setUp(self):
+        from dupcleaner import config as config_module
+        from dupcleaner import store as store_module
+        self.tmp = tempfile.mkdtemp(prefix="dc-loadjobs-")
+        self.config = config_module.RuntimeConfig(
+            data_dir=self.tmp, web_dir=os.path.join(self.tmp, "web"),
+            dev_mode=True, dev_roots=[], environ={})
+        self.store = store_module.Store(self.tmp)
+        self.service = None
+        self._worker_patch = mock.patch.object(
+            subtitles.SubtitleService, "_ensure_worker", lambda self: None)
+        self._worker_patch.start()
+
+    def tearDown(self):
+        self._worker_patch.stop()
+        if self.service is not None:
+            try:
+                self.service.shutdown(timeout=1)
+            except Exception:
+                pass
+        try:
+            self.store.close()
+        except Exception:
+            pass
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    @staticmethod
+    def _settings():
+        return {"subtitle_job_limit": 200, "subtitle_concurrency": 1}
+
+    @staticmethod
+    def _record(status="done"):
+        job = subtitles.SubtitleJob(
+            subtitles.make_job_id(), "v.mp4", "auto", False, "zh", "admin")
+        job.status = status
+        job.created_epoch = time.time()
+        return job.to_record()
+
+    def _new_service(self):
+        self.service = subtitles.SubtitleService(
+            self.config, self.store, None, self._settings,
+            client=object(), ffmpeg=object())
+        return self.service
+
+    def _write_json(self, record):
+        jobs_dir = os.path.join(self.tmp, "subtitles", "jobs")
+        os.makedirs(jobs_dir, exist_ok=True)
+        path = os.path.join(jobs_dir, record["job_id"] + ".json")
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump(record, handle, ensure_ascii=False)
+        return path
+
+    def test_db_records_skip_json_parse(self):
+        """DB 已有任务 → 不再打开对应 JSON（NAS 上 7500 个任务曾多花 21s 启动）。"""
+        record = self._record("done")
+        job_id = record["job_id"]
+        self.store.save_subtitle_job(job_id, record)
+        json_path = self._write_json(record)
+        opened = []
+        real_open = builtins.open
+
+        def tracking_open(path, *args, **kwargs):
+            opened.append(str(path))
+            return real_open(path, *args, **kwargs)
+
+        with mock.patch("builtins.open", tracking_open):
+            service = self._new_service()
+        self.assertEqual([p for p in opened if p == json_path], [],
+                         "DB 命中时不应再读取任务 JSON")
+        self.assertIn(job_id, service._jobs)
+
+    def test_json_only_job_is_restored(self):
+        """DB 没有、只有 JSON 的任务仍要恢复并回写 DB（兜底语义不变）。"""
+        record = self._record("done")
+        job_id = record["job_id"]
+        self._write_json(record)
+        service = self._new_service()
+        self.assertIn(job_id, service._jobs)
+        stored = [item["job_id"]
+                  for item in self.store.load_subtitle_jobs(limit=10)]
+        self.assertIn(job_id, stored)
+
+    def test_terminal_jobs_skip_chunk_query(self):
+        """终态任务启动时不再查 ASR 分片缓存，只有可能继续的任务才查。"""
+        done = self._record("done")
+        queued = self._record("queued")
+        self.store.save_subtitle_job(done["job_id"], done)
+        self.store.save_subtitle_job(queued["job_id"], queued)
+        calls = []
+        original = self.store.load_subtitle_chunks
+
+        def tracking_chunks(job_id):
+            calls.append(job_id)
+            return original(job_id)
+
+        self.store.load_subtitle_chunks = tracking_chunks
+        try:
+            service = self._new_service()
+        finally:
+            self.store.load_subtitle_chunks = original
+        self.assertIn(queued["job_id"], calls)
+        self.assertNotIn(done["job_id"], calls)
+        self.assertIn(queued["job_id"], list(service._queue))

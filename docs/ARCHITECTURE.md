@@ -1,7 +1,7 @@
 # 整体方案架构
 
 > 项目：**重复文件清理与字幕（Duplicate Cleaner & Subtitles）** · 群晖 DSM 7.x SPK 套件
-> 版本：1.1.0-0041
+> 版本：1.1.0-0042
 > 原则：**先扫描、出报告、人工确认、二次确认、可回收、全程审计**。任何情况下都不自动静默删除。
 
 ## 1. 目标与边界
@@ -412,5 +412,13 @@ Linux 的 `st_ctime` 是 **inode 状态变更时间**，不是创建时间，复
 - `SubtitleJob.snapshot()` 新增 `eta_seconds`（仅 `running`/`translating` 有值）：ASR 阶段用已完成分片 `extract_sec + asr_sec` 均值 × 剩余分片数；翻译阶段用已完成批次 `duration_sec` 均值 × 由进度带（70..90）反推的剩余批次数；其它情况返回 `None`。只读内存记录，不做文件 IO，列表轮询无额外开销，也不持久化。
 - 前端进度条统一走 `subtitleProgressBar(pct)`：`el()` 只支持 `className/text/attrs/dataset/on`，**不支持 `style`**，此前 `el(..., {style: 'width:..%'})` 被静默丢弃导致任务行/详情进度条恒为空条。
 - 分块文案按后端语义（`chunk_index` 为 1-based 已完成片数）直接展示，不再 +1；任务行顺序调整为 `阶段 · 分块 · 步骤消息 · 已耗时 · 预计剩余 · 译文 · 创建`，来源移到行尾弱化。
+
+### 12.9 服务启动与升级（v0042）
+
+- **启动耗时构成**（NAS 实测，7540 个字幕任务 / 4672 排队）：`build_services` 27s，其中逐任务解析 `subtitles/jobs/*.json` 占 21s、DB 读取 0.5s、其余为 `load_subtitle_chunks` 逐任务查询与队列恢复。
+- **优化**：`_load_jobs` 以文件名即 job_id（`_job_json`）判定 DB 是否已有该任务，命中则跳过文件读取；仅 DB 缺失时才解析 JSON 并回写 DB（兜底语义不变）。终态任务的 ASR 分片缓存查询也跳过（分片只影响“能否继续执行”）。
+- **升级链路**：DSM 7 升级 = `preupgrade` → 停服务 → 换文件 → `postupgrade` → `start-stop-status start`；`start` 返回非 0 即被标记“启动失败”，套件中心要求【修复】。因此 `start` 的健康检查放宽到 90s，失败清理残留后重试一次，进程存活但未通过检查时返回成功（宁可显示运行中，也不判升级失败）；`PYTHONPYCACHEPREFIX` 指向 `<var>/pycache`，`postupgrade` 在 root 下补 `chown`。
+- 可观测：`<var>/log/start.log` 记录每次启动尝试、耗时与失败时的 backend.log 尾部。
+
 
 

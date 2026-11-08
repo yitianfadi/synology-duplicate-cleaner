@@ -1,7 +1,7 @@
 {
-  "generated_at": "2026-11-08T13:57:49+0800",
+  "generated_at": "2026-11-08T14:23:49+0800",
   "summary": {
-    "PASS": 167,
+    "PASS": 169,
     "FAIL": 0,
     "UNVERIFIED": 0
   },
@@ -52,7 +52,7 @@
       "id": "BE-UNITTEST-LOG",
       "name": "unittest 结果",
       "status": "INFO",
-      "detail": "Ran 456 tests in 118.965s"
+      "detail": "Ran 459 tests in 118.102s"
     },
     {
       "id": "BE-NO-AUTODELETE",
@@ -279,6 +279,12 @@
     {
       "id": "BE-SUBTITLE-AUDIO-PREFETCH",
       "name": "分片音频预取：1 片预读 + 暂停/取消/异常/缓存语义 + 设置开关（v0040）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "BE-SUBTITLE-LOAD-FAST",
+      "name": "启动加载：DB 已有任务时不再解析 JSON、终态任务不查分片缓存（v0042，根治升级后判启动失败）",
       "status": "PASS",
       "detail": ""
     },
@@ -853,6 +859,12 @@
       "detail": ""
     },
     {
+      "id": "SPK-HEALTH-TIMEOUT",
+      "name": "健康检查放宽到 90s、失败清理后重试一次并写 start.log（v0042：升级不再被判启动失败）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
       "id": "SPK-PY-DETECT",
       "name": "preinst 检测 Python3 且要求 3.8+",
       "status": "PASS",
@@ -914,7 +926,7 @@
     },
     {
       "id": "SPK-DIST",
-      "name": "构建产物存在（DuplicateCleaner-1.1.0-0041.spk）",
+      "name": "构建产物存在（DuplicateCleaner-1.1.0-0042.spk）",
       "status": "PASS",
       "detail": ""
     },
@@ -926,7 +938,7 @@
     },
     {
       "id": "SPK-VERSION",
-      "name": "SPK INFO.version 与当前源码 APP_VERSION（1.1.0-0041）一致",
+      "name": "SPK INFO.version 与当前源码 APP_VERSION（1.1.0-0042）一致",
       "status": "PASS",
       "detail": ""
     },

@@ -5,8 +5,13 @@ PKG_DIR="${SYNOPKG_PKGDEST:-/var/packages/${PKG_NAME}/target}"
 VAR_DIR="${SYNOPKG_PKGVAR:-/var/packages/${PKG_NAME}/var}"
 
 # 升级时保留扫描报告/日志/审计记录，只补齐目录与清理缓存。
-mkdir -p "$VAR_DIR" "$VAR_DIR/log" "$VAR_DIR/scans" "$VAR_DIR/deletions" "$VAR_DIR/plans" "$VAR_DIR/tmp" 2>/dev/null
+mkdir -p "$VAR_DIR" "$VAR_DIR/log" "$VAR_DIR/scans" "$VAR_DIR/deletions" "$VAR_DIR/plans" "$VAR_DIR/tmp" "$VAR_DIR/pycache" 2>/dev/null
 chmod 700 "$VAR_DIR" "$VAR_DIR/log" "$VAR_DIR/scans" "$VAR_DIR/deletions" "$VAR_DIR/plans" "$VAR_DIR/tmp" 2>/dev/null
+# v0042：若升级脚本以 root 运行，确保数据目录仍归套件用户所有
+# （属主被改动是升级后“数据目录不可写 → 启动失败”的常见原因）。
+if [ "$(id -u 2>/dev/null)" = "0" ] && [ -d "$VAR_DIR" ]; then
+  chown -R duplicatecleaner:duplicatecleaner "$VAR_DIR" 2>/dev/null
+fi
 rm -f "$VAR_DIR/backend.pid" 2>/dev/null
 find "$PKG_DIR" -type d -name __pycache__ -prune -exec rm -rf {} + 2>/dev/null
 echo "DuplicateCleaner postupgrade: data preserved at $VAR_DIR"

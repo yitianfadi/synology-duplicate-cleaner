@@ -8,6 +8,12 @@ PORT="8787"
 PID_FILE="$VAR_DIR/backend.pid"
 LOG_DIR="$VAR_DIR/log"
 LOG_FILE="$LOG_DIR/backend.log"
+# v0042：升级后首次启动要恢复成千上万条字幕任务（DB + JSON 兜底），慢盘上远超
+# 原来的 15 秒；超时会让 DSM 把这次升级判成“启动失败”，现场表现为每次升级后
+# 套件中心都要点一次【修复】。这里放宽到 90 秒并在失败时清理残留后重试一次。
+HEALTH_TIMEOUT_SECONDS=90
+START_LOG="$LOG_DIR/start.log"
+PYCACHE_DIR="$VAR_DIR/pycache"
 # 可选 TLS：在 $VAR_DIR/tls.env 中设置
 #   DUP_TLS_CERT=/path/fullchain.pem
 #   DUP_TLS_KEY=/path/privkey.pem
@@ -67,16 +73,39 @@ find_orphan_pids() {
   done
 }
 
-start_service() {
-  if is_running; then
-    echo "DuplicateCleaner is already running."
-    return 0
-  fi
-  if [ -z "$PYTHON" ]; then
-    echo "Python 3 not found; cannot start DuplicateCleaner." >&2
-    return 1
-  fi
-  mkdir -p "$LOG_DIR" "$VAR_DIR" 2>/dev/null
+wait_healthy() {
+  # $1 = 超时秒数；每 0.5s 探测一次 /api/healthz，进程已退出则立即失败。
+  _limit=$(( $1 * 2 ))
+  _i=0
+  while [ "$_i" -lt "$_limit" ]; do
+    if "$PYTHON" - "$PORT" "$SCHEME" <<'PY' >/dev/null 2>&1
+import ssl, sys, urllib.request
+scheme, port = sys.argv[2], sys.argv[1]
+url = "%s://127.0.0.1:%s/api/healthz" % (scheme, port)
+ctx = ssl._create_unverified_context() if scheme == "https" else None
+try:
+    urllib.request.urlopen(url, timeout=1, context=ctx).read()
+except Exception:
+    raise SystemExit(1)
+PY
+    then
+      return 0
+    fi
+    if [ -r "$PID_FILE" ]; then
+      _pid=$(cat "$PID_FILE" 2>/dev/null)
+      if [ -n "$_pid" ] && ! kill -0 "$_pid" 2>/dev/null; then
+        return 1
+      fi
+    fi
+    _i=$((_i + 1))
+    sleep 0.5
+  done
+  return 1
+}
+
+launch_backend() {
+  # 启动一次进程并写 PID 文件（不等待健康检查）。
+  mkdir -p "$LOG_DIR" "$VAR_DIR" "$PYCACHE_DIR" 2>/dev/null
   chmod 700 "$VAR_DIR" "$LOG_DIR" 2>/dev/null
   if [ ! -w "$VAR_DIR" ] || [ ! -w "$LOG_DIR" ]; then
     echo "数据目录不可写: $VAR_DIR（套件用户 duplicatecleaner）。" >&2
@@ -85,6 +114,10 @@ start_service() {
   fi
   # 明确隔离开发模式，生产环境绝不允许跳过 DSM 登录。
   unset DUP_CLEANER_DEV DUP_DEV_ROOTS DUP_DEV_PASSWORD
+  # v0042：字节码缓存写到数据目录（套件目录升级后可能是只读/root 所有），
+  # 避免每次启动重新编译全部模块拉长首次启动时间。
+  PYTHONPYCACHEPREFIX="$PYCACHE_DIR"
+  export PYTHONPYCACHEPREFIX
   ulimit -n 65536 2>/dev/null || true
   cd "$PKG_DIR" || return 1
   # 低优先级启动：nice 让出 CPU；ionice 只在当前用户允许时使用，避免非 root 启动失败。
@@ -97,27 +130,47 @@ start_service() {
     --host 0.0.0.0 --port "$PORT" --data-dir "$VAR_DIR" --web-dir "$PKG_DIR/web" $TLS_ARGS \
     >> "$LOG_FILE" 2>&1 < /dev/null &
   echo $! > "$PID_FILE"
-  # 等待健康检查通过（最多 15 秒），失败时返回错误并保留日志。
-  _i=0
-  while [ "$_i" -lt 30 ]; do
-    if "$PYTHON" - "$PORT" "$SCHEME" <<'PY' >/dev/null 2>&1
-import ssl, sys, urllib.request
-scheme, port = sys.argv[2], sys.argv[1]
-url = "%s://127.0.0.1:%s/api/healthz" % (scheme, port)
-ctx = ssl._create_unverified_context() if scheme == "https" else None
-try:
-    urllib.request.urlopen(url, timeout=1, context=ctx).read()
-except Exception:
-    raise SystemExit(1)
-PY
-    then
-      echo "DuplicateCleaner started on port $PORT (pid $(cat "$PID_FILE"))."
+  return 0
+}
+
+start_service() {
+  if is_running; then
+    echo "DuplicateCleaner is already running."
+    return 0
+  fi
+  if [ -z "$PYTHON" ]; then
+    echo "Python 3 not found; cannot start DuplicateCleaner." >&2
+    return 1
+  fi
+  mkdir -p "$LOG_DIR" 2>/dev/null
+  _started_at=$(date +%s)
+  _attempt=1
+  while [ "$_attempt" -le 2 ]; do
+    echo "$(date '+%Y-%m-%d %H:%M:%S') start attempt $_attempt" >> "$START_LOG" 2>/dev/null
+    if launch_backend && wait_healthy "$HEALTH_TIMEOUT_SECONDS"; then
+      _elapsed=$(( $(date +%s) - _started_at ))
+      echo "DuplicateCleaner started on port $PORT (pid $(cat "$PID_FILE" 2>/dev/null), ${_elapsed}s)."
+      echo "$(date '+%Y-%m-%d %H:%M:%S') started in ${_elapsed}s (attempt $_attempt)" >> "$START_LOG" 2>/dev/null
       return 0
     fi
-    _i=$((_i + 1))
-    sleep 0.5
+    _elapsed=$(( $(date +%s) - _started_at ))
+    echo "$(date '+%Y-%m-%d %H:%M:%S') attempt $_attempt failed after ${_elapsed}s" >> "$START_LOG" 2>/dev/null
+    tail -n 40 "$LOG_FILE" 2>/dev/null >> "$START_LOG" 2>/dev/null
+    # 清理残留进程/端口后重试一次（升级后旧进程未退出是常见失败原因）。
+    _pid=$(cat "$PID_FILE" 2>/dev/null)
+    if [ -n "$_pid" ]; then kill -TERM "$_pid" 2>/dev/null; fi
+    for _orphan in $(find_orphan_pids); do kill -TERM "$_orphan" 2>/dev/null; done
+    rm -f "$PID_FILE" 2>/dev/null
+    sleep 2
+    _attempt=$((_attempt + 1))
   done
-  echo "DuplicateCleaner failed to become healthy; see $LOG_FILE" >&2
+  if is_running; then
+    # 进程还活着但没在时限内通过健康检查：宁可让 DSM 保持“运行中”（稍后可能自愈），
+    # 也不要判定升级失败并要求用户点【修复】。
+    echo "DuplicateCleaner is running but health check timed out after ${HEALTH_TIMEOUT_SECONDS}s x2; check $LOG_FILE and $START_LOG" >&2
+    return 0
+  fi
+  echo "DuplicateCleaner failed to become healthy after ${HEALTH_TIMEOUT_SECONDS}s x2; see $LOG_FILE and $START_LOG" >&2
   tail -n 40 "$LOG_FILE" 2>/dev/null >&2
   return 1
 }

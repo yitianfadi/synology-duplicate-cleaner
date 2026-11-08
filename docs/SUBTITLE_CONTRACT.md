@@ -364,4 +364,15 @@ v0028 在 v1.3 单文件任务之上新增**目录批量生成 / 翻译**：独�
 - **任务详情**：网格新增「耗时」与「预计剩余」两行（有值才显示）。
 - 版本 1.1.0-0041；SQLite schema 不变（仍 v7）；接口只新增可选字段，无错误码变化。
 
+## 22. v0042 启动加载性能（升级后“无法启动 → 修复”根治）
+
+- **现象**：每次升级 SPK 后，套件中心显示“无法启动…点【修复】”。现场（DSM 7.4，7540 个字幕任务 / 4672 排队）定位到 `build_services` 需 **27s**，其中 `_load_jobs` 逐个解析 `subtitles/jobs/*.json`（7540 个）占 **21s**；而 `start-stop-status` 原健康检查只有 15s（实测约 18–21s 超时窗口）→ `start` 返回 1 → DSM 判定升级失败 → 要求修复。
+- **修复（v0042）**：
+  - `_load_jobs`：文件名即 job_id（`_job_json`），**DB 已有该任务时直接跳过文件读取/解析**；只有 DB 缺失的任务才读 JSON 并回写 DB（兜底语义不变）。
+  - 终态任务（`done`/`failed`/`cancelled`）启动时**不再查询 ASR 分片缓存**（分片只影响“能否继续执行”）。
+  - `start-stop-status`：健康检查 15s → **90s**；失败时清理残留进程/端口后**重试一次**；进程存活但未通过检查时返回成功（不把升级判成失败）；`PYTHONPYCACHEPREFIX=<var>/pycache`；全过程写 `<var>/log/start.log`。
+  - `postupgrade`：root 身份下补 `chown -R duplicatecleaner:duplicatecleaner <var>`。
+- 版本 1.1.0-0042；SQLite schema 不变（仍 v7）；无接口/错误码变化。
+
+
 
