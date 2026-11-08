@@ -143,4 +143,8 @@ export var IDS = ('loginView loginForm loginUsername loginPassword loginOtp logi
   'setProtectEnabled setProtectExtensions setProtectExtensionsError ' +
   'setProtectDirs setProtectDirsError setProtectNameRegex setProtectNameRegexError ' +
   'setProtectSidecarFiles ' +
+  'setMergeEnabled setDeleteRecycleMode ' +
+  'taskTabTrash taskPanelTrash trashList trashLoading trashError trashEmpty ' +
+  'trashRefreshBtn trashRecycleMode trashMergeList trashMergeLoading ' +
+  'trashMergeEmpty trashMergeCount ' +
   'footerMeta toastRoot modalRoot').split(' ');

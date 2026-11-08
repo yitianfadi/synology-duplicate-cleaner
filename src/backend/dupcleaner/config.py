@@ -7,9 +7,9 @@ import os
 import re
 
 APP_NAME = "DuplicateCleaner"
-APP_VERSION = "1.1.0-0044"
+APP_VERSION = "1.1.0-0045"
 DISPLAY_NAME = "重复文件清理与字幕"
-SPK_VERSION = "1.1.0-0044"
+SPK_VERSION = "1.1.0-0045"
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8787
@@ -140,6 +140,27 @@ PROTECT_REASON_LABELS = {
     "directory": u"目录受保护",
     "name": u"文件名命中保护规则",
     "sidecar": u"视频附属文件（同目录同源视频）",
+}
+
+# ---------------------------------------------------------------------------
+# 硬链接合并 / 套件独立回收站（v0045，docs/MERGE_TRASH_CONTRACT.md）
+# ---------------------------------------------------------------------------
+# 硬链接合并：默认关闭（不可逆操作），开启后仍需逐组勾选 + 二次确认。
+MERGE_ENABLED_DEFAULT = False
+MERGE_PLAN_TTL_SECONDS = 300
+MERGE_ALREADY_LINKED = "ALREADY_LINKED"
+MERGE_RESTORE_COPY = "copy"
+# Btrfs 上的 FICLONE ioctl（fs/ioctl.h: _IOW(0x94, 9, int)）；不可用时回退普通复制。
+FICLONE_IOCTL = 0x40049409
+# 套件独立回收站：放在共享文件夹根下的 # 前缀目录（扫描器会跳过 # 前缀目录）。
+TRASH_DIR_NAME = "#duplicate-cleaner-trash"
+TRASH_MANIFEST_SUBDIR = "trash"
+MERGE_MANIFEST_SUBDIR = "merges"
+RECYCLE_MODES = ("share", "package")
+RECYCLE_MODE_DEFAULT = "share"
+RECYCLE_MODE_LABELS = {
+    "share": u"共享文件夹回收站（#recycle）",
+    "package": u"套件独立回收站（可整组恢复）",
 }
 
 # ---------------------------------------------------------------------------

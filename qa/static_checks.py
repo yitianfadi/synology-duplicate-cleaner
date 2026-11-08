@@ -206,7 +206,10 @@ def check_backend():
                        "/api/cache", "/api/cache/clear",
                        # v0044：预览增强
                        "/api/preview/thumb", "/api/preview/media",
-                       "/api/preview/thumbs"]
+                       "/api/preview/thumbs",
+                       # v0045：硬链接合并 / 套件回收站
+                       "/merge-plan", "/merge/", "/api/merges",
+                       "/api/trash"]
     missing = []
     for marker in expected_routes:
         if marker.startswith("/api/"):
@@ -620,6 +623,44 @@ def check_backend():
           and "protected_skipped" in deletion_src,
           "protection markers missing")
 
+    # ---- v0045：硬链接合并 + 套件独立回收站 ----
+    merge_path = os.path.join(backend, "dupcleaner", "merge.py")
+    merge_src = read(merge_path) if os.path.isfile(merge_path) else ""
+    trash_path = os.path.join(backend, "dupcleaner", "trash.py")
+    trash_src = read(trash_path) if os.path.isfile(trash_path) else ""
+    check("BE-MERGE",
+          "硬链接合并：独立计划 + confirm=MERGE + 全量重校验 + link/rename 原子替换 + manifest 与独立副本恢复（v0045）",
+          os.path.isfile(merge_path)
+          and "class MergeManager" in merge_src
+          and "def create_plan(" in merge_src
+          and "confirm != \"MERGE\"" in merge_src
+          and "os.link(" in merge_src
+          and "os.replace(" in merge_src
+          and "FICLONE_IOCTL" in merge_src
+          and "def restore(" in merge_src
+          and "MERGE_ENABLED_DEFAULT" in conf_src
+          and "merge_enabled" in settings_src
+          and "merge-plan" in http_src
+          and "def _merge_plan" in http_src
+          and "def _merge_restore" in http_src,
+          "merge markers missing")
+    check("BE-TRASH",
+          "套件独立回收站：删除到 #duplicate-cleaner-trash + manifest 整组恢复/清理（v0045）",
+          os.path.isfile(trash_path)
+          and "class TrashManager" in trash_src
+          and "def destination_for(" in trash_src
+          and "def record_job(" in trash_src
+          and "def restore(" in trash_src
+          and "def purge(" in trash_src
+          and "TRASH_DIR_NAME" in conf_src
+          and "delete_recycle_mode" in settings_src
+          and "recycle_mode" in http_src
+          and "def _trash_restore" in http_src
+          and "def _trash_purge" in http_src
+          and "trash_mode" in deletion_src
+          and "_record_trash" in deletion_src,
+          "trash markers missing")
+
 
 # ---------------------------------------------------------------------------
 # 前端
@@ -1012,6 +1053,34 @@ def check_frontend():
           and "badge-shield" in read(os.path.join(web, "styles.css")),
           "protect ui markers missing")
 
+    # ---- v0045：硬链接合并 / 套件回收站 ----
+    check("FE-MERGE-UI",
+          "结果页逐组合并为硬链接（二次确认）+ 设置页开关 + 合并记录与恢复为独立副本（v0045）",
+          "setMergeEnabled" in html
+          and "function mergeEnabled" in app
+          and "function openMergeGroupDialog" in app
+          and "function runMergePlan" in app
+          and "function pollMergeJob" in app
+          and "merge-plan" in app
+          and "confirm: 'MERGE'" in app
+          and "function restoreMergeJob" in app
+          and "group-merge-btn" in read(os.path.join(web, "styles.css")),
+          "merge ui markers missing")
+    check("FE-TRASH-UI",
+          "任务中心「回收站与合并」：套件回收站整组恢复/清理 + 合并记录（v0045）",
+          "taskTabTrash" in html and "taskPanelTrash" in html
+          and "trashList" in html and "trashMergeList" in html
+          and "setDeleteRecycleMode" in html
+          and "function loadTrashPanel" in app
+          and "function renderTrashJobCard" in app
+          and "function restoreTrashJob" in app
+          and "function purgeTrashJob" in app
+          and "function loadMergeHistory" in app
+          and "RECYCLE_MODE_LABEL" in app
+          and "MERGE_REASON_LABEL" in app
+          and "trash-card" in read(os.path.join(web, "styles.css")),
+          "trash ui markers missing")
+
     check("FE-RISK-TEXT", "风险提示文案与契约逐字一致（index.html）",
           RISK_TEXT in html, "risk text not found verbatim")
     risk_region = ""
@@ -1052,6 +1121,8 @@ def check_frontend():
         ("/api/cache/clear", "增量缓存清理"),
         ("/api/preview/thumb", "预览缩略图"),
         ("/api/preview/media", "预览媒体信息"),
+        ("/api/trash", "套件回收站"),
+        ("/api/merges", "合并记录"),
     ]
     missing = [name for marker, name in endpoints if marker not in app]
     check("FE-ENDPOINTS", "前端覆盖契约全部 API 端点",

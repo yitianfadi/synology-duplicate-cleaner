@@ -113,6 +113,12 @@ DEFAULT_SETTINGS = {
     "protect_dirs": [],
     "protect_name_regex": [],
     "protect_sidecar_files": config.PROTECT_SIDECAR_DEFAULT,
+    # --- v0045 硬链接合并 / 套件独立回收站（docs/MERGE_TRASH_CONTRACT.md）---
+    # 硬链接合并默认关闭（不可逆操作；开启后仍需逐组确认 + confirm=MERGE）。
+    "merge_enabled": config.MERGE_ENABLED_DEFAULT,
+    # 删除后的去向：share=共享文件夹 #recycle（默认，DSM 回收站可见）；
+    # package=套件独立回收站（同卷 rename，可在任务中心整组恢复/清理）。
+    "delete_recycle_mode": config.RECYCLE_MODE_DEFAULT,
 }
 
 # 密钥键：GET/日志/审计/扫描结果中绝不允许出现明文
@@ -532,6 +538,13 @@ def _normalize_value(key, value):
         return _check_path_list(key, value)
     if key == "protect_name_regex":
         return _check_exclude_patterns(key, value, True)
+    # --- v0045 合并 / 回收站模式 ---
+    if key == "merge_enabled":
+        return _check_bool(key, value)
+    if key == "delete_recycle_mode":
+        if value not in config.RECYCLE_MODES:
+            _err(u"delete_recycle_mode 只能是 share/package", {"key": key})
+        return value
     if key == "skip_symlinks":
         # 无论前端传什么，符号链接一律跳过（安全强制）
         if not isinstance(value, bool):

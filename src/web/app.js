@@ -23,7 +23,8 @@ import {
   ACTIVE_STATUS, AUDIT_LABEL, CSRF_KEY, DEFAULT_SETTINGS, DEFAULT_SIMILARITY_EXTENSIONS,
   DEFAULT_VIDEO_EXTENSIONS, DELETE_REASON_LABEL, DELETE_STATUS_LABEL,
   ERROR_FALLBACK, JOB_STATUS_LABEL, KEEP_LABEL, KEEP_MODE_LABEL,
-  KEEP_RULE_LABEL, SIDECAR_MODE_LABEL, PROTECT_REASON_LABEL, LEGACY_VIEW_ALIASES,
+  KEEP_RULE_LABEL, SIDECAR_MODE_LABEL, PROTECT_REASON_LABEL,
+  RECYCLE_MODE_LABEL, MERGE_REASON_LABEL, LEGACY_VIEW_ALIASES,
   MTIME_FALLBACK_LABEL, MTIME_FALLBACK_REASONS, POLL_MS,
   SIZE_UNITS, SOURCE_INFO, STAGE_LABEL, STATUS_BADGE, STATUS_LABEL,
   SUBTITLE_ACTIVE_STATUS, SUBTITLE_LANGUAGES, SUBTITLE_OUTPUT_KIND_LABEL,
@@ -308,7 +309,7 @@ import {
   }
 
   // ==================== 7.1 任务中心标签页（键盘 / aria 可访问） ====================
-  var TASK_TABS = ['history', 'subtitles', 'deletions', 'logs'];
+  var TASK_TABS = ['history', 'subtitles', 'deletions', 'trash', 'logs'];
 
   function normalizeTaskTab(tab) {
     return TASK_TABS.indexOf(tab) === -1 ? 'history' : tab;
@@ -352,6 +353,7 @@ import {
     if (tab === 'history') { loadHistory(); }
     else if (tab === 'subtitles') { loadSubtitleJobs(); }
     else if (tab === 'deletions') { loadDeletionJobs(); }
+    else if (tab === 'trash') { loadTrashPanel(); }
     else if (tab === 'logs') { loadLogs(); }
   }
 
@@ -3891,10 +3893,30 @@ import {
       manual ? '本组不参与删除' : '选择本组副本'
     ]);
 
-    var side = el('div', { className: 'group-head-side' }, [
+    var sideChildren = [
       el('div', { className: 'group-badges' }, badges),
       groupCheckLabel
-    ]);
+    ];
+    if (mergeEnabled()) {
+      var mergeCandidates = (group.files || []).filter(function (item) {
+        return !item.is_keep && !item.protected;
+      });
+      if (mergeCandidates.length) {
+        var mergeBtn = el('button', {
+          className: 'btn btn-ghost btn-sm group-merge-btn',
+          attrs: {
+            type: 'button',
+            title: '把这些副本替换成指向保留项的硬链接：节省空间、不删除路径，合并后同一内容共享'
+          },
+          text: '合并为硬链接'
+        });
+        mergeBtn.addEventListener('click', function () {
+          openMergeGroupDialog(group);
+        });
+        sideChildren.push(mergeBtn);
+      }
+    }
+    var side = el('div', { className: 'group-head-side' }, sideChildren);
     var head = el('div', { className: 'group-head' }, [headMain, side]);
     if (manual) {
       head.appendChild(el('p', { className: 'group-hint' }, [
@@ -6302,7 +6324,7 @@ import {
     if (fallbackInfo.count > 0) {
       addKv('修改时间降级', fmtInt(fallbackInfo.count) + ' 组');
     }
-    addKv('删除方式', permanent ? '永久删除（不可恢复）' : '移动到回收站', permanent ? 'is-permanent' : '');
+    addKv('删除方式', permanent ? '永久删除（不可恢复）' : ('移动到回收站（' + planRecycleModeLabel(plan) + '）'), permanent ? 'is-permanent' : '');
     addKv('涉及分组', fmtInt(plan.groups_affected) + ' 组');
     addKv('校验跳过', fmtInt(skippedTotal) + ' 个');
     if (plan.expires_at) { addKv('计划有效期', fmtDateTime(plan.expires_at)); }
@@ -6340,7 +6362,9 @@ import {
       el('label', { className: 'modal-check-row' }, [
         recycleCheckbox,
         el('span', {}, [
-          '移动到回收站（推荐，可在 DSM 回收站中恢复）',
+          recycleMode === 'package'
+            ? '移动到套件独立回收站（可在「任务中心 → 回收站与合并」整组恢复）'
+            : '移动到回收站（推荐，可在 DSM 回收站中恢复）',
           el('span', { className: 'modal-note', text: '关闭后为永久删除，删除后不可恢复。' })
         ])
       ])
@@ -6419,7 +6443,9 @@ import {
       icon('warning'),
       permanent
         ? '即将永久删除以下文件。删除后不可恢复，请确认已完成备份并核对保留项！'
-        : '即将把以下文件移动到回收站，可在 DSM 回收站中恢复。'
+        : ((plan && plan.recycle_mode) === 'package'
+          ? '即将把以下文件移动到套件独立回收站，可在「任务中心 → 回收站与合并」整组恢复。'
+          : '即将把以下文件移动到回收站，可在 DSM 回收站中恢复。')
     ]));
     var kv = el('dl', { className: 'modal-kv' });
     function addKv(label, value, cls) {
@@ -6441,7 +6467,7 @@ import {
     if (fallbackInfo.count > 0) {
       addKv('修改时间降级', fmtInt(fallbackInfo.count) + ' 组');
     }
-    addKv('删除方式', permanent ? '永久删除（不可恢复）' : '移动到回收站', permanent ? 'is-permanent' : '');
+    addKv('删除方式', permanent ? '永久删除（不可恢复）' : ('移动到回收站（' + planRecycleModeLabel(plan) + '）'), permanent ? 'is-permanent' : '');
     addKv('涉及分组', fmtInt(plan.groups_affected) + ' 组');
     addKv('校验跳过', fmtInt(skippedTotal) + ' 个');
     body.appendChild(el('div', { className: 'modal-section' }, [kv]));
@@ -8762,6 +8788,426 @@ import {
     bindTaskTabs();
   }
 
+  // ==================== 15.5 v0045 套件回收站 / 硬链接合并 ====================
+  function mergeEnabled() {
+    if (state.settings && typeof state.settings.merge_enabled === 'boolean') {
+      return state.settings.merge_enabled === true;
+    }
+    var meta = state.meta && state.meta.merge;
+    return !!(meta && meta.enabled === true);
+  }
+
+  function planRecycleModeLabel(plan) {
+    var mode = (plan && plan.recycle_mode) === 'package' ? 'package' : 'share';
+    return RECYCLE_MODE_LABEL[mode] || '回收站';
+  }
+
+  function reasonLabel(map, reason, fallback) {
+    return (map && map[reason]) || fallback || reason || '—';
+  }
+
+  async function loadTrashPanel() {
+    if (els.trashLoading) { setHidden(els.trashLoading, false); }
+    if (els.trashError) { setHidden(els.trashError, true); }
+    if (els.trashEmpty) { setHidden(els.trashEmpty, true); }
+    try {
+      var res = await api('/api/trash?limit=100', { timeout: 20000 });
+      if (els.trashLoading) { setHidden(els.trashLoading, true); }
+      renderTrashList(res || {});
+      if (els.trashRecycleMode) {
+        var mode = (res && res.recycle_mode) || 'share';
+        setText(els.trashRecycleMode,
+          '当前删除去向：' + (RECYCLE_MODE_LABEL[mode] || mode));
+      }
+    } catch (err) {
+      if (els.trashLoading) { setHidden(els.trashLoading, true); }
+      setText(els.trashError, errorMessage(err, '加载回收站失败，请稍后重试。'));
+      setHidden(els.trashError, false);
+    }
+    loadMergeHistory();
+  }
+
+  function renderTrashList(data) {
+    if (!els.trashList) { return; }
+    clear(els.trashList);
+    var jobs = Array.isArray(data.trash) ? data.trash : [];
+    setHidden(els.trashEmpty, jobs.length > 0);
+    jobs.forEach(function (job) {
+      els.trashList.appendChild(renderTrashJobCard(job));
+    });
+  }
+
+  function renderTrashJobCard(job) {
+    var card = el('div', {
+      className: 'trash-card' + (job.purged ? ' is-purged' : '')
+    });
+    var metaBits = [
+      fmtDateTime(job.created_at || ''),
+      '文件 ' + fmtInt(job.entries_total || 0) + ' 个',
+      '已恢复 ' + fmtInt(job.entries_restored || 0),
+      '可恢复 ' + fmtInt(job.entries_remaining || 0),
+      '剩余 ' + fmtBytes(job.bytes_remaining || 0)
+    ];
+    card.appendChild(el('div', { className: 'trash-card-head' }, [
+      el('div', { className: 'trash-card-title', text: '删除批次 ' + (job.trash_id || '') }),
+      el('div', { className: 'trash-card-meta', text: metaBits.join(' · ') })
+    ]));
+    var actions = el('div', { className: 'trash-card-actions' });
+    var detailBtn = el('button', {
+      className: 'btn btn-ghost btn-sm', attrs: { type: 'button' }, text: '查看明细'
+    });
+    detailBtn.addEventListener('click', function () { openTrashDetail(job.trash_id); });
+    actions.appendChild(detailBtn);
+    if (job.purged) {
+      actions.appendChild(el('span', { className: 'badge badge-gray', text: '已清理' }));
+    } else if (Number(job.entries_remaining || 0) > 0) {
+      var restoreBtn = el('button', {
+        className: 'btn btn-primary btn-sm', attrs: { type: 'button' },
+        text: '整组恢复'
+      });
+      restoreBtn.addEventListener('click', function () { restoreTrashJob(job); });
+      actions.appendChild(restoreBtn);
+      var purgeBtn = el('button', {
+        className: 'btn btn-danger btn-sm', attrs: { type: 'button' },
+        text: '清理（永久删除）'
+      });
+      purgeBtn.addEventListener('click', function () { purgeTrashJob(job); });
+      actions.appendChild(purgeBtn);
+    }
+    card.appendChild(actions);
+    return card;
+  }
+
+  async function openTrashDetail(trashId) {
+    var closeBtn = el('button', {
+      className: 'btn btn-ghost', attrs: { type: 'button' }, text: '关闭',
+      on: { click: function () { closeModal(true); } }
+    });
+    var modal = openModal({
+      title: '回收站明细',
+      subtitle: trashId,
+      size: 'lg',
+      body: el('div', { className: 'modal-loading' }, [
+        el('span', { className: 'spinner spinner-lg' }), '正在加载明细…'
+      ]),
+      footer: [closeBtn],
+      initialFocus: closeBtn
+    });
+    try {
+      var detail = await api('/api/trash/' + encodePath(trashId), { timeout: 20000 });
+      var entries = detail.entries || [];
+      var list = el('div', { className: 'trash-detail-list' });
+      entries.forEach(function (entry) {
+        var stateText = entry.restored_at ? '已恢复'
+          : (entry.purged_at ? '已清理'
+            : (entry.trash_exists ? (entry.original_exists ? '原位置已存在' : '可恢复') : '回收站内已缺失'));
+        var stateClass = entry.restored_at ? 'badge-green'
+          : (entry.purged_at ? 'badge-gray'
+            : (entry.trash_exists ? (entry.original_exists ? 'badge-amber' : 'badge-blue') : 'badge-red'));
+        list.appendChild(el('div', { className: 'trash-detail-row' }, [
+          el('div', { className: 'trash-detail-path', attrs: { title: entry.original }, text: entry.original }),
+          el('span', { className: 'badge ' + stateClass, text: stateText }),
+          el('span', { className: 'muted', text: fmtBytes(entry.size || 0) })
+        ]));
+      });
+      if (!entries.length) {
+        list.appendChild(el('p', { className: 'hint', text: '该批次没有记录。' }));
+      }
+      modal.setBody(el('div', { className: 'trash-detail-body' }, [
+        el('p', { className: 'hint', text: '文件位置：' + ((detail.summary && detail.summary.trash_id) || trashId) }),
+        list
+      ]));
+    } catch (err) {
+      modal.setBody(el('div', { className: 'state-box state-error', text: errorMessage(err, '加载回收站明细失败。') }));
+    }
+  }
+
+  async function restoreTrashJob(job) {
+    var ok = await confirmDialog({
+      title: '整组恢复？',
+      message: '将把该批次中仍在回收站里的文件恢复到原位置（共 '
+        + fmtInt(job.entries_remaining || 0) + ' 个，'
+        + fmtBytes(job.bytes_remaining || 0) + '）。原位置已有同名文件时不会覆盖。',
+      confirmText: '恢复'
+    });
+    if (!ok) { return; }
+    try {
+      var res = await api('/api/trash/' + encodePath(job.trash_id) + '/restore', {
+        method: 'POST', body: { confirm: true }, timeout: 120000
+      });
+      var skipped = (res.results || []).filter(function (item) {
+        return item.status === 'skipped';
+      });
+      var failed = (res.results || []).filter(function (item) {
+        return item.status === 'failed';
+      });
+      var message = '已恢复 ' + fmtInt(res.restored || 0) + ' 个文件';
+      if (skipped.length) { message += '；跳过 ' + fmtInt(skipped.length) + ' 个（冲突/缺失）'; }
+      if (failed.length) { message += '；失败 ' + fmtInt(failed.length) + ' 个'; }
+      toast(message, failed.length ? 'error' : 'success', 6000);
+      await loadTrashPanel();
+    } catch (err) {
+      toast(errorMessage(err, '恢复失败，请稍后重试。'), 'error', 6000);
+    }
+  }
+
+  function purgeTrashJob(job) {
+    var input = el('input', {
+      attrs: { type: 'text', placeholder: '请输入“永久删除”', autocomplete: 'off', spellcheck: 'false' }
+    });
+    var errorEl = el('p', { className: 'field-error', attrs: { role: 'alert' }, text: '' });
+    var cancelBtn = el('button', {
+      className: 'btn btn-ghost', attrs: { type: 'button' }, text: '取消',
+      on: { click: function () { closeModal(true); } }
+    });
+    var modal = openModal({
+      title: '清理回收站（不可恢复）',
+      message: '将永久删除该批次在回收站里的 ' + fmtInt(job.entries_remaining || 0)
+        + ' 个文件（' + fmtBytes(job.bytes_remaining || 0) + '）。',
+      size: 'sm',
+      body: el('div', { className: 'form-grid' }, [
+        el('div', { className: 'field field-wide' }, [
+          el('label', { text: '确认短语' }), input, errorEl
+        ])
+      ]),
+      footer: [cancelBtn, el('button', {
+        className: 'btn btn-danger', attrs: { type: 'button' }, text: '永久删除',
+        on: {
+          click: async function () {
+            if (input.value.trim() !== '永久删除') {
+              setText(errorEl, '请输入完整的“永久删除”。');
+              show(errorEl);
+              return;
+            }
+            try {
+              var res = await api('/api/trash/' + encodePath(job.trash_id) + '/purge', {
+                method: 'POST',
+                body: { confirm: true, permanent_phrase: input.value.trim() },
+                timeout: 120000
+              });
+              closeModal(true);
+              toast('已清理 ' + fmtInt(res.removed || 0) + ' 个文件，释放 '
+                + fmtBytes(res.bytes_freed || 0), 'success', 6000);
+              await loadTrashPanel();
+            } catch (err) {
+              setText(errorEl, errorMessage(err, '清理失败，请稍后重试。'));
+              show(errorEl);
+            }
+          }
+        }
+      })]
+    });
+    setTimeout(function () { try { input.focus(); } catch (e) { /* 忽略 */ } }, 50);
+    return modal;
+  }
+
+  async function loadMergeHistory() {
+    if (!els.trashMergeList) { return; }
+    setHidden(els.trashMergeLoading, false);
+    try {
+      var res = await api('/api/merges?limit=100', { timeout: 20000 });
+      setHidden(els.trashMergeLoading, true);
+      var jobs = Array.isArray(res.merges) ? res.merges : [];
+      clear(els.trashMergeList);
+      setHidden(els.trashMergeEmpty, jobs.length > 0);
+      setText(els.trashMergeCount, jobs.length ? '共 ' + fmtInt(jobs.length) + ' 次' : '');
+      jobs.forEach(function (job) {
+        els.trashMergeList.appendChild(renderMergeJobCard(job));
+      });
+    } catch (err) {
+      setHidden(els.trashMergeLoading, true);
+      setHidden(els.trashMergeEmpty, false);
+      if (els.trashMergeCount) {
+        setText(els.trashMergeCount, '加载失败：' + errorMessage(err, '请稍后重试'));
+      }
+    }
+  }
+
+  function renderMergeJobCard(job) {
+    var card = el('div', { className: 'trash-card' });
+    card.appendChild(el('div', { className: 'trash-card-head' }, [
+      el('div', { className: 'trash-card-title', text: '合并任务 ' + (job.job_id || '') }),
+      el('div', {
+        className: 'trash-card-meta',
+        text: [fmtDateTime(job.started_at || ''),
+               '合并 ' + fmtInt(job.done || job.entries || job.total || 0) + ' 个路径',
+               fmtBytes(job.bytes_done || job.bytes_total || 0),
+               job.status || ''].join(' · ')
+      })
+    ]));
+    var actions = el('div', { className: 'trash-card-actions' });
+    var detailBtn = el('button', {
+      className: 'btn btn-ghost btn-sm', attrs: { type: 'button' }, text: '查看明细'
+    });
+    detailBtn.addEventListener('click', function () { openMergeDetail(job.job_id); });
+    actions.appendChild(detailBtn);
+    if (Number(job.done || job.entries || 0) > 0) {
+      var restoreBtn = el('button', {
+        className: 'btn btn-primary btn-sm', attrs: { type: 'button' },
+        text: '恢复为独立副本'
+      });
+      restoreBtn.addEventListener('click', function () { restoreMergeJob(job); });
+      actions.appendChild(restoreBtn);
+    }
+    card.appendChild(actions);
+    return card;
+  }
+
+  async function openMergeDetail(jobId) {
+    var closeBtn = el('button', {
+      className: 'btn btn-ghost', attrs: { type: 'button' }, text: '关闭',
+      on: { click: function () { closeModal(true); } }
+    });
+    var modal = openModal({
+      title: '合并明细',
+      subtitle: jobId,
+      size: 'lg',
+      body: el('div', { className: 'modal-loading' }, [
+        el('span', { className: 'spinner spinner-lg' }), '正在加载明细…'
+      ]),
+      footer: [closeBtn],
+      initialFocus: closeBtn
+    });
+    try {
+      var detail = await api('/api/merges/' + encodePath(jobId), { timeout: 20000 });
+      var list = el('div', { className: 'trash-detail-list' });
+      (detail.entries || []).forEach(function (entry) {
+        var labels = {
+          linked: '硬链接中', independent: '已独立', missing: '文件不存在'
+        };
+        var classes = { linked: 'badge-blue', independent: 'badge-green', missing: 'badge-red' };
+        list.appendChild(el('div', { className: 'trash-detail-row' }, [
+          el('div', { className: 'trash-detail-path', attrs: { title: entry.path }, text: entry.path }),
+          el('span', {
+            className: 'badge ' + (classes[entry.state] || 'badge-gray'),
+            text: labels[entry.state] || entry.state
+          }),
+          el('span', { className: 'muted', text: '→ ' + (entry.master || '') })
+        ]));
+      });
+      if (!(detail.entries || []).length) {
+        list.appendChild(el('p', { className: 'hint', text: '没有可显示的合并路径。' }));
+      }
+      modal.setBody(el('div', { className: 'trash-detail-body' }, [list]));
+    } catch (err) {
+      modal.setBody(el('div', { className: 'state-box state-error', text: errorMessage(err, '加载合并明细失败。') }));
+    }
+  }
+
+  async function restoreMergeJob(job) {
+    var ok = await confirmDialog({
+      title: '恢复为独立副本？',
+      message: '将为每条路径复制一份独立内容（Btrfs 使用 FICLONE 秒级复制，其它文件系统回退普通复制，'
+        + '需要与文件同等大小的可用空间）。恢复后这些路径不再共享内容。',
+      confirmText: '恢复'
+    });
+    if (!ok) { return; }
+    try {
+      var res = await api('/api/merges/' + encodePath(job.job_id) + '/restore', {
+        method: 'POST', body: { confirm: true }, timeout: 180000
+      });
+      var skipped = (res.results || []).filter(function (item) {
+        return item.status === 'skipped';
+      });
+      var failed = (res.results || []).filter(function (item) {
+        return item.status === 'failed';
+      });
+      var message = '已恢复 ' + fmtInt(res.restored || 0) + ' 个独立副本'
+        + (res.reflink ? '（其中 FICLONE ' + fmtInt(res.reflink) + ' 个）' : '');
+      if (skipped.length) { message += '；跳过 ' + fmtInt(skipped.length) + ' 个'; }
+      if (failed.length) { message += '；失败 ' + fmtInt(failed.length) + ' 个'; }
+      toast(message, failed.length ? 'error' : 'success', 6000);
+      await loadMergeHistory();
+    } catch (err) {
+      toast(errorMessage(err, '恢复失败，请稍后重试。'), 'error', 6000);
+    }
+  }
+
+  function openMergeGroupDialog(group) {
+    var candidates = (group.files || []).filter(function (item) {
+      return !item.is_keep && !item.protected;
+    });
+    if (!candidates.length) {
+      toast('该组没有可合并的副本（保留项/受保护文件不可合并）。', 'info');
+      return;
+    }
+    var bytes = candidates.reduce(function (total, item) {
+      return total + (Number(item.size) || 0);
+    }, 0);
+    var paths = candidates.slice(0, 8).map(function (item) { return item.name || item.path; });
+    confirmDialog({
+      title: '合并为硬链接？',
+      message: '将把本组 ' + fmtInt(candidates.length) + ' 个副本（' + fmtBytes(bytes)
+        + '）替换成指向保留项的硬链接：路径都还在、内容共享、可释放空间。\n\n'
+        + '注意：合并后任一路径的内容修改会影响所有路径；回收站无法恢复“原来的第二个副本”，'
+        + '但可在「任务中心 → 回收站与合并」里恢复为独立副本。\n\n'
+        + '示例：' + paths.join('、') + (candidates.length > paths.length ? ' …' : ''),
+      confirmText: '继续'
+    }).then(function (ok) {
+      if (!ok) { return; }
+      runMergePlan(candidates.map(function (item) { return item.file_id; }));
+    });
+  }
+
+  async function runMergePlan(fileIds) {
+    if (!state.scan.id) { toast('请先完成一次扫描。', 'info'); return; }
+    try {
+      var planRes = await api('/api/scans/' + encodePath(state.scan.id) + '/merge-plan', {
+        method: 'POST', body: { file_ids: fileIds }, timeout: 30000
+      });
+      var plan = planRes.plan || {};
+      if (Number(plan.count || 0) <= 0) {
+        toast('没有可合并的文件。', 'info');
+        return;
+      }
+      var skipped = plan.skipped || [];
+      var skippedText = skipped.length
+        ? ('\n\n跳过 ' + fmtInt(skipped.length) + ' 个：' + skipped.slice(0, 5).map(function (item) {
+            return (item.path || '') + '（' + reasonLabel(MERGE_REASON_LABEL, item.reason) + '）';
+          }).join('；'))
+        : '';
+      var ok = await confirmDialog({
+        title: '最终确认：合并为硬链接（' + fmtInt(plan.count) + ' 个）',
+        message: '计划已生成：' + fmtInt(plan.count) + ' 个副本，' + fmtBytes(plan.bytes || 0)
+          + '，涉及 ' + fmtInt(plan.groups_affected || 0) + ' 组。\n\n'
+          + (plan.warning || '') + skippedText,
+        confirmText: '执行合并',
+        danger: true
+      });
+      if (!ok) { return; }
+      var startRes = await api('/api/scans/' + encodePath(state.scan.id) + '/merge', {
+        method: 'POST',
+        body: { plan_id: plan.plan_id, confirm: 'MERGE' },
+        timeout: 30000
+      });
+      var jobId = startRes.job_id;
+      var job = await pollMergeJob(jobId);
+      var summary = '合并完成：' + fmtInt(job.done || 0) + ' 个路径';
+      if (job.skipped) { summary += '，跳过 ' + fmtInt(job.skipped); }
+      if (job.failed) { summary += '，失败 ' + fmtInt(job.failed); }
+      toast(summary, job.failed ? 'error' : 'success', 7000);
+      await loadResults(true);
+      await loadMergeHistory();
+    } catch (err) {
+      toast(errorMessage(err, '合并失败，请稍后重试。'), 'error', 7000);
+    }
+  }
+
+  async function pollMergeJob(jobId, timeoutMs) {
+    var deadline = Date.now() + (timeoutMs || 180000);
+    var last = {};
+    while (Date.now() < deadline) {
+      var res = await api('/api/scans/' + encodePath(state.scan.id) + '/merge/'
+        + encodePath(jobId), { timeout: 15000 });
+      last = res.job || {};
+      if (['completed', 'partial', 'failed', 'stopped'].indexOf(last.status) !== -1) {
+        return last;
+      }
+      await new Promise(function (resolve) { setTimeout(resolve, 700); });
+    }
+    return last;
+  }
+
   // ==================== 16. 操作日志 ====================
   async function loadLogs() {
     setHidden(els.logsLoading, false);
@@ -9083,6 +9529,11 @@ import {
       } else {
         scanBits.push('删除白名单关闭');
       }
+      scanBits.push(els.setDeleteRecycleMode
+        ? (RECYCLE_MODE_LABEL[els.setDeleteRecycleMode.value] || '回收站')
+        : '回收站');
+      scanBits.push(els.setMergeEnabled && els.setMergeEnabled.checked
+        ? '硬链接合并开' : '硬链接合并关');
       setText(els.settingsScanSummary, scanBits.join(' · '));
     }
     if (els.settingsSimilaritySummary) {
@@ -9214,6 +9665,12 @@ import {
     }
     if (els.setProtectSidecarFiles) {
       els.setProtectSidecarFiles.checked = settings.protect_sidecar_files !== false;
+    }
+    // v0045：硬链接合并 / 删除去向
+    if (els.setMergeEnabled) { els.setMergeEnabled.checked = settings.merge_enabled === true; }
+    if (els.setDeleteRecycleMode) {
+      els.setDeleteRecycleMode.value =
+        settings.delete_recycle_mode === 'package' ? 'package' : 'share';
     }
     if (els.setScanMode) { els.setScanMode.value = settings.scan_mode === 'similar' ? 'similar' : 'exact'; }
     if (els.setSimilarityThreshold) {
@@ -9402,6 +9859,11 @@ import {
     }
     settings.protect_sidecar_files = els.setProtectSidecarFiles
       ? !!els.setProtectSidecarFiles.checked : true;
+    // v0045：硬链接合并 / 删除去向
+    settings.merge_enabled = els.setMergeEnabled
+      ? !!els.setMergeEnabled.checked : false;
+    settings.delete_recycle_mode = (els.setDeleteRecycleMode
+      && els.setDeleteRecycleMode.value === 'package') ? 'package' : 'share';
     return { settings: settings, errors: errors, valid: Object.keys(errors).length === 0 };
   }
 

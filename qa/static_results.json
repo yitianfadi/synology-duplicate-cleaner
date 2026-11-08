@@ -1,7 +1,7 @@
 {
-  "generated_at": "2026-11-08T20:49:24+0800",
+  "generated_at": "2026-11-08T21:16:11+0800",
   "summary": {
-    "PASS": 181,
+    "PASS": 186,
     "FAIL": 0,
     "UNVERIFIED": 0
   },
@@ -28,7 +28,7 @@
       "id": "BE-FILE-COUNT",
       "name": "后端 Python 文件数",
       "status": "INFO",
-      "detail": "57"
+      "detail": "61"
     },
     {
       "id": "BE-SRC-HYGIENE",
@@ -41,6 +41,18 @@
       "name": "存在后端 unittest 测试文件",
       "status": "PASS",
       "detail": ""
+    },
+    {
+      "id": "BE-UNITTEST",
+      "name": "后端 unittest 全部通过",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "BE-UNITTEST-LOG",
+      "name": "unittest 结果",
+      "status": "INFO",
+      "detail": "Ran 566 tests in 168.997s"
     },
     {
       "id": "BE-NO-AUTODELETE",
@@ -325,6 +337,18 @@
       "detail": ""
     },
     {
+      "id": "BE-MERGE",
+      "name": "硬链接合并：独立计划 + confirm=MERGE + 全量重校验 + link/rename 原子替换 + manifest 与独立副本恢复（v0045）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "BE-TRASH",
+      "name": "套件独立回收站：删除到 #duplicate-cleaner-trash + manifest 整组恢复/清理（v0045）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
       "id": "FE-FILES",
       "name": "前端 index.html/app.js/styles.css 存在",
       "status": "PASS",
@@ -573,6 +597,18 @@
     {
       "id": "FE-PROTECT-UI",
       "name": "删除白名单：设置页规则 + 结果行受保护徽标 + 不可勾选 + 摘要统计（v0044）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "FE-MERGE-UI",
+      "name": "结果页逐组合并为硬链接（二次确认）+ 设置页开关 + 合并记录与恢复为独立副本（v0045）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "FE-TRASH-UI",
+      "name": "任务中心「回收站与合并」：套件回收站整组恢复/清理 + 合并记录（v0045）",
       "status": "PASS",
       "detail": ""
     },
@@ -992,7 +1028,7 @@
     },
     {
       "id": "SPK-DIST",
-      "name": "构建产物存在（DuplicateCleaner-1.1.0-0044.spk）",
+      "name": "构建产物存在（DuplicateCleaner-1.1.0-0045.spk）",
       "status": "PASS",
       "detail": ""
     },
@@ -1004,7 +1040,7 @@
     },
     {
       "id": "SPK-VERSION",
-      "name": "SPK INFO.version 与当前源码 APP_VERSION（1.1.0-0044）一致",
+      "name": "SPK INFO.version 与当前源码 APP_VERSION（1.1.0-0045）一致",
       "status": "PASS",
       "detail": ""
     },

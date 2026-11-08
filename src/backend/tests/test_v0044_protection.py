@@ -135,10 +135,15 @@ class ProtectionScanTest(unittest.TestCase):
     def test_scan_marks_protected_files(self):
         media = os.path.join(self.root, "media")
         # 两组精准重复：mkv 组（不保护）、srt 组（默认后缀保护）
-        write_bytes(os.path.join(media, "movie.mkv"), b"M" * 4096)
-        write_bytes(os.path.join(media, "movie2.mkv"), b"M" * 4096)
-        write_bytes(os.path.join(media, "movie.srt"), b"S" * 512)
-        write_bytes(os.path.join(media, "movie2.srt"), b"S" * 512)
+        mkv_a = write_bytes(os.path.join(media, "movie.mkv"), b"M" * 4096)
+        mkv_b = write_bytes(os.path.join(media, "movie2.mkv"), b"M" * 4096)
+        srt_a = write_bytes(os.path.join(media, "movie.srt"), b"S" * 512)
+        srt_b = write_bytes(os.path.join(media, "movie2.srt"), b"S" * 512)
+        # 注入可区分的创建时间，避免 btime 相同 → 转人工组（会让可选数量断言抖动）
+        self.harness.set_creation(mkv_a, 400)
+        self.harness.set_creation(mkv_b, 300)
+        self.harness.set_creation(srt_a, 200)
+        self.harness.set_creation(srt_b, 100)
         scan_id, meta = self.harness.run_scan(options={
             "media_sidecar_mode": "include"})
         self.assertEqual(meta["status"], "completed")
@@ -157,10 +162,14 @@ class ProtectionScanTest(unittest.TestCase):
 
     def test_scan_sidecar_protection_without_extension_rule(self):
         media = os.path.join(self.root, "media")
-        write_bytes(os.path.join(media, "movie.mkv"), b"M" * 4096)
-        write_bytes(os.path.join(media, "movie2.mkv"), b"M" * 4096)
-        write_bytes(os.path.join(media, "movie.srt"), b"S" * 512)
-        write_bytes(os.path.join(media, "movie2.srt"), b"S" * 512)
+        mkv_a = write_bytes(os.path.join(media, "movie.mkv"), b"M" * 4096)
+        mkv_b = write_bytes(os.path.join(media, "movie2.mkv"), b"M" * 4096)
+        srt_a = write_bytes(os.path.join(media, "movie.srt"), b"S" * 512)
+        srt_b = write_bytes(os.path.join(media, "movie2.srt"), b"S" * 512)
+        self.harness.set_creation(mkv_a, 400)
+        self.harness.set_creation(mkv_b, 300)
+        self.harness.set_creation(srt_a, 200)
+        self.harness.set_creation(srt_b, 100)
         scan_id, meta = self.harness.run_scan(options={
             "media_sidecar_mode": "include",
             "protect_extensions": [],

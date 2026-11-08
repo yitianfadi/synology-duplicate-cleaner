@@ -2427,3 +2427,36 @@ input[type="checkbox"]:disabled { cursor: not-allowed; }
   .compare-grid { grid-template-columns: minmax(0, 1fr); }
   .preview-thumb { width: 120px; height: 68px; }
 }
+
+/* ==========================================================================
+   v0045：套件回收站 / 硬链接合并
+   ========================================================================== */
+.trash-list { display: flex; flex-direction: column; gap: 10px; margin-top: 10px; }
+.trash-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 12px 14px;
+  background: #fff;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.trash-card.is-purged { opacity: .72; background: #fafbfd; }
+.trash-card-head { display: flex; flex-direction: column; gap: 2px; }
+.trash-card-title { font-weight: 600; font-size: 13.5px; }
+.trash-card-meta { font-size: 12px; color: var(--muted); }
+.trash-card-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.trash-detail-body { display: flex; flex-direction: column; gap: 8px; }
+.trash-detail-list { display: flex; flex-direction: column; gap: 6px; max-height: 50vh; overflow: auto; }
+.trash-detail-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 12.5px;
+}
+.trash-detail-path { font-family: var(--mono, monospace); overflow-wrap: anywhere; }
+.group-merge-btn { margin-top: 6px; }

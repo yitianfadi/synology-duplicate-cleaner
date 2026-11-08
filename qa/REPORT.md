@@ -910,7 +910,7 @@ python build/build_spk.py --no-icons --out-dir $env:TEMP\qa-build2
 
 ### 26.3 验证
 
-- unittest：**573 OK（5 skipped）**（新增 `test_v0044_preview.py` 12 例、`test_v0044_protection.py` 24 例）。
+- unittest：**549 OK（5 skipped）**（新增 `test_v0044_preview.py` 12 例、`test_v0044_protection.py` 24 例）。
 - static：**PASS=182 / FAIL=0 / UNVERIFIED=0**（新增 `BE-PREVIEW-THUMB`、`BE-PROTECT`、
   `FE-PREVIEW-THUMB`、`FE-PROTECT-UI`，路由/前端端点覆盖补齐 3 个预览接口）。
 - e2e：**174 PASS / 0 FAIL / 1 UNVERIFIED**（新增 `PRT-01..04`、`THUMB-01..04`；Windows symlink 历史项）。
@@ -941,6 +941,63 @@ python build/build_spk.py --no-icons --out-dir $env:TEMP\qa-build2
 
 - 4K/MKV 首次缩略图耗时与失败率（HEVC 软解一帧）；DSM 内置浏览器里并排对比/同步播放可用性；
   白名单对真实媒体库（srt/海报/nfo）的保护效果；受保护目录对照片库判重的影响。
+
+## 27. 附：v0045 硬链接合并与套件独立回收站（2026-11-08）
+
+### 27.1 需求与方案
+
+- 需求（v2 文档 扫描 优化 5）：“支持硬链接替代删除，适配 Btrfs；套件删除文件独立进入回收站，
+  支持整组重复文件一键恢复”。
+- 评估结论（[REQUIREMENTS_V2_ASSESSMENT.md](../docs/REQUIREMENTS_V2_ASSESSMENT.md) §2.5、§3.4）：
+  硬链接**可行但不可逆**（第二份 inode 无法恢复）→ 做成独立操作、默认关闭、逐组确认、提供
+  “恢复为独立副本”；独立回收站可行，但**不能直接把文件塞进 DSM 的 `#recycle`**（DSM UI 不认），
+  改为共享根下 `#duplicate-cleaner-trash/` + manifest 支撑整组恢复。
+
+### 27.2 实现
+
+- **硬链接合并**（`merge.py`）：只处理精准重复组的非保留项；计划阶段校验扫描记录/同文件系统/受保护/
+  已链接，执行阶段再跑 `revalidate(hash_check=True)` 后 `link(master, tmp)` + `rename(tmp, candidate)`
+  原子替换；`confirm="MERGE"`、计划 5 分钟过期一次性；manifest `<var>/merges/*.json`；
+  “恢复为独立副本”优先 `FICLONE`（Btrfs），回退普通复制并保持 mtime。
+- **套件独立回收站**（`trash.py`）：`delete_recycle_mode=package` 时删除移动到
+  `<share>/#duplicate-cleaner-trash/<时间戳>/<相对路径>`（同卷 rename、不复制）；每个删除任务写
+  `<var>/trash/<job_id>.json`；任务中心「回收站与合并」支持整组/部分恢复（原位置已存在则跳过、
+  绝不覆盖）与“永久删除”清理（需短语，只删清单记录文件）。
+- 设置：`merge_enabled`（默认 false）、`delete_recycle_mode`（默认 share）；`/api/meta` 暴露能力与标签。
+- 前端：结果页精准组「合并为硬链接」按钮（两次确认 + 跳过原因）；设置页合并开关与删除去向；
+  删除引导按 `recycle_mode` 显示去向；任务中心新增「回收站与合并」标签页。
+
+### 27.3 验证
+
+- unittest：**566 OK（5 skipped）**（新增 `test_v0045_merge.py` 10 例、`test_v0045_trash.py` 7 例）。
+- static：**PASS=186 / FAIL=0 / UNVERIFIED=0**（新增 `BE-MERGE`、`BE-TRASH`、`FE-MERGE-UI`、`FE-TRASH-UI`
+  与合并/回收站路由）。
+- e2e：**182 PASS / 0 FAIL / 1 UNVERIFIED**（新增 `MERGE-01..04`、`TRASH-00..03`；Windows symlink 历史项）。
+- 真实 Chromium 探针（`.uiprobe/probe_v0045.mjs` + `harness_v0045.py`）**13/13 PASS**：
+  设置回填/保存、扫描、合并计划与执行（同 inode/nlink）、恢复独立副本、套件回收站计划/批次/恢复、
+  任务中心「回收站与合并」渲染、无 console 错误；截图 `.uiprobe/v0045-trash.png`。
+
+### 27.4 踩坑
+
+- 合并清单必须**先落盘再对外暴露终态**：否则 e2e 轮询到 completed 立刻调恢复会 404（清单还没写）。
+- 合并后扫描器按 inode 去重，重复组会收缩；恢复后需要重新扫描才反映新的分组（结果页提示刷新）。
+- 恢复/合并测试不能假设“哪个是候选”：keeper 由创建时间决定，恢复后复制出来的文件 btime 会变，
+  下次扫描 keeper 可能翻转 —— 测试要按“两路径 inode 是否不同”判断，而不是固定文件名。
+- 反复执行探针时设置会持久化（merge_enabled=true），断言默认值不能写死“当前必须 false”。
+
+### 27.5 产物
+
+- `dist/DuplicateCleaner-1.1.0-0045.spk`：**39,075,840 B**
+  - SHA256 `c54580277300086dbce5bed8f4d7df40b1328701a7043e8731c4ab99f649f822`
+  - package.tgz MD5 `988ddda60b97b7f08994436e5dbc83ef`
+- 版本 1.1.0-0045 同步 8 处；SQLite schema 仍 **v8**（本版无 DB 迁移；合并/回收站清单是 `<var>/` JSON）。
+
+### 27.6 真机待验证（Btrfs）
+
+- 合并后 `df` 释放空间与 `stat` nlink；跨卷（volume1↔volume2）合并是否被正确跳过；
+- `FICLONE` 恢复是否秒级、非 Btrfs 文件系统回退复制是否正常；
+- 套件回收站在 File Station 的可见性、整组恢复后文件/权限/mtime 是否正常；
+- 合并组在下次扫描中是否正确收缩（不应再算“可释放空间”）。
 
 
 

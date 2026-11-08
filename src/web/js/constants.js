@@ -104,6 +104,18 @@ export var PROTECT_REASON_LABEL = {
   extension: '后缀受保护', directory: '目录受保护',
   name: '文件名命中保护规则', sidecar: '视频附属文件'
 };
+// v0045：删除去向（与后端 config.RECYCLE_MODE_LABELS 对应）
+export var RECYCLE_MODE_LABEL = {
+  share: '共享文件夹回收站（#recycle）',
+  package: '套件独立回收站（可整组恢复）'
+};
+// v0045：合并计划/任务的跳过原因
+export var MERGE_REASON_LABEL = {
+  ALREADY_LINKED: '已经是硬链接', CROSS_DEVICE: '跨文件系统',
+  MANUAL_KEEP_REQUIRED: '需人工确认保留项', IS_KEEPER: '是保留项',
+  PROTECTED: '受删除白名单保护', NOT_FOUND: '文件不存在',
+  FILE_CHANGED: '文件已被修改', HASH_MISMATCH: '哈希不一致'
+};
 export var JOB_STATUS_LABEL = {
   running: '删除中', completed: '删除完成', partial: '部分成功',
   failed: '删除失败', stopped: '已停止'
@@ -275,5 +287,8 @@ export var DEFAULT_SETTINGS = {
   protect_dirs: [],
   protect_name_regex: [],
   protect_sidecar_files: true,
+  // v0045：硬链接合并（默认关）与删除去向（share=#recycle 默认 / package=套件回收站）
+  merge_enabled: false,
+  delete_recycle_mode: 'share',
 };
 export var SIZE_UNITS = { kb: 1024, mb: 1048576, gb: 1073741824 };

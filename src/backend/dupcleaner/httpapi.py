@@ -193,6 +193,27 @@ class Api(object):
              self._delete, False),
             ("GET", re.compile(r"^/api/scans/(?P<scan_id>[^/]+)/delete/(?P<job_id>[^/]+)$"),
              self._delete_job, False),
+            # v0045：硬链接合并（计划/执行/查询/恢复）
+            ("POST", re.compile(r"^/api/scans/(?P<scan_id>[^/]+)/merge-plan$"),
+             self._merge_plan, False),
+            ("POST", re.compile(r"^/api/scans/(?P<scan_id>[^/]+)/merge$"),
+             self._merge_start, False),
+            ("GET", re.compile(
+                r"^/api/scans/(?P<scan_id>[^/]+)/merge/(?P<job_id>[^/]+)$"),
+             self._merge_job, False),
+            ("GET", re.compile(r"^/api/merges$"), self._merges, False),
+            ("GET", re.compile(r"^/api/merges/(?P<job_id>[^/]+)$"),
+             self._merge_detail, False),
+            ("POST", re.compile(r"^/api/merges/(?P<job_id>[^/]+)/restore$"),
+             self._merge_restore, False),
+            # v0045：套件独立回收站（列表/详情/整组恢复/清理）
+            ("GET", re.compile(r"^/api/trash$"), self._trash_list, False),
+            ("GET", re.compile(r"^/api/trash/(?P<trash_id>[^/]+)$"),
+             self._trash_detail, False),
+            ("POST", re.compile(r"^/api/trash/(?P<trash_id>[^/]+)/restore$"),
+             self._trash_restore, False),
+            ("POST", re.compile(r"^/api/trash/(?P<trash_id>[^/]+)/purge$"),
+             self._trash_purge, False),
             ("GET", re.compile(r"^/api/preview$"), self._preview, False),
             # v0044：预览增强（缩略图 / 媒体信息 / 缩略图时间点清单）
             ("GET", re.compile(r"^/api/preview/thumb$"), self._preview_thumb, False),
@@ -417,6 +438,19 @@ class Api(object):
                 "thumb_count_max": config.THUMB_COUNT_MAX,
                 "thumb_cache_entries": config.THUMB_MAX_ENTRIES,
                 "sync_tolerance_sec": config.PREVIEW_SYNC_TOLERANCE_SEC,
+            },
+            # v0045：硬链接合并 / 回收站模式
+            "merge": {
+                "enabled": bool(self.services.settings.get().get("merge_enabled")),
+                "enabled_default": config.MERGE_ENABLED_DEFAULT,
+                "plan_ttl_seconds": config.MERGE_PLAN_TTL_SECONDS,
+            },
+            "recycle": {
+                "mode": (self.services.settings.get().get("delete_recycle_mode")
+                         or config.RECYCLE_MODE_DEFAULT),
+                "modes": list(config.RECYCLE_MODES),
+                "labels": dict(config.RECYCLE_MODE_LABELS),
+                "trash_dir_name": config.TRASH_DIR_NAME,
             },
             # v0028 目录批量字幕能力（docs/SUBTITLE_BATCH_CONTRACT.md）
             "subtitle": {
@@ -1054,6 +1088,81 @@ class Api(object):
     def _delete_job(self, request, session, params):
         job = self.services.deletion.get_job(params["scan_id"], params["job_id"])
         return json_response({"ok": True, "job": job})
+
+    # ------------------------------------------------------------------
+    # v0045：硬链接合并 / 套件独立回收站
+    # ------------------------------------------------------------------
+    def _merge_plan(self, request, session, params):
+        body = _json_body(request)
+        plan = self.services.merges.create_plan(
+            session, params["scan_id"], body)
+        return json_response({"ok": True, "plan": plan})
+
+    def _merge_start(self, request, session, params):
+        body = _json_body(request)
+        job_id = self.services.merges.start_merge(
+            session, params["scan_id"], body)
+        return json_response({"ok": True, "job_id": job_id}, status=202)
+
+    def _merge_job(self, request, session, params):
+        job = self.services.merges.get_job(params["scan_id"], params["job_id"])
+        return json_response({"ok": True, "job": job})
+
+    def _merges(self, request, session, params):
+        scan_id = request.query_last("scan_id", None) or None
+        limit = _query_int(request, "limit", 50)
+        return json_response({"ok": True,
+                              "merges": self.services.merges.list_jobs(
+                                  scan_id=scan_id, limit=limit)})
+
+    def _merge_restore(self, request, session, params):
+        body = _json_body(request)
+        result = self.services.merges.restore(
+            session, params["job_id"], body)
+        payload = {"ok": True}
+        payload.update(result)
+        return json_response(payload)
+
+    def _merge_detail(self, request, session, params):
+        detail = self.services.merges.detail(params["job_id"])
+        payload = {"ok": True}
+        payload.update(detail)
+        return json_response(payload)
+
+    def _trash_list(self, request, session, params):
+        limit = _query_int(request, "limit", 100)
+        settings = self.services.settings.get() or {}
+        mode = settings.get("delete_recycle_mode") or config.RECYCLE_MODE_DEFAULT
+        return json_response({
+            "ok": True,
+            "trash": self.services.trash.list_jobs(limit=limit),
+            "recycle_mode": mode,
+            "recycle_modes": list(config.RECYCLE_MODES),
+            "recycle_mode_labels": dict(config.RECYCLE_MODE_LABELS),
+            "trash_dir_name": config.TRASH_DIR_NAME,
+        })
+
+    def _trash_detail(self, request, session, params):
+        detail = self.services.trash.detail(params["trash_id"])
+        payload = {"ok": True}
+        payload.update(detail)
+        return json_response(payload)
+
+    def _trash_restore(self, request, session, params):
+        body = _json_body(request)
+        result = self.services.trash.restore(
+            session, params["trash_id"], body)
+        payload = {"ok": True}
+        payload.update(result)
+        return json_response(payload)
+
+    def _trash_purge(self, request, session, params):
+        body = _json_body(request)
+        result = self.services.trash.purge(
+            session, params["trash_id"], body)
+        payload = {"ok": True}
+        payload.update(result)
+        return json_response(payload)
 
     # ------------------------------------------------------------------
     # 预览 / 日志

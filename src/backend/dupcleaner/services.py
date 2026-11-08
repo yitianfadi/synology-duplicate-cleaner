@@ -7,6 +7,7 @@ from . import config
 from .auth import AuthManager
 from .browse import BrowseService
 from .deletion import DeletionManager
+from .merge import MergeManager
 from .preview import PreviewService
 from .scanner import ScanManager
 from .settings import SettingsManager
@@ -14,6 +15,7 @@ from .shares import ShareService
 from .store import Store
 from .subtitles import SubtitleService
 from .thumbnails import ThumbnailService
+from .trash import TrashManager
 from .upgrade import UpgradeDrainMonitor
 
 
@@ -21,7 +23,8 @@ class Services(object):
     def __init__(self, runtime_config, store, settings_manager, auth_manager,
                  share_service, browse_service, preview_service, scan_manager,
                  deletion_manager, subtitle_service=None,
-                 upgrade_monitor=None, thumbnail_service=None):
+                 upgrade_monitor=None, thumbnail_service=None,
+                 merge_manager=None, trash_manager=None):
         self.config = runtime_config
         self.store = store
         self.settings = settings_manager
@@ -34,6 +37,8 @@ class Services(object):
         self.subtitles = subtitle_service
         self.upgrade_monitor = upgrade_monitor
         self.thumbnails = thumbnail_service
+        self.merges = merge_manager
+        self.trash = trash_manager
 
     def shutdown(self, timeout=5.0):
         # 先停升级 drain 监视，避免正常退出时又把扫描暂停。
@@ -48,6 +53,11 @@ class Services(object):
             pass
         try:
             self.deletion.stop_all(timeout=timeout)
+        except Exception:
+            pass
+        try:
+            if self.merges is not None:
+                self.merges.stop_all(timeout=timeout)
         except Exception:
             pass
         try:
@@ -75,8 +85,12 @@ def build_services(runtime_config):
         runtime_config, settings_provider=settings_manager.get)
     scan_manager = ScanManager(runtime_config, store, share_service,
                                settings_manager)
+    trash_manager = TrashManager(runtime_config, store, share_service)
     deletion_manager = DeletionManager(runtime_config, store, share_service,
-                                       scan_manager, settings_manager)
+                                       scan_manager, settings_manager,
+                                       trash_manager=trash_manager)
+    merge_manager = MergeManager(runtime_config, store, share_service,
+                                 scan_manager, settings_manager)
     subtitle_service = SubtitleService(runtime_config, store, share_service,
                                        settings_manager.get)
     # 升级 drain 握手：preupgrade 写 <var>/upgrade.drain，后端暂停扫描后写 done。
@@ -85,4 +99,5 @@ def build_services(runtime_config):
     return Services(runtime_config, store, settings_manager, auth_manager,
                     share_service, browse_service, preview_service,
                     scan_manager, deletion_manager, subtitle_service,
-                    upgrade_monitor, thumbnail_service)
+                    upgrade_monitor, thumbnail_service, merge_manager,
+                    trash_manager)

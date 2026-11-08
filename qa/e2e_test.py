@@ -601,6 +601,22 @@ def wait_scan(client, scan_id, timeout=240):
     return last or {"status": "timeout"}
 
 
+def wait_merge_job(client, scan_id, job_id, timeout=120):
+    deadline = time.time() + timeout
+    last = {}
+    while time.time() < deadline:
+        resp = client.get("/api/scans/%s/merge/%s"
+                          % (quote(scan_id), quote(job_id)))
+        data = jd(resp)
+        job = data.get("job") if isinstance(data.get("job"), dict) else {}
+        if job:
+            last = job
+        if job.get("status") in ("completed", "partial", "failed", "stopped"):
+            return job
+        time.sleep(0.2)
+    return last
+
+
 def wait_job(client, scan_id, job_id, timeout=180):
     deadline = time.time() + timeout
     last = {}
@@ -2271,6 +2287,140 @@ def run():
                               % quote(txt_path, safe=""))
             check("THUMB-04", "v0044 缩略图接口拒绝非视频文件（415）",
                   resp.status == 415, "status=%s" % resp.status)
+
+        # ---------------- v0045：硬链接合并 / 套件独立回收站 ----------------
+        merge_dir = os.path.join(fx["share_a"], "merge")
+        prev = None
+        prev = create_ordered(os.path.join(merge_dir, "m1.bin"),
+                              blob("mrg", 8192), prev)
+        prev = create_ordered(os.path.join(merge_dir, "m2.bin"),
+                              blob("mrg", 8192), prev)
+        resp = post_scan(client, [merge_dir])
+        merge_scan_id = jd(resp).get("scan_id")
+        merge_scan = wait_scan(client, merge_scan_id) if merge_scan_id else {}
+        resp = client.post_json(
+            "/api/scans/%s/merge-plan" % quote(merge_scan_id),
+            {"scope": "all_exact"})
+        code, _details = err_code(resp)
+        check("MERGE-01", "v0045 硬链接合并默认关闭（merge_enabled=false 拒绝计划）",
+              merge_scan.get("status") == "completed"
+              and resp.status == 400 and code == "INVALID_ARGUMENT",
+              "status=%s code=%s" % (resp.status, code))
+        client.put_json("/api/settings", {"settings": {"merge_enabled": True}})
+        merge_groups, _merge_total, _ = fetch_groups(client, merge_scan_id) if merge_scan_id else ([], 0, None)
+        merge_group = group_with_path(
+            merge_groups, os.path.join(merge_dir, "m1.bin"))
+        merge_ids = [item.get("file_id") for item in group_files(merge_group)] if merge_group else []
+        resp = client.post_json(
+            "/api/scans/%s/merge-plan" % quote(merge_scan_id),
+            {"file_ids": merge_ids})
+        plan = jd(resp).get("plan") if isinstance(jd(resp).get("plan"), dict) else {}
+        check("MERGE-02", "v0045 合并计划生成（保留项排除，仅 1 个副本）",
+              resp.status == 200 and int(plan.get("count") or 0) == 1,
+              "status=%s count=%s" % (resp.status, plan.get("count")))
+        resp = client.post_json(
+            "/api/scans/%s/merge" % quote(merge_scan_id),
+            {"plan_id": plan.get("plan_id"), "confirm": "MERGE"})
+        merge_job_id = jd(resp).get("job_id")
+        merge_job = wait_merge_job(client, merge_scan_id, merge_job_id) if merge_job_id else {}
+        stat1 = os.stat(os.path.join(merge_dir, "m1.bin"))
+        stat2 = os.stat(os.path.join(merge_dir, "m2.bin"))
+        check("MERGE-03", "v0045 合并后两个路径同 inode（硬链接）且内容未变",
+              merge_job.get("status") == "completed"
+              and merge_job.get("done") == 1
+              and stat1.st_ino == stat2.st_ino
+              and stat1.st_nlink >= 2
+              and os.path.getsize(os.path.join(merge_dir, "m2.bin")) == 8192,
+              "status=%s done=%s inode_same=%s nlink=%s"
+              % (merge_job.get("status"), merge_job.get("done"),
+                 stat1.st_ino == stat2.st_ino, stat1.st_nlink))
+        resp = client.post_json(
+            "/api/merges/%s/restore" % quote(merge_job_id or ""),
+            {"confirm": True})
+        restored = jd(resp).get("restored")
+        restore_stat1 = os.stat(os.path.join(merge_dir, "m1.bin"))
+        restore_stat2 = os.stat(os.path.join(merge_dir, "m2.bin"))
+        check("MERGE-04", "v0045 恢复为独立副本（inode 重新不同、内容一致）",
+              resp.status == 200 and int(restored or 0) == 1
+              and restore_stat1.st_ino != restore_stat2.st_ino
+              and os.path.getsize(os.path.join(merge_dir, "m1.bin")) == 8192,
+              "status=%s restored=%s inode_diff=%s"
+              % (resp.status, restored,
+                 restore_stat1.st_ino != restore_stat2.st_ino))
+
+        trash_dir = os.path.join(fx["share_a"], "trashsrc")
+        prev = None
+        prev = create_ordered(os.path.join(trash_dir, "t1.bin"),
+                              blob("trs", 4096), prev)
+        prev = create_ordered(os.path.join(trash_dir, "t2.bin"),
+                              blob("trs", 4096), prev)
+        prev = create_ordered(os.path.join(trash_dir, "t3.bin"),
+                              blob("trs", 4096), prev)
+        resp = post_scan(client, [trash_dir])
+        trash_scan_id = jd(resp).get("scan_id")
+        trash_scan = wait_scan(client, trash_scan_id) if trash_scan_id else {}
+        client.put_json("/api/settings", {"settings": {
+            "delete_recycle_mode": "package"}})
+        trash_groups, _trash_total, _ = fetch_groups(client, trash_scan_id) if trash_scan_id else ([], 0, None)
+        trash_group = group_with_path(
+            trash_groups, os.path.join(trash_dir, "t1.bin"))
+        delete_names = ("t1.bin", "t2.bin")  # t3 创建最晚 → 保留项
+        delete_ids = [item.get("file_id") for item in group_files(trash_group)
+                      if (item.get("path") or "").endswith(delete_names)] if trash_group else []
+        resp = client.post_json(
+            "/api/scans/%s/delete-plan" % quote(trash_scan_id),
+            {"file_ids": delete_ids, "recycle": True})
+        trash_plan = jd(resp).get("plan") if isinstance(jd(resp).get("plan"), dict) else {}
+        check("TRASH-00", "v0045 删除计划使用套件独立回收站（recycle_mode=package）",
+              resp.status == 200 and trash_plan.get("recycle_mode") == "package",
+              "status=%s mode=%s" % (resp.status, trash_plan.get("recycle_mode")))
+        resp = client.post_json(
+            "/api/scans/%s/delete" % quote(trash_scan_id),
+            {"plan_id": trash_plan.get("plan_id"), "confirm": "DELETE"})
+        trash_job = wait_job(client, trash_scan_id, jd(resp).get("job_id")) if jd(resp).get("job_id") else {}
+        trash_root = os.path.join(fx["share_a"], "#duplicate-cleaner-trash")
+        resp = client.get("/api/trash?limit=20")
+        trash_payload = jd(resp)
+        trash_jobs = trash_payload.get("trash") or []
+        check("TRASH-01", "v0045 文件进入套件回收站并记录批次",
+              trash_scan.get("status") == "completed"
+              and trash_job.get("status") in ("completed", "partial")
+              and not os.path.exists(os.path.join(trash_dir, "t1.bin"))
+              and not os.path.exists(os.path.join(trash_dir, "t2.bin"))
+              and os.path.isfile(os.path.join(trash_dir, "t3.bin"))
+              and os.path.isdir(trash_root)
+              and len(trash_jobs) >= 1
+              and int((trash_jobs[0] or {}).get("entries_remaining") or 0) >= 2,
+              "status=%s dir=%s jobs=%s remaining=%s"
+              % (trash_job.get("status"), os.path.isdir(trash_root),
+                 len(trash_jobs),
+                 (trash_jobs[0] or {}).get("entries_remaining") if trash_jobs else None))
+        trash_id = (trash_jobs[0] or {}).get("trash_id") if trash_jobs else ""
+        resp = client.post_json("/api/trash/%s/restore" % quote(trash_id or ""),
+                                {"confirm": True,
+                                 "paths": [os.path.join(trash_dir, "t1.bin")]})
+        restored_count = jd(resp).get("restored")
+        check("TRASH-02", "v0045 按路径部分恢复（t1 回原位，t2 仍在回收站）",
+              resp.status == 200 and int(restored_count or 0) == 1
+              and os.path.isfile(os.path.join(trash_dir, "t1.bin"))
+              and not os.path.exists(os.path.join(trash_dir, "t2.bin"))
+              and os.path.isfile(os.path.join(trash_dir, "t3.bin")),
+              "status=%s restored=%s" % (resp.status, restored_count))
+        # 清理剩余（t2）：“永久删除”短语校验
+        resp = client.post_json("/api/trash/%s/purge" % quote(trash_id or ""),
+                                {"confirm": True, "permanent_phrase": "删除"})
+        wrong_code, _ = err_code(resp)
+        resp = client.post_json("/api/trash/%s/purge" % quote(trash_id or ""),
+                                {"confirm": True,
+                                 "permanent_phrase": "永久删除"})
+        removed = jd(resp).get("removed")
+        check("TRASH-03", "v0045 清理回收站需“永久删除”短语且成功删除",
+              wrong_code == "INVALID_ARGUMENT" and resp.status == 200
+              and int(removed or 0) >= 1
+              and os.path.isfile(os.path.join(trash_dir, "t1.bin"))
+              and os.path.isfile(os.path.join(trash_dir, "t3.bin")),
+              "wrong=%s status=%s removed=%s"
+              % (wrong_code, resp.status, removed))
 
         # ---------------- 重启持久化 ----------------
         client.put_json("/api/settings", {"settings": {"concurrency": 3}})

@@ -1,7 +1,7 @@
 # 整体方案架构
 
 > 项目：**重复文件清理与字幕（Duplicate Cleaner & Subtitles）** · 群晖 DSM 7.x SPK 套件
-> 版本：1.1.0-0044
+> 版本：1.1.0-0045
 > 原则：**先扫描、出报告、人工确认、二次确认、可回收、全程审计**。任何情况下都不自动静默删除。
 
 ## 1. 目标与边界
@@ -485,6 +485,35 @@ Linux 的 `st_ctime` 是 **inode 状态变更时间**，不是创建时间，复
 - 三层生效：扫描期标记（UI 不可勾选、计入 `stats.protected_files`、不计入可选数量）→
   计划期按当前设置重算（`skipped[].reason=PROTECTED`）→ 执行期再算一次（防止计划生成后改设置/改名）。
 - 性能：目录内视频 stem 按目录缓存（一次 `scandir`），一次计划/任务内复用。
+
+## 15. 硬链接合并与套件独立回收站（v0045）
+
+> 详细字段与验收见 [MERGE_TRASH_CONTRACT.md](MERGE_TRASH_CONTRACT.md)。
+
+### 15.1 硬链接合并（`merge.py`）
+
+- 需求原文“硬链接替代删除”做一个**独立操作**（默认关闭、逐组确认），只对精准重复组生效：
+  非保留项 `link(master, tmp)` + `rename(tmp, candidate)` 原子替换成指向保留项的硬链接，
+  路径保留、内容共享、空间真正释放。
+- 计划阶段校验扫描记录仍一致、受保护/保留项跳过、同一文件系统、非已链接；执行阶段再跑一次
+  `revalidate(..., hash_check=True)`（含全量哈希），任何不一致跳过。计划 5 分钟过期、一次性、
+  `confirm="MERGE"`。
+- 合并不可逆的“第二份 inode”无法恢复，但 manifest（`<var>/merges/*.json`）支持
+  “恢复为独立副本”：`FICLONE`（Btrfs 秒级复制）优先，回退普通复制并保持 mtime。
+- 合并后扫描器按 `(dev,inode)` 去重，重复组会缩小 → 结果页语义与“可释放空间”自然收敛；
+  需要立即看到变化时可重新扫描。
+
+### 15.2 套件独立回收站（`trash.py`）
+
+- 删除去向可选：`share`（默认，`<share>/#recycle/@duplicate-cleaner/...`，DSM 回收站可见）/
+  `package`（`<share>/#duplicate-cleaner-trash/<时间戳>/<相对路径>`，同卷 rename）。
+- 为什么不用 `#recycle` 直放：DSM 回收站 UI 只认自己的目录结构，手工塞入可能不显示、也不便
+  “按删除批次整组恢复”。`#` 前缀目录会被扫描器当作系统目录跳过。
+- 每个删除任务结束写 manifest `<var>/trash/<job_id>.json`，记录原路径/回收站路径/大小/组/保留项：
+  - 整组恢复：原位置已存在则跳过（绝不覆盖），逐条 rename 回原路径；
+  - 永久清理：需 `confirm` + “永久删除”短语，只删除 manifest 记录且位于回收站目录下的文件。
+- 计划时快照 `recycle_mode`；执行期间不跟随设置变化。
+
 
 
 

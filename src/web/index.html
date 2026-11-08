@@ -6,8 +6,8 @@
 <meta name="color-scheme" content="light">
 <meta name="referrer" content="same-origin">
 <title>重复文件清理与字幕 · Duplicate Cleaner &amp; Subtitles</title>
-<link rel="icon" href="./assets/favicon.svg?v=1.1.0-0044" type="image/svg+xml">
-<link rel="stylesheet" href="./styles.css?v=1.1.0-0044">
+<link rel="icon" href="./assets/favicon.svg?v=1.1.0-0045" type="image/svg+xml">
+<link rel="stylesheet" href="./styles.css?v=1.1.0-0045">
 </head>
 <body>
 <a class="skip-link" href="#main">跳到主要内容</a>
@@ -839,6 +839,7 @@
         <button type="button" class="task-tab is-active" role="tab" id="taskTabHistory" data-task-tab="history" aria-selected="true" aria-controls="taskPanelHistory" tabindex="0">扫描历史</button>
         <button type="button" class="task-tab" role="tab" id="taskTabSubtitles" data-task-tab="subtitles" aria-selected="false" aria-controls="taskPanelSubtitles" tabindex="-1">字幕任务</button>
         <button type="button" class="task-tab" role="tab" id="taskTabDeletions" data-task-tab="deletions" aria-selected="false" aria-controls="taskPanelDeletions" tabindex="-1">删除任务</button>
+        <button type="button" class="task-tab" role="tab" id="taskTabTrash" data-task-tab="trash" aria-selected="false" aria-controls="taskPanelTrash" tabindex="-1">回收站与合并</button>
         <button type="button" class="task-tab" role="tab" id="taskTabLogs" data-task-tab="logs" aria-selected="false" aria-controls="taskPanelLogs" tabindex="-1">操作日志</button>
       </div>
 
@@ -897,6 +898,33 @@
             </table>
           </div>
           <p class="hint">仅显示删除任务摘要，不包含文件内容；点击“打开扫描”可查看对应扫描结果。</p>
+        </section>
+      </div>
+
+      <div class="task-panel" id="taskPanelTrash" role="tabpanel" aria-labelledby="taskTabTrash" data-task-panel="trash" tabindex="0" hidden>
+        <section class="card" aria-labelledby="trashHeading">
+          <div class="card-head">
+            <h2 id="trashHeading">套件回收站</h2>
+            <span class="muted" id="trashRecycleMode"></span>
+            <button type="button" class="btn btn-ghost btn-sm" id="trashRefreshBtn">
+              <svg class="icon" aria-hidden="true"><use href="#i-refresh"></use></svg>刷新
+            </button>
+          </div>
+          <p class="hint">删除时选择“套件独立回收站”的文件会移动到共享文件夹根下的 <code>#duplicate-cleaner-trash/</code>，可按删除批次整组恢复或清理；清理不可恢复，需要输入“永久删除”。当前删除去向可在设置页修改。</p>
+          <div class="state-box" id="trashLoading" hidden><span class="spinner" aria-hidden="true"></span>正在加载回收站…</div>
+          <div class="state-box state-error" id="trashError" role="alert" hidden></div>
+          <div class="state-box state-empty" id="trashEmpty" hidden>暂无套件回收站记录。</div>
+          <div id="trashList" class="trash-list"></div>
+        </section>
+        <section class="card" aria-labelledby="mergeHistoryHeading">
+          <div class="card-head">
+            <h2 id="mergeHistoryHeading">硬链接合并记录</h2>
+            <span class="muted" id="trashMergeCount"></span>
+          </div>
+          <p class="hint">合并后这些路径共享同一份内容（任一处修改会影响全部）；可“恢复为独立副本”（Btrfs FICLONE 秒级复制，其它文件系统回退普通复制）。</p>
+          <div class="state-box" id="trashMergeLoading" hidden><span class="spinner" aria-hidden="true"></span>正在加载合并记录…</div>
+          <div class="state-box state-empty" id="trashMergeEmpty" hidden>暂无硬链接合并记录。</div>
+          <div id="trashMergeList" class="trash-list"></div>
         </section>
       </div>
 
@@ -1104,6 +1132,16 @@
             <textarea id="setProtectNameRegex" rows="2" placeholder="^keep-.*$"></textarea>
             <p class="field-error" id="setProtectNameRegexError" role="alert" hidden></p>
             <label class="check"><input id="setProtectSidecarFiles" type="checkbox" checked>保护视频附属文件（同目录同源视频的字幕 / 海报 / nfo）</label>
+          </div>
+          <div class="field field-wide">
+            <label for="setDeleteRecycleMode">删除去向</label>
+            <select id="setDeleteRecycleMode">
+              <option value="share">共享文件夹回收站（#recycle，DSM 回收站可见）</option>
+              <option value="package">套件独立回收站（可按删除批次整组恢复）</option>
+            </select>
+            <p class="hint">套件独立回收站会移动到共享文件夹根下的 <code>#duplicate-cleaner-trash/</code>（同卷 rename，不复制数据），可在「任务中心 → 回收站与合并」里恢复或清理。已有文件的去向在生成删除计划时确定。</p>
+            <label class="check"><input id="setMergeEnabled" type="checkbox">启用硬链接合并（不可逆，默认关闭）</label>
+            <p class="hint">合并把重复组的非保留项替换成指向保留项的硬链接，只省空间不删路径；合并后任一路径的内容修改会影响全部路径。只对精准重复组生效，需逐组确认，可在「回收站与合并」里恢复为独立副本。</p>
           </div>
         </div>
       </details>
@@ -1588,6 +1626,6 @@
   <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.6" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M12 10.8v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="12" cy="7.6" r="1.05" fill="currentColor"/></symbol>
 </svg>
 
-<script type="module" src="./app.js?v=1.1.0-0044"></script>
+<script type="module" src="./app.js?v=1.1.0-0045"></script>
 </body>
 </html>

@@ -16,6 +16,7 @@
 from __future__ import absolute_import
 
 import json
+import logging
 import os
 import secrets
 import threading
@@ -24,6 +25,8 @@ import traceback
 
 from . import config, fsutil, hashing, protection, timeutil, video_similarity
 from .errors import ApiError, forbidden, invalid, not_found, path_not_allowed
+
+logger = logging.getLogger("dupcleaner.deletion")
 
 # 删除结果状态
 STATUS_RECYCLED = "recycled"
@@ -248,6 +251,7 @@ class DeleteJobState(object):
         self.plan_id = plan_id
         self.user = user
         self.recycle = bool(recycle)
+        self.recycle_mode = "share"
         self.create_recycle_dir = bool(create_recycle_dir)
         self.total = int(total)
         self.bytes_total = int(bytes_total)
@@ -285,6 +289,7 @@ class DeleteJobState(object):
                 "started_at": timeutil.iso_local(self.started_epoch),
                 "finished_at": timeutil.iso_local(self.finished_epoch),
                 "recycle": self.recycle,
+                "recycle_mode": self.recycle_mode,
                 "log_file": "deletions/%s.jsonl" % self.job_id,
             }
 
@@ -298,12 +303,13 @@ class DeleteJobState(object):
 
 class DeletionManager(object):
     def __init__(self, runtime_config, store, share_service, scan_manager,
-                 settings_manager, hash_verifier=None):
+                 settings_manager, hash_verifier=None, trash_manager=None):
         self.config = runtime_config
         self.store = store
         self.shares = share_service
         self.scanner = scan_manager
         self.settings = settings_manager
+        self.trash = trash_manager
         self._hash_verifier = hash_verifier or _fresh_hash
         self._lock = threading.RLock()
         self._plans = {}
@@ -328,6 +334,19 @@ class DeletionManager(object):
         recycle = payload.get("recycle", True)
         if not isinstance(recycle, bool):
             raise invalid(u"recycle 必须是布尔值")
+        # v0045：删除去向（共享文件夹 #recycle / 套件独立回收站）按当前设置快照
+        recycle_mode = "share"
+        if recycle:
+            try:
+                recycle_mode = str(
+                    (self.settings.get() or {}).get("delete_recycle_mode")
+                    or config.RECYCLE_MODE_DEFAULT)
+            except Exception:  # pragma: no cover - 设置读取失败按默认
+                recycle_mode = config.RECYCLE_MODE_DEFAULT
+            if recycle_mode not in config.RECYCLE_MODES:
+                recycle_mode = config.RECYCLE_MODE_DEFAULT
+            if recycle_mode == "package" and self.trash is None:
+                recycle_mode = "share"
         options = meta.get("options") or {}
         algo = options.get("hash_algo") or "sha256"
         create_recycle_dir = bool(options.get("create_recycle_dir", False))
@@ -511,7 +530,7 @@ class DeletionManager(object):
                 # 历史扫描缺少视频内容快速哈希：允许按身份校验删除，但计划显式告警。
                 content_hash_verified = False
                 content_hash_missing_videos += 1
-            # 回收站可用性
+            # 回收站可用性（v0045：套件独立回收站只要共享根可写即可，无需 #recycle）
             if recycle:
                 try:
                     share = self.shares.share_root(path)
@@ -520,35 +539,37 @@ class DeletionManager(object):
                                     "reason": REASON_PATH_NOT_ALLOWED,
                                     "message": exc.message})
                     continue
-                share_key = fsutil.path_key(share["path"])
-                if share_key not in recycle_seen:
-                    recycle_seen.add(share_key)
-                    available = self.shares.has_recycle_dir(share)
-                    if not available and not create_recycle_dir:
-                        recycle_unavailable.append({
-                            "share": share["name"],
-                            "path": share["path"],
+                if recycle_mode == "share":
+                    share_key = fsutil.path_key(share["path"])
+                    if share_key not in recycle_seen:
+                        recycle_seen.add(share_key)
+                        available = self.shares.has_recycle_dir(share)
+                        if not available and not create_recycle_dir:
+                            recycle_unavailable.append({
+                                "share": share["name"],
+                                "path": share["path"],
+                            })
+                    if (not self.shares.has_recycle_dir(share)
+                            and not create_recycle_dir):
+                        skipped.append({
+                            "path": path,
+                            "file_id": file_info.get("file_id"),
+                            "reason": REASON_RECYCLE_UNAVAILABLE,
+                            "message": u"共享文件夹没有 #recycle 回收站目录，已跳过",
                         })
-                if (not self.shares.has_recycle_dir(share)
-                        and not create_recycle_dir):
-                    skipped.append({
-                        "path": path,
-                        "file_id": file_info.get("file_id"),
-                        "reason": REASON_RECYCLE_UNAVAILABLE,
-                        "message": u"共享文件夹没有 #recycle 回收站目录，已跳过",
-                    })
-                    continue
-                source_identity = fsutil.file_identity(path)
-                share_identity = fsutil.stat_or_none(share["path"])
-                if (source_identity is not None and share_identity is not None
-                        and source_identity["dev"] != int(share_identity.st_dev)):
-                    skipped.append({
-                        "path": path,
-                        "file_id": file_info.get("file_id"),
-                        "reason": REASON_CROSS_DEVICE,
-                        "message": u"文件与共享文件夹不在同一文件系统，无法移动到回收站",
-                    })
-                    continue
+                        continue
+                    source_identity = fsutil.file_identity(path)
+                    share_identity = fsutil.stat_or_none(share["path"])
+                    if (source_identity is not None and share_identity is not None
+                            and source_identity["dev"]
+                            != int(share_identity.st_dev)):
+                        skipped.append({
+                            "path": path,
+                            "file_id": file_info.get("file_id"),
+                            "reason": REASON_CROSS_DEVICE,
+                            "message": u"文件与共享文件夹不在同一文件系统，无法移动到回收站",
+                        })
+                        continue
             plan_files.append({
                 "file": file_info,
                 "keeper": keeper,
@@ -607,6 +628,7 @@ class DeletionManager(object):
             "session_id": session.session_id,
             "user": session.user,
             "recycle": recycle,
+            "recycle_mode": recycle_mode,
             "create_recycle_dir": create_recycle_dir,
             "algo": algo,
             "created_epoch": now,
@@ -644,6 +666,7 @@ class DeletionManager(object):
             "recycle": recycle,
             "count": plan["count"],
             "bytes": plan["bytes"],
+            "recycle_mode": plan.get("recycle_mode") or "share",
             "exact_count": plan["exact_count"],
             "similar_count": plan["similar_count"],
             "video_count": plan.get("video_count", 0),
@@ -667,6 +690,7 @@ class DeletionManager(object):
             "plan_id": plan["plan_id"],
             "expires_at": plan["expires_at"],
             "recycle": plan["recycle"],
+            "recycle_mode": plan.get("recycle_mode") or "share",
             "count": plan["count"],
             "bytes": plan["bytes"],
             "similar_count": plan.get("similar_count", 0),
@@ -795,6 +819,8 @@ class DeletionManager(object):
         )
         # v0044：本任务的保护判定器（目录缓存跨文件复用）；执行前再按当前设置复查。
         job.protector = self._protector()
+        # v0045：删除去向（计划时快照，执行期间不跟随设置变化）
+        job.recycle_mode = plan.get("recycle_mode") or "share"
         with self._lock:
             self._jobs[job_id] = job
             self._jobs_by_scan.setdefault(scan_id, []).append(job_id)
@@ -807,6 +833,7 @@ class DeletionManager(object):
             "plan_id": plan_id,
             "job_id": job_id,
             "recycle": plan["recycle"],
+            "recycle_mode": job.recycle_mode,
             "count": plan["count"],
             "bytes": plan["bytes"],
             "exact_count": plan.get("exact_count", 0),
@@ -824,6 +851,8 @@ class DeletionManager(object):
     def _run_job(self, job):
         stamp = time.strftime("%Y%m%d-%H%M%S")
         hash_cache = {}
+        # v0045：套件回收站条目（任务结束后写 manifest，供整组恢复/清理）
+        trash_entries = []
         # v0032：删除成功的文件写入 scan_file_deletions，结果页/统计/CSV 读取时剔除；
         # 每 200 条刷一次，避免任务中断时丢失全部标记。
         deleted_entries = []
@@ -873,6 +902,18 @@ class DeletionManager(object):
                         })
                     if len(deleted_entries) >= 200:
                         flush_deleted()
+                    if (status == STATUS_RECYCLED
+                            and result.get("trash_mode") == "package"):
+                        trash_entries.append({
+                            "original": result.get("path"),
+                            "trash_path": result.get("recycle_path"),
+                            "size": result.get("size"),
+                            "group_id": (entry.get("group_id")
+                                         or (entry.get("file") or {}).get("group_id")),
+                            "keeper_path": (entry.get("keeper") or {}).get("path"),
+                            "file_id": result.get("file_id"),
+                            "match_type": result.get("match_type"),
+                        })
                     self._record_result(job, result)
                     self._persist_job(job)
             flush_deleted()
@@ -897,12 +938,15 @@ class DeletionManager(object):
                 "done": job.done,
                 "failed": job.failed,
                 "skipped": job.skipped,
+                "recycle_mode": getattr(job, "recycle_mode", "share"),
             })
+            self._record_trash(job, trash_entries)
             with job.lock:
                 job.status = final_status
             self._persist_job(job, force=True)
         except Exception as exc:  # pragma: no cover
             flush_deleted()
+            self._record_trash(job, trash_entries)
             with job.lock:
                 job.status = "failed"
                 job.finished_epoch = time.time()
@@ -928,6 +972,18 @@ class DeletionManager(object):
                 "status": "failed",
                 "error": str(exc),
             })
+
+    def _record_trash(self, job, trash_entries):
+        """v0045：把套件回收站的移动记录写成 manifest（供整组恢复/清理）。"""
+        if self.trash is None or not trash_entries:
+            return
+        try:
+            self.trash.record_job(job.job_id, job.scan_id, job.user,
+                                  trash_entries,
+                                  recycle_mode=getattr(job, "recycle_mode",
+                                                       "package"))
+        except Exception:  # pragma: no cover - 清单失败不影响已完成的移动
+            logger.warning(u"写入套件回收站清单失败：%s", exc_info=True)
 
     def _delete_one(self, job, entry, stamp, hash_cache):
         file_info = entry.get("file") or {}
@@ -971,6 +1027,46 @@ class DeletionManager(object):
             return base
 
         if job.recycle:
+            # v0045：套件独立回收站（同卷 rename，manifest 支持整组恢复）
+            if (getattr(job, "recycle_mode", "share") == "package"
+                    and self.trash is not None):
+                try:
+                    destination = self.trash.destination_for(
+                        share["path"], path, stamp)
+                    parent = os.path.dirname(destination)
+                    os.makedirs(parent, exist_ok=True)
+                    source_identity = fsutil.file_identity(path)
+                    if source_identity is not None:
+                        parent_stat = fsutil.stat_or_none(parent)
+                        if (parent_stat is not None
+                                and int(parent_stat.st_dev) != source_identity["dev"]):
+                            base.update({
+                                "status": STATUS_FAILED,
+                                "reason": REASON_CROSS_DEVICE,
+                                "message": u"套件回收站与文件不在同一文件系统，禁止跨设备移动"})
+                            return base
+                    # 文件删除点（套件回收站）：移动到 <共享文件夹根>/#duplicate-cleaner-trash/<时间戳>/<相对路径>
+                    os.rename(path, destination)
+                except ApiError as exc:
+                    base.update({"status": STATUS_FAILED,
+                                 "reason": REASON_INTERNAL,
+                                 "message": exc.message})
+                    return base
+                except OSError as exc:
+                    base.update({
+                        "status": STATUS_FAILED,
+                        "reason": REASON_CROSS_DEVICE
+                        if getattr(exc, "errno", None) == 18 else REASON_INTERNAL,
+                        "message": u"移动到套件回收站失败: %s" % exc})
+                    return base
+                result_dict = dict(base)
+                result_dict.update({
+                    "status": STATUS_RECYCLED, "reason": "",
+                    "message": u"已移动到套件回收站（可在任务中心整组恢复）",
+                    "recycle_path": destination,
+                    "trash_mode": "package"})
+                self._audit_file_result(job, result_dict)
+                return result_dict
             recycle_dir = self.shares.recycle_dir(share)
             if not self.shares.has_recycle_dir(share):
                 if not job.create_recycle_dir:
