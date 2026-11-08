@@ -230,6 +230,9 @@ class Api(object):
             ("GET", re.compile(r"^/api/preview/media$"), self._preview_media, False),
             ("GET", re.compile(r"^/api/preview/thumbs$"), self._preview_thumbs, False),
             ("GET", re.compile(r"^/api/logs$"), self._logs, False),
+            # v0049：日志检索（按任务 ID/关键字）与可读导出
+            ("GET", re.compile(r"^/api/logs/search$"), self._logs_search, False),
+            ("GET", re.compile(r"^/api/logs/export$"), self._logs_export, False),
             ("GET", re.compile(r"^/api/logs/download$"), self._logs_download, False),
             # v0038：操作日志删除（管理员 + CSRF；支持选中删除 / 只保留最近 N 天）
             ("POST", re.compile(r"^/api/logs/audit/delete$"),
@@ -238,6 +241,11 @@ class Api(object):
              self._delete_log_files, False),
             # v0021 P0：诊断 / 存储维护 / 删除任务历史（仅管理员）
             ("GET", re.compile(r"^/api/diagnostics$"), self._diagnostics, False),
+            # v0049：权限与路径体检（只读检测 + 指引，不提权）
+            ("GET", re.compile(r"^/api/permissions/report$"),
+             self._permissions_report, False),
+            ("POST", re.compile(r"^/api/permissions/check$"),
+             self._permissions_check, False),
             # v0043：增量扫描缓存管理（哈希缓存/媒体探测缓存）
             ("GET", re.compile(r"^/api/cache$"), self._cache_stats, False),
             ("POST", re.compile(r"^/api/cache/clear$"), self._cache_clear, False),
@@ -264,6 +272,8 @@ class Api(object):
              self._subtitle_failures_export, False),
             ("POST", re.compile(r"^/api/subtitles/failures/retry$"),
              self._subtitle_failures_retry, False),
+            ("POST", re.compile(r"^/api/subtitles/batch-actions$"),
+             self._subtitle_batch_actions, False),
             ("POST", re.compile(r"^/api/subtitles/audio-tracks$"),
              self._subtitle_audio_tracks, False),
             ("GET", re.compile(r"^/api/subtitles/watch$"),
@@ -613,6 +623,28 @@ class Api(object):
             raise forbidden(message)
         return session
 
+    # ------------------------------------------------------------------
+    # v0049：权限与路径体检（只读检测 + 指引，不做提权）
+    # ------------------------------------------------------------------
+    def _permissions_report(self, request, session, params):
+        self._require_admin(session)
+        inspector = getattr(self.services, "permissions", None)
+        if inspector is None:
+            raise ApiError("NOT_SUPPORTED", u"权限体检不可用")
+        return json_response({"ok": True, "report": inspector.report()})
+
+    def _permissions_check(self, request, session, params):
+        self._require_admin(session)
+        inspector = getattr(self.services, "permissions", None)
+        if inspector is None:
+            raise ApiError("NOT_SUPPORTED", u"权限体检不可用")
+        body = _json_body(request)
+        paths = body.get("paths") if isinstance(body, dict) else None
+        if not isinstance(paths, list) or not paths:
+            raise invalid(u"paths 必须是非空数组")
+        return json_response({"ok": True,
+                              "report": inspector.check_paths(paths)})
+
     def _diagnostics(self, request, session, params):
         """只读运行诊断：DB/WAL、schema、行数、缓存、FFmpeg/ASR、活动任务。
 
@@ -846,10 +878,16 @@ class Api(object):
         group_id = request.query_last("group_id") or None
         # v0034：状态过滤（all/active/queued/running/...；非法值由 service 抛 400）
         status = request.query_last("status") or None
+        # v0049：任务检索筛选（路径关键字/后缀/目录/失败分类）
+        q = request.query_last("q") or None
+        suffix = request.query_last("suffix") or None
+        directory = request.query_last("directory") or None
+        category = request.query_last("category") or None
         if group_id is not None or offset:
             page = service.list_page(limit=limit, batch_id=batch_id,
                                      group_id=group_id, offset=offset,
-                                     status=status)
+                                     status=status, q=q, suffix=suffix,
+                                     directory=directory, category=category)
             payload = {"ok": True}
             payload.update(page)
             return json_response(payload)
@@ -857,7 +895,10 @@ class Api(object):
         return json_response({"ok": True,
                               "jobs": service.list(limit=limit,
                                                    batch_id=batch_id,
-                                                   status=status)})
+                                                   status=status, q=q,
+                                                   suffix=suffix,
+                                                   directory=directory,
+                                                   category=category)})
 
     # ------------------------------------------------------------------
     # v0039：任务中心队列视图 / 批次组总览（只读；管理员）
@@ -946,6 +987,22 @@ class Api(object):
         if not isinstance(path, str) or not path.strip():
             raise invalid(u"必须提供视频路径 path")
         return json_response({"ok": True, "audio": service.audio_tracks(path)})
+
+    def _subtitle_batch_actions(self, request, session, params):
+        service = self._require_subtitle_admin(session)
+        body = _json_body(request)
+        if not isinstance(body, dict):
+            raise invalid(u"请求体必须是 JSON 对象")
+        job_ids = body.get("job_ids")
+        if not isinstance(job_ids, list):
+            raise invalid(u"job_ids 必须是数组")
+        action = body.get("action")
+        if not isinstance(action, str):
+            raise invalid(u"action 不能为空")
+        result = service.bulk_action(session.user, job_ids, action)
+        payload = {"ok": True}
+        payload.update(result)
+        return json_response(payload)
 
     def _subtitle_watch(self, request, session, params):
         self._require_subtitle_admin(session)
@@ -1446,6 +1503,121 @@ class Api(object):
         logs = self.services.store.list_logs(limit=limit)
         audit = self.services.store.read_audit(limit=limit)
         return json_response({"ok": True, "logs": logs, "audit": audit})
+
+    # ------------------------------------------------------------------
+    # v0049：日志检索（按任务 ID/关键字）与可读导出
+    # ------------------------------------------------------------------
+    def _collect_log_search(self, q, job_id, limit=100):
+        q = (q or "").strip()
+        job_id = (job_id or "").strip()
+        needle = q.lower()
+        store = self.services.store
+        hits = []
+        scanned = 0
+        for entry in store.list_logs(limit=500):
+            name = entry.get("name") or ""
+            scanned += 1
+            if job_id:
+                haystack = " ".join([
+                    name, entry.get("job_id") or "",
+                    entry.get("scan_id") or ""])
+                if job_id not in haystack:
+                    continue
+            try:
+                path = store.resolve_log(name)
+            except Exception:
+                continue
+            try:
+                with open(path, "rb") as handle:
+                    text = handle.read(512 * 1024).decode("utf-8", "replace")
+            except OSError:
+                continue
+            lines = text.splitlines()
+            if needle:
+                matched = [line.strip() for line in lines
+                           if needle in line.lower()]
+            else:
+                matched = [line.strip() for line in lines if line.strip()]
+            if not matched:
+                continue
+            hits.append({
+                "name": name,
+                "kind": entry.get("kind") or "other",
+                "size": entry.get("size"),
+                "modified_at": entry.get("modified_at"),
+                "match_count": len(matched),
+                "matches": matched[:30],
+                "truncated": len(matched) > 30,
+                "content_preview": text[:4000] if not needle else "",
+            })
+            if len(hits) >= limit:
+                break
+        audit_hits = []
+        for entry in store.read_audit(limit=500):
+            blob = json.dumps(entry, ensure_ascii=False).lower()
+            if job_id and job_id not in blob:
+                continue
+            if needle and needle not in blob:
+                continue
+            audit_hits.append(entry)
+            if len(audit_hits) >= limit:
+                break
+        return {"query": {"q": q, "job_id": job_id},
+                "logs": hits, "audit": audit_hits,
+                "scanned_logs": scanned}
+
+    def _logs_search(self, request, session, params):
+        self._require_admin(session)
+        q = request.query_last("q") or ""
+        job_id = request.query_last("job_id") or ""
+        if not q.strip() and not job_id.strip():
+            raise invalid(u"需要 q 或 job_id 参数")
+        limit = max(1, min(_query_int(request, "limit", 100), 500))
+        result = self._collect_log_search(q, job_id, limit)
+        payload = {"ok": True}
+        payload.update(result)
+        return json_response(payload)
+
+    def _logs_export(self, request, session, params):
+        self._require_admin(session)
+        q = request.query_last("q") or ""
+        job_id = request.query_last("job_id") or ""
+        if not q.strip() and not job_id.strip():
+            raise invalid(u"需要 q 或 job_id 参数")
+        data = self._collect_log_search(q, job_id, 50)
+        lines = [
+            u"# DuplicateCleaner 日志导出",
+            u"# 生成时间: %s" % timeutil.iso_local(time.time()),
+            u"# 过滤条件: q=%s job_id=%s" % (data["query"]["q"],
+                                           data["query"]["job_id"]),
+            u"# 匹配日志: %d 个，审计条目: %d 条" % (len(data["logs"]),
+                                                   len(data["audit"])),
+            u"",
+        ]
+        for hit in data["logs"]:
+            lines.append(u"===== 日志 %s（%s 字节，%s）=====" % (
+                hit["name"], hit.get("size"), hit.get("modified_at") or ""))
+            for line in hit["matches"]:
+                lines.append(line)
+            if hit.get("truncated"):
+                lines.append(u"...（已截断，仅显示前 30 行匹配）")
+            lines.append(u"")
+        if data["audit"]:
+            lines.append(u"===== 审计事件 =====")
+            for entry in data["audit"]:
+                lines.append(json.dumps(entry, ensure_ascii=False))
+            lines.append(u"")
+        body = (u"\n".join(lines)).encode("utf-8")
+        suffix = job_id.strip() or u"search"
+        filename = "logs-%s-%s.txt" % (
+            re.sub(r"[^A-Za-z0-9._-]", "_", suffix),
+            time.strftime("%Y%m%d-%H%M%S"))
+        return Response(
+            status=200, content_type="text/plain; charset=utf-8", body=body,
+            headers={
+                "Content-Disposition": 'attachment; filename="%s"' % filename,
+                "Cache-Control": "no-store",
+            })
 
     def _logs_download(self, request, session, params):
         name = request.query_last("name", "")

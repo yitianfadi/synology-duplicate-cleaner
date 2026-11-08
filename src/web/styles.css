@@ -2503,3 +2503,42 @@ input[type="checkbox"]:disabled { cursor: not-allowed; }
 .subtitle-failure-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .settings-actions-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 8px 0; }
 .settings-actions-row .muted { font-size: 12px; }
+
+/* ==========================================================================
+   v0049：任务检索 / 批量操作 / 日志检索 / 权限体检
+   ========================================================================== */
+.subtitle-filter-bar { margin: 8px 0; }
+.subtitle-job-select { margin-right: 6px; }
+.log-search-results { display: flex; flex-direction: column; gap: 10px; margin-top: 8px; }
+.log-search-item {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  background: #fff;
+}
+.log-search-head { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; font-size: 12px; }
+.log-match-lines {
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  background: #f7f8fa;
+  border-radius: 6px;
+  font-family: var(--mono, monospace);
+  font-size: 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 260px;
+  overflow: auto;
+}
+.permission-report-list { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.permission-report-item {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 12.5px;
+}
+.permission-path { overflow-wrap: anywhere; max-width: 100%; }
+.permission-guidance { margin: 0 0 4px 8px; }

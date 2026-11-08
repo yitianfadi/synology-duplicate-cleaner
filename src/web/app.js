@@ -7552,6 +7552,105 @@ import {
     }
   }
 
+  // ==================== v0049：任务检索 / 批量操作 ====================
+  function subtitleJobFilters() {
+    return {
+      q: (els.subtitleJobSearch ? els.subtitleJobSearch.value : '').trim(),
+      status: els.subtitleJobStatusFilter ? els.subtitleJobStatusFilter.value : '',
+      suffix: (els.subtitleJobSuffix ? els.subtitleJobSuffix.value : '').trim(),
+      directory: (els.subtitleJobDir ? els.subtitleJobDir.value : '').trim(),
+      category: els.subtitleJobCategory ? els.subtitleJobCategory.value : ''
+    };
+  }
+
+  function subtitleJobFiltersActive(filters) {
+    return !!(filters.q || filters.status || filters.suffix
+      || filters.directory || filters.category);
+  }
+
+  function subtitleJobQueryString(filters) {
+    var parts = [];
+    if (filters.q) { parts.push('q=' + encodeURIComponent(filters.q)); }
+    if (filters.status) { parts.push('status=' + encodeURIComponent(filters.status)); }
+    if (filters.suffix) { parts.push('suffix=' + encodeURIComponent(filters.suffix)); }
+    if (filters.directory) { parts.push('directory=' + encodeURIComponent(filters.directory)); }
+    if (filters.category) { parts.push('category=' + encodeURIComponent(filters.category)); }
+    return parts.length ? '&' + parts.join('&') : '';
+  }
+
+  function subtitleSelectedSet() {
+    if (!(state.subtitleJobs.selected instanceof Set)) {
+      state.subtitleJobs.selected = new Set();
+    }
+    return state.subtitleJobs.selected;
+  }
+
+  function subtitleBulkCountUpdate() {
+    if (!els.subtitleBulkCount) { return; }
+    var count = subtitleSelectedSet().size;
+    setText(els.subtitleBulkCount, '已选 ' + count + ' 个');
+    var list = state.subtitleJobs.list || [];
+    if (els.subtitleSelectAll) {
+      var selectable = list.filter(function (job) {
+        return job && job.job_id;
+      });
+      var selected = selectable.filter(function (job) {
+        return subtitleSelectedSet().has(job.job_id);
+      }).length;
+      els.subtitleSelectAll.checked = selectable.length > 0
+        && selected === selectable.length;
+      els.subtitleSelectAll.indeterminate = selected > 0
+        && selected < selectable.length;
+    }
+  }
+
+  function subtitleToggleSelection(job, checked) {
+    var selected = subtitleSelectedSet();
+    if (checked) { selected.add(job.job_id); } else { selected.delete(job.job_id); }
+    subtitleBulkCountUpdate();
+  }
+
+  function populateSubtitleJobCategoryFilter() {
+    if (!els.subtitleJobCategory || els.subtitleJobCategory.dataset.filled === '1') {
+      return;
+    }
+    Object.keys(SUBTITLE_FAILURE_LABEL).forEach(function (key) {
+      els.subtitleJobCategory.appendChild(el('option', {
+        attrs: { value: key },
+        text: SUBTITLE_FAILURE_LABEL[key]
+      }));
+    });
+    els.subtitleJobCategory.dataset.filled = '1';
+  }
+
+  async function subtitleBulkAction(action) {
+    var ids = Array.from(subtitleSelectedSet());
+    if (!ids.length) {
+      toast('请先勾选要操作的任务。', 'info', 3000);
+      return;
+    }
+    if (action === 'cancel') {
+      var ok = await confirmDialog({
+        title: '批量取消 ' + ids.length + ' 个任务？',
+        message: '取消后这些任务会停止并标记为已取消（已完成的任务不受影响）。',
+        confirmText: '取消任务', danger: true
+      });
+      if (!ok) { return; }
+    }
+    try {
+      var res = await api('/api/subtitles/batch-actions', {
+        method: 'POST', body: { job_ids: ids, action: action }, timeout: 60000
+      });
+      toast('批量操作完成：成功 ' + fmtInt(res.succeeded || 0)
+        + '，失败 ' + fmtInt(res.failed || 0), 'success', 6000);
+      subtitleSelectedSet().clear();
+      await loadSubtitleJobs({ silent: true });
+      if (action === 'retry') { await loadSubtitleFailures(); }
+    } catch (err) {
+      toast(errorMessage(err, '批量操作失败，请稍后重试。'), 'error', 6000);
+    }
+  }
+
   async function loadSubtitleJobs(options) {
     options = options || {};
     if (!els.subtitleJobsList || state.subtitleJobs.loading) { return; }
@@ -7562,6 +7661,21 @@ import {
       setHidden(els.subtitleJobsEmpty, true);
     }
     try {
+      populateSubtitleJobCategoryFilter();
+      // v0049：有检索条件时直接走筛选接口（队列视图只显示最近 10 条）
+      var filters = subtitleJobFilters();
+      if (subtitleJobFiltersActive(filters)) {
+        state.subtitleJobs.snapshot = null;
+        var filteredRes = await api('/api/subtitles?limit=200'
+          + subtitleJobQueryString(filters), { timeout: 20000 });
+        var filtered = normalizeSubtitleJobsResponse(filteredRes);
+        state.subtitleJobs.list = filtered;
+        state.subtitleJobs.lastError = '';
+        renderSubtitleJobs(filtered);
+        setHidden(els.subtitleJobsEmpty, filtered.length > 0);
+        subtitleBulkCountUpdate();
+        return;
+      }
       // v0039：优先用队列视图（真实执行顺序：进行中/即将执行/已暂停/最近完成）
       var snapshot = null;
       try {
@@ -7578,6 +7692,7 @@ import {
         state.subtitleJobs.lastError = '';
         renderSubtitleJobsSnapshot(snapshot);
         setHidden(els.subtitleJobsEmpty, state.subtitleJobs.list.length > 0);
+        subtitleBulkCountUpdate();
       } else {
         // 老后端降级：执行中置顶 + 最近任务（按创建时间倒序）
         state.subtitleJobs.snapshot = null;
@@ -7595,6 +7710,7 @@ import {
         state.subtitleJobs.lastError = '';
         renderSubtitleJobs(jobs);
         setHidden(els.subtitleJobsEmpty, jobs.length > 0);
+        subtitleBulkCountUpdate();
       }
     } catch (err) {
       var message = errorMessage(err, '加载字幕任务失败，请稍后重试。');
@@ -7878,9 +7994,21 @@ import {
     var status = job.status || 'queued';
     var item = el('div', { className: 'subtitle-job-item', dataset: { jobId: job.job_id } });
     var head = el('div', { className: 'subtitle-job-head' }, [
+      // v0049：批量选择
+      el('input', {
+        className: 'subtitle-job-select',
+        attrs: { type: 'checkbox', 'aria-label': '选择任务 ' + (job.job_id || '') },
+        on: {
+          change: function (event) {
+            subtitleToggleSelection(job, !!event.target.checked);
+          }
+        }
+      }),
       el('span', { className: 'badge ' + subtitleJobStatusClass(status), text: subtitleJobStatusLabel(status) }),
       el('span', { className: 'subtitle-job-path', attrs: { title: job.path || '' }, text: job.path || '（无路径）' })
     ]);
+    var jobSelect = head.querySelector('.subtitle-job-select');
+    if (jobSelect) { jobSelect.checked = subtitleSelectedSet().has(job.job_id); }
     var chunkText = subtitleJobChunkText(job);
     // v0041：当前步骤消息（如“正在识别语音 7/9”）；与分块数重复时优先展示消息
     var stepMessage = subtitleJobStepMessage(job);
@@ -9197,6 +9325,61 @@ import {
     if (els.subtitleJobsRefreshBtn) {
       els.subtitleJobsRefreshBtn.addEventListener('click', function () { loadSubtitleJobs(); });
     }
+    // v0049：任务检索筛选 + 批量操作
+    if (els.subtitleJobFilterBtn) {
+      els.subtitleJobFilterBtn.addEventListener('click', function () {
+        subtitleSelectedSet().clear();
+        loadSubtitleJobs();
+      });
+    }
+    if (els.subtitleJobFilterResetBtn) {
+      els.subtitleJobFilterResetBtn.addEventListener('click', function () {
+        ['subtitleJobSearch', 'subtitleJobSuffix', 'subtitleJobDir'].forEach(
+          function (id) {
+            var input = byId(id);
+            if (input) { input.value = ''; }
+          });
+        ['subtitleJobStatusFilter', 'subtitleJobCategory'].forEach(
+          function (id) {
+            var select = byId(id);
+            if (select) { select.value = ''; }
+          });
+        subtitleSelectedSet().clear();
+        loadSubtitleJobs();
+      });
+    }
+    if (els.subtitleJobSearch) {
+      els.subtitleJobSearch.addEventListener('keydown', function (event) {
+        if (event.key === 'Enter') { loadSubtitleJobs(); }
+      });
+    }
+    if (els.subtitleSelectAll) {
+      els.subtitleSelectAll.addEventListener('change', function () {
+        var checked = !!els.subtitleSelectAll.checked;
+        var selected = subtitleSelectedSet();
+        (state.subtitleJobs.list || []).forEach(function (job) {
+          if (!job || !job.job_id) { return; }
+          if (checked) { selected.add(job.job_id); } else { selected.delete(job.job_id); }
+        });
+        renderSubtitleJobs(state.subtitleJobs.list || []);
+        subtitleBulkCountUpdate();
+      });
+    }
+    if (els.subtitleBulkCancelBtn) {
+      els.subtitleBulkCancelBtn.addEventListener('click', function () {
+        subtitleBulkAction('cancel');
+      });
+    }
+    if (els.subtitleBulkRetryBtn) {
+      els.subtitleBulkRetryBtn.addEventListener('click', function () {
+        subtitleBulkAction('retry');
+      });
+    }
+    if (els.subtitleBulkPriorityBtn) {
+      els.subtitleBulkPriorityBtn.addEventListener('click', function () {
+        subtitleBulkAction('priority');
+      });
+    }
     // v0048：失败任务面板 / 目录监控按钮
     if (els.subtitleFailuresRefreshBtn) {
       els.subtitleFailuresRefreshBtn.addEventListener('click', function () {
@@ -9225,6 +9408,10 @@ import {
     }
     if (els.subtitleWatchScanBtn) {
       els.subtitleWatchScanBtn.addEventListener('click', subtitleWatchScan);
+    }
+    // v0049：权限与路径体检
+    if (els.permissionCheckBtn) {
+      els.permissionCheckBtn.addEventListener('click', runPermissionCheck);
     }
     if (els.deletionJobsRefreshBtn) {
       els.deletionJobsRefreshBtn.addEventListener('click', function () { loadDeletionJobs(); });
@@ -9894,9 +10081,191 @@ import {
     }
     if (els.auditPruneBtn) { els.auditPruneBtn.addEventListener('click', pruneAuditByDays); }
     if (els.logFilesPruneBtn) { els.logFilesPruneBtn.addEventListener('click', pruneLogFilesByDays); }
+    // v0049：日志检索 / 可读导出
+    if (els.logSearchBtn) { els.logSearchBtn.addEventListener('click', searchLogs); }
+    if (els.logSearchClearBtn) {
+      els.logSearchClearBtn.addEventListener('click', function () {
+        if (els.logSearchQuery) { els.logSearchQuery.value = ''; }
+        if (els.logSearchJobId) { els.logSearchJobId.value = ''; }
+        if (els.logSearchResults) { clear(els.logSearchResults); }
+        setHidden(els.logSearchEmpty, true);
+        setText(els.logSearchStatus, '');
+        updateLogExportHref();
+      });
+    }
+    if (els.logSearchQuery) {
+      els.logSearchQuery.addEventListener('keydown', function (event) {
+        if (event.key === 'Enter') { searchLogs(); }
+      });
+    }
+    if (els.logSearchJobId) {
+      els.logSearchJobId.addEventListener('keydown', function (event) {
+        if (event.key === 'Enter') { searchLogs(); }
+      });
+    }
   }
 
-  // ==================== 17. 设置页 ====================
+  // ==================== v0049：日志检索 / 权限体检 ====================
+  function logSearchParams() {
+    return {
+      q: (els.logSearchQuery ? els.logSearchQuery.value : '').trim(),
+      jobId: (els.logSearchJobId ? els.logSearchJobId.value : '').trim()
+    };
+  }
+
+  function updateLogExportHref() {
+    if (!els.logSearchExportBtn) { return; }
+    var params = logSearchParams();
+    var query = [];
+    if (params.q) { query.push('q=' + encodeURIComponent(params.q)); }
+    if (params.jobId) { query.push('job_id=' + encodeURIComponent(params.jobId)); }
+    els.logSearchExportBtn.href = '/api/logs/export'
+      + (query.length ? '?' + query.join('&') : '');
+  }
+
+  async function searchLogs() {
+    var params = logSearchParams();
+    if (!params.q && !params.jobId) {
+      toast('请输入关键字或任务 ID 再搜索。', 'info', 3000);
+      return;
+    }
+    setHidden(els.logSearchLoading, false);
+    setHidden(els.logSearchEmpty, true);
+    updateLogExportHref();
+    var query = [];
+    if (params.q) { query.push('q=' + encodeURIComponent(params.q)); }
+    if (params.jobId) { query.push('job_id=' + encodeURIComponent(params.jobId)); }
+    try {
+      var res = await api('/api/logs/search?' + query.join('&') + '&limit=100',
+        { timeout: 20000 });
+      setHidden(els.logSearchLoading, true);
+      renderLogSearchResults(res || {});
+    } catch (err) {
+      setHidden(els.logSearchLoading, true);
+      setHidden(els.logSearchEmpty, false);
+      setText(els.logSearchStatus,
+        errorMessage(err, '日志检索失败，请稍后重试。'));
+    }
+  }
+
+  function renderLogSearchResults(data) {
+    if (!els.logSearchResults) { return; }
+    clear(els.logSearchResults);
+    var logs = data.logs || [];
+    var audit = data.audit || [];
+    setHidden(els.logSearchEmpty, logs.length > 0 || audit.length > 0);
+    setText(els.logSearchStatus, '匹配日志 ' + fmtInt(logs.length)
+      + ' 个 · 审计 ' + fmtInt(audit.length) + ' 条 · 扫描 '
+      + fmtInt(data.scanned_logs || 0) + ' 个文件');
+    logs.forEach(function (hit) {
+      var card = el('div', { className: 'log-search-item' }, [
+        el('div', { className: 'log-search-head' }, [
+          el('span', { className: 'mono', text: hit.name || '' }),
+          el('span', { className: 'muted',
+            text: fmtBytes(hit.size || 0) + ' · ' + (hit.modified_at || '') }),
+          el('span', { className: 'badge badge-blue',
+            text: '匹配 ' + fmtInt(hit.match_count || 0) + ' 行' })
+        ])
+      ]);
+      var pre = el('pre', { className: 'log-match-lines' });
+      pre.textContent = (hit.matches || []).join('\n')
+        + (hit.truncated ? '\n…（仅显示前 30 行匹配）' : '');
+      card.appendChild(pre);
+      els.logSearchResults.appendChild(card);
+    });
+    audit.forEach(function (entry) {
+      var card = el('div', { className: 'log-search-item' });
+      card.appendChild(el('div', { className: 'log-search-head' }, [
+        el('span', { className: 'badge badge-gray',
+          text: '审计 ' + (entry.action || '') }),
+        el('span', { className: 'muted', text: entry.time || '' })
+      ]));
+      var pre = el('pre', { className: 'log-match-lines' });
+      pre.textContent = JSON.stringify(entry, null, 2);
+      card.appendChild(pre);
+      els.logSearchResults.appendChild(card);
+    });
+  }
+
+  async function runPermissionCheck() {
+    if (els.permissionCheckBtn) { setBusy(els.permissionCheckBtn, true); }
+    setHidden(els.permissionLoading, false);
+    try {
+      var res = await api('/api/permissions/report', { timeout: 60000 });
+      var report = (res && res.report) || {};
+      var summary = report.summary || {};
+      setHidden(els.permissionLoading, true);
+      if (els.permissionReportStatus) {
+        setText(els.permissionReportStatus,
+          '共 ' + fmtInt(summary.total || 0) + ' 项：正常 '
+          + fmtInt(summary.ok || 0) + '，警告 ' + fmtInt(summary.warn || 0)
+          + '，错误 ' + fmtInt(summary.error || 0) + '，权限异常 '
+          + fmtInt(summary.issues || 0));
+      }
+      if (els.settingsPermissionSummary) {
+        setText(els.settingsPermissionSummary,
+          '正常 ' + fmtInt(summary.ok || 0) + ' · 异常 '
+          + fmtInt((summary.warn || 0) + (summary.error || 0)));
+      }
+      renderPermissionReport(report);
+    } catch (err) {
+      setHidden(els.permissionLoading, true);
+      if (els.permissionReportStatus) {
+        setText(els.permissionReportStatus,
+          errorMessage(err, '权限体检失败，请稍后重试。'));
+      }
+    } finally {
+      if (els.permissionCheckBtn) { setBusy(els.permissionCheckBtn, false); }
+    }
+  }
+
+  function renderPermissionReport(report) {
+    if (!els.permissionReportList) { return; }
+    clear(els.permissionReportList);
+    var items = report.items || [];
+    var STATUS_LABEL = { ok: '正常', warn: '警告', error: '错误' };
+    var STATUS_CLASS = { ok: 'badge-green', warn: 'badge-amber', error: 'badge-red' };
+    items.forEach(function (item) {
+      els.permissionReportList.appendChild(el('div', {
+        className: 'permission-report-item'
+      }, [
+        el('span', { className: 'badge ' + (STATUS_CLASS[item.status] || 'badge-gray'),
+          text: STATUS_LABEL[item.status] || item.status }),
+        el('span', { className: 'muted', text: item.source || '' }),
+        el('span', { className: 'mono permission-path',
+          attrs: { title: item.path || '' }, text: item.path || '' }),
+        el('span', { className: 'muted',
+          text: (item.share ? '共享 ' + item.share + ' · ' : '')
+            + (item.code || '') })
+      ]));
+      if (item.guidance) {
+        els.permissionReportList.appendChild(el('p', {
+          className: 'hint permission-guidance', text: item.guidance
+        }));
+      }
+    });
+    if (report.issues && report.issues.length) {
+      els.permissionReportList.appendChild(el('div', {
+        className: 'modal-section modal-warning'
+      }, [
+        icon('warning'),
+        '任务中出现的权限异常：' + report.issues.map(function (issue) {
+          return (issue.source || '') + ' '
+            + (issue.message || '');
+        }).slice(0, 10).join('；')
+      ]));
+    }
+    if (els.permissionGuidance) {
+      if (report.guidance && report.guidance.length) {
+        setText(els.permissionGuidance, report.guidance.join(' '));
+        show(els.permissionGuidance);
+      } else {
+        hide(els.permissionGuidance);
+      }
+    }
+  }
+
+
   var SETTINGS_ERROR_FIELDS = {
     minSizeMb: { input: 'setMinSizeMb', error: 'setMinSizeError' },
     maxSizeMb: { input: 'setMaxSizeMb', error: 'setMaxSizeError' },

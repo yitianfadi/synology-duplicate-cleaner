@@ -9,6 +9,7 @@ from .browse import BrowseService
 from .deletion import DeletionManager
 from .merge import MergeManager
 from .notifications import NotificationService
+from .permissions import PermissionInspector
 from .preview import PreviewService
 from .scanner import ScanManager
 from .scheduler import SchedulerService
@@ -29,7 +30,7 @@ class Services(object):
                  upgrade_monitor=None, thumbnail_service=None,
                  merge_manager=None, trash_manager=None,
                  notification_service=None, scheduler_service=None,
-                 subtitle_watch_service=None):
+                 subtitle_watch_service=None, permission_inspector=None):
         self.config = runtime_config
         self.store = store
         self.settings = settings_manager
@@ -47,6 +48,7 @@ class Services(object):
         self.notify = notification_service
         self.scheduler = scheduler_service
         self.subtitle_watch = subtitle_watch_service
+        self.permissions = permission_inspector
 
     def shutdown(self, timeout=5.0):
         # 先停升级 drain 监视，避免正常退出时又把扫描暂停。
@@ -130,6 +132,10 @@ def build_services(runtime_config):
         notifier=notification_service,
         subtitles_provider=lambda: subtitle_service)
     scheduler_service.start()
+    # v0049：权限与路径体检（只读检测 + 指引，不提权）
+    permission_inspector = PermissionInspector(
+        runtime_config, store, share_service, settings_manager.get,
+        subtitle_service=subtitle_service)
     # 升级 drain 握手：preupgrade 写 <var>/upgrade.drain，后端暂停扫描后写 done。
     upgrade_monitor = UpgradeDrainMonitor(runtime_config.data_dir, scan_manager)
     upgrade_monitor.start()
@@ -138,4 +144,4 @@ def build_services(runtime_config):
                     scan_manager, deletion_manager, subtitle_service,
                     upgrade_monitor, thumbnail_service, merge_manager,
                     trash_manager, notification_service, scheduler_service,
-                    subtitle_watch_service)
+                    subtitle_watch_service, permission_inspector)

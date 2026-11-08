@@ -1,7 +1,7 @@
 # 整体方案架构
 
 > 项目：**重复文件清理与字幕（Duplicate Cleaner & Subtitles）** · 群晖 DSM 7.x SPK 套件
-> 版本：1.1.0-0048
+> 版本：1.1.0-0049
 > 原则：**先扫描、出报告、人工确认、二次确认、可回收、全程审计**。任何情况下都不自动静默删除。
 
 ## 1. 目标与边界
@@ -579,6 +579,22 @@ Linux 的 `st_ctime` 是 **inode 状态变更时间**，不是创建时间，复
 - **目录监控**（新 `subtitle_watch.py`）：30 秒 tick + 配置间隔扫描监控目录，按
   `(size, mtime_ns)` 去重（`<var>/subtitle_watch_state.json`），每轮最多入队 20 个，
   以 `user="watcher"` 提交批量任务，翻译开关用 `subtitle_translate_enabled`。
+
+## 19. 任务中心 / 权限体检 / 日志增强（v0049）
+
+> 详细契约见 [TASK_CENTER_V2_CONTRACT.md](TASK_CENTER_V2_CONTRACT.md)。
+
+- **任务检索**：`SubtitleService._matches_filters` 支持 q（路径/任务ID/消息）、suffix、directory
+  （path_key 前缀）、category（失败分类），与 status/group_id/batch_id 组合；前端在有筛选条件时
+  走 `/api/subtitles?limit=200`，否则沿用队列视图。
+- **批量操作**：`bulk_action(user, job_ids, action)` 支持 cancel/pause/resume/retry/priority，
+  逐条结果、最多 200 个、审计 `subtitle_bulk_action`。
+- **权限体检**（新 `permissions.py`）：`PermissionInspector.report()` 收集设置路径 + 最近扫描
+  roots + 共享根，检查存在/目录/可读/可写（`os.access`，即套件用户实际权限），汇总扫描日志权限
+  关键字与字幕 permission 失败，输出 `ok/warn/error` 与 DSM 操作指引；**不自动提权**。
+- **日志增强**：`/api/logs/search` 遍历日志文件（单文件 512KB、最多 500 个）按文件名/内容匹配
+  并同时过滤审计；`/api/logs/export` 生成可读文本；前端日志页新增检索与导出。
+- 任务行/详情已有错误信息与失败分类（v0041/v0048），本版补检索与批量操作入口。
 
 
 

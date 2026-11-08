@@ -1693,7 +1693,40 @@ class SubtitleService(object):
             return (value,)
         raise invalid(u"status 参数非法", details={"key": "status"})
 
-    def list(self, limit=50, batch_id=None, status=None):
+    @staticmethod
+    def _matches_filters(job, q=None, suffix=None, directory=None,
+                         category=None):
+        """v0049：任务检索过滤（路径关键字/后缀/目录前缀/失败分类）。"""
+        if suffix:
+            extension = os.path.splitext(job.path or "")[1].lower()
+            wanted = str(suffix).strip().lower()
+            if wanted and not wanted.startswith("."):
+                wanted = "." + wanted
+            if extension != wanted:
+                return False
+        if directory:
+            prefix = fsutil.path_key(directory)
+            if not fsutil.path_key(job.path or "").startswith(prefix):
+                return False
+        if category and job.status == STATUS_FAILED:
+            if (job.failure_category or "unknown") != category:
+                return False
+        elif category:
+            return False
+        if q:
+            needle = str(q).strip().lower()
+            if not needle:
+                return True
+            haystack = " ".join([
+                job.path or "", job.job_id or "", job.group_id or "",
+                job.batch_id or "", job.message or "",
+                (job.error or {}).get("message") or ""]).lower()
+            if needle not in haystack:
+                return False
+        return True
+
+    def list(self, limit=50, batch_id=None, status=None, q=None,
+             suffix=None, directory=None, category=None):
         statuses = self._status_set(status)
         with self._lock:
             jobs = list(self._jobs.values())
@@ -1701,12 +1734,17 @@ class SubtitleService(object):
             jobs = [item for item in jobs if item.batch_id == batch_id]
         if statuses is not None:
             jobs = [item for item in jobs if item.status in statuses]
+        jobs = [item for item in jobs
+                if self._matches_filters(item, q=q, suffix=suffix,
+                                         directory=directory,
+                                         category=category)]
         jobs.sort(key=lambda item: item.created_epoch, reverse=True)
         return [item.snapshot() for item in jobs[:max(1, int(limit or 50))]]
 
     def list_page(self, limit=50, batch_id=None, group_id=None, offset=0,
-                  status=None):
-        """任务分页（v0032：批次组任务明细按 group_id 过滤；v0034：status 过滤）。"""
+                  status=None, q=None, suffix=None, directory=None,
+                  category=None):
+        """任务分页（v0032 批次组 / v0034 status / v0049 检索筛选）。"""
         statuses = self._status_set(status)
         with self._lock:
             jobs = list(self._jobs.values())
@@ -1716,6 +1754,10 @@ class SubtitleService(object):
             jobs = [item for item in jobs if item.group_id == group_id]
         if statuses is not None:
             jobs = [item for item in jobs if item.status in statuses]
+        jobs = [item for item in jobs
+                if self._matches_filters(item, q=q, suffix=suffix,
+                                         directory=directory,
+                                         category=category)]
         jobs.sort(key=lambda item: item.created_epoch, reverse=True)
         try:
             offset = max(0, int(offset or 0))
@@ -2067,6 +2109,61 @@ class SubtitleService(object):
         self.store.audit("subtitle_priority", job.user, {
             "job_id": job.job_id, "priority": value, "top": bool(top)})
         return job.snapshot()
+
+    def bulk_action(self, user, job_ids, action):
+        """v0049：批量取消/暂停/继续/重试/置顶（单任务失败不影响其它）。"""
+        actions = ("cancel", "pause", "resume", "retry", "priority")
+        if action not in actions:
+            raise invalid(u"action 只能是 %s" % "/".join(actions))
+        if not isinstance(job_ids, list) or not job_ids:
+            raise invalid(u"job_ids 必须是非空数组")
+        if len(job_ids) > 200:
+            raise ApiError("BATCH_TOO_LARGE", u"一次最多操作 200 个任务")
+        unique = []
+        seen = set()
+        for item in job_ids:
+            if not isinstance(item, str) or not item:
+                continue
+            if item in seen:
+                continue
+            seen.add(item)
+            unique.append(item)
+        results = []
+        succeeded = 0
+        failed = 0
+        for job_id in unique:
+            entry = {"job_id": job_id, "ok": False, "message": ""}
+            try:
+                if action == "cancel":
+                    self.cancel(job_id)
+                elif action == "pause":
+                    self.pause(job_id)
+                elif action == "resume":
+                    self.resume(job_id)
+                elif action == "priority":
+                    self.set_priority(job_id, top=True)
+                else:  # retry
+                    result = self.retry_failures(user, job_ids=[job_id],
+                                                 force=True)
+                    if not result.get("requeued"):
+                        skipped = (result.get("skipped") or [{}])[0]
+                        raise invalid(u"任务无法重试：%s"
+                                      % (skipped.get("reason") or "未知原因"))
+                entry["ok"] = True
+                succeeded += 1
+            except (ApiError, SubtitleError) as exc:
+                entry["message"] = getattr(exc, "message", str(exc))
+                failed += 1
+            except Exception as exc:  # pragma: no cover - 防御性兜底
+                entry["message"] = str(exc)
+                failed += 1
+            results.append(entry)
+        self.store.audit("subtitle_bulk_action", user or "", {
+            "action": action, "requested": len(unique),
+            "succeeded": succeeded, "failed": failed})
+        return {"action": action, "requested": len(unique),
+                "succeeded": succeeded, "failed": failed,
+                "results": results}
 
     def get_file(self, job_id, name):
         self._get_job(job_id)

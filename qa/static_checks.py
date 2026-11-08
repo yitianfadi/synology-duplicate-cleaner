@@ -214,7 +214,11 @@ def check_backend():
                        "/api/notifications", "/api/scheduler",
                        # v0048：字幕失败/音轨/监控
                        "/api/subtitles/failures", "/api/subtitles/audio-tracks",
-                       "/api/subtitles/watch"]
+                       "/api/subtitles/watch",
+                       # v0049：任务检索/批量/权限/日志
+                       "/api/subtitles/batch-actions",
+                       "/api/permissions/report", "/api/logs/search",
+                       "/api/logs/export"]
     missing = []
     for marker in expected_routes:
         if marker.startswith("/api/"):
@@ -627,6 +631,31 @@ def check_backend():
           and "protector.check(" in deletion_src
           and "protected_skipped" in deletion_src,
           "protection markers missing")
+
+    # ---- v0049：任务检索/批量操作 + 权限体检 + 日志检索 ----
+    perm_path = os.path.join(backend, "dupcleaner", "permissions.py")
+    perm_src = read(perm_path) if os.path.isfile(perm_path) else ""
+    check("BE-TASKCENTER-V2",
+          "任务检索筛选/批量操作 + 权限路径体检（只读+指引）+ 日志检索与可读导出（v0049）",
+          "def _matches_filters(" in subtitles_src
+          and "def bulk_action(" in subtitles_src
+          and "subtitle_bulk_action" in subtitles_src
+          and os.path.isfile(perm_path)
+          and "class PermissionInspector" in perm_src
+          and "def report(" in perm_src
+          and "def check_paths(" in perm_src
+          and "只读检测" in perm_src
+          and "def _collect_log_search(" in http_src
+          and "def _logs_search(" in http_src
+          and "def _logs_export(" in http_src
+          and "def _permissions_report(" in http_src
+          and "def _subtitle_batch_actions(" in http_src
+          and "subtitles/batch-actions" in http_src
+          and "permissions/report" in http_src
+          and "logs/search" in http_src
+          and "logs/export" in http_src
+          and "PermissionInspector(" in read(os.path.join(backend, "dupcleaner", "services.py")),
+          "taskcenter v2 markers missing")
 
     # ---- v0048：字幕失败分类/自动重试/资源管控/优先级/音轨/目录监控 ----
     watch_path = os.path.join(backend, "dupcleaner", "subtitle_watch.py")
@@ -1235,6 +1264,29 @@ def check_frontend():
           read(os.path.join(web, "js", "constants.js"))
           and "subtitle-failure-item" in read(os.path.join(web, "styles.css")),
           "subtitle v2 ui markers missing")
+    check("FE-TASKCENTER-V2",
+          "任务检索筛选/批量选择取消重试置顶 + 日志检索导出 + 权限体检面板（v0049）",
+          "subtitleJobSearch" in html
+          and "subtitleJobStatusFilter" in html
+          and "subtitleJobSuffix" in html
+          and "subtitleJobDir" in html
+          and "subtitleJobCategory" in html
+          and "subtitleBulkCancelBtn" in html
+          and "subtitleBulkRetryBtn" in html
+          and "logSearchQuery" in html
+          and "logSearchJobId" in html
+          and "logSearchExportBtn" in html
+          and "permissionCheckBtn" in html
+          and "permissionReportList" in html
+          and "function subtitleJobFilters" in app
+          and "function subtitleBulkAction" in app
+          and "function searchLogs" in app
+          and "function runPermissionCheck" in app
+          and "/api/subtitles/batch-actions" in app
+          and "/api/logs/search" in app
+          and "/api/permissions/report" in app
+          and "permission-report-item" in read(os.path.join(web, "styles.css")),
+          "taskcenter v2 ui markers missing")
 
     check("FE-RISK-TEXT", "风险提示文案与契约逐字一致（index.html）",
           RISK_TEXT in html, "risk text not found verbatim")
@@ -1283,6 +1335,10 @@ def check_frontend():
         ("/api/subtitles/failures", "字幕失败清单"),
         ("/api/subtitles/audio-tracks", "字幕音轨列表"),
         ("/api/subtitles/watch", "字幕目录监控"),
+        ("/api/subtitles/batch-actions", "字幕批量操作"),
+        ("/api/permissions/report", "权限体检"),
+        ("/api/logs/search", "日志检索"),
+        ("/api/logs/export", "日志导出"),
     ]
     missing = [name for marker, name in endpoints if marker not in app]
     check("FE-ENDPOINTS", "前端覆盖契约全部 API 端点",

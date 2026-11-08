@@ -1,7 +1,7 @@
 # 实现契约（前后端共享，版本 1.0）
 
 > 本文件是前后端并行开发的唯一接口约定。任何一方需要改动字段，先改本文件并在团队任务中说明。
-> 产品名：**DuplicateCleaner**；显示名：**重复文件清理与字幕**；SPK 版本：**1.1.0-0048**。
+> 产品名：**DuplicateCleaner**；显示名：**重复文件清理与字幕**；SPK 版本：**1.1.0-0049**。
 > v1.1 新增内容相似度模式；相似模式字段与行为见 [SIMILARITY_CONTRACT.md](SIMILARITY_CONTRACT.md)，**精准模式规则不变**。
 
 ## 1. 仓库与写入边界
@@ -154,7 +154,7 @@ v0042 增量（升级启动稳定性）：
 ### GET /api/meta
 ```json
 {
- "app_version": "1.1.0-0048",
+ "app_version": "1.1.0-0049",
  "dsm_version": "7.2.2-72806" | "dev",
  "python_version": "3.8.16",
  "creation_time_supported": true,
@@ -548,6 +548,18 @@ Content-Disposition: attachment; filename="duplicate-scan-<id>.csv"
   last_result, watched_files}}`；`POST /api/subtitles/watch/scan` → 202 `{result}`。
 - `POST /api/subtitles/{job_id}/priority` `{top:true}` 或 `{priority:0..1000}` → `{job}`。
 
+### v0049 任务检索 / 批量操作 / 权限体检 / 日志检索接口
+
+- `GET /api/subtitles` 新增检索参数：`q`（路径/任务ID/消息）、`suffix`、`directory`、
+  `category`（失败分类），与 `status/group_id/batch_id/offset/limit` 组合使用。
+- `POST /api/subtitles/batch-actions` `{job_ids[], action:"cancel"|"pause"|"resume"|"retry"|"priority"}`
+  → `{requested, succeeded, failed, results:[{job_id,ok,message}]}`（最多 200 个）。
+- `GET /api/permissions/report` → `{report:{items[], summary{total,ok,warn,error,issues},
+  issues[], guidance[], note}}`（只读检测 + 指引，不提权）。
+- `POST /api/permissions/check` `{paths[]}` → `{report:{items[], count}}`（≤50 条）。
+- `GET /api/logs/search?q=&job_id=&limit=` → `{logs[], audit[], scanned_logs}`。
+- `GET /api/logs/export?q=&job_id=` → 可读文本（text/plain）下载。
+
 ### GET /api/logs?limit=50
 ```json
 {"ok":true,"logs":[{"name":"scan-20261101-....log","kind":"scan","size":1234,
@@ -624,4 +636,4 @@ Content-Disposition: attachment; filename="duplicate-scan-<id>.csv"
 - 后端 unittest 覆盖：statx 时间读取降级、哈希分片/限速、重复分组与三种保留策略、
   路径黑名单、删除前重校验、回收站路径生成、CSV、API 鉴权。
 - 前端可用静态检查 + 本地 dev 后端联调；QA 用 dev 模式在临时目录生成重复文件跑完整 API 流程。
-- 打包产物 `dist/DuplicateCleaner-1.1.0-0048.spk` 必须能通过 `tar -tf` 检查，包含 INFO/package.tgz/scripts/conf/ui。
+- 打包产物 `dist/DuplicateCleaner-1.1.0-0049.spk` 必须能通过 `tar -tf` 检查，包含 INFO/package.tgz/scripts/conf/ui。

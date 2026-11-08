@@ -6,8 +6,8 @@
 <meta name="color-scheme" content="light">
 <meta name="referrer" content="same-origin">
 <title>重复文件清理与字幕 · Duplicate Cleaner &amp; Subtitles</title>
-<link rel="icon" href="./assets/favicon.svg?v=1.1.0-0048" type="image/svg+xml">
-<link rel="stylesheet" href="./styles.css?v=1.1.0-0048">
+<link rel="icon" href="./assets/favicon.svg?v=1.1.0-0049" type="image/svg+xml">
+<link rel="stylesheet" href="./styles.css?v=1.1.0-0049">
 </head>
 <body>
 <a class="skip-link" href="#main">跳到主要内容</a>
@@ -859,6 +859,51 @@
               <svg class="icon" aria-hidden="true"><use href="#i-refresh"></use></svg>刷新任务
             </button>
           </div>
+          <div class="form-grid subtitle-filter-bar" id="subtitleFilterBar">
+            <div class="field">
+              <label for="subtitleJobSearch">检索（路径/任务ID/关键字）</label>
+              <input id="subtitleJobSearch" type="text" placeholder="movie 或 sub-2026..." autocomplete="off" spellcheck="false">
+            </div>
+            <div class="field">
+              <label for="subtitleJobStatusFilter">状态</label>
+              <select id="subtitleJobStatusFilter">
+                <option value="">全部状态</option>
+                <option value="active">进行中</option>
+                <option value="queued">排队中</option>
+                <option value="running">识别中</option>
+                <option value="translating">翻译中</option>
+                <option value="paused">已暂停</option>
+                <option value="done">已完成</option>
+                <option value="failed">失败</option>
+                <option value="cancelled">已取消</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="subtitleJobSuffix">文件后缀</label>
+              <input id="subtitleJobSuffix" type="text" placeholder=".mkv" autocomplete="off" spellcheck="false">
+            </div>
+            <div class="field">
+              <label for="subtitleJobDir">目录包含</label>
+              <input id="subtitleJobDir" type="text" placeholder="/volume1/media" autocomplete="off" spellcheck="false">
+            </div>
+            <div class="field">
+              <label for="subtitleJobCategory">失败分类</label>
+              <select id="subtitleJobCategory">
+                <option value="">全部分类</option>
+              </select>
+            </div>
+            <div class="field field-wide">
+              <div class="settings-actions-row">
+                <button type="button" class="btn btn-primary btn-sm" id="subtitleJobFilterBtn">筛选</button>
+                <button type="button" class="btn btn-ghost btn-sm" id="subtitleJobFilterResetBtn">重置</button>
+                <label class="check"><input id="subtitleSelectAll" type="checkbox">全选当前列表</label>
+                <span class="muted" id="subtitleBulkCount">已选 0 个</span>
+                <button type="button" class="btn btn-ghost btn-sm" id="subtitleBulkCancelBtn">批量取消</button>
+                <button type="button" class="btn btn-ghost btn-sm" id="subtitleBulkRetryBtn">批量重试</button>
+                <button type="button" class="btn btn-ghost btn-sm" id="subtitleBulkPriorityBtn">批量置顶</button>
+              </div>
+            </div>
+          </div>
           <div class="state-box" id="subtitleJobsLoading" hidden><span class="spinner" aria-hidden="true"></span>正在加载字幕任务…</div>
           <div class="state-box state-error" id="subtitleJobsError" role="alert" hidden></div>
           <div class="state-box state-empty" id="subtitleJobsEmpty" hidden>暂无字幕任务。可在视频结果行点击“生成字幕”，或到「字幕」页批量提交。</div>
@@ -990,6 +1035,32 @@
           </div>
         </div>
         <p class="hint">删除不可恢复：勾选可删除单条审计事件；「清理审计 / 清理日志文件」按上面选择的“保留最近 N 天”删除更早记录。</p>
+        <section class="card logs-search-panel" id="logSearchPanel" aria-labelledby="logSearchHeading">
+          <div class="card-head">
+            <h2 id="logSearchHeading">日志检索（按任务 ID / 关键字）</h2>
+            <span class="muted" id="logSearchStatus"></span>
+          </div>
+          <div class="form-grid">
+            <div class="field">
+              <label for="logSearchQuery">关键字</label>
+              <input id="logSearchQuery" type="text" placeholder="PERMISSION / timeout / 任务ID" autocomplete="off" spellcheck="false">
+            </div>
+            <div class="field">
+              <label for="logSearchJobId">任务 ID（扫描/删除/合并/字幕）</label>
+              <input id="logSearchJobId" type="text" placeholder="20261108-... 或 sub-/del-/mrg-" autocomplete="off" spellcheck="false">
+            </div>
+            <div class="field field-wide">
+              <div class="settings-actions-row">
+                <button type="button" class="btn btn-primary btn-sm" id="logSearchBtn">搜索</button>
+                <button type="button" class="btn btn-ghost btn-sm" id="logSearchClearBtn">清空</button>
+                <a class="btn btn-ghost btn-sm" id="logSearchExportBtn" href="/api/logs/export" download>导出可读日志</a>
+              </div>
+            </div>
+          </div>
+          <div class="state-box" id="logSearchLoading" hidden><span class="spinner" aria-hidden="true"></span>正在检索日志…</div>
+          <div class="state-box state-empty" id="logSearchEmpty" hidden>没有匹配的日志。</div>
+          <div id="logSearchResults" class="log-search-results"></div>
+        </section>
         <div class="state-box" id="logsLoading" hidden><span class="spinner" aria-hidden="true"></span>正在加载日志…</div>
         <div class="state-box state-error" id="logsError" role="alert" hidden></div>
         <div class="two-col">
@@ -1702,6 +1773,17 @@
           </div>
         </section>
         </details>
+        <details class="advanced settings-group" id="settingsPermissionGroup">
+          <summary><span class="settings-group-title">系统 · 权限与路径体检</span><span class="settings-summary" id="settingsPermissionSummary"></span></summary>
+          <p class="hint">只做检测与指引，不会自动修改权限/ACL（套件非 root 无法改 ACL）。检查配置中的扫描/监控/白名单目录、共享文件夹以及任务里出现过的权限异常，并给出 DSM 控制面板操作建议。</p>
+          <div class="settings-actions-row">
+            <button type="button" class="btn btn-primary btn-sm" id="permissionCheckBtn">运行权限体检</button>
+            <span class="muted" id="permissionReportStatus"></span>
+          </div>
+          <div class="state-box" id="permissionLoading" hidden><span class="spinner" aria-hidden="true"></span>正在体检…</div>
+          <div class="form-error-banner" id="permissionGuidance" role="status" hidden></div>
+          <div id="permissionReportList" class="permission-report-list"></div>
+        </details>
         <p class="form-error-banner" id="settingsError" role="alert" hidden></p>
         <div class="form-actions settings-save-bar">
           <button type="button" class="btn btn-primary" id="saveSettingsBtn">保存设置</button>
@@ -1751,6 +1833,6 @@
   <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.6" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M12 10.8v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="12" cy="7.6" r="1.05" fill="currentColor"/></symbol>
 </svg>
 
-<script type="module" src="./app.js?v=1.1.0-0048"></script>
+<script type="module" src="./app.js?v=1.1.0-0049"></script>
 </body>
 </html>

@@ -1,9 +1,9 @@
 {
-  "generated_at": "2026-11-08T22:12:42+0800",
+  "generated_at": "2026-11-08T22:25:34+0800",
   "python": "3.12.9 | packaged by Anaconda, Inc. | (main, Feb  6 2025, 18:49:16) [MSC v.1929 64 bit (AMD64)]",
   "repo": "D:\\code\\zhouyi\\qunhui\\synology-duplicate-cleaner",
   "summary": {
-    "PASS": 199,
+    "PASS": 204,
     "FAIL": 0,
     "UNVERIFIED": 1
   },
@@ -11,11 +11,11 @@
     "fixture_files": 46,
     "python": "3.12.9",
     "birthtime_supported": true,
-    "backend_port": 5769,
+    "backend_port": 4450,
     "csrf_token_len": 43,
     "meta": {
       "ok": true,
-      "app_version": "1.1.0-0048",
+      "app_version": "1.1.0-0049",
       "dsm_version": "dev",
       "python_version": "3.12.9",
       "creation_time_supported": true,
@@ -550,7 +550,7 @@
       }
     },
     "subtitle_enumerate_count": 0,
-    "main_scan_id": "20261108-221232-be3daa",
+    "main_scan_id": "20261108-222521-3200b5",
     "main_scan_final": "completed",
     "main_stats": {
       "files_seen": 38,
@@ -564,7 +564,7 @@
       "selectable_duplicate_files": 15,
       "selectable_reclaimable_bytes": 4403200,
       "bytes_hashed": 8753152,
-      "bytes_per_sec": 379650894,
+      "bytes_per_sec": 402726798,
       "errors": 0,
       "skipped": {
         "symlink": 0,
@@ -640,13 +640,13 @@
     },
     "main_groups_total": 12,
     "recycle_plan": {
-      "plan_id": "plan-c2091498a2ebdf4a",
+      "plan_id": "plan-7c12afd3b170569e",
       "count": 2,
       "bytes": 40960,
       "groups_affected": 1
     },
     "recycle_job": {
-      "job_id": "del-20261108-221232-145e8a",
+      "job_id": "del-20261108-222522-dedde1",
       "status": "completed",
       "done": 2,
       "failed": 0,
@@ -1162,7 +1162,7 @@
       "id": "SKIP-04",
       "name": "符号链接跳过（当前环境无法创建 symlink）",
       "status": "UNVERIFIED",
-      "detail": "os.symlink failed: [WinError 1314] 客户端没有所需的特权。: 'C:\\\\Users\\\\zhouyi\\\\AppData\\\\Local\\\\Temp\\\\dupqa-5s4zkwew\\\\qa-share-a\\\\dup' -> 'C:\\\\Users\\\\zhouyi\\\\AppData\\\\Local\\\\Temp\\\\dupqa-5s4zkwew\\\\qa-share-a\\\\link_to_dup'"
+      "detail": "os.symlink failed: [WinError 1314] 客户端没有所需的特权。: 'C:\\\\Users\\\\zhouyi\\\\AppData\\\\Local\\\\Temp\\\\dupqa-u5b1a_tt\\\\qa-share-a\\\\dup' -> 'C:\\\\Users\\\\zhouyi\\\\AppData\\\\Local\\\\Temp\\\\dupqa-u5b1a_tt\\\\qa-share-a\\\\link_to_dup'"
     },
     {
       "id": "HARDLINK-01",
@@ -1815,6 +1815,36 @@
     {
       "id": "SUBF-06",
       "name": "v0048 监控间隔过小被拒绝（60 秒下限）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SUBJ-01",
+      "name": "v0049 任务检索筛选（q/后缀/目录/状态）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SUBJ-02",
+      "name": "v0049 批量操作接口（空列表拒绝、未知任务计失败）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "PERM-01",
+      "name": "v0049 权限体检报告（只读检测+指引）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "LOGS-01",
+      "name": "v0049 日志按任务 ID 检索",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "LOGS-02",
+      "name": "v0049 日志可导出为可读文本",
       "status": "PASS",
       "detail": ""
     },

@@ -2748,6 +2748,50 @@ def run():
               resp.status == 400 and bad_code2 == "INVALID_ARGUMENT",
               "status=%s code=%s" % (resp.status, bad_code2))
 
+        # ---------------- v0049：任务检索/批量操作/权限体检/日志检索 ----------------
+        resp = client.get("/api/subtitles?limit=20&q=movie&suffix=.mp4"
+                          "&directory=/volume1/media&status=done")
+        filtered = jd(resp)
+        check("SUBJ-01", "v0049 任务检索筛选（q/后缀/目录/状态）",
+              resp.status == 200 and isinstance(filtered.get("jobs"), list),
+              "status=%s jobs=%s"
+              % (resp.status, len(filtered.get("jobs") or [])))
+        resp = client.post_json("/api/subtitles/batch-actions",
+                                {"job_ids": [], "action": "cancel"})
+        empty_code, _ = err_code(resp)
+        resp = client.post_json("/api/subtitles/batch-actions",
+                                {"job_ids": ["sub-not-exist"], "action": "cancel"})
+        result = jd(resp)
+        check("SUBJ-02", "v0049 批量操作接口（空列表拒绝、未知任务计失败）",
+              empty_code == "INVALID_ARGUMENT" and resp.status == 200
+              and result.get("failed") == 1 and result.get("succeeded") == 0,
+              "empty=%s status=%s result=%s"
+              % (empty_code, resp.status,
+                 json.dumps(result, ensure_ascii=False)[:120]))
+        resp = client.get("/api/permissions/report")
+        report = jd(resp).get("report") or {}
+        check("PERM-01", "v0049 权限体检报告（只读检测+指引）",
+              resp.status == 200
+              and isinstance(report.get("items"), list)
+              and isinstance(report.get("summary"), dict)
+              and "note" in report
+              and isinstance(report.get("guidance"), list),
+              "status=%s summary=%s"
+              % (resp.status, json.dumps(report.get("summary"),
+                                         ensure_ascii=False)))
+        resp = client.get("/api/logs/search?job_id=%s" % quote(main_id))
+        search = jd(resp)
+        check("LOGS-01", "v0049 日志按任务 ID 检索",
+              resp.status == 200 and isinstance(search.get("logs"), list),
+              "status=%s logs=%s"
+              % (resp.status, len(search.get("logs") or [])))
+        resp = client.get("/api/logs/export?job_id=%s" % quote(main_id))
+        check("LOGS-02", "v0049 日志可导出为可读文本",
+              resp.status == 200 and "text/plain" in resp.header("content-type")
+              and b"DuplicateCleaner" in resp.body,
+              "status=%s type=%s" % (resp.status,
+                                     resp.header("content-type")))
+
         # ---------------- 重启持久化 ----------------
         client.put_json("/api/settings", {"settings": {"concurrency": 3}})
         backend.stop()

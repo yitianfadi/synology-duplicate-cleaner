@@ -132,6 +132,17 @@ export var IDS = ('loginView loginForm loginUsername loginPassword loginOtp logi
   'subtitleFailuresRetryBtn subtitleFailuresRetryForceBtn ' +
   'subtitleFailuresHint subtitleFailuresLoading subtitleFailuresEmpty ' +
   'subtitleFailuresList ' +
+  'subtitleFilterBar subtitleJobSearch subtitleJobStatusFilter ' +
+  'subtitleJobSuffix subtitleJobDir subtitleJobCategory ' +
+  'subtitleJobFilterBtn subtitleJobFilterResetBtn subtitleSelectAll ' +
+  'subtitleBulkCount subtitleBulkCancelBtn subtitleBulkRetryBtn ' +
+  'subtitleBulkPriorityBtn ' +
+  'logSearchPanel logSearchHeading logSearchStatus logSearchQuery ' +
+  'logSearchJobId logSearchBtn logSearchClearBtn logSearchExportBtn ' +
+  'logSearchLoading logSearchEmpty logSearchResults ' +
+  'settingsPermissionGroup settingsPermissionSummary permissionCheckBtn ' +
+  'permissionReportStatus permissionLoading permissionGuidance ' +
+  'permissionReportList ' +
   'setSubtitleConcurrency setSubtitleConcurrencyError ' +
   'setSubtitleTranslateOutputs setSubtitleTranslateOutputsError ' +
   'subtitleGroupCurrent subtitleJobsFilter subtitleJobsActive ' +

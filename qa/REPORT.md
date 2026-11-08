@@ -1198,6 +1198,71 @@ python build/build_spk.py --no-icons --out-dir $env:TEMP\qa-build2
 - 目录监控自动入队 + 翻译流程、`skip_existing` 去重、误报（新文件拷贝/重命名）处理；
 - 失败清单 CSV 在 Excel 中的中文显示（UTF-8 BOM）；自动重试对网络抖动的实际收益。
 
+## 31. 附：v0049 任务中心 / 权限体检 / 日志增强（2026-11-08）
+
+### 31.1 需求与方案
+
+- 需求（v2 文档 全局 1/2/4）：“任务检索筛选（状态/目录/后缀/失败类型，批量选中/取消/重试）”、
+  “权限与路径向导（一键配置共享文件夹读写权限；汇总无法读取/权限异常清单）”、“日志增强
+  （可视化报错、按任务 ID 筛选、导出易读格式）”。
+- 评估结论（REQUIREMENTS_V2_ASSESSMENT §3.1/§4）：**一键配置 ACL 做不到**（套件非 root），
+  改为“一键**只读体检** + DSM 操作指引”；检索/批量/日志均可行。
+
+### 31.2 实现
+
+- **任务检索**（`SubtitleService._matches_filters`）：`q`（路径/任务ID/批次组/消息）、
+  `suffix`（.mkv 或 mkv）、`directory`（path_key 前缀）、`category`（失败分类），与
+  `status/group_id/batch_id/offset/limit` 组合；前端有筛选条件时走 `/api/subtitles?limit=200`，
+  否则沿用队列视图。
+- **批量操作**（`bulk_action`）：cancel/pause/resume/retry/priority，最多 200 个、逐条结果、
+  审计 `subtitle_bulk_action`；前端「全选当前列表 / 已选 N 个 / 批量取消/重试/置顶」。
+- **权限体检**（新 `permissions.py`）：收集设置路径（计划扫描/监控/白名单/目录优先级）+
+  最近完成扫描 roots + 所有共享根，检查存在/目录/可读/可写（`os.access` = 套件用户实际权限），
+  汇总扫描日志权限关键字与字幕 permission 失败，输出 `ok/warn/error` + DSM 指引；
+  明确“只读检测、不自动改 ACL”。
+- **日志增强**：`/api/logs/search`（关键字/任务 ID，最多 500 个日志文件、单文件 512KB，
+  同时过滤审计）、`/api/logs/export`（可读文本）；前端日志页新增检索/清空/导出与 `<pre>` 匹配行。
+- 版本 1.1.0-0049；schema 仍 v8，无数据库迁移。
+
+### 31.3 验证
+
+- unittest：**659 OK（5 skipped）**（新增 `test_v0049_taskcenter.py` 17 例：检索 5、批量 5、
+  权限 3、日志 API 4）。
+- static：**195 PASS / 0 FAIL / 0 UNVERIFIED**（新增 `BE-TASKCENTER-V2`、`FE-TASKCENTER-V2`
+  + 路由/端点覆盖）。
+- e2e：**204 PASS / 0 FAIL / 1 UNVERIFIED**（新增 `SUBJ-01/02`、`PERM-01`、`LOGS-01/02`；
+  Windows symlink 历史项）。
+- 真实 Chromium 探针（`.uiprobe/probe_v0049.mjs`）**11/11 PASS**：任务筛选栏/批量栏、日志检索
+  （先扫描产生日志）、权限体检渲染、无 console 错误；截图 `.uiprobe/v0049-permission.png`。
+- 真机待验证：DSM 共享文件夹权限体检结果与 `ls -l` 一致性；大量日志下检索耗时；
+  200 个任务批量操作的响应与审计。
+
+### 31.4 踩坑
+
+- 测试客户端 `request()` 返回 headers 为 `[(name, value)]` 列表，导出检查需 `repr` 匹配。
+- 前端审计条目是普通对象（`entry.action`）而非 Map（`entry.get`）。
+- 权限体检只读：不要实现“自动改权限”承诺；评估结论已明确非 root 无法改 ACL。
+- 检索接口在 `limit=0/offset` 分支下走 `list_page`，要保持旧 `{ok, jobs}` 形状兼容。
+
+### 31.5 产物
+
+- `dist/DuplicateCleaner-1.1.0-0049.spk`：**39,116,800 B**
+  - SHA256 `000cd59274c8f55a9a2bdea7e66c8c5d9a0e77599988e736711394b93e2aab54`
+  - package.tgz MD5 `43d150e673ec935a6f3eb1d5a20e2a43`
+- 版本 1.1.0-0049 同步 8 处；SQLite schema 仍 **v8**。
+
+### 31.6 v2 需求闭环总结
+
+| 需求 | 版本 | 说明 |
+|---|---|---|
+| 增量扫描/哈希缓存/快速过滤/保留策略/排除规则 | v0043 | 哈希缓存、保留规则链、正则/glob/.ignore/附属文件 |
+| 预览/安全删除（硬链接/独立回收站/白名单） | v0044/v0045 | 缩略图/并排对比；合并+回收站+删除白名单 |
+| 计划扫描 + 通知 | v0046 | DSM/Webhook/Telegram、负载阈值 |
+| 相似视频增强 | v0047 | 指纹 v2/裁剪/偏移/音频签名/置信度 |
+| 字幕 ASR 优化 + 视频监控 | v0048 | 失败分类/自动重试/资源管控/优先级/ETA/音轨/目录监控 |
+| 任务检索/权限向导/日志增强 | v0049 | 筛选批量、只读体检+指引、日志检索导出 |
+| 评估结论中“做不到/需改法”的项 | — | ACL 一键配置（改体检+指引）；增量“仅比对新增”改缓存复用；不同剪辑版本不承诺；实时监控用轮询 |
+
 
 
 
