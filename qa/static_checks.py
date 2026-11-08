@@ -203,7 +203,10 @@ def check_backend():
                        "/api/logs/files/delete", "/api/subtitles/queue",
                        "/api/subtitles/batch-groups",
                        # v0043：增量扫描缓存管理
-                       "/api/cache", "/api/cache/clear"]
+                       "/api/cache", "/api/cache/clear",
+                       # v0044：预览增强
+                       "/api/preview/thumb", "/api/preview/media",
+                       "/api/preview/thumbs"]
     missing = []
     for marker in expected_routes:
         if marker.startswith("/api/"):
@@ -578,6 +581,45 @@ def check_backend():
           and "hash_cache_stats" in http_src,
           "cache api markers missing")
 
+    # ---- v0044：预览增强 + 删除白名单 ----
+    thumb_path = os.path.join(backend, "dupcleaner", "thumbnails.py")
+    thumb_src = read(thumb_path) if os.path.isfile(thumb_path) else ""
+    video_src = read(os.path.join(backend, "dupcleaner", "video_similarity.py"))
+    check("BE-PREVIEW-THUMB",
+          "预览增强：缩略图服务（FFmpeg 抽帧 + JPEG 缓存 LRU）+ 媒体信息 + 三个接口（v0044）",
+          os.path.isfile(thumb_path)
+          and "class ThumbnailService" in thumb_src
+          and "def thumbnail(" in thumb_src
+          and "def media_info(" in thumb_src
+          and "def preview_plan(" in thumb_src
+          and "def extract_thumbnail(" in video_src
+          and "def parse_media_streams(" in video_src
+          and "/api/preview/thumb" in http_src
+          and "def _preview_thumb" in http_src
+          and "def _preview_media" in http_src
+          and "def _preview_thumbs" in http_src
+          and "THUMB_MAX_ENTRIES" in conf_src,
+          "preview thumbnail markers missing")
+    protect_path = os.path.join(backend, "dupcleaner", "protection.py")
+    protect_src = read(protect_path) if os.path.isfile(protect_path) else ""
+    deletion_src = read(os.path.join(backend, "dupcleaner", "deletion.py"))
+    check("BE-PROTECT",
+          "删除白名单：目录/后缀/文件名/视频附属文件保护，扫描期标记 + 计划与执行前按当前设置重算（v0044）",
+          os.path.isfile(protect_path)
+          and "class Protector" in protect_src
+          and "def sidecar_state(" in protect_src
+          and "PROTECT_DEFAULT_EXTENSIONS" in conf_src
+          and "protect_enabled" in settings_src
+          and "protect_dirs" in settings_src
+          and "protect_name_regex" in settings_src
+          and "protect_sidecar_files" in settings_src
+          and "protection.Protector" in scanner_src
+          and 'file_info["protected"]' in scanner_src
+          and "REASON_PROTECTED" in deletion_src
+          and "protector.check(" in deletion_src
+          and "protected_skipped" in deletion_src,
+          "protection markers missing")
+
 
 # ---------------------------------------------------------------------------
 # 前端
@@ -945,6 +987,31 @@ def check_frontend():
           and "hash_cache" in app,
           "cache ui markers missing")
 
+    # ---- v0044：预览增强 + 删除白名单 ----
+    check("FE-PREVIEW-THUMB",
+          "视频预览：缩略图条（点击跳转时间点）+ 媒体信息 + 并排对比（v0044）",
+          "function buildVideoExtras" in app
+          and "function openCompareView" in app
+          and "function mediaInfoText" in app
+          and "function clockText" in app
+          and "/api/preview/thumbs" in app
+          and "preview-thumb" in app
+          and "/api/preview/media" in app
+          and "bytes=0-0" in app
+          and "preview-thumb" in read(os.path.join(web, "styles.css")),
+          "preview thumbnail ui markers missing")
+    check("FE-PROTECT-UI",
+          "删除白名单：设置页规则 + 结果行受保护徽标 + 不可勾选 + 摘要统计（v0044）",
+          "setProtectEnabled" in html and "setProtectExtensions" in html
+          and "setProtectDirs" in html and "setProtectNameRegex" in html
+          and "setProtectSidecarFiles" in html
+          and "PROTECT_REASON_LABEL" in app
+          and "is-protected" in app
+          and "file.protected" in app
+          and "受删除白名单保护" in app
+          and "badge-shield" in read(os.path.join(web, "styles.css")),
+          "protect ui markers missing")
+
     check("FE-RISK-TEXT", "风险提示文案与契约逐字一致（index.html）",
           RISK_TEXT in html, "risk text not found verbatim")
     risk_region = ""
@@ -983,6 +1050,8 @@ def check_frontend():
         ("/api/subtitles/queue", "字幕队列视图"),
         ("/api/subtitles/batch-groups", "字幕批次组总览"),
         ("/api/cache/clear", "增量缓存清理"),
+        ("/api/preview/thumb", "预览缩略图"),
+        ("/api/preview/media", "预览媒体信息"),
     ]
     missing = [name for marker, name in endpoints if marker not in app]
     check("FE-ENDPOINTS", "前端覆盖契约全部 API 端点",

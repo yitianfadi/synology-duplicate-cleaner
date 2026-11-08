@@ -148,6 +148,16 @@ def _query_bool(request, name, default=False):
     return str(raw).strip().lower() in ("1", "true", "yes", "on")
 
 
+def _query_float(request, name, default):
+    raw = request.query_last(name)
+    if raw is None or raw == "":
+        return default
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        raise invalid(u"参数 %s 必须是数字" % name)
+
+
 class Api(object):
     def __init__(self, services):
         self.services = services
@@ -184,6 +194,10 @@ class Api(object):
             ("GET", re.compile(r"^/api/scans/(?P<scan_id>[^/]+)/delete/(?P<job_id>[^/]+)$"),
              self._delete_job, False),
             ("GET", re.compile(r"^/api/preview$"), self._preview, False),
+            # v0044：预览增强（缩略图 / 媒体信息 / 缩略图时间点清单）
+            ("GET", re.compile(r"^/api/preview/thumb$"), self._preview_thumb, False),
+            ("GET", re.compile(r"^/api/preview/media$"), self._preview_media, False),
+            ("GET", re.compile(r"^/api/preview/thumbs$"), self._preview_thumbs, False),
             ("GET", re.compile(r"^/api/logs$"), self._logs, False),
             ("GET", re.compile(r"^/api/logs/download$"), self._logs_download, False),
             # v0038：操作日志删除（管理员 + CSRF；支持选中删除 / 只保留最近 N 天）
@@ -392,6 +406,17 @@ class Api(object):
                     config.LARGE_FILE_SAMPLE_THRESHOLD_BYTES,
                 "hash_cache_max_entries": config.HASH_CACHE_MAX_ENTRIES,
                 "ignore_file_name": config.IGNORE_FILE_NAME,
+                # v0044：删除白名单（保护）原因中文标签
+                "protect_reasons": dict(config.PROTECT_REASON_LABELS),
+            },
+            # v0044：预览增强能力
+            "preview": {
+                "thumb_width_default": config.THUMB_DEFAULT_WIDTH,
+                "thumb_width_max": config.THUMB_MAX_WIDTH,
+                "thumb_count_default": config.THUMB_COUNT_DEFAULT,
+                "thumb_count_max": config.THUMB_COUNT_MAX,
+                "thumb_cache_entries": config.THUMB_MAX_ENTRIES,
+                "sync_tolerance_sec": config.PREVIEW_SYNC_TOLERANCE_SEC,
             },
             # v0028 目录批量字幕能力（docs/SUBTITLE_BATCH_CONTRACT.md）
             "subtitle": {
@@ -545,6 +570,10 @@ class Api(object):
                 "entries": store.media_probe_cache_count(),
                 "max_entries": config.MEDIA_PROBE_CACHE_MAX_ENTRIES,
             },
+            # v0044：预览缩略图缓存
+            "thumbnail_cache": (
+                self.services.thumbnails.stats()
+                if self.services.thumbnails is not None else None),
             "video_cache": video_cache,
             "ffmpeg": {
                 "available": bool(ffmpeg_info.get("available")),
@@ -1061,6 +1090,74 @@ class Api(object):
             allow_range=True,
             headers={"Cache-Control": "no-store"},
         )
+
+    # ------------------------------------------------------------------
+    # v0044：预览增强（缩略图 / 媒体信息）
+    # ------------------------------------------------------------------
+    def _preview_thumb(self, request, session, params):
+        path = request.query_last("path", "")
+        if self.services.thumbnails is None:
+            raise ApiError("PREVIEW_UNSUPPORTED", u"当前后端未提供缩略图服务")
+        info = self.services.preview.resolve(path)
+        if info["kind"] != "video":
+            raise ApiError("PREVIEW_UNSUPPORTED", u"缩略图仅支持视频文件")
+        timestamp = _query_float(request, "t", 0.0)
+        width = _query_int(request, "w", config.THUMB_DEFAULT_WIDTH)
+        duration = None
+        try:
+            media = self.services.thumbnails.media_info(info["path"])
+            duration = media.get("duration")
+        except ApiError:
+            duration = None
+        thumbnail = self.services.thumbnails.thumbnail(
+            info["path"], timestamp=timestamp, width=width, duration=duration)
+        try:
+            size = os.path.getsize(thumbnail["path"])
+        except OSError:
+            raise ApiError("PICTURE_FAILED", u"缩略图文件不可读")
+        return Response(
+            status=200,
+            content_type="image/jpeg",
+            file_path=thumbnail["path"],
+            file_size=size,
+            headers={
+                "Cache-Control": "private, max-age=3600",
+                "X-Thumb-Cache": "hit" if thumbnail.get("cached") else "miss",
+                "X-Thumb-Timestamp": "%.3f" % float(thumbnail.get("timestamp") or 0),
+            },
+        )
+
+    def _preview_media(self, request, session, params):
+        path = request.query_last("path", "")
+        if self.services.thumbnails is None:
+            raise ApiError("PREVIEW_UNSUPPORTED", u"当前后端未提供媒体信息服务")
+        info = self.services.preview.resolve(path)
+        if info["kind"] not in ("video", "audio"):
+            raise ApiError("PREVIEW_UNSUPPORTED", u"该文件类型不支持媒体信息")
+        media = self.services.thumbnails.media_info(info["path"])
+        return json_response({
+            "ok": True,
+            "path": info["path"],
+            "name": info["name"],
+            "size": info["size"],
+            "media": media,
+        })
+
+    def _preview_thumbs(self, request, session, params):
+        path = request.query_last("path", "")
+        if self.services.thumbnails is None:
+            raise ApiError("PREVIEW_UNSUPPORTED", u"当前后端未提供缩略图服务")
+        info = self.services.preview.resolve(path)
+        if info["kind"] not in ("video", "audio"):
+            raise ApiError("PREVIEW_UNSUPPORTED", u"该文件类型不支持缩略图清单")
+        count = _query_int(request, "count", config.THUMB_COUNT_DEFAULT)
+        width = _query_int(request, "w", config.THUMB_DEFAULT_WIDTH)
+        plan = self.services.thumbnails.preview_plan(
+            info["path"], count=count, width=width)
+        payload = {"ok": True, "path": info["path"], "name": info["name"],
+                   "size": info["size"]}
+        payload.update(plan)
+        return json_response(payload)
 
     def _logs(self, request, session, params):
         limit = _query_int(request, "limit", 50)

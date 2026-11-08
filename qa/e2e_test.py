@@ -2146,6 +2146,132 @@ def run():
               % (after_scan.get("status"), after_stats.get("hash_cache_hits"),
                  after_stats.get("bytes_hashed")))
 
+        # ---------------- v0044：预览缩略图 / 删除白名单 ----------------
+        prot_dir = os.path.join(fx["share_a"], "prot", "media")
+        # 用 create_ordered 保证 btime 可区分，避免同组创建时间相同 → 转人工组
+        prev = None
+        prev = create_ordered(os.path.join(prot_dir, "movie.mkv"),
+                              blob("prot-v", 4096), prev)
+        prev = create_ordered(os.path.join(prot_dir, "movie2.mkv"),
+                              blob("prot-v", 4096), prev)
+        prev = create_ordered(os.path.join(prot_dir, "movie.srt"),
+                              blob("prot-s", 512), prev)
+        prev = create_ordered(os.path.join(prot_dir, "movie2.srt"),
+                              blob("prot-s", 512), prev)
+        client.put_json("/api/settings", {"settings": {
+            "protect_enabled": True,
+            "protect_extensions": [".srt", ".ass", ".ssa", ".nfo", ".vtt"],
+            "protect_dirs": [],
+            "protect_name_regex": [],
+            "protect_sidecar_files": True,
+        }})
+        resp = post_scan(client, [os.path.join(fx["share_a"], "prot")], options={
+            "media_sidecar_mode": "include"})
+        prot_scan_id = jd(resp).get("scan_id")
+        prot_scan = wait_scan(client, prot_scan_id) if prot_scan_id else {}
+        prot_stats = prot_scan.get("stats") or {}
+        prot_groups, _prot_total, _ = fetch_groups(client, prot_scan_id) if prot_scan_id else ([], 0, None)
+        srt_group = group_with_path(prot_groups, os.path.join(prot_dir, "movie.srt"))
+        srt_protected = bool(srt_group) and all(
+            f.get("protected") and not f.get("default_selected")
+            for f in group_files(srt_group))
+        check("PRT-01", "v0044 扫描标记受保护文件（外挂字幕）且默认不可勾选",
+              prot_scan.get("status") == "completed"
+              and int(prot_stats.get("protected_files") or 0) >= 2
+              and srt_protected,
+              "status=%s protected=%s group_protected=%s"
+              % (prot_scan.get("status"), prot_stats.get("protected_files"),
+                 srt_group and srt_group.get("protected_files")))
+        mkv_group = group_with_path(prot_groups, os.path.join(prot_dir, "movie.mkv"))
+        mkv_files = group_files(mkv_group) if mkv_group else []
+        srt_files = group_files(srt_group) if srt_group else []
+        all_ids = [f.get("file_id") for f in mkv_files + srt_files]
+        resp = client.post_json("/api/scans/%s/delete-plan" % quote(prot_scan_id),
+                                {"file_ids": all_ids, "recycle": False})
+        data = jd(resp)
+        plan = data.get("plan") if isinstance(data.get("plan"), dict) else {}
+        skipped_reasons = [item.get("reason") for item in (plan.get("skipped") or [])]
+        check("PRT-02", "v0044 删除计划跳过受保护文件（PROTECTED）",
+              resp.status == 200
+              and int(plan.get("count") or 0) == 1
+              and int(plan.get("protected_skipped") or 0) >= 1
+              and skipped_reasons.count("PROTECTED") >= 1,
+              "status=%s count=%s protected_skipped=%s reasons=%s"
+              % (resp.status, plan.get("count"), plan.get("protected_skipped"),
+                 skipped_reasons))
+        # 全部受保护 → 计划被拒绝
+        resp = client.post_json("/api/scans/%s/delete-plan" % quote(prot_scan_id),
+                                {"file_ids": [f.get("file_id") for f in srt_files],
+                                 "recycle": False})
+        code, details = err_code(resp)
+        detail_skipped = (details or {}).get("skipped") or []
+        check("PRT-03", "v0044 全部文件受保护时拒绝生成删除计划",
+              resp.status == 400 and code == "PLAN_INVALID"
+              and any(item.get("reason") == "PROTECTED" for item in detail_skipped),
+              "status=%s code=%s skipped=%s" % (resp.status, code, detail_skipped[:3]))
+        # 受保护目录规则
+        client.put_json("/api/settings", {"settings": {
+            "protect_dirs": [prot_dir]}})
+        resp = client.post_json("/api/scans/%s/delete-plan" % quote(prot_scan_id),
+                                {"file_ids": [f.get("file_id") for f in mkv_files],
+                                 "recycle": False})
+        code, details = err_code(resp)
+        check("PRT-04", "v0044 受保护目录规则生效（计划阶段拦截）",
+              resp.status == 400 and code == "PLAN_INVALID"
+              and any(item.get("protect_source") == "directory"
+                      for item in (details or {}).get("skipped") or []),
+              "status=%s code=%s" % (resp.status, code))
+        client.put_json("/api/settings", {"settings": {
+            "protect_dirs": [], "protect_name_regex": []}})
+
+        ffmpeg_path = shutil.which("ffmpeg")
+        if not ffmpeg_path:
+            for rid, name in (
+                    ("THUMB-01", "v0044 缩略图接口返回 JPEG"),
+                    ("THUMB-02", "v0044 媒体信息接口返回时长"),
+                    ("THUMB-03", "v0044 缩略图时间点清单")):
+                record(rid, name, "UNVERIFIED", "本机没有 ffmpeg")
+        else:
+            clip = os.path.join(fx["share_a"], "prot", "clip.mp4")
+            subprocess.run([ffmpeg_path, "-nostdin", "-hide_banner", "-loglevel",
+                            "error", "-y", "-f", "lavfi", "-i",
+                            "testsrc=size=320x240:rate=15:duration=2",
+                            "-c:v", "libx264", "-pix_fmt", "yuv420p", clip],
+                           check=True, timeout=120,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            quoted = quote(clip, safe="")
+            resp = client.get("/api/preview/thumb?path=%s&t=0.5&w=200" % quoted)
+            first_cache = resp.header("x-thumb-cache")
+            jpeg_ok = (resp.status == 200
+                       and (resp.header("content-type") or "").startswith("image/jpeg")
+                       and resp.body[:3] == b"\xff\xd8\xff")
+            resp2 = client.get("/api/preview/thumb?path=%s&t=0.5&w=200" % quoted)
+            check("THUMB-01", "v0044 缩略图接口返回 JPEG 且第二次命中缓存",
+                  jpeg_ok and resp2.status == 200
+                  and resp2.header("x-thumb-cache") == "hit",
+                  "status=%s cache=%s/%s" % (resp.status, first_cache,
+                                             resp2.header("x-thumb-cache")))
+            resp = client.get("/api/preview/media?path=%s" % quoted)
+            media = jd(resp).get("media") or {}
+            check("THUMB-02", "v0044 媒体信息接口返回时长/视频流",
+                  resp.status == 200 and float(media.get("duration") or 0) > 1
+                  and int(media.get("video_stream_count") or 0) == 1,
+                  "status=%s duration=%s" % (resp.status, media.get("duration")))
+            resp = client.get("/api/preview/thumbs?path=%s&count=3&w=160" % quoted)
+            data = jd(resp)
+            thumbs = data.get("thumbs") or []
+            check("THUMB-03", "v0044 缩略图时间点清单返回 3 个可点击时间点",
+                  resp.status == 200 and len(thumbs) == 3
+                  and all(str(item.get("url") or "").startswith("/api/preview/thumb?")
+                          for item in thumbs),
+                  "status=%s count=%s" % (resp.status, len(thumbs)))
+            txt_path = os.path.join(fx["share_a"], "prot", "note.txt")
+            write_bytes(txt_path, b"hello")
+            resp = client.get("/api/preview/thumb?path=%s"
+                              % quote(txt_path, safe=""))
+            check("THUMB-04", "v0044 缩略图接口拒绝非视频文件（415）",
+                  resp.status == 415, "status=%s" % resp.status)
+
         # ---------------- 重启持久化 ----------------
         client.put_json("/api/settings", {"settings": {"concurrency": 3}})
         backend.stop()

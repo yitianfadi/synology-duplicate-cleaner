@@ -13,6 +13,7 @@ from .settings import SettingsManager
 from .shares import ShareService
 from .store import Store
 from .subtitles import SubtitleService
+from .thumbnails import ThumbnailService
 from .upgrade import UpgradeDrainMonitor
 
 
@@ -20,7 +21,7 @@ class Services(object):
     def __init__(self, runtime_config, store, settings_manager, auth_manager,
                  share_service, browse_service, preview_service, scan_manager,
                  deletion_manager, subtitle_service=None,
-                 upgrade_monitor=None):
+                 upgrade_monitor=None, thumbnail_service=None):
         self.config = runtime_config
         self.store = store
         self.settings = settings_manager
@@ -32,6 +33,7 @@ class Services(object):
         self.deletion = deletion_manager
         self.subtitles = subtitle_service
         self.upgrade_monitor = upgrade_monitor
+        self.thumbnails = thumbnail_service
 
     def shutdown(self, timeout=5.0):
         # 先停升级 drain 监视，避免正常退出时又把扫描暂停。
@@ -69,6 +71,8 @@ def build_services(runtime_config):
     browse_service = BrowseService(runtime_config, share_service,
                                    settings_provider=settings_manager.get)
     preview_service = PreviewService(share_service)
+    thumbnail_service = ThumbnailService(
+        runtime_config, settings_provider=settings_manager.get)
     scan_manager = ScanManager(runtime_config, store, share_service,
                                settings_manager)
     deletion_manager = DeletionManager(runtime_config, store, share_service,
@@ -81,4 +85,4 @@ def build_services(runtime_config):
     return Services(runtime_config, store, settings_manager, auth_manager,
                     share_service, browse_service, preview_service,
                     scan_manager, deletion_manager, subtitle_service,
-                    upgrade_monitor)
+                    upgrade_monitor, thumbnail_service)

@@ -6,8 +6,8 @@
 <meta name="color-scheme" content="light">
 <meta name="referrer" content="same-origin">
 <title>重复文件清理与字幕 · Duplicate Cleaner &amp; Subtitles</title>
-<link rel="icon" href="./assets/favicon.svg?v=1.1.0-0043" type="image/svg+xml">
-<link rel="stylesheet" href="./styles.css?v=1.1.0-0043">
+<link rel="icon" href="./assets/favicon.svg?v=1.1.0-0044" type="image/svg+xml">
+<link rel="stylesheet" href="./styles.css?v=1.1.0-0044">
 </head>
 <body>
 <a class="skip-link" href="#main">跳到主要内容</a>
@@ -1090,6 +1090,21 @@
             </select>
             <p class="hint">增量缓存清单位置：设置 → 系统 · 存储与运行诊断 → 缓存。</p>
           </div>
+          <div class="field field-wide">
+            <label class="check"><input id="setProtectEnabled" type="checkbox" checked>启用删除白名单（保护文件不可删除）</label>
+            <p class="hint">白名单是删除前的最后一道防线：命中的文件在结果里不可勾选，删除计划与执行前还会按当前设置再校验一次。</p>
+            <label for="setProtectExtensions">受保护后缀（逗号分隔，可留空）</label>
+            <input id="setProtectExtensions" type="text" placeholder=".srt,.ass,.nfo" autocomplete="off" spellcheck="false">
+            <p class="hint">默认保护外挂字幕/元数据类后缀；图片默认不在此列（海报由下面的“视频附属文件”规则保护）。</p>
+            <p class="field-error" id="setProtectExtensionsError" role="alert" hidden></p>
+            <label for="setProtectDirs">受保护目录（每行一个绝对路径，目录及其子目录都会被保护）</label>
+            <textarea id="setProtectDirs" rows="2" placeholder="/volume1/photo/重要"></textarea>
+            <p class="field-error" id="setProtectDirsError" role="alert" hidden></p>
+            <label for="setProtectNameRegex">受保护文件名（正则，每行一条，最多 50 条）</label>
+            <textarea id="setProtectNameRegex" rows="2" placeholder="^keep-.*$"></textarea>
+            <p class="field-error" id="setProtectNameRegexError" role="alert" hidden></p>
+            <label class="check"><input id="setProtectSidecarFiles" type="checkbox" checked>保护视频附属文件（同目录同源视频的字幕 / 海报 / nfo）</label>
+          </div>
         </div>
       </details>
 
@@ -1573,6 +1588,6 @@
   <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.6" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M12 10.8v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="12" cy="7.6" r="1.05" fill="currentColor"/></symbol>
 </svg>
 
-<script type="module" src="./app.js?v=1.1.0-0043"></script>
+<script type="module" src="./app.js?v=1.1.0-0044"></script>
 </body>
 </html>

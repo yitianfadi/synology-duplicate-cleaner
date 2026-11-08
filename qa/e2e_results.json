@@ -1,9 +1,9 @@
 {
-  "generated_at": "2026-11-08T20:27:48+0800",
+  "generated_at": "2026-11-08T20:49:06+0800",
   "python": "3.12.9 | packaged by Anaconda, Inc. | (main, Feb  6 2025, 18:49:16) [MSC v.1929 64 bit (AMD64)]",
   "repo": "D:\\code\\zhouyi\\qunhui\\synology-duplicate-cleaner",
   "summary": {
-    "PASS": 166,
+    "PASS": 174,
     "FAIL": 0,
     "UNVERIFIED": 1
   },
@@ -11,11 +11,11 @@
     "fixture_files": 46,
     "python": "3.12.9",
     "birthtime_supported": true,
-    "backend_port": 3484,
+    "backend_port": 4815,
     "csrf_token_len": 43,
     "meta": {
       "ok": true,
-      "app_version": "1.1.0-0043",
+      "app_version": "1.1.0-0044",
       "dsm_version": "dev",
       "python_version": "3.12.9",
       "creation_time_supported": true,
@@ -124,6 +124,24 @@
         "exclude_name_glob": [],
         "ignore_file_enabled": true,
         "media_sidecar_mode": "skip",
+        "protect_enabled": true,
+        "protect_extensions": [
+          ".srt",
+          ".ass",
+          ".ssa",
+          ".sub",
+          ".vtt",
+          ".idx",
+          ".sup",
+          ".smi",
+          ".nfo",
+          ".sfv",
+          ".md5",
+          ".sha256"
+        ],
+        "protect_dirs": [],
+        "protect_name_regex": [],
+        "protect_sidecar_files": true,
         "subtitle_asr_api_key_set": false,
         "subtitle_llm_api_key_set": false
       },
@@ -375,7 +393,21 @@
         "quick_sample_version": 2,
         "large_file_sample_threshold_bytes": 268435456,
         "hash_cache_max_entries": 300000,
-        "ignore_file_name": ".ignore"
+        "ignore_file_name": ".ignore",
+        "protect_reasons": {
+          "extension": "后缀受保护",
+          "directory": "目录受保护",
+          "name": "文件名命中保护规则",
+          "sidecar": "视频附属文件（同目录同源视频）"
+        }
+      },
+      "preview": {
+        "thumb_width_default": 320,
+        "thumb_width_max": 1280,
+        "thumb_count_default": 6,
+        "thumb_count_max": 12,
+        "thumb_cache_entries": 3000,
+        "sync_tolerance_sec": 0.5
       },
       "subtitle": {
         "supported": true,
@@ -395,7 +427,7 @@
       }
     },
     "subtitle_enumerate_count": 0,
-    "main_scan_id": "20261108-202741-42bab6",
+    "main_scan_id": "20261108-204857-9a3976",
     "main_scan_final": "completed",
     "main_stats": {
       "files_seen": 38,
@@ -409,7 +441,7 @@
       "selectable_duplicate_files": 15,
       "selectable_reclaimable_bytes": 4403200,
       "bytes_hashed": 8753152,
-      "bytes_per_sec": 327178737,
+      "bytes_per_sec": 252086546,
       "errors": 0,
       "skipped": {
         "symlink": 0,
@@ -436,6 +468,8 @@
       "keep_rule_hits": {},
       "new_groups": 12,
       "exclude_rule_errors": 0,
+      "protected_files": 0,
+      "protected_groups": 0,
       "exact_groups": 12,
       "exact_files": 27,
       "similar_groups": 0,
@@ -483,13 +517,13 @@
     },
     "main_groups_total": 12,
     "recycle_plan": {
-      "plan_id": "plan-b06d6a2227564f48",
+      "plan_id": "plan-90183377f1bed78d",
       "count": 2,
       "bytes": 40960,
       "groups_affected": 1
     },
     "recycle_job": {
-      "job_id": "del-20261108-202742-15f1da",
+      "job_id": "del-20261108-204858-42da0b",
       "status": "completed",
       "done": 2,
       "failed": 0,
@@ -1005,7 +1039,7 @@
       "id": "SKIP-04",
       "name": "符号链接跳过（当前环境无法创建 symlink）",
       "status": "UNVERIFIED",
-      "detail": "os.symlink failed: [WinError 1314] 客户端没有所需的特权。: 'C:\\\\Users\\\\zhouyi\\\\AppData\\\\Local\\\\Temp\\\\dupqa-2ukkw9a8\\\\qa-share-a\\\\dup' -> 'C:\\\\Users\\\\zhouyi\\\\AppData\\\\Local\\\\Temp\\\\dupqa-2ukkw9a8\\\\qa-share-a\\\\link_to_dup'"
+      "detail": "os.symlink failed: [WinError 1314] 客户端没有所需的特权。: 'C:\\\\Users\\\\zhouyi\\\\AppData\\\\Local\\\\Temp\\\\dupqa-1q7p6c03\\\\qa-share-a\\\\dup' -> 'C:\\\\Users\\\\zhouyi\\\\AppData\\\\Local\\\\Temp\\\\dupqa-1q7p6c03\\\\qa-share-a\\\\link_to_dup'"
     },
     {
       "id": "HARDLINK-01",
@@ -1460,6 +1494,54 @@
     {
       "id": "CACHE-04",
       "name": "v0043 清空缓存后扫描重新计算哈希",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "PRT-01",
+      "name": "v0044 扫描标记受保护文件（外挂字幕）且默认不可勾选",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "PRT-02",
+      "name": "v0044 删除计划跳过受保护文件（PROTECTED）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "PRT-03",
+      "name": "v0044 全部文件受保护时拒绝生成删除计划",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "PRT-04",
+      "name": "v0044 受保护目录规则生效（计划阶段拦截）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "THUMB-01",
+      "name": "v0044 缩略图接口返回 JPEG 且第二次命中缓存",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "THUMB-02",
+      "name": "v0044 媒体信息接口返回时长/视频流",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "THUMB-03",
+      "name": "v0044 缩略图时间点清单返回 3 个可点击时间点",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "THUMB-04",
+      "name": "v0044 缩略图接口拒绝非视频文件（415）",
       "status": "PASS",
       "detail": ""
     },

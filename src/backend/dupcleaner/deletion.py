@@ -22,7 +22,7 @@ import threading
 import time
 import traceback
 
-from . import config, fsutil, hashing, timeutil, video_similarity
+from . import config, fsutil, hashing, protection, timeutil, video_similarity
 from .errors import ApiError, forbidden, invalid, not_found, path_not_allowed
 
 # 删除结果状态
@@ -41,6 +41,8 @@ REASON_IS_KEEPER = "IS_KEEPER"
 REASON_RECYCLE_UNAVAILABLE = "RECYCLE_UNAVAILABLE"
 REASON_CROSS_DEVICE = "CROSS_DEVICE"
 REASON_MANUAL_KEEP_REQUIRED = "MANUAL_KEEP_REQUIRED"
+# v0044：删除白名单（附属文件/指定目录/后缀保护）
+REASON_PROTECTED = "PROTECTED"
 REASON_INTERNAL = "INTERNAL_ERROR"
 
 
@@ -311,6 +313,14 @@ class DeletionManager(object):
     # ------------------------------------------------------------------
     # 计划
     # ------------------------------------------------------------------
+    def _protector(self):
+        """按当前设置构造保护判定器（删除侧终局防线）。"""
+        try:
+            settings = self.settings.get() or {}
+        except Exception:  # pragma: no cover - 设置读取失败时按默认保护
+            settings = {}
+        return protection.Protector(settings)
+
     def create_plan(self, session, scan_id, payload):
         meta = self.scanner.require_completed(scan_id)
         if not isinstance(payload, dict):
@@ -432,6 +442,25 @@ class DeletionManager(object):
                     candidates.append((group, file_info, keeper))
         else:
             raise invalid(u"必须提供 file_ids 或 scope=all_duplicates/video_similar")
+
+        # v0044：删除白名单（保护附属文件/指定目录/后缀）。
+        # 用**当前设置**重新计算（不信任扫描期标记，防止扫描后改设置/改文件名）。
+        protector = self._protector()
+        protected_candidates = []
+        for group, file_info, keeper in candidates:
+            state = protector.check(file_info.get("path") or "")
+            if state is not None:
+                skipped.append({
+                    "path": file_info.get("path") or "",
+                    "file_id": file_info.get("file_id"),
+                    "reason": REASON_PROTECTED,
+                    "protect_source": state.get("source") or "",
+                    "message": protector.describe(state),
+                })
+                continue
+            protected_candidates.append((group, file_info, keeper))
+        protected_skipped = len(candidates) - len(protected_candidates)
+        candidates = protected_candidates
 
         # 相似组删除门槛：confirm_similar + 每个涉及组都在 reviewed 列表内
         needed_similar_groups = set()
@@ -597,6 +626,7 @@ class DeletionManager(object):
             "files": public_files,
             "skipped": skipped,
             "recycle_unavailable": recycle_unavailable,
+            "protected_skipped": protected_skipped,
             "hash_verified": bool(hash_check),
             "hash_verification_deferred": not hash_check,
             "content_hash_verified": bool(content_hash_verified),
@@ -620,6 +650,7 @@ class DeletionManager(object):
             "manual_review": plan["manual_review"],
             "reviewed_similar_group_ids": plan["reviewed_similar_group_ids"],
             "skipped": len(skipped),
+            "protected_skipped": protected_skipped,
             "hash_verified": plan["hash_verified"],
             "content_hash_verified": plan.get("content_hash_verified", True),
             "content_hash_missing_videos": plan.get(
@@ -654,6 +685,7 @@ class DeletionManager(object):
             "skipped_truncated": skipped_truncated,
             "groups_affected": plan["groups_affected"],
             "recycle_unavailable": plan["recycle_unavailable"],
+            "protected_skipped": int(plan.get("protected_skipped") or 0),
             "hash_verified": plan["hash_verified"],
             "hash_verification_deferred": plan["hash_verification_deferred"],
             "content_hash_verified": plan.get("content_hash_verified", True),
@@ -761,6 +793,8 @@ class DeletionManager(object):
             plan_path=plan["internal_path"],
             create_recycle_dir=plan.get("create_recycle_dir", False),
         )
+        # v0044：本任务的保护判定器（目录缓存跨文件复用）；执行前再按当前设置复查。
+        job.protector = self._protector()
         with self._lock:
             self._jobs[job_id] = job
             self._jobs_by_scan.setdefault(scan_id, []).append(job_id)
@@ -918,6 +952,16 @@ class DeletionManager(object):
             base.update({"status": STATUS_SKIPPED, "reason": result["code"],
                          "message": result["message"]})
             return base
+        # v0044：删除白名单终局检查（计划生成后设置/文件名可能变化）
+        protector = getattr(job, "protector", None)
+        if protector is not None:
+            protect_state = protector.check(path)
+            if protect_state is not None:
+                base.update({"status": STATUS_SKIPPED,
+                             "reason": REASON_PROTECTED,
+                             "protect_source": protect_state.get("source") or "",
+                             "message": protector.describe(protect_state)})
+                return base
         try:
             share = self.shares.share_root(path)
         except ApiError as exc:

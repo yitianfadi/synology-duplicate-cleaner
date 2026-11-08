@@ -7,9 +7,9 @@ import os
 import re
 
 APP_NAME = "DuplicateCleaner"
-APP_VERSION = "1.1.0-0043"
+APP_VERSION = "1.1.0-0044"
 DISPLAY_NAME = "重复文件清理与字幕"
-SPK_VERSION = "1.1.0-0043"
+SPK_VERSION = "1.1.0-0044"
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8787
@@ -104,6 +104,43 @@ EXCLUDE_PATTERN_MAX_COUNT = 50
 EXCLUDE_PATTERN_MAX_LEN = 200
 IGNORE_FILE_NAME = ".ignore"
 IGNORE_FILE_MAX_LINES = 1000
+
+# ---------------------------------------------------------------------------
+# 预览缩略图 / 媒体信息（v0044，docs/PREVIEW_PROTECTION_CONTRACT.md）
+# ---------------------------------------------------------------------------
+# 缩略图缓存放 <var>/cache/thumbs/<sha1(path|size|mtime|t|w)>.jpg，按 LRU 裁剪。
+THUMB_CACHE_SUBDIR = "cache/thumbs"
+THUMB_DEFAULT_WIDTH = 320
+THUMB_MAX_WIDTH = 1280
+THUMB_COUNT_DEFAULT = 6
+THUMB_COUNT_MAX = 12
+THUMB_TIMEOUT_SEC = 60
+THUMB_MAX_ENTRIES = 3000
+THUMB_MAX_BYTES = 300 * 1024 * 1024
+THUMB_JPEG_QUALITY = 4
+# 预览/媒体探测的内存缓存条数（按 path+size+mtime_ns 区分）
+MEDIA_INFO_CACHE_MAX = 200
+# 「片段播放」：对比弹窗同步播放的判定容差（秒）
+PREVIEW_SYNC_TOLERANCE_SEC = 0.5
+
+# ---------------------------------------------------------------------------
+# 删除白名单 / 附属文件保护（v0044）
+# ---------------------------------------------------------------------------
+# 保护是**删除侧**的终局防线：扫描期标记（UI 不可选）+ 计划/执行期按当前设置重算。
+PROTECT_ENABLED_DEFAULT = True
+# 默认保护“外挂字幕 / 元数据”后缀（不含图片：照片库仍需判重；海报由
+# “同目录同源视频的附属文件”规则保护，见 PROTECT_SIDECAR_DEFAULT）。
+PROTECT_DEFAULT_EXTENSIONS = (
+    ".srt", ".ass", ".ssa", ".sub", ".vtt", ".idx", ".sup", ".smi",
+    ".nfo", ".sfv", ".md5", ".sha256",
+)
+PROTECT_SIDECAR_DEFAULT = True
+PROTECT_REASON_LABELS = {
+    "extension": u"后缀受保护",
+    "directory": u"目录受保护",
+    "name": u"文件名命中保护规则",
+    "sidecar": u"视频附属文件（同目录同源视频）",
+}
 
 # ---------------------------------------------------------------------------
 # 内容相似度模式常量（docs/SIMILARITY_CONTRACT.md）

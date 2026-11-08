@@ -140,4 +140,7 @@ export var IDS = ('loginView loginForm loginUsername loginPassword loginOtp logi
   'setKeepPreferMultiAudio setIncrementalScan setExcludeNameRegex setExcludeNameRegexError ' +
   'setExcludeNameGlob setExcludeNameGlobError setIgnoreFileEnabled setMediaSidecarMode ' +
   'cacheStatsText clearHashCacheBtn cacheClearResult ' +
+  'setProtectEnabled setProtectExtensions setProtectExtensionsError ' +
+  'setProtectDirs setProtectDirsError setProtectNameRegex setProtectNameRegexError ' +
+  'setProtectSidecarFiles ' +
   'footerMeta toastRoot modalRoot').split(' ');

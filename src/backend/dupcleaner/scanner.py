@@ -26,8 +26,9 @@ import threading
 import time
 import traceback
 
-from . import (config, excluder, fsutil, hashing, settings as settings_module,
-               similarity, timeutil, video_similarity, xlsx)
+from . import (config, excluder, fsutil, hashing, protection,
+               settings as settings_module, similarity, timeutil,
+               video_similarity, xlsx)
 from .errors import ApiError, invalid, not_found
 from .store import RESUME_STAGES
 from .store import sqlite_int as store_sqlite_int
@@ -180,6 +181,9 @@ def _empty_stats():
         "keep_rule_hits": {},
         "new_groups": 0,
         "exclude_rule_errors": 0,
+        # v0044：删除白名单（扫描期标记）
+        "protected_files": 0,
+        "protected_groups": 0,
         # 相似度模式统计（docs/SIMILARITY_CONTRACT.md §3.4）
         "exact_groups": 0,
         "exact_files": 0,
@@ -485,6 +489,8 @@ class ScanState(object):
         self.excluder = None
         self.keep_rules = list(options.get("keep_rules") or [])
         self.media_engine = None
+        # v0044：删除白名单（扫描期只做 UI 标记；删除计划/执行会按当前设置重算）
+        self.protector = protection.Protector(self.options)
         # 暂停/升级断点（docs/RESUME_CONTRACT.md）
         self.pause_reason = ""
         self.resumable = False
@@ -2702,6 +2708,17 @@ class ScanManager(object):
             "quick_hash_cached": bool(getattr(record, "cache_quick", False)),
             "first_scan_id": getattr(record, "first_scan_id", None),
         }
+        # v0044：删除白名单标记（仅 UI 提示；删除计划/执行还会按当前设置重算）
+        protector = getattr(state, "protector", None)
+        protect_state = None
+        if protector is not None:
+            try:
+                protect_state = protector.check(record.path)
+            except Exception:  # pragma: no cover - 保护判断失败时按未保护处理
+                protect_state = None
+        file_info["protected"] = bool(protect_state)
+        file_info["protect_reason"] = (protect_state or {}).get("source") or ""
+        file_info["protect_message"] = (protect_state or {}).get("message") or ""
         return file_info
 
     def _needs_media_probe(self, state):
@@ -2846,7 +2863,8 @@ class ScanManager(object):
             for file_index, file_info in enumerate(files):
                 file_info["is_keep"] = file_index == keeper
                 file_info["default_selected"] = (
-                    not file_info["is_keep"] and not needs_manual)
+                    not file_info["is_keep"] and not needs_manual
+                    and not file_info.get("protected"))
             files.sort(key=lambda item: (
                 0 if item["is_keep"] else 1,
                 -(item["created_ts"] or 0),
@@ -2865,6 +2883,8 @@ class ScanManager(object):
                 "creation_time_suspect": bool(group_suspect),
                 "time_fallback": bool(time_fallback),
                 "keep_time_source": keep_time_source,
+                "protected_files": sum(1 for item in files
+                                       if item.get("protected")),
                 "files": files,
             })
             if index % 50 == 0:
@@ -2938,6 +2958,8 @@ class ScanManager(object):
                 "creation_time_suspect": bool(group_suspect),
                 "time_fallback": bool(time_fallback),
                 "keep_time_source": keep_time_source,
+                "protected_files": sum(1 for item in files
+                                       if item.get("protected")),
                 "files": files,
             })
         groups.sort(key=lambda group: (-int(group["similarity_score"] or 0),
@@ -3041,7 +3063,9 @@ class ScanManager(object):
                 "video_low_confidence": any(
                     bool(item.get("video_low_confidence")) for item in files),
                 "manual_review_required": False,
-                "allow_batch_delete": True,
+                # v0044：组内存在受保护文件时禁用“全选视频副本”批量删除
+                "allow_batch_delete": not any(bool(item.get("protected"))
+                                              for item in files),
                 "size": max(int(item.get("size") or 0) for item in files),
                 "count": len(files),
                 "wasted_bytes": sum(int(item.get("size") or 0) for item in files
@@ -3051,6 +3075,8 @@ class ScanManager(object):
                 "creation_time_suspect": bool(group_suspect),
                 "time_fallback": bool(time_fallback),
                 "keep_time_source": keep_time_source,
+                "protected_files": sum(1 for item in files
+                                       if item.get("protected")),
                 "files": files,
             })
         groups.sort(key=lambda group: (-int(group["similarity_score"] or 0),
@@ -3106,13 +3132,26 @@ class ScanManager(object):
             group["changed_files"] = changed_count
             if new_count or changed_count:
                 new_group_count += 1
+        # v0044：删除白名单统计（扫描期标记，供 UI 提示）
+        protected_file_count = sum(int(group.get("protected_files") or 0)
+                                   for group in groups)
+        protected_group_count = sum(1 for group in groups
+                                    if int(group.get("protected_files") or 0))
         exact_files = sum(group["count"] for group in exact_groups)
         similar_files = sum(group["count"] for group in similar_groups)
         video_files = sum(group["count"] for group in video_groups)
         exact_safe = [group for group in exact_groups
                       if not group["needs_manual_keep"]]
         reclaimable = sum(group["wasted_bytes"] for group in exact_safe)
-        selectable_files = sum(group["count"] - 1 for group in exact_safe)
+        # v0044：受删除白名单保护的文件不计入“可全选删除”的数量/空间
+        selectable_files = 0
+        selectable_bytes = 0
+        for group in exact_safe:
+            for item in group.get("files") or []:
+                if item.get("is_keep") or item.get("protected"):
+                    continue
+                selectable_files += 1
+                selectable_bytes += int(item.get("size") or 0)
         similar_reclaimable = sum(group["wasted_bytes"]
                                   for group in similar_groups)
         video_reclaimable = sum(group["wasted_bytes"] for group in video_groups)
@@ -3139,10 +3178,12 @@ class ScanManager(object):
             stats["duplicate_files"] = duplicate_files
             stats["reclaimable_bytes"] = reclaimable
             stats["selectable_duplicate_files"] = selectable_files
-            stats["selectable_reclaimable_bytes"] = reclaimable
+            stats["selectable_reclaimable_bytes"] = selectable_bytes
             stats["mtime_fallback_groups"] = mtime_fallback_groups
             stats["mtime_fallback_files"] = mtime_fallback_files
             stats["new_groups"] = new_group_count
+            stats["protected_files"] = protected_file_count
+            stats["protected_groups"] = protected_group_count
             state.needs_manual_keep_groups = needs_manual_groups
             state.creation_time_unsafe = creation_unsafe
         self._set_progress(state, "finalize", 0.995, u"正在保存扫描结果")

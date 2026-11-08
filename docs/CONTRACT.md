@@ -1,7 +1,7 @@
 # 实现契约（前后端共享，版本 1.0）
 
 > 本文件是前后端并行开发的唯一接口约定。任何一方需要改动字段，先改本文件并在团队任务中说明。
-> 产品名：**DuplicateCleaner**；显示名：**重复文件清理与字幕**；SPK 版本：**1.1.0-0043**。
+> 产品名：**DuplicateCleaner**；显示名：**重复文件清理与字幕**；SPK 版本：**1.1.0-0044**。
 > v1.1 新增内容相似度模式；相似模式字段与行为见 [SIMILARITY_CONTRACT.md](SIMILARITY_CONTRACT.md)，**精准模式规则不变**。
 
 ## 1. 仓库与写入边界
@@ -154,7 +154,7 @@ v0042 增量（升级启动稳定性）：
 ### GET /api/meta
 ```json
 {
- "app_version": "1.1.0-0043",
+ "app_version": "1.1.0-0044",
  "dsm_version": "7.2.2-72806" | "dev",
  "python_version": "3.8.16",
  "creation_time_supported": true,
@@ -246,6 +246,21 @@ v0042 增量（升级启动稳定性）：
 `path_priority:<目录前缀>`、`filename_priority:<通配符或 /正则/>`、
 `has_subtitle_stream`（需要 FFmpeg 探测媒体流，结果缓存）、`has_audio_streams`（音轨数多者优先）。
 规则链耗尽仍平局 → `needs_manual_keep=true`（禁止自动删除）。
+
+### v0044 新增设置键（预览增强 / 删除白名单）
+
+> 详细语义见 [PREVIEW_PROTECTION_CONTRACT.md](PREVIEW_PROTECTION_CONTRACT.md)。
+
+| key | 类型 | 默认 | 说明 |
+|---|---|---|---|
+| protect_enabled | bool | true | 删除白名单总开关 |
+| protect_extensions | string[] | `.srt` `.ass` `.ssa` `.sub` `.vtt` `.idx` `.sup` `.smi` `.nfo` `.sfv` `.md5` `.sha256` | 受保护后缀（默认不含图片） |
+| protect_dirs | string[] | [] | 受保护目录（绝对路径，含子目录） |
+| protect_name_regex | string[] | [] | 受保护文件名正则（≤50 条，保存时校验） |
+| protect_sidecar_files | bool | true | 保护“同目录同源视频的附属文件”（外挂字幕/海报/nfo；视频本身不受影响） |
+
+白名单命中者：扫描结果 `files[].protected=true`、`protect_reason`、`protect_message`；组级 `protected_files`；
+`default_selected=false` 且不计入 `selectable_duplicate_files`；删除计划/执行会按当前设置再次校验。
 
 ## 7. 扫描
 
@@ -365,6 +380,9 @@ Content-Disposition: attachment; filename="duplicate-scan-<id>.csv"
   候选总量 ≤512 MB 时 plan 阶段立即重哈希；超过预算时哈希复核推迟到删除任务中逐文件执行，
   但删除前始终会重新哈希候选和保留文件。
 - 任何无法校验的组/文件进入 `skipped`，绝不静默删除。
+- v0044：受删除白名单保护的文件同样进入 `skipped`，`reason="PROTECTED"` 并带
+  `protect_source`（`extension`/`directory`/`name`/`sidecar`）；计划响应新增 `protected_skipped` 计数。
+  若计划里没有任何可删文件 → 400 `PLAN_INVALID`（details 中列出 PROTECTED 原因）。
 - **v1 不支持 `include_manual_groups`**：`needs_manual_keep=true` 的组一律跳过，并在 `skipped` 中说明
   `MANUAL_KEEP_REQUIRED`；`include_manual_groups=true` 返回 `INVALID_ARGUMENT`。
   原因是创建时间不可靠时，用户认为的保留项可能与服务端 `keep_file_id` 不同，允许删除有误删风险。
@@ -414,6 +432,17 @@ Content-Disposition: attachment; filename="duplicate-scan-<id>.csv"
 - 图片/文本/PDF/音视频 inline 返回；其他类型 415 `PREVIEW_UNSUPPORTED`。
 - 文本最多返回 1MB，返回头 `X-Preview-Truncated: 1`。
 
+### v0044 预览增强接口
+
+- `GET /api/preview/thumb?path=…&t=<秒>&w=<宽>` → `image/jpeg`（FFmpeg 抽帧 + 磁盘缓存）；
+  响应头 `X-Thumb-Cache: hit|miss`、`X-Thumb-Timestamp`；仅视频；失败 415 / 超时 504 / 忙 429。
+- `GET /api/preview/media?path=…` → `{"ok":true,"media":{duration,video_stream_count,audio_stream_count,
+  subtitle_stream_count,video:{width,height,codec},audio_streams[],subtitle_streams[]}}`；
+  内存缓存 200 条（path+size+mtime_ns）。
+- `GET /api/preview/thumbs?path=…&count=6&w=320` → `{media,width,timestamps[],thumbs:[{t,url}]}`；
+  只返回时间点与 URL，不预渲染。
+- 三者与 `/api/preview` 使用同一套路径安全规则（仅共享文件夹内普通文件）。
+
 ### GET /api/logs?limit=50
 ```json
 {"ok":true,"logs":[{"name":"scan-20261101-....log","kind":"scan","size":1234,
@@ -457,6 +486,8 @@ Content-Disposition: attachment; filename="duplicate-scan-<id>.csv"
 - 同一 inode 的硬链接只保留一个路径参与重复判定，避免“删了不释放空间”。
 - 删除前必须对比扫描时记录的 size / mtime_ns / inode / dev / 全量哈希；保留文件必须仍存在。
 - 绝不自动删除：必须 plan + 二次确认 + `confirm=DELETE`；永久删除额外要求短语。
+- v0044：删除白名单（目录/后缀/文件名正则/视频附属文件）在**计划与执行**两处按当前设置复查；
+  命中即跳过，不生成/不执行删除动作。
 - 回收站移动目标：`<共享文件夹根>/#recycle/@duplicate-cleaner/<YYYYMMDD-HHMMSS>/<相对路径>`，
   同名冲突加 `.dup-<n>` 后缀；跨文件系统时禁止 move，改为失败报告。
 - 审计日志必须持久化，包含扫描开始/结束、计划、逐文件删除结果。
@@ -482,4 +513,4 @@ Content-Disposition: attachment; filename="duplicate-scan-<id>.csv"
 - 后端 unittest 覆盖：statx 时间读取降级、哈希分片/限速、重复分组与三种保留策略、
   路径黑名单、删除前重校验、回收站路径生成、CSV、API 鉴权。
 - 前端可用静态检查 + 本地 dev 后端联调；QA 用 dev 模式在临时目录生成重复文件跑完整 API 流程。
-- 打包产物 `dist/DuplicateCleaner-1.1.0-0043.spk` 必须能通过 `tar -tf` 检查，包含 INFO/package.tgz/scripts/conf/ui。
+- 打包产物 `dist/DuplicateCleaner-1.1.0-0044.spk` 必须能通过 `tar -tf` 检查，包含 INFO/package.tgz/scripts/conf/ui。

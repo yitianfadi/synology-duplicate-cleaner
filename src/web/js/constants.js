@@ -95,7 +95,14 @@ export var DELETE_STATUS_LABEL = { recycled: '已移入回收站', deleted: '已
 export var DELETE_REASON_LABEL = {
   FILE_CHANGED: '文件已被修改', HASH_MISMATCH: '哈希不一致', KEEP_FILE_MISSING: '保留文件不存在',
   PATH_NOT_ALLOWED: '路径不在允许范围', NOT_FOUND: '文件不存在', PERMISSION_DENIED: '没有权限',
-  RECYCLE_UNAVAILABLE: '回收站不可用', CROSS_DEVICE: '跨文件系统无法移动', PLAN_EXPIRED: '计划已过期'
+  RECYCLE_UNAVAILABLE: '回收站不可用', CROSS_DEVICE: '跨文件系统无法移动', PLAN_EXPIRED: '计划已过期',
+  MANUAL_KEEP_REQUIRED: '需人工确认保留项', IS_KEEPER: '是保留文件',
+  PROTECTED: '受删除白名单保护'
+};
+// v0044：删除白名单（保护）原因标签（与后端 config.PROTECT_REASON_LABELS 对应）
+export var PROTECT_REASON_LABEL = {
+  extension: '后缀受保护', directory: '目录受保护',
+  name: '文件名命中保护规则', sidecar: '视频附属文件'
 };
 export var JOB_STATUS_LABEL = {
   running: '删除中', completed: '删除完成', partial: '部分成功',
@@ -260,6 +267,13 @@ export var DEFAULT_SETTINGS = {
   exclude_name_regex: [],
   exclude_name_glob: [],
   ignore_file_enabled: true,
-  media_sidecar_mode: 'skip'
+  media_sidecar_mode: 'skip',
+  // v0044：删除白名单 / 附属文件保护（与后端 settings.DEFAULT_SETTINGS 对齐）
+  protect_enabled: true,
+  protect_extensions: ['.srt', '.ass', '.ssa', '.sub', '.vtt', '.idx', '.sup',
+    '.smi', '.nfo', '.sfv', '.md5', '.sha256'],
+  protect_dirs: [],
+  protect_name_regex: [],
+  protect_sidecar_files: true,
 };
 export var SIZE_UNITS = { kb: 1024, mb: 1048576, gb: 1073741824 };

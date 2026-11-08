@@ -106,6 +106,13 @@ DEFAULT_SETTINGS = {
     "exclude_name_glob": [],
     "ignore_file_enabled": True,
     "media_sidecar_mode": "skip",
+    # --- v0044 删除白名单 / 附属文件保护（docs/PREVIEW_PROTECTION_CONTRACT.md）---
+    # 删除侧终局防线：扫描期标记 + 计划/执行前按当前设置重算。
+    "protect_enabled": config.PROTECT_ENABLED_DEFAULT,
+    "protect_extensions": list(config.PROTECT_DEFAULT_EXTENSIONS),
+    "protect_dirs": [],
+    "protect_name_regex": [],
+    "protect_sidecar_files": config.PROTECT_SIDECAR_DEFAULT,
 }
 
 # 密钥键：GET/日志/审计/扫描结果中绝不允许出现明文
@@ -212,6 +219,31 @@ def _check_exclude_patterns(key, value, is_regex):
         elif "\x00" in pattern:
             _err(u"设置 %s 第 %d 条包含非法字符" % (key, index + 1), {"key": key})
         out.append(pattern)
+    return out
+
+
+def _check_path_list(key, value, max_items=200, max_len=1024):
+    """绝对路径列表（保护目录用）。规范化留给使用侧，保留用户原始写法。"""
+    if not isinstance(value, list):
+        _err(u"设置 %s 必须是字符串数组" % key, {"key": key})
+    if len(value) > max_items:
+        _err(u"设置 %s 最多 %d 条" % (key, max_items), {"key": key})
+    out = []
+    for index, item in enumerate(value):
+        if not isinstance(item, str):
+            _err(u"设置 %s 的元素必须是字符串" % key, {"key": key})
+        text = item.strip()
+        if not text:
+            continue
+        if "\x00" in text:
+            _err(u"设置 %s 第 %d 条包含非法字符" % (key, index + 1), {"key": key})
+        if len(text) > max_len:
+            _err(u"设置 %s 第 %d 条超过 %d 字符" % (key, index + 1, max_len),
+                 {"key": key})
+        if not os.path.isabs(text):
+            _err(u"设置 %s 第 %d 条必须是绝对路径" % (key, index + 1),
+                 {"key": key, "index": index, "value": text})
+        out.append(text)
     return out
 
 
@@ -491,6 +523,15 @@ def _normalize_value(key, value):
         if value not in config.SIDECAR_MODES:
             _err(u"media_sidecar_mode 只能是 skip/include", {"key": key})
         return value
+    # --- v0044 保护白名单 ---
+    if key in ("protect_enabled", "protect_sidecar_files"):
+        return _check_bool(key, value)
+    if key == "protect_extensions":
+        return _check_ext_list(key, value)
+    if key == "protect_dirs":
+        return _check_path_list(key, value)
+    if key == "protect_name_regex":
+        return _check_exclude_patterns(key, value, True)
     if key == "skip_symlinks":
         # 无论前端传什么，符号链接一律跳过（安全强制）
         if not isinstance(value, bool):

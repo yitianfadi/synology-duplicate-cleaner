@@ -881,6 +881,68 @@ python build/build_spk.py --no-icons --out-dir $env:TEMP\qa-build2
 - 真实媒体库第二次扫描的耗时与 `bytes_hashed` 对比；`.ignore`/附属文件后结果是否更干净；
   规则链是否按预期选保留项；缓存清理后是否重新读盘。
 
+## 26. 附：v0044 预览增强与删除白名单（2026-11-08）
+
+### 26.1 需求与方案
+
+- 需求（v2 文档 扫描 优化 4/5）：结果页提供**视频缩略图预览、片段播放**，避免误删不同压制版本/花絮/剪辑版本；
+  **安全删除增强**中要求“白名单保护外挂字幕 / nfo / 海报等附属文件”。
+- 评估结论（[REQUIREMENTS_V2_ASSESSMENT.md](../docs/REQUIREMENTS_V2_ASSESSMENT.md) §2.4/2.5）：
+  缩略图/片段播放**可行但有编码限制**；附属文件保护**可行**，且应做成“删除侧终局防线”。
+
+### 26.2 实现
+
+- **预览不再整段下载**：原实现 `fetch → blob` 后播放，大视频要先下载完整文件；现在先 `Range: bytes=0-0`
+  探测类型，视频/音频直接用 URL 作为 `<video>/<audio>` 源（Range 流式、可立即拖动/片段定位）。
+- **缩略图**（`thumbnails.py`）：FFmpeg 抽 1 帧 → JPEG（默认宽 320），缓存
+  `<var>/cache/thumbs/<sha1(path|size|mtime|t|w)>.jpg`；上限 3000 条 / 300MB，LRU；并发 2；
+  `GET /api/preview/thumb`（`X-Thumb-Cache: hit|miss`）。
+- **媒体信息**：解析 `ffmpeg -i` Stream 行得到时长/分辨率/编码/音轨/字幕轨（含语言），内存缓存 200 条；
+  `GET /api/preview/media`；时间点清单 `GET /api/preview/thumbs`（只给 t 与 URL，`<img>` 按需加载）。
+- **前端**：视频预览弹窗显示媒体信息 + 6 张可点击缩略图（跳到对应时间点播放）；同组 ≥2 文件时提供
+  「并排对比」弹窗（左右播放器 + 同组文件下拉 + 同步播放开关 + 对齐时间点）。
+- **删除白名单**（`protection.py`）：目录（绝对路径前缀）/ 后缀（默认字幕+元数据，不含图片）/
+  文件名正则 / 视频附属文件（同目录同源视频的字幕/海报/nfo；视频本身与“无视频目录里的图片”不受影响）。
+  **三层生效**：扫描期标记（UI 不可勾选、不计入可选数量）→ 计划期按当前设置重算
+  （`skipped[].reason=PROTECTED` + `protect_source`，计划响应 `protected_skipped`）→ 执行期再算一次。
+- 设置页新增白名单表单（启用/后缀/目录/正则/附属文件）；结果行显示「受保护 · 原因」徽标并禁用勾选，
+  组卡片显示「受保护 N」，摘要新增受保护统计；诊断页显示缩略图缓存条目/大小。
+
+### 26.3 验证
+
+- unittest：**573 OK（5 skipped）**（新增 `test_v0044_preview.py` 12 例、`test_v0044_protection.py` 24 例）。
+- static：**PASS=182 / FAIL=0 / UNVERIFIED=0**（新增 `BE-PREVIEW-THUMB`、`BE-PROTECT`、
+  `FE-PREVIEW-THUMB`、`FE-PROTECT-UI`，路由/前端端点覆盖补齐 3 个预览接口）。
+- e2e：**174 PASS / 0 FAIL / 1 UNVERIFIED**（新增 `PRT-01..04`、`THUMB-01..04`；Windows symlink 历史项）。
+- 真实 Chromium 探针（`.uiprobe/probe_v0044.mjs` + `harness_v0044.py`）**8/8 PASS**：
+  白名单设置回填/保存、`/api/meta` 能力、浏览器会话下缩略图/媒体/时间点接口、
+  扫描结果 `protected` 标记、无 console 错误；截图 `.uiprobe/v0044-settings.png`。
+- 媒体流解析单测覆盖 `1920x1080`、`jpn/chi/eng` 语言、5.1 声道、default 标记。
+
+### 26.4 踩坑
+
+- 探针的临时共享目录不能放在隐藏目录（`.uiprobe`）下：后端路径安全会拒绝隐藏路径组件
+  （`PATH_NOT_ALLOWED: 不能访问隐藏目录/文件: .uiprobe`）→ 改用系统临时目录。
+- 附属文件判定必须先排除“视频文件自身”，否则 `.mkv` 会把自己识别成自己的附属文件；
+  已加单测 `test_scan_marks_protected_files` 防止回归。
+- 删除计划里 keeper 先被 `IS_KEEPER` 跳过，所以“受保护数”只统计非 keeper 候选；
+  e2e 断言按此语义修正。
+- 计划中全部文件都因保护被跳过时返回 `PLAN_INVALID`（details 含 PROTECTED），执行后任务状态为
+  `partial`（既有语义：skipped>0 即 partial）。
+
+### 26.5 产物
+
+- `dist/DuplicateCleaner-1.1.0-0044.spk`：**39,055,360 B**
+  - SHA256 `97a69074a1a5ff8da370141e425dcb5749c6c62359668cabb6a9e6efab38b35f`
+  - package.tgz MD5 `2236c1f6e0689f1b0dcd4783cc252cfa`
+- 版本 1.1.0-0044 同步 8 处；SQLite schema 仍 **v8**（本版无 DB 迁移；缩略图缓存是文件缓存）。
+
+### 26.6 真机待验证
+
+- 4K/MKV 首次缩略图耗时与失败率（HEVC 软解一帧）；DSM 内置浏览器里并排对比/同步播放可用性；
+  白名单对真实媒体库（srt/海报/nfo）的保护效果；受保护目录对照片库判重的影响。
+
+
 
 
 

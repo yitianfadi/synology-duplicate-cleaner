@@ -23,7 +23,7 @@ import {
   ACTIVE_STATUS, AUDIT_LABEL, CSRF_KEY, DEFAULT_SETTINGS, DEFAULT_SIMILARITY_EXTENSIONS,
   DEFAULT_VIDEO_EXTENSIONS, DELETE_REASON_LABEL, DELETE_STATUS_LABEL,
   ERROR_FALLBACK, JOB_STATUS_LABEL, KEEP_LABEL, KEEP_MODE_LABEL,
-  KEEP_RULE_LABEL, SIDECAR_MODE_LABEL, LEGACY_VIEW_ALIASES,
+  KEEP_RULE_LABEL, SIDECAR_MODE_LABEL, PROTECT_REASON_LABEL, LEGACY_VIEW_ALIASES,
   MTIME_FALLBACK_LABEL, MTIME_FALLBACK_REASONS, POLL_MS,
   SIZE_UNITS, SOURCE_INFO, STAGE_LABEL, STATUS_BADGE, STATUS_LABEL,
   SUBTITLE_ACTIVE_STATUS, SUBTITLE_LANGUAGES, SUBTITLE_OUTPUT_KIND_LABEL,
@@ -2476,6 +2476,14 @@ import {
     return Array.isArray(list) ? list.join('\n') : '';
   }
 
+  /** 绝对路径判定（POSIX / Windows 盘符 / UNC）。保护目录要求绝对路径。 */
+  function isAbsolutePath(value) {
+    var text = String(value || '').trim();
+    if (!text) { return false; }
+    return text.charAt(0) === '/' || /^[A-Za-z]:[\\/]/.test(text)
+      || /^\\\\/.test(text);
+  }
+
   /** 由表单控件组合出 keep_rules；空数组表示沿用 keep_mode/pinned_path。 */
   function composeKeepRules(prefix) {
     var primary = byId(prefix + 'PrimaryRule');
@@ -3664,6 +3672,14 @@ import {
         fmtInt(excludedByRule) + ' / ' + fmtInt(sidecarFiles), '排除规则 / 附属文件',
         '按文件名规则与 .ignore 跳过 ' + fmtInt(excludedByRule) + ' 个，影视附属文件跳过 ' + fmtInt(sidecarFiles) + ' 个'));
     }
+    // v0044：删除白名单命中数（命中的文件不可勾选，也不会进入删除计划）
+    var protectedFiles = Number(stats.protected_files) || 0;
+    if (protectedFiles > 0) {
+      summaryCards.push(summaryCard('lock', 'is-amber',
+        fmtInt(protectedFiles) + ' 个', '受删除白名单保护',
+        '共 ' + fmtInt(stats.protected_groups || 0)
+          + ' 组含受保护文件；这些文件不可勾选、删除计划也会跳过'));
+    }
     var videoGroupCount = Number(stats.video_groups);
     if (!isFinite(videoGroupCount) || videoGroupCount <= 0) {
       videoGroupCount = state.results.videoGroups.length;
@@ -3830,6 +3846,13 @@ import {
     }
     var exactIncrementalBadge = incrementalGroupBadge(group);
     if (exactIncrementalBadge) { badges.push(exactIncrementalBadge); }
+    if (Number(group.protected_files) > 0) {
+      badges.push(el('span', {
+        className: 'badge badge-shield',
+        attrs: { title: '组内受删除白名单保护的文件不会进入删除计划' },
+        text: '受保护 ' + fmtInt(group.protected_files)
+      }));
+    }
 
     var groupSubItems = [
       el('span', { className: 'mono', attrs: { title: group.hash || '' }, text: truncHash(group.hash) }),
@@ -3901,23 +3924,31 @@ import {
 
   function renderFileRow(group, file, keeperId, manual) {
     var isKeeper = !manual && file.file_id === keeperId;
+    var isProtected = !!file.protected && !isKeeper;
     var row = el('div', {
-      className: 'file-row' + (isKeeper ? ' is-keeper' : ''),
+      className: 'file-row' + (isKeeper ? ' is-keeper' : '')
+        + (isProtected ? ' is-protected' : ''),
       dataset: { fileId: file.file_id }
     });
 
     var checkbox = el('input', {
       attrs: {
         type: 'checkbox',
-        disabled: manual || isKeeper,
-        'aria-label': isKeeper ? '保留项，不可选择删除' : (manual ? '本组禁止删除' : '选择删除 ' + file.path)
+        disabled: manual || isKeeper || isProtected,
+        'aria-label': isKeeper ? '保留项，不可选择删除'
+          : (manual ? '本组禁止删除'
+            : (isProtected ? '受保护文件，不可选择删除' : '选择删除 ' + file.path))
       }
     });
-    checkbox.disabled = manual || isKeeper;
-    checkbox.checked = !manual && !isKeeper && isFileSelected(group, file);
+    checkbox.disabled = manual || isKeeper || isProtected;
+    checkbox.checked = !manual && !isKeeper && !isProtected && isFileSelected(group, file);
     if (manual) { checkbox.title = '该组需人工确认，禁止删除'; }
     else if (isKeeper) { checkbox.title = '保留项不可删除'; }
-    if (!manual && !isKeeper) {
+    else if (isProtected) {
+      checkbox.title = '删除白名单保护：'
+        + (PROTECT_REASON_LABEL[file.protect_reason] || '受保护');
+    }
+    if (!manual && !isKeeper && !isProtected) {
       checkbox.addEventListener('change', function () {
         toggleFileSelection(group, file, checkbox.checked);
         checkbox.checked = isFileSelected(group, file);
@@ -3953,14 +3984,23 @@ import {
       attrs: { title: file.hash || '' },
       text: file.hash || '—'
     });
-    return el('div', { className: 'file-sub' }, [
+    var subItems = [
       el('span', { text: fmtBytes(file.size) }),
       el('span', { className: 'file-hash' }, [
         el('span', { className: 'muted', text: String(group.algo || 'sha256').toUpperCase() }),
         hashCode,
         copyBtn
       ])
-    ]);
+    ];
+    if (file.protected) {
+      subItems.push(el('span', {
+        className: 'badge badge-shield',
+        attrs: { title: file.protect_message || '删除白名单保护，不会进入删除计划' },
+        text: '受保护 · '
+          + (PROTECT_REASON_LABEL[file.protect_reason] || '白名单')
+      }));
+    }
+    return el('div', { className: 'file-sub' }, subItems);
   }
 
   function buildFileTimes(file, group) {
@@ -4032,8 +4072,16 @@ import {
       input.disabled = true;
       return;
     }
-    var selectable = (group.files || []).filter(function (file) { return file.file_id !== group.keep_file_id; });
+    var selectable = (group.files || []).filter(function (file) {
+      return isFileSelectable(group, file);
+    });
     var selectedCount = selectable.filter(function (file) { return isFileSelected(group, file); }).length;
+    if (!selectable.length) {
+      input.checked = false;
+      input.indeterminate = false;
+      input.disabled = true;
+      return;
+    }
     input.disabled = false;
     input.checked = selectable.length > 0 && selectedCount === selectable.length;
     input.indeterminate = selectedCount > 0 && selectedCount < selectable.length;
@@ -4211,6 +4259,13 @@ import {
     if (group.creation_time_suspect && !fallback) { badges.push(el('span', { className: 'badge badge-amber', text: '创建时间存疑' })); }
     var similarIncrementalBadge = incrementalGroupBadge(group);
     if (similarIncrementalBadge) { badges.push(similarIncrementalBadge); }
+    if (Number(group.protected_files) > 0) {
+      badges.push(el('span', {
+        className: 'badge badge-shield',
+        attrs: { title: '组内受删除白名单保护的文件不会进入删除计划' },
+        text: '受保护 ' + fmtInt(group.protected_files)
+      }));
+    }
 
     var similarSubItems = [
       el('span', { text: similarityMethodLabel(group.similarity_method) }),
@@ -4432,6 +4487,13 @@ import {
     }
     var videoIncrementalBadge = incrementalGroupBadge(group);
     if (videoIncrementalBadge) { badges.push(videoIncrementalBadge); }
+    if (Number(group.protected_files) > 0) {
+      badges.push(el('span', {
+        className: 'badge badge-shield',
+        attrs: { title: '组内受删除白名单保护的文件不会进入删除计划' },
+        text: '受保护 ' + fmtInt(group.protected_files)
+      }));
+    }
 
     var subItems = [
       el('span', { text: '时长 ' + fmtVideoDuration(group.video_duration) }),
@@ -5221,7 +5283,9 @@ import {
   function videoGroupSelectableFiles(group) {
     if (!group || group.needs_manual_keep || group.allow_batch_delete === false) { return []; }
     var keeperId = videoGroupKeeperId(group);
-    return (group.files || []).filter(function (file) { return file.file_id !== keeperId; });
+    return (group.files || []).filter(function (file) {
+      return file.file_id !== keeperId && !file.protected;
+    });
   }
 
   function syncVideoGroupCheckbox(group, card) {
@@ -5409,6 +5473,7 @@ import {
   function isFileSelectable(group, file) {
     if (!group || !file) { return false; }
     if (group.needs_manual_keep) { return false; }
+    if (file.protected) { return false; }
     return file.file_id !== group.keep_file_id;
   }
 
@@ -5613,7 +5678,9 @@ import {
   function toggleGroupSelection(group, checked) {
     if (!group || group.needs_manual_keep) { return; }
     var results = state.results;
-    var selectable = (group.files || []).filter(function (file) { return file.file_id !== group.keep_file_id; });
+    var selectable = (group.files || []).filter(function (file) {
+      return isFileSelectable(group, file);
+    });
     if (results.mode === 'all') {
       selectable.forEach(function (file) {
         if (checked) { results.excluded.delete(file.file_id); }
@@ -5680,26 +5747,39 @@ import {
       ]));
     }
     try {
-      var res = await fetch('/api/preview?path=' + encodePath(file.path), {
-        credentials: 'same-origin',
-        signal: abortController.signal,
-        headers: { Accept: '*/*' }
-      });
-      if (res.status === 401) {
-        handleUnauthorized();
-        throw new ApiError(401, 'AUTH_REQUIRED', ERROR_FALLBACK.AUTH_REQUIRED);
+      // v0044：先用 Range 探测类型，避免把整个视频下载成 blob 才能播放；
+      // 视频/音频改为直接 URL（浏览器按 Range 流式播放，支持拖动与片段定位）。
+      async function fetchPreview(withRange) {
+        var headers = { Accept: '*/*' };
+        if (withRange) { headers.Range = 'bytes=0-0'; }
+        var response = await fetch('/api/preview?path=' + encodePath(file.path), {
+          credentials: 'same-origin',
+          signal: abortController.signal,
+          headers: headers
+        });
+        if (response.status === 401) {
+          handleUnauthorized();
+          throw new ApiError(401, 'AUTH_REQUIRED', ERROR_FALLBACK.AUTH_REQUIRED);
+        }
+        if (!response.ok && response.status !== 206) {
+          var message = '预览失败（HTTP ' + response.status + '）。';
+          try {
+            var payload = await response.json();
+            if (payload && payload.error && payload.error.message) { message = payload.error.message; }
+          } catch (e2) { /* 非 JSON 错误体 */ }
+          throw new ApiError(response.status, 'PREVIEW_FAILED', message);
+        }
+        return response;
       }
-      if (!res.ok) {
-        var message = '预览失败（HTTP ' + res.status + '）。';
-        try {
-          var payload = await res.json();
-          if (payload && payload.error && payload.error.message) { message = payload.error.message; }
-        } catch (e2) { /* 非 JSON 错误体 */ }
-        throw new ApiError(res.status, 'PREVIEW_FAILED', message);
-      }
+      var probe = await fetchPreview(true);
+      var probeType = (probe.headers.get('Content-Type') || '').toLowerCase();
+      var mediaLike = probeType.indexOf('video/') === 0
+        || probeType.indexOf('audio/') === 0;
+      var res = mediaLike ? probe : await fetchPreview(false);
       var contentType = (res.headers.get('Content-Type') || '').toLowerCase();
       var truncated = res.headers.get('X-Preview-Truncated') === '1';
       var stage;
+      var extras = null;
       if (contentType.indexOf('image/') === 0) {
         var imageBlob = await res.blob();
         var imageUrl = URL.createObjectURL(imageBlob);
@@ -5723,34 +5803,274 @@ import {
           el('iframe', { attrs: { src: pdfUrl, title: 'PDF 文件预览' } })
         ]);
       } else if (contentType.indexOf('audio/') === 0) {
-        var audioBlob = await res.blob();
-        var audioUrl = URL.createObjectURL(audioBlob);
-        objectUrls.push(audioUrl);
+        var audioUrl = '/api/preview?path=' + encodePath(file.path);
         stage = el('div', { className: 'preview-stage' }, [
           el('audio', { attrs: { src: audioUrl, controls: true, preload: 'metadata' } })
         ]);
       } else if (contentType.indexOf('video/') === 0) {
-        var videoBlob = await res.blob();
-        var videoUrl = URL.createObjectURL(videoBlob);
-        objectUrls.push(videoUrl);
-        stage = el('div', { className: 'preview-stage' }, [
-          el('video', { attrs: { src: videoUrl, controls: true, preload: 'metadata' } })
-        ]);
+        // 直接 URL：Range 流式播放，不预先下载整个视频（大文件也能立即拖动）。
+        var videoUrl = '/api/preview?path=' + encodePath(file.path);
+        var videoPlayer = el('video', {
+          className: 'preview-video',
+          attrs: { src: videoUrl, controls: true, preload: 'metadata' }
+        });
+        stage = el('div', { className: 'preview-stage is-video' }, [videoPlayer]);
+        extras = await buildVideoExtras(file, videoPlayer, abortController.signal);
       } else {
         throw new ApiError(415, 'PREVIEW_UNSUPPORTED',
           '该文件类型暂不支持预览（' + (contentType || '未知类型') + '）。可点击“在新窗口打开”尝试。');
       }
       if (!ensureOpen()) { return; }
-      modal.setBody(el('div', { className: 'preview-body' }, [
-        stage,
-        el('p', { className: 'preview-path', text: file.path })
-      ]));
+      var bodyChildren = [stage];
+      if (extras) { bodyChildren.push(extras); }
+      bodyChildren.push(el('p', { className: 'preview-path', text: file.path }));
+      modal.setBody(el('div', { className: 'preview-body' }, bodyChildren));
       var focusable = $('img, video, audio, iframe', modal.modal);
       if (!focusable) { closeBtn.focus(); }
     } catch (err) {
       if (err && err.name === 'AbortError') { return; }
       showError(err);
     }
+  }
+
+  // ==================== 13.5 v0044 视频缩略图 / 媒体信息 / 并排对比 ====================
+  var PREVIEW_SYNC_TOLERANCE = 0.5;
+
+  function clockText(seconds) {
+    var total = Math.max(0, Math.round(Number(seconds) || 0));
+    var hours = Math.floor(total / 3600);
+    var minutes = Math.floor((total % 3600) / 60);
+    var secs = total % 60;
+    function pad(value) { return value < 10 ? '0' + value : String(value); }
+    return (hours > 0 ? hours + ':' + pad(minutes) : String(minutes))
+      + ':' + pad(secs);
+  }
+
+  function findGroupForFile(file) {
+    if (!file) { return null; }
+    var lists = [state.results.groups, state.results.similarGroups,
+      state.results.videoGroups];
+    for (var i = 0; i < lists.length; i += 1) {
+      var list = lists[i] || [];
+      for (var j = 0; j < list.length; j += 1) {
+        var group = list[j] || {};
+        var files = group.files || [];
+        for (var k = 0; k < files.length; k += 1) {
+          var item = files[k] || {};
+          if ((file.file_id && item.file_id === file.file_id)
+              || (file.path && item.path === file.path)) { return group; }
+        }
+      }
+    }
+    return null;
+  }
+
+  function videoPreviewUrl(path) {
+    return '/api/preview?path=' + encodePath(path);
+  }
+
+  function mediaInfoText(media) {
+    media = media || {};
+    var parts = [];
+    if (media.duration) { parts.push('时长 ' + clockText(media.duration)); }
+    var video = media.video || {};
+    if (video.width && video.height) { parts.push(video.width + '×' + video.height); }
+    if (video.codec) { parts.push(String(video.codec).split(' ')[0]); }
+    parts.push('音轨 ' + fmtInt(media.audio_stream_count || 0));
+    parts.push('字幕轨 ' + fmtInt(media.subtitle_stream_count || 0));
+    if (media.size) { parts.push(fmtBytes(media.size)); }
+    if (!media.duration && !video.width) { parts.push('（无法读取媒体信息）'); }
+    return parts.join(' · ');
+  }
+
+  function buildVideoExtras(file, player) {
+    var wrap = el('div', { className: 'preview-extras' });
+    var info = el('p', { className: 'preview-media-info', text: '正在读取媒体信息…' });
+    var strip = el('div', { className: 'preview-thumb-strip' });
+    var actions = el('div', { className: 'preview-extras-actions' });
+    wrap.appendChild(info);
+    wrap.appendChild(strip);
+    wrap.appendChild(actions);
+    var group = findGroupForFile(file);
+    var siblings = ((group && group.files) || []).filter(function (item) {
+      return item && item.path && item.path !== file.path;
+    });
+    if (siblings.length) {
+      actions.appendChild(el('button', {
+        className: 'btn btn-ghost btn-sm',
+        attrs: { type: 'button' },
+        on: { click: function () { openCompareView(file, group); } }
+      }, [icon('eye'), '与同组文件并排对比']));
+      actions.appendChild(el('span', {
+        className: 'hint',
+        text: '同组还有 ' + fmtInt(siblings.length)
+          + ' 个文件可并排对比（时长 / 分辨率 / 音轨差异可帮助判断不同压制版本）'
+      }));
+    }
+    api('/api/preview/thumbs?path=' + encodePath(file.path) + '&count=6&w=320',
+      { timeout: 30000 }).then(function (plan) {
+      setText(info, mediaInfoText(plan.media || {}));
+      (plan.thumbs || []).forEach(function (item) {
+        var thumb = el('img', {
+          className: 'preview-thumb',
+          attrs: {
+            src: item.url, alt: '缩略图 ' + clockText(item.t),
+            title: '跳到 ' + clockText(item.t), loading: 'lazy'
+          }
+        });
+        thumb.addEventListener('click', function () {
+          try {
+            player.currentTime = Number(item.t) || 0;
+            player.play();
+          } catch (e) { /* 浏览器不支持时忽略 */ }
+        });
+        strip.appendChild(thumb);
+      });
+      if (!(plan.thumbs || []).length) {
+        setText(info, '该视频无法生成缩略图（可用“在新窗口打开”查看）。');
+      }
+    }).catch(function (err) {
+      setText(info, '媒体信息读取失败：' + errorMessage(err, '暂不可用'));
+    });
+    return wrap;
+  }
+
+  function openCompareView(file, group) {
+    var files = ((group && group.files) || []).slice();
+    if (!files.length) { files = [file]; }
+    var found = files.filter(function (item) { return item.path === file.path; })[0];
+    if (!found) { files.unshift(file); }
+    var others = files.filter(function (item) { return item.path !== file.path; });
+    var other = others[0] || file;
+    var closeBtn = el('button', {
+      className: 'btn btn-ghost', attrs: { type: 'button' }, text: '关闭',
+      on: { click: function () { closeModal(true); } }
+    });
+    var syncInput = el('input', { attrs: { type: 'checkbox' } });
+    var syncLabel = el('label', { className: 'check' }, [
+      syncInput, '同步播放（勾选后两侧互相带动）'
+    ]);
+    var alignBtn = el('button', {
+      className: 'btn btn-ghost btn-sm', attrs: { type: 'button' }, text: '对齐到左侧时间点'
+    });
+    var modal = openModal({
+      title: '并排对比（片段播放）',
+      subtitle: '用于判断不同压制版本 / 剪辑版本；两侧视频可独立拖动或同步播放',
+      size: 'xl',
+      body: el('div', { className: 'modal-loading' }, [
+        el('span', { className: 'spinner spinner-lg' }), '正在准备对比…'
+      ]),
+      footer: [syncLabel, alignBtn, closeBtn],
+      initialFocus: closeBtn
+    });
+    var syncing = false;
+
+    function loadPanelMeta(item, target) {
+      setText(target, '正在读取媒体信息…');
+      api('/api/preview/media?path=' + encodePath(item.path), { timeout: 20000 })
+        .then(function (payload) {
+          setText(target, mediaInfoText(payload.media || {}));
+        })
+        .catch(function (err) {
+          setText(target, '媒体信息读取失败：' + errorMessage(err, '暂不可用'));
+        });
+    }
+
+    function makePanel(initial, label) {
+      var select = el('select', { attrs: { 'aria-label': label } });
+      files.forEach(function (item) {
+        var option = el('option', {
+          attrs: { value: item.path },
+          text: (item.name || item.path) + ' · ' + fmtBytes(item.size)
+        });
+        if (item.path === initial.path) { option.selected = true; }
+        select.appendChild(option);
+      });
+      var video = el('video', {
+        className: 'compare-video',
+        attrs: {
+          src: videoPreviewUrl(initial.path),
+          controls: true, preload: 'metadata'
+        }
+      });
+      var meta = el('p', { className: 'compare-meta', text: '' });
+      var panel = { select: select, video: video, meta: meta, file: initial };
+      select.addEventListener('change', function () {
+        var next = files.filter(function (item) {
+          return item.path === select.value;
+        })[0];
+        if (!next) { return; }
+        panel.file = next;
+        video.setAttribute('src', videoPreviewUrl(next.path));
+        try { video.load(); } catch (e) { /* 忽略 */ }
+        loadPanelMeta(next, meta);
+      });
+      loadPanelMeta(initial, meta);
+      return panel;
+    }
+
+    var left = makePanel(file, '左侧文件');
+    var right = makePanel(other, '右侧文件');
+    var panels = [left, right];
+
+    function maybeSync(source, target) {
+      if (!syncInput.checked || syncing) { return; }
+      var delta = Math.abs((target.video.currentTime || 0)
+        - (source.video.currentTime || 0));
+      if (delta < PREVIEW_SYNC_TOLERANCE) { return; }
+      syncing = true;
+      try { target.video.currentTime = source.video.currentTime || 0; } catch (e) { /* 忽略 */ }
+      setTimeout(function () { syncing = false; }, 120);
+    }
+
+    panels.forEach(function (source) {
+      var target = source === left ? right : left;
+      source.video.addEventListener('play', function () {
+        if (!syncInput.checked) { return; }
+        try {
+          if (target.video.paused) { target.video.play(); }
+        } catch (e) { /* 忽略 */ }
+        maybeSync(source, target);
+      });
+      source.video.addEventListener('pause', function () {
+        if (!syncInput.checked) { return; }
+        try {
+          if (!target.video.paused) { target.video.pause(); }
+        } catch (e) { /* 忽略 */ }
+      });
+      source.video.addEventListener('seeked', function () {
+        maybeSync(source, target);
+      });
+    });
+
+    alignBtn.addEventListener('click', function () {
+      var time = Number(left.video.currentTime) || 0;
+      try { right.video.currentTime = time; } catch (e) { /* 忽略 */ }
+      toast('已把右侧对齐到 ' + clockText(time) + '。', 'info');
+    });
+
+    function panelNode(panel, label) {
+      return el('div', { className: 'compare-panel' }, [
+        el('div', { className: 'compare-panel-head' }, [
+          el('span', { className: 'compare-panel-label', text: label }),
+          panel.select
+        ]),
+        panel.video,
+        panel.meta
+      ]);
+    }
+
+    modal.setBody(el('div', { className: 'compare-body' }, [
+      el('div', { className: 'compare-grid' }, [
+        panelNode(left, '左侧'),
+        panelNode(right, '右侧')
+      ]),
+      el('p', {
+        className: 'hint',
+        text: '提示：浏览器内置解码器不支持 HEVC / MKV / DTS 等编码时无法播放，但“在新窗口打开”或缩略图仍可用于核对文件内容。'
+      })
+    ]));
+    return modal;
   }
 
   // ==================== 14. 两步删除流程 ====================
@@ -8211,7 +8531,10 @@ import {
       // v0043：增量扫描缓存
       diagRow('增量哈希缓存条目', diagLooseValue(hashCache, ['entries'])),
       diagRow('增量哈希缓存覆盖大小', diagLooseValue(hashCache, ['bytes']), { bytes: true }),
-      diagRow('媒体探测缓存条目', diagLooseValue(mediaProbeCache, ['entries']))
+      diagRow('媒体探测缓存条目', diagLooseValue(mediaProbeCache, ['entries'])),
+      // v0044：预览缩略图缓存
+      diagRow('预览缩略图缓存条目', diagLooseValue(diag.thumbnail_cache || {}, ['entries'])),
+      diagRow('预览缩略图缓存大小', diagLooseValue(diag.thumbnail_cache || {}, ['bytes']), { bytes: true })
     ]);
 
     appendDiagRows(els.storageMediaList, [
@@ -8718,7 +9041,11 @@ import {
     setSubtitleConcurrency: { input: 'setSubtitleConcurrency', error: 'setSubtitleConcurrencyError' },
     // v0043：排除规则（增量扫描无独立校验错误）
     excludeNameRegex: { input: 'setExcludeNameRegex', error: 'setExcludeNameRegexError' },
-    excludeNameGlob: { input: 'setExcludeNameGlob', error: 'setExcludeNameGlobError' }
+    excludeNameGlob: { input: 'setExcludeNameGlob', error: 'setExcludeNameGlobError' },
+    // v0044：删除白名单
+    protectExtensions: { input: 'setProtectExtensions', error: 'setProtectExtensionsError' },
+    protectDirs: { input: 'setProtectDirs', error: 'setProtectDirsError' },
+    protectNameRegex: { input: 'setProtectNameRegex', error: 'setProtectNameRegexError' }
   };
 
   function bytesToMbValue(bytes) {
@@ -8744,6 +9071,18 @@ import {
       }
       var extraSettingsRules = composeKeepRules('setKeep');
       if (extraSettingsRules.length) { scanBits.push('高级保留规则 ' + extraSettingsRules.length + ' 条'); }
+      if (els.setProtectEnabled && els.setProtectEnabled.checked) {
+        var protectCount = textToLines(els.setProtectExtensions
+          ? els.setProtectExtensions.value : '').length
+          + textToLines(els.setProtectDirs ? els.setProtectDirs.value : '').length
+          + textToLines(els.setProtectNameRegex
+            ? els.setProtectNameRegex.value : '').length;
+        scanBits.push('删除白名单 ' + protectCount + ' 项配置'
+          + (els.setProtectSidecarFiles && els.setProtectSidecarFiles.checked
+            ? '（含视频附属文件）' : ''));
+      } else {
+        scanBits.push('删除白名单关闭');
+      }
       setText(els.settingsScanSummary, scanBits.join(' · '));
     }
     if (els.settingsSimilaritySummary) {
@@ -8864,6 +9203,18 @@ import {
       els.setMediaSidecarMode.value = settings.media_sidecar_mode === 'include' ? 'include' : 'skip';
     }
     fillKeepRuleControls('setKeep', settings.keep_rules);
+    // v0044：删除白名单
+    if (els.setProtectEnabled) { els.setProtectEnabled.checked = settings.protect_enabled !== false; }
+    if (els.setProtectExtensions) {
+      els.setProtectExtensions.value = extListToText(settings.protect_extensions);
+    }
+    if (els.setProtectDirs) { els.setProtectDirs.value = linesToText(settings.protect_dirs); }
+    if (els.setProtectNameRegex) {
+      els.setProtectNameRegex.value = linesToText(settings.protect_name_regex);
+    }
+    if (els.setProtectSidecarFiles) {
+      els.setProtectSidecarFiles.checked = settings.protect_sidecar_files !== false;
+    }
     if (els.setScanMode) { els.setScanMode.value = settings.scan_mode === 'similar' ? 'similar' : 'exact'; }
     if (els.setSimilarityThreshold) {
       var threshold = parseInt(settings.similarity_threshold, 10);
@@ -9024,6 +9375,33 @@ import {
     settings.ignore_file_enabled = els.setIgnoreFileEnabled ? !!els.setIgnoreFileEnabled.checked : true;
     settings.media_sidecar_mode = els.setMediaSidecarMode && els.setMediaSidecarMode.value === 'include'
       ? 'include' : 'skip';
+    // v0044：删除白名单
+    settings.protect_enabled = els.setProtectEnabled ? !!els.setProtectEnabled.checked : true;
+    var protectExt = normalizeExtList(els.setProtectExtensions ? els.setProtectExtensions.value : '');
+    if (protectExt.error) {
+      errors.protectExtensions = protectExt.error;
+    } else {
+      settings.protect_extensions = protectExt.list;
+    }
+    var protectDirs = textToLines(els.setProtectDirs ? els.setProtectDirs.value : '');
+    var badDir = '';
+    protectDirs.forEach(function (item) {
+      if (!badDir && !isAbsolutePath(item)) { badDir = item; }
+    });
+    if (badDir) {
+      errors.protectDirs = '受保护目录必须是绝对路径：' + badDir;
+    } else {
+      settings.protect_dirs = protectDirs;
+    }
+    var protectRegex = textToLines(
+      els.setProtectNameRegex ? els.setProtectNameRegex.value : '');
+    if (protectRegex.length > 50) {
+      errors.protectNameRegex = '受保护文件名正则最多 50 条。';
+    } else {
+      settings.protect_name_regex = protectRegex;
+    }
+    settings.protect_sidecar_files = els.setProtectSidecarFiles
+      ? !!els.setProtectSidecarFiles.checked : true;
     return { settings: settings, errors: errors, valid: Object.keys(errors).length === 0 };
   }
 

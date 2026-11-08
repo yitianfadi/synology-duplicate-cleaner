@@ -1,5 +1,5 @@
 package="DuplicateCleaner"
-version="1.1.0-0043"
+version="1.1.0-0044"
 os_min_ver="7.0-40000"
 description="Exact-hash and content-similarity duplicate finder with a review-first, recoverable cleanup workflow for Synology DSM 7."
 description_chs="支持哈希精准匹配、图片/文档内容相似与视频视觉相似（FFmpeg 抽样帧指纹）的重复文件扫描与安全清理工具；先报告、人工确认后再删除，支持回收站、限速、特征/视频指纹缓存与持久日志；支持 OpenAI 兼容云端 ASR/LLM 字幕生成与翻译。图片/文档相似组必须人工复核、禁止一键批量删除；视频相似组默认不勾选，允许手动全选批量删除。"

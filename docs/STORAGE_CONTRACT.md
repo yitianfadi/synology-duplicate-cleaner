@@ -174,6 +174,9 @@ CREATE INDEX idx_media_probe_cache_used ON media_probe_cache(last_used);
   读写两侧使用同一映射（`store.sqlite_int`），避免 SQLite `OverflowError`。
 - 缓存上限：`hash_cache` 300000 条、`media_probe_cache` 50000 条，写入后按 `last_used` 裁剪；
   `POST /api/cache/clear` 可手动清空。
+- v0044 预览缩略图缓存**不进数据库**：`<var>/cache/thumbs/<sha1(path|size|mtime_ns|t|w)>.jpg`，
+  上限 `THUMB_MAX_ENTRIES=3000` 条 / `THUMB_MAX_BYTES=300MB`，按 mtime LRU 裁剪；
+  媒体信息内存缓存 200 条（不落盘）。缩略图缓存可随时删除，只影响下次预览速度。
 
 ## 2. Store 兼容 API
 

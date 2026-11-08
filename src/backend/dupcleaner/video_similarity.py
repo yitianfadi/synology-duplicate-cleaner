@@ -44,6 +44,7 @@ _STREAM_RE = re.compile(
 _CHANNELS_RE = re.compile(
     r",\s*(mono|stereo|quad|5\.1|6\.1|7\.1|\d+ channels)")
 _STREAM_TITLE_RE = re.compile(r"title\s*:\s*([^,\n]+)")
+_RESOLUTION_RE = re.compile(r"(\d{2,5})x(\d{2,5})")
 VIDEO_FILTER = ("scale=32:32:force_original_aspect_ratio=decrease,"
                 "pad=32:32:(ow-iw)/2:(oh-ih)/2:black,format=gray")
 
@@ -75,6 +76,11 @@ def parse_media_streams(text):
         if channels:
             item["channels"] = channels.group(1).strip()
         kind = match.group("kind").lower()
+        if kind == "video":
+            resolution = _RESOLUTION_RE.search(rest)
+            if resolution:
+                item["width"] = int(resolution.group(1))
+                item["height"] = int(resolution.group(2))
         if kind == "audio":
             result["audio_streams"].append(item)
         elif kind == "subtitle":
@@ -785,6 +791,27 @@ class FFmpegTool(object):
         if len(stdout) < config.VIDEO_FRAME_BYTES:
             raise VideoSkip("decode", u"帧数据不足 %d 字节" % len(stdout))
         return stdout[:config.VIDEO_FRAME_BYTES]
+
+    def extract_thumbnail(self, path, out_path, timestamp, width,
+                          timeout=60.0, hwaccel_label="none", stop_check=None):
+        """按时间点抽 1 帧缩放为 JPEG（v0044 预览缩略图）。
+
+        与 `extract_frame`（32×32 灰度指纹）不同：这里输出可直接给浏览器显示的
+        JPEG 文件，宽度上限由调用方控制，保持等比。
+        """
+        width = max(64, int(width or 320))
+        args = ["-nostdin", "-hide_banner", "-loglevel", "error", "-threads", "1"]
+        args += _hwaccel_flag_args(hwaccel_label)
+        args += ["-ss", "%.3f" % max(0.0, float(timestamp)), "-i", path,
+                 "-frames:v", "1", "-an", "-sn",
+                 "-vf", "scale=w='min(%d,iw)':h=-2" % width,
+                 "-q:v", str(config.THUMB_JPEG_QUALITY),
+                 "-f", "image2", "-y", out_path]
+        code, _stdout, stderr = self._run(args, timeout, stop_check)
+        if code != 0 or not os.path.isfile(out_path) or os.path.getsize(out_path) <= 0:
+            detail = stderr.decode("utf-8", "replace").strip()[-300:]
+            raise VideoSkip("decode", detail or ("ffmpeg thumbnail exit=%s" % code))
+        return out_path
 
     def extract_frames_batch(self, path, timestamps, timeout,
                              hwaccel_label="none", stop_check=None):
