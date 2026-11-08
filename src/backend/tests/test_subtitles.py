@@ -2186,3 +2186,77 @@ class SubtitleApiTest(SubtitleTestBase):
             "POST", "/api/subtitles/test", {"kind": "llm"})
         self.assertEqual(status, 403)
         self.assertEqual(payload["error"]["code"], "CSRF_FAILED")
+
+
+class SubtitleEtaTest(unittest.TestCase):
+    """v0041：单任务预计剩余时间（eta_seconds，只读内存，样本不足返回 None）。"""
+
+    def _job(self, status="running", stage="asr", progress=20,
+             chunk_total=0, chunk_index=0):
+        job = subtitles.SubtitleJob(
+            subtitles.make_job_id(), "v.mp4", "auto", False, "zh", "admin")
+        job.status = status
+        job.stage = stage
+        job.progress = progress
+        job.chunk_total = chunk_total
+        job.chunk_index = chunk_index
+        job.started_epoch = time.time() - 100
+        return job
+
+    @staticmethod
+    def _add_chunk(job, index, extract=10.0, asr=40.0):
+        job.add_asr_chunk({
+            "index": index, "status": "done",
+            "start_epoch": 0.0, "end_epoch": extract + asr,
+            "extract_sec": extract, "asr_sec": asr, "fallback": False,
+        })
+
+    @staticmethod
+    def _add_batch(job, index, duration=10.0):
+        job.add_translate_batch({
+            "index": index, "status": "done",
+            "start_epoch": 0.0, "end_epoch": duration,
+            "duration_sec": duration, "cues": 20, "attempts": 1,
+            "partial": False,
+        })
+
+    def test_asr_eta_uses_chunk_average(self):
+        job = self._job(chunk_total=5, chunk_index=2)
+        self._add_chunk(job, 0)
+        self._add_chunk(job, 1)
+        # 已完成 2 片各 50s，剩 3 片 → 150s；snapshot 同步暴露
+        self.assertEqual(job.eta_seconds(), 150)
+        self.assertEqual(job.snapshot()["eta_seconds"], 150)
+
+    def test_asr_eta_requires_samples(self):
+        # 有剩余分片但还没有任何已完成分片样本 → None
+        self.assertIsNone(self._job(chunk_total=5, chunk_index=3).eta_seconds())
+        # 单分片任务无法估算
+        single = self._job(chunk_total=1, chunk_index=0)
+        self._add_chunk(single, 0)
+        self.assertIsNone(single.eta_seconds())
+        # 全部完成（剩余 0）→ None
+        done = self._job(chunk_total=2, chunk_index=2)
+        self._add_chunk(done, 0)
+        self._add_chunk(done, 1)
+        self.assertIsNone(done.eta_seconds())
+
+    def test_translate_eta_uses_batch_average(self):
+        job = self._job(status="translating", stage="translate", progress=80)
+        self._add_batch(job, 0)
+        self._add_batch(job, 1)
+        # 进度 80%（带 70..90）→ 完成比例 0.5 → 共 4 批，剩 2 批 × 10s
+        self.assertEqual(job.eta_seconds(), 20)
+        # 刚进入翻译（progress=70，没有比例）→ 不猜
+        job.progress = 70
+        self.assertIsNone(job.eta_seconds())
+        # 已接近完成（progress>=90）→ None
+        job.progress = 90
+        self.assertIsNone(job.eta_seconds())
+
+    def test_eta_hidden_when_not_running(self):
+        for status in ("queued", "paused", "done", "failed", "cancelled"):
+            job = self._job(status=status, chunk_total=4, chunk_index=1)
+            self._add_chunk(job, 0)
+            self.assertIsNone(job.eta_seconds(), status)
+            self.assertIsNone(job.snapshot()["eta_seconds"], status)

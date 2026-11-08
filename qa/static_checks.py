@@ -502,6 +502,17 @@ def check_backend():
           and prefetch_test_ok,
           "subtitle audio prefetch markers missing")
 
+    # ---- v0041：预计剩余时间（ASR 分片均值 / 翻译批次均值，样本不足 None）----
+    eta_test_ok = ("class SubtitleEtaTest" in read(
+        os.path.join(backend, "tests", "test_subtitles.py")))
+    check("BE-SUBTITLE-ETA",
+          "任务视图暴露预计剩余秒数：ASR 分片均值 / 翻译批次均值，样本不足返回 None（v0041）",
+          "def eta_seconds(self):" in subtitles_src
+          and '"eta_seconds": self.eta_seconds()' in subtitles_src
+          and "fraction = (progress - 70) / 20.0" in subtitles_src
+          and eta_test_ok,
+          "subtitle job eta markers missing")
+
 
 # ---------------------------------------------------------------------------
 # 前端
@@ -800,6 +811,41 @@ def check_frontend():
     check("FE-SUBTITLE-SUBMIT-REASON",
           "提交按钮禁用原因常显；全选不截断并提示拆分批次（v0031/v0032）",
           submit_reason_ok, "submit reason / group-limit markers missing")
+
+    # ---- v0041：字幕任务行进度条 / 分块文案 / 来源位置 / 步骤消息 ----
+    css_src = read(os.path.join(web, "styles.css"))
+    progress_fill_ok = (
+        # el() 只支持 className/text/attrs/dataset/on，传 style 会被静默丢弃
+        "function subtitleProgressBar(pct)" in app
+        and "fill.style.width = value + '%'" in app
+        and not re.search(r"el\([^)]*\{[^}]*\bstyle\s*:", app))
+    check("FE-SUBTITLE-PROGRESS-BAR",
+          "字幕任务行/详情进度条按百分比填充（el() 不支持 style，v0041 修空条）",
+          progress_fill_ok, "subtitle progress bar fill markers missing")
+    chunk_label_ok = (
+        "分块 ' + clamp(display, 0, total) + '/' + total" in app
+        and "job.chunk_index, job.chunks_done" in app
+        and "? index + 1 : index" not in app)
+    check("FE-SUBTITLE-CHUNK-LABEL",
+          "分块进度不再对 1-based chunk_index 重复 +1（v0041）",
+          chunk_label_ok, "subtitle chunk label off-by-one markers missing")
+    source_tail_ok = (
+        "subtitle-job-source" in app
+        and ".subtitle-job-meta .subtitle-job-source" in css_src
+        and app.index("subtitle-job-source")
+        > app.index("function renderSubtitleJobItem"))
+    check("FE-SUBTITLE-SOURCE-TAIL",
+          "「来源」移到任务行尾并弱化，避免与阶段“云端语音识别”混淆（v0041）",
+          source_tail_ok, "subtitle source tail markers missing")
+    job_meta_ok = (
+        "function subtitleJobStepMessage(job)" in app
+        and "function subtitleJobElapsedText(job)" in app
+        and "function subtitleJobEtaText(job)" in app
+        and "预计剩余 " in app and "job.eta_seconds" in app
+        and "function subtitleJobDedupeChunkText" in app)
+    check("FE-SUBTITLE-ETA",
+          "任务行展示当前步骤消息 / 已耗时 / 预计剩余（v0041）",
+          job_meta_ok, "subtitle eta / step message markers missing")
 
     check("FE-RISK-TEXT", "风险提示文案与契约逐字一致（index.html）",
           RISK_TEXT in html, "risk text not found verbatim")

@@ -729,6 +729,51 @@ python build/build_spk.py --no-icons --out-dir $env:TEMP\qa-build2
 - 安装 1.1.0-0040 后跑一个 ≥2 片的字幕任务：任务详情 →「步骤耗时」→ 展开「ASR 分片明细」，第 2/3 片的「抽音频」开始时间应早于上一片「识别」结束（两段时间窗重叠）；同时在 NAS 上 `ps -eo args | grep -c '[f]fmpeg'` 连续采样，出现 2 个 ffmpeg 的比例应比升级前明显上升。
 - 关闭「分片音频预取」再跑一个同规格任务：抽音频与识别应恢复严格串行（无重叠），用于对比提速幅度。
 
+## 23. 附：v0041 任务行进度信息与预计剩余（2026-11-08）
+
+### 23.1 现场问题
+
+- 用户反馈：任务中心「字幕任务 → 进行中」的任务行进度条**一直是空条**（只有右侧 53% 文字）；同一行「分块 7/9」与 53% 对不上；行首「云端语音识别」与「云端 ASR 生成」两个标签都带“云端…”，来源被误读成当前阶段。
+
+### 23.2 定位
+
+- **进度条空条（前端 bug）**：截图像素采样确认条内只有轨道色 `#E8EEF7`、无蓝色填充。根因是 `js/dom.js` 的 `el(tag, opts, children)` 只支持 `className/text/attrs/dataset/on`，**不支持 `style`**；任务行（app.js `renderSubtitleJobItem`）与任务详情弹窗（`buildSubtitleJobDetailBody`）却用 `el('div', {style: 'width:..%'})` 传宽度，`style` 被静默丢弃后回落到 `.progress-fill{width:0}`。其余 5 处进度条（扫描、单视频字幕弹窗、删除、字幕组、批次组）都走 `node.style.width`，因此只有这两处受影响。
+- **分块数字多一片（前端 off-by-one）**：后端 `chunk_index = index + 1` 已是 1-based 的已完成分片数（`_run_chunked_asr` 收尾 `progress = 20 + int(50*(index+1)/total)`），前端 `subtitleJobChunkText` 又对 `chunk_index` +1 → 9 片完成 6 片时显示 7/9，而百分比 53% 正确。
+- **来源与阶段撞词（UX）**：`来源` 取值「云端 ASR 生成」、ASR 阶段名「云端语音识别」，两个标签相邻显示，容易被读成一句状态。
+
+### 23.3 实现
+
+- 前端新增 `subtitleProgressBar(pct)`：创建 `progress-bar` 节点后设置 `fill.style.width` 并同步 `aria-valuenow`；任务行与任务详情弹窗统一使用它。
+- `subtitleJobChunkText` 修复为：`chunk_index`/`chunks_done` 直接使用（1-based），只有 0-based 的 `current_chunk`/`chunk` 才 +1。
+- 任务行 meta 顺序调整为 `阶段 · 分块 x/y · 当前步骤消息（message）· 已耗时 · 预计剩余 · 译文 · 创建`；`message` 与分块数字重复时只保留 `message`（`subtitleJobDedupeChunkText`）。
+- 「来源」移到行尾并弱化为小字（`.subtitle-job-source`，11px / opacity .72），文案改为 `来源：云端 ASR 生成`。
+- 后端 `SubtitleJob.eta_seconds()`：仅 `running`/`translating` 有值；ASR 阶段 = 已完成分片 `extract_sec + asr_sec` 均值 × `chunk_total - chunk_index`；翻译阶段 = 已完成批次 `duration_sec` 均值 × 由进度带（70..90）反推的剩余批次数；其它情况 `None`。只读内存、不 stat 文件、不持久化，随 `snapshot()` 暴露为 `eta_seconds`（列表/队列/详情都能拿到）。
+- 任务详情网格新增「耗时」「预计剩余」两行（有值才显示）。
+- 无 DB schema 变更（仍 v7），无数据迁移；无新增接口/错误码。
+
+### 23.4 测试证据
+
+- 后端单测 **456 tests OK（6 skipped）**：新增 `SubtitleEtaTest` 4 例——ASR 分片均值估算 + `snapshot` 暴露、无样本/单分片/已完成时返回 `None`、翻译批次均值与进度带边界（70/90 不猜）、非执行中状态一律 `None`。
+- 静态检查 **PASS=167 / FAIL=0 / UNVERIFIED=0**：新增 `BE-SUBTITLE-ETA`、`FE-SUBTITLE-PROGRESS-BAR`（并断言 `src/web` 内不再出现 `el(..., {style:...})` 写法）、`FE-SUBTITLE-CHUNK-LABEL`、`FE-SUBTITLE-SOURCE-TAIL`、`FE-SUBTITLE-ETA`。
+- 端到端 **PASS=157 / FAIL=0 / UNVERIFIED=1**（Windows symlink 历史项，无新增用例）。
+- 前端模块 **22/22**、web smoke **8/8**。
+
+### 23.5 最终产物
+
+- `dist/DuplicateCleaner-1.1.0-0041.spk`
+  - SHA256 `7345c642072ba3dcb21860a7ffb6e65bfd6c3a92b8f54a904c4b1c9e6b4e41b9`
+  - package.tgz MD5 `367914ac22c877efdca55e83425bb4c5`（= INFO.checksum）
+  - 大小 39,014,400 B
+- 版本 1.1.0-0041 同步 8 处；SQLite schema 不变（仍 v7），无数据迁移。
+
+### 23.6 真机验证待办
+
+- 安装 1.1.0-0041 后打开任务中心「字幕任务 → 进行中」：进度条应按百分比填充，且与右侧百分比一致（不再是空条）。
+- 分块数与百分比应一致：9 片任务完成 6 片时显示「分块 6/9」+ 53%（旧版显示 7/9）。
+- 运行中任务行应出现「已耗时 10 分 49 秒 · 预计剩余 X」，`来源：云端 ASR 生成` 在行尾以灰色小字显示。
+- 任务详情弹窗进度条同样应为填充状态，网格里出现「耗时」「预计剩余」两行。
+
+
 
 
 

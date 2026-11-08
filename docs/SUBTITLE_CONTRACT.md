@@ -350,3 +350,18 @@ v0028 在 v1.3 单文件任务之上新增**目录批量生成 / 翻译**：独�
 - **关闭方式**：设置页「分片音频预取」取消勾选（或 API `PUT /api/settings {"settings":{"subtitle_audio_prefetch": false}}`），下个任务起按严格串行执行。
 - 版本 1.1.0-0040；SQLite schema 不变（仍 v7）；无接口/错误码变化。
 
+## 21. v0041 任务行进度信息与预计剩余
+
+- **背景**：任务中心「进行中」任务行的进度条长期是空条（只有右侧百分比文字），且「分块 7/9」与「53%」对不上。
+- **修复 1（进度条）**：前端 `el()` 只支持 `className/text/attrs/dataset/on`，**不支持 `style`**；任务行与任务详情弹窗曾用 `el('div', {style: 'width:..%'})` 传宽度，被静默丢弃 → 回落到 CSS `width:0`。改为统一的 `subtitleProgressBar(pct)`：创建节点后 `fill.style.width = pct + '%'`，并同步 `aria-valuenow`。
+- **修复 2（分块文案）**：后端 `chunk_index` 已是 **1-based 的已完成分片数**（`chunk_index = index + 1`），前端又 +1 导致多算一片。现在只有 0-based 备选字段（`current_chunk`/`chunk`）才 +1。
+- **新字段 `eta_seconds`**：`GET /api/subtitles`、`GET /api/subtitles/queue`、`GET /api/subtitles/{id}` 的任务视图新增 `eta_seconds`（整数秒或 `null`，仅 `running`/`translating` 有值）：
+  - ASR 阶段：已完成分片 `extract_sec + asr_sec` 的均值 × 剩余分片数（剩余 = `chunk_total - chunk_index`）；
+  - 翻译阶段：已完成批次 `duration_sec` 均值 × 由进度带（70..90）反推的剩余批次数；
+  - 其它阶段 / 无样本 / 单分片任务 / 非执行中 → `null`（前端不显示，避免假精度）。
+  - 只读内存里的分片/批次记录，不 stat 文件，列表轮询无额外 IO；不持久化、无 schema 变更。
+- **任务行展示（v0041）**：`阶段 · 分块 x/y · 当前步骤消息（message）· 已耗时 · 预计剩余 · 译文 · 创建`，**「来源」移到行尾并弱化为小字**（`来源：云端 ASR 生成`），避免与阶段“云端语音识别”撞词被误读；`message` 与分块数字重复时只保留 `message`。
+- **任务详情**：网格新增「耗时」与「预计剩余」两行（有值才显示）。
+- 版本 1.1.0-0041；SQLite schema 不变（仍 v7）；接口只新增可选字段，无错误码变化。
+
+

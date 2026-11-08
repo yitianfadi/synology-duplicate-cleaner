@@ -6698,11 +6698,18 @@ import {
       job.chunk_total, job.chunks_total, job.total_chunks, job.chunk_count
     ]);
     if (total === null || total <= 0) { return ''; }
-    var index = firstFiniteNumber([
-      job.chunk_index, job.current_chunk, job.chunks_done, job.chunk
-    ]);
-    if (index === null) { return '分块 0/' + total; }
-    var display = job.chunk_index !== undefined && job.chunk_index !== null ? index + 1 : index;
+    // v0041：后端 chunk_index / chunks_done 已是 1-based 的“已完成分片数”，
+    // 再 +1 会多算一片（曾显示“分块 7/9”而进度只有 53%）。只有 0-based 的
+    // 备选字段（current_chunk / chunk）才需要 +1。
+    var done = firstFiniteNumber([job.chunk_index, job.chunks_done]);
+    var display = null;
+    if (done !== null) {
+      display = done;
+    } else {
+      var current = firstFiniteNumber([job.current_chunk, job.chunk]);
+      if (current !== null) { display = current + 1; }
+    }
+    if (display === null) { return '分块 0/' + total; }
     return '分块 ' + clamp(display, 0, total) + '/' + total;
   }
 
@@ -6736,6 +6743,56 @@ import {
   function subtitleJobProgressText(job) {
     var pct = Math.round(clamp(Number(job.progress) || 0, 0, 100));
     return pct + '%';
+  }
+
+  /** v0041：进度条节点。el() 不支持 style 选项（会被静默丢弃），宽度必须创建后再设置。 */
+  function subtitleProgressBar(pct) {
+    var value = Math.round(clamp(Number(pct) || 0, 0, 100));
+    var bar = el('div', {
+      className: 'progress-bar',
+      attrs: {
+        role: 'progressbar', 'aria-valuemin': '0',
+        'aria-valuemax': '100', 'aria-valuenow': String(value)
+      }
+    });
+    var fill = el('div', { className: 'progress-fill' });
+    fill.style.width = value + '%';
+    bar.appendChild(fill);
+    return bar;
+  }
+
+  /** v0041：当前步骤消息（后端 message）；排队/终态时与状态徽章重复，不重复展示。 */
+  function subtitleJobStepMessage(job) {
+    var message = typeof job.message === 'string' ? job.message.trim() : '';
+    if (!message) { return ''; }
+    var status = job.status || 'queued';
+    if (status === 'queued' || isTerminalSubtitleStatus(status)) { return ''; }
+    if (message === subtitleStageLabel(job.stage)) { return ''; }
+    return message;
+  }
+
+  /** v0041：消息里已带“7/9”这类分片数时，不再重复显示“分块 7/9”。 */
+  function subtitleJobDedupeChunkText(chunkText, message) {
+    if (!chunkText || !message) { return chunkText; }
+    var match = chunkText.match(/(\d+)\/(\d+)/);
+    if (match && message.indexOf(match[1] + '/' + match[2]) !== -1) { return ''; }
+    return chunkText;
+  }
+
+  /** v0041：已耗时（执行中）/ 总耗时（终态）。 */
+  function subtitleJobElapsedText(job) {
+    if (job.duration_sec === null || job.duration_sec === undefined) { return ''; }
+    var status = job.status || 'queued';
+    var prefix = isTerminalSubtitleStatus(status) ? '耗时 ' : '已耗时 ';
+    return prefix + subtitleDurationText(job.duration_sec);
+  }
+
+  /** v0041：预计剩余（后端 eta_seconds；样本不足时后端返回 null → 不显示，避免假精度）。 */
+  function subtitleJobEtaText(job) {
+    if (job.eta_seconds === null || job.eta_seconds === undefined) { return ''; }
+    var eta = Number(job.eta_seconds);
+    if (!isFinite(eta) || eta <= 0) { return ''; }
+    return '预计剩余 ' + subtitleDurationText(eta);
   }
 
   // ---- v0038：步骤时间线 ----
@@ -6887,15 +6944,18 @@ import {
       el('span', { className: 'badge ' + subtitleJobStatusClass(status), text: subtitleJobStatusLabel(status) }),
       el('span', { className: 'subtitle-job-path', attrs: { title: job.path || '' }, text: job.path || '（无路径）' })
     ]);
-    var metaBits = [subtitleStageLabel(job.stage)];
     var chunkText = subtitleJobChunkText(job);
+    // v0041：当前步骤消息（如“正在识别语音 7/9”）；与分块数重复时优先展示消息
+    var stepMessage = subtitleJobStepMessage(job);
+    if (stepMessage) { chunkText = subtitleJobDedupeChunkText(chunkText, stepMessage); }
+    var metaBits = [subtitleStageLabel(job.stage)];
     if (chunkText) { metaBits.push(chunkText); }
-    var sourceText = subtitleSourceLabel(job);
-    if (sourceText) { metaBits.push(sourceText); }
+    if (stepMessage) { metaBits.push(stepMessage); }
+    var elapsedText = subtitleJobElapsedText(job);
+    if (elapsedText) { metaBits.push(elapsedText); }
+    var etaText = subtitleJobEtaText(job);
+    if (etaText) { metaBits.push(etaText); }
     if (job.translate) { metaBits.push('译文 ' + (job.target_lang || '—')); }
-    if (job.duration_sec !== undefined && job.duration_sec !== null) {
-      metaBits.push('耗时 ' + subtitleDurationText(job.duration_sec));
-    }
     if (job.queue_position !== undefined && job.queue_position !== null) {
       metaBits.unshift('队列位置 #' + (Number(job.queue_position) + 1));
     }
@@ -6903,12 +6963,17 @@ import {
     var meta = el('div', { className: 'subtitle-job-meta' }, metaBits.map(function (text) {
       return el('span', { text: text });
     }));
+    // v0041：「来源」是提交时固定的生成方式，移到行尾并弱化，避免与阶段（云端语音识别）撞词
+    var sourceText = subtitleSourceLabel(job);
+    if (sourceText) {
+      meta.appendChild(el('span', {
+        className: 'subtitle-job-source', text: '来源：' + sourceText
+      }));
+    }
     var main = el('div', { className: 'subtitle-job-main' }, [head, meta]);
     var pct = Math.round(clamp(Number(job.progress) || 0, 0, 100));
     main.appendChild(el('div', { className: 'subtitle-job-progress' }, [
-      el('div', { className: 'progress-bar', attrs: { role: 'progressbar', 'aria-valuemin': '0', 'aria-valuemax': '100', 'aria-valuenow': String(pct) } }, [
-        el('div', { className: 'progress-fill', style: 'width:' + pct + '%' })
-      ]),
+      subtitleProgressBar(pct),
       el('span', { className: 'subtitle-pct', text: subtitleJobProgressText(job) })
     ]));
     if (status === 'failed') {
@@ -7178,6 +7243,15 @@ import {
       el('div', {}, [el('dt', { text: '翻译' }), el('dd', { text: job.translate ? ('开启 · 目标 ' + (job.target_lang || '—')) : '未开启' })]),
       el('div', {}, [el('dt', { text: '写回' }), el('dd', { text: subtitleOutputModeLabel(job.output_mode) })])
     ];
+    // v0041：已耗时 / 预计剩余（后端 eta_seconds，样本不足时不显示）
+    var elapsedRow = subtitleJobElapsedText(job);
+    if (elapsedRow) {
+      gridRows.push(el('div', {}, [el('dt', { text: '耗时' }), el('dd', { text: elapsedRow })]));
+    }
+    if (job.eta_seconds !== null && job.eta_seconds !== undefined
+      && isFinite(Number(job.eta_seconds)) && Number(job.eta_seconds) > 0) {
+      gridRows.push(el('div', {}, [el('dt', { text: '预计剩余' }), el('dd', { text: subtitleDurationText(job.eta_seconds) })]));
+    }
     if (job.batch_id) {
       gridRows.push(el('div', {}, [el('dt', { text: '批次' }), el('dd', { className: 'mono', text: job.batch_id })]));
     }
@@ -7188,9 +7262,7 @@ import {
         el('span', { className: 'badge ' + subtitleJobStatusClass(status), text: subtitleJobStatusLabel(status) }),
         el('span', { className: 'subtitle-pct', text: pct + '%' })
       ]),
-      el('div', { className: 'progress-bar', attrs: { role: 'progressbar', 'aria-valuemin': '0', 'aria-valuemax': '100', 'aria-valuenow': String(pct) } }, [
-        el('div', { className: 'progress-fill', style: 'width:' + pct + '%' })
-      ]),
+      subtitleProgressBar(pct),
       el('p', { className: 'modal-note', text: job.message || (isTerminalSubtitleStatus(status) ? '任务已结束。' : '正在处理…') }),
       el('dl', { className: 'subtitle-detail-grid' }, gridRows)
     ]);

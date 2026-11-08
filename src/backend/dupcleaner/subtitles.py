@@ -861,6 +861,59 @@ class SubtitleJob(object):
             "partial": bool(item.get("partial")),
         }
 
+    # ---- v0041：预计剩余时间（只读内存，不做 IO；样本不足返回 None）----
+    def eta_seconds(self):
+        """估算任务剩余秒数（仅 running/translating 有值）。
+
+        - ASR 阶段：已完成分片（抽音频 + 识别）平均耗时 × 剩余分片数；
+        - 翻译阶段：已完成批次平均耗时 × 由进度带（70..90）推算的剩余批次数；
+        - 其它阶段 / 样本不足 → None（前端不显示，避免假精度）。
+
+        只基于内存里的分片/批次记录，不额外 stat 文件，列表轮询也不增加 IO。
+        """
+        with self.lock:
+            status = self.status
+            stage = self.stage
+            progress = int(self.progress or 0)
+            total = int(self.chunk_total or 0)
+            done_chunks = max(0, int(self.chunk_index or 0))
+            chunk_secs = []
+            for item in self.asr_chunks:
+                if item.get("status") != "done":
+                    continue
+                sec = (float(item.get("extract_sec") or 0.0)
+                       + float(item.get("asr_sec") or 0.0))
+                if sec > 0:
+                    chunk_secs.append(sec)
+            batch_secs = []
+            for item in self.translate_batches:
+                if item.get("status") not in ("done", "partial"):
+                    continue
+                sec = float(item.get("duration_sec") or 0.0)
+                if sec > 0:
+                    batch_secs.append(sec)
+        if status not in (STATUS_RUNNING, STATUS_TRANSLATING):
+            return None
+        if stage in ("audio", "asr") and total > 1:
+            remaining = total - min(done_chunks, total)
+            if remaining > 0 and chunk_secs:
+                avg = sum(chunk_secs) / float(len(chunk_secs))
+                return int(round(avg * remaining))
+            return None
+        if stage == "translate" and batch_secs:
+            # 翻译进度带 70..90（见 _translate_cues），据此反推批次数与剩余批次
+            fraction = (progress - 70) / 20.0
+            if fraction <= 0.0 or fraction >= 1.0:
+                return None
+            done = len(batch_secs)
+            total_batches = done / fraction
+            remaining = total_batches - done
+            if remaining <= 0.0:
+                return None
+            avg = sum(batch_secs) / float(done)
+            return int(round(avg * remaining))
+        return None
+
     def snapshot(self, include_timeline=False):
         with self.lock:
             started = self.started_epoch
@@ -902,6 +955,8 @@ class SubtitleJob(object):
                 "finished_at": timeutil.iso_local(finished),
                 "duration_sec": (round(max(0.0, float(end) - float(started)), 3)
                                  if started is not None else None),
+                # v0041：预计剩余秒数（仅 running/translating，样本不足为 None）
+                "eta_seconds": self.eta_seconds(),
             }
             if include_timeline:
                 data["timeline"] = {

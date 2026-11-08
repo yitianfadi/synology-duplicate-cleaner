@@ -1,7 +1,7 @@
 # 实现契约（前后端共享，版本 1.0）
 
 > 本文件是前后端并行开发的唯一接口约定。任何一方需要改动字段，先改本文件并在团队任务中说明。
-> 产品名：**DuplicateCleaner**；显示名：**重复文件清理与字幕**；SPK 版本：**1.1.0-0040**。
+> 产品名：**DuplicateCleaner**；显示名：**重复文件清理与字幕**；SPK 版本：**1.1.0-0041**。
 > v1.1 新增内容相似度模式；相似模式字段与行为见 [SIMILARITY_CONTRACT.md](SIMILARITY_CONTRACT.md)，**精准模式规则不变**。
 
 ## 1. 仓库与写入边界
@@ -115,6 +115,13 @@ v0040 增量（分片音频预取）：
 - 语义不变：分片顺序/时间轴/字幕内容/错误码与串行实现一致；暂停仍在分片边界生效；取消或任务结束让在跑 FFmpeg 尽快退出；已完成分片不重复抽取；临时音频最多多占 1 片并在任务结束时清理。
 - 设置保存后对新开始执行的任务生效；无新增接口/错误码；SQLite schema 仍 v7。
 
+v0041 增量（任务行进度信息与预计剩余）：
+- 字幕任务视图（`GET /api/subtitles`、`GET /api/subtitles/queue`、`GET /api/subtitles/{id}`）新增可选字段 `eta_seconds`（整数秒或 `null`）：仅 `running`/`translating` 有值，ASR 阶段按已完成分片均值 × 剩余分片数估算，翻译阶段按已完成批次均值 × 由进度带反推的剩余批次数；其它情况为 `null`。
+- 前端修复：任务行与任务详情进度条此前恒为空条（`el()` 不支持 `style`，宽度被丢弃），改为创建后设置 `fill.style.width`；分块文案不再对 1-based 的 `chunk_index` 重复 +1。
+- 前端展示：任务行顺序为 `阶段 · 分块 x/y · 步骤消息 · 已耗时 · 预计剩余 · 译文 · 创建`，「来源」移到行尾弱化；详情网格新增「耗时」「预计剩余」。
+- 无新增接口/错误码；SQLite schema 仍 v7，无数据迁移。
+
+
 
 ## 4. 认证
 
@@ -141,7 +148,7 @@ v0040 增量（分片音频预取）：
 ### GET /api/meta
 ```json
 {
- "app_version": "1.1.0-0040",
+ "app_version": "1.1.0-0041",
  "dsm_version": "7.2.2-72806" | "dev",
  "python_version": "3.8.16",
  "creation_time_supported": true,
@@ -414,4 +421,4 @@ Content-Disposition: attachment; filename="duplicate-scan-<id>.csv"
 - 后端 unittest 覆盖：statx 时间读取降级、哈希分片/限速、重复分组与三种保留策略、
   路径黑名单、删除前重校验、回收站路径生成、CSV、API 鉴权。
 - 前端可用静态检查 + 本地 dev 后端联调；QA 用 dev 模式在临时目录生成重复文件跑完整 API 流程。
-- 打包产物 `dist/DuplicateCleaner-1.1.0-0040.spk` 必须能通过 `tar -tf` 检查，包含 INFO/package.tgz/scripts/conf/ui。
+- 打包产物 `dist/DuplicateCleaner-1.1.0-0041.spk` 必须能通过 `tar -tf` 检查，包含 INFO/package.tgz/scripts/conf/ui。

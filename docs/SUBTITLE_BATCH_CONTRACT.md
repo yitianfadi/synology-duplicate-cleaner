@@ -326,7 +326,7 @@ CREATE TABLE IF NOT EXISTS subtitle_batches (
 
 ## 12. 版本与兼容
 
-- 版本 **1.1.0-0040**（v0039 起含任务队列视图与批次组总览，v0040 起含分片音频预取），需同步 8 处：`README.md`、`build/build_spk.py`、`docs/ARCHITECTURE.md`、`docs/CONTRACT.md`、`docs/SPK_PACKAGING.md`、`spk/INFO`、`src/backend/dupcleaner/config.py`、`src/web/index.html`（含 `app.js?v=` 查询串）。
+- 版本 **1.1.0-0041**（v0039 起含任务队列视图与批次组总览，v0040 起含分片音频预取，v0041 起任务行补 `eta_seconds` 与进度显示修复），需同步 8 处：`README.md`、`build/build_spk.py`、`docs/ARCHITECTURE.md`、`docs/CONTRACT.md`、`docs/SPK_PACKAGING.md`、`spk/INFO`、`src/backend/dupcleaner/config.py`、`src/web/index.html`（含 `app.js?v=` 查询串）。
 - 现有 `POST /api/subtitles` 行为不变（新字段均为可选）；旧任务记录可读；旧 SPK 升级后数据目录与包 ID 不变。
 - 文档同步：本文件、`docs/SUBTITLE_CONTRACT.md`（新增 §13 指向本文件）、`docs/ARCHITECTURE.md`（字幕页与批次服务）。
 
@@ -496,4 +496,14 @@ CREATE TABLE IF NOT EXISTS subtitle_batches (
 - **语义不变**：暂停仍在分片边界生效（预取结果丢弃）；取消/任务结束让在跑 FFmpeg 尽快退出；抽音频异常原样抛回主线程（错误码不变）；已完成分片不重复抽取；临时音频最多多占 1 片，任务结束整目录删除。
 - **前端**：设置页「云端字幕」新增「分片音频预取（默认开启）」复选框；任务详情「ASR 分片明细」的「抽音频 / 识别」耗时改为记录真实时间窗（预取时两段重叠）。
 - 版本 1.1.0-0040；SQLite schema 不变（仍 v7），无数据迁移。
+
+## 21. v0041 任务行进度信息与预计剩余
+
+- **修复**：任务中心「进行中」任务行与任务详情弹窗的进度条此前恒为空条——`el()` 不支持 `style` 选项，`width:..%` 被静默丢弃。现统一用 `subtitleProgressBar(pct)`（创建后设置 `fill.style.width`）。
+- **修复**：分块文案多算一片（前端对已是 1-based 的 `chunk_index` 又 +1）；现在只有 0-based 备选字段才 +1。
+- **新增 `eta_seconds`**：字幕任务视图（列表 / 队列 / 详情）新增预计剩余秒数，仅 `running`/`translating` 有值：ASR 用已完成分片均值 × 剩余分片数，翻译用已完成批次均值 × 由进度带反推的剩余批次；其它情况为 `null`。
+- **展示**：任务行顺序为 `阶段 · 分块 x/y · 当前步骤消息 · 已耗时 · 预计剩余 · 译文 · 创建`，「来源」移到行尾弱化（`来源：云端 ASR 生成`），避免与阶段“云端语音识别”混淆；详情网格新增「耗时」「预计剩余」。
+- **批次组**：组卡片「当前执行」与组内任务行沿用同一视图字段，无需额外改动；组快照 `active_jobs` 仍只暴露安全字段。
+- 版本 1.1.0-0041；SQLite schema 不变（仍 v7），无数据迁移。
+
 

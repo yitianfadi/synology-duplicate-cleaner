@@ -1,7 +1,7 @@
 # 整体方案架构
 
 > 项目：**重复文件清理与字幕（Duplicate Cleaner & Subtitles）** · 群晖 DSM 7.x SPK 套件
-> 版本：1.1.0-0040
+> 版本：1.1.0-0041
 > 原则：**先扫描、出报告、人工确认、二次确认、可回收、全程审计**。任何情况下都不自动静默删除。
 
 ## 1. 目标与边界
@@ -406,4 +406,11 @@ Linux 的 `st_ctime` 是 **inode 状态变更时间**，不是创建时间，复
 - `_run_chunked_asr` 现在通过 `_AudioPrefetch` 只预读 **1 片**：预取线程在主线程识别第 N 片时抽第 N+1 片，结果经内存/条件变量交接；`take(index)` 时已就绪则零等待。设置 `subtitle_audio_prefetch`（默认 `true`）关闭时退化为原地串行抽取。
 - 边界语义：仍按分片顺序 ASR（时间轴/内容不变）；暂停只在分片边界生效并丢弃预取；取消/任务收尾通过传入 FFmpeg 的 `stop_check` 让在跑抽取尽快退出；抽音频异常保存后在主线程 `take()` 原样抛出（错误码不变）；缓存里已完成的分片不预取；未消费的临时音频在 `close()` 中删除，任务临时目录整体 `rmtree`。
 - 观测：`timeline.asr_chunks[]` 的 `extract_sec`/`asr_sec` 记录各自真实时间窗（预取时两者重叠），仍是定位「慢在抽音频还是识别」的依据。
+
+### 12.8 任务视图的进度信息（v0041）
+
+- `SubtitleJob.snapshot()` 新增 `eta_seconds`（仅 `running`/`translating` 有值）：ASR 阶段用已完成分片 `extract_sec + asr_sec` 均值 × 剩余分片数；翻译阶段用已完成批次 `duration_sec` 均值 × 由进度带（70..90）反推的剩余批次数；其它情况返回 `None`。只读内存记录，不做文件 IO，列表轮询无额外开销，也不持久化。
+- 前端进度条统一走 `subtitleProgressBar(pct)`：`el()` 只支持 `className/text/attrs/dataset/on`，**不支持 `style`**，此前 `el(..., {style: 'width:..%'})` 被静默丢弃导致任务行/详情进度条恒为空条。
+- 分块文案按后端语义（`chunk_index` 为 1-based 已完成片数）直接展示，不再 +1；任务行顺序调整为 `阶段 · 分块 · 步骤消息 · 已耗时 · 预计剩余 · 译文 · 创建`，来源移到行尾弱化。
+
 
