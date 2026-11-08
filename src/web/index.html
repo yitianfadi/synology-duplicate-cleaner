@@ -6,8 +6,8 @@
 <meta name="color-scheme" content="light">
 <meta name="referrer" content="same-origin">
 <title>重复文件清理与字幕 · Duplicate Cleaner &amp; Subtitles</title>
-<link rel="icon" href="./assets/favicon.svg?v=1.1.0-0042" type="image/svg+xml">
-<link rel="stylesheet" href="./styles.css?v=1.1.0-0042">
+<link rel="icon" href="./assets/favicon.svg?v=1.1.0-0043" type="image/svg+xml">
+<link rel="stylesheet" href="./styles.css?v=1.1.0-0043">
 </head>
 <body>
 <a class="skip-link" href="#main">跳到主要内容</a>
@@ -224,6 +224,49 @@
                 <label class="check"><input id="skipEmpty" type="checkbox" checked>跳过空文件（0 字节）</label>
                 <label class="check"><input id="skipHidden" type="checkbox" checked>跳过隐藏 / 系统文件</label>
                 <label class="check"><input id="recycleDefault" type="checkbox" checked>删除时默认移动到回收站</label>
+              </div>
+              <div class="field field-wide" id="keepRulesField">
+                <label for="keepPrimaryRule">保留规则（高级，可选）</label>
+                <select id="keepPrimaryRule" aria-label="主保留规则">
+                  <option value="">沿用上面的“保留策略”</option>
+                  <option value="created_latest">创建时间最晚</option>
+                  <option value="created_earliest">创建时间最早</option>
+                  <option value="mtime_latest">修改时间最晚</option>
+                  <option value="mtime_earliest">修改时间最早</option>
+                  <option value="size_largest">体积最大</option>
+                  <option value="size_smallest">体积最小</option>
+                  <option value="atime_latest">访问时间最晚（不可靠，仅参考）</option>
+                </select>
+                <div class="rule-grid">
+                  <div class="field">
+                    <label for="keepPathPriority">路径优先级（每行一个目录前缀，越靠前越优先）</label>
+                    <textarea id="keepPathPriority" rows="2" placeholder="/volume1/video/收藏&#10;/volume1/video/正片"></textarea>
+                  </div>
+                  <div class="field">
+                    <label for="keepNamePriority">文件名优先级（每行一个通配符或 /正则/，越靠前越优先）</label>
+                    <textarea id="keepNamePriority" rows="2" placeholder="*2160p*&#10;*CHS*&#10;/\[国语\]/"></textarea>
+                  </div>
+                </div>
+                <label class="check"><input id="keepPreferSubtitle" type="checkbox">优先保留带内嵌字幕的版本</label>
+                <label class="check"><input id="keepPreferMultiAudio" type="checkbox">优先保留内嵌音轨更多的版本</label>
+                <p class="hint" id="keepRulesHint">规则按顺序生效：先比主规则，平局再比路径 / 文件名 / 字幕 / 音轨；全部照旧则用上面的“保留策略”。</p>
+                <p class="field-error" id="keepRulesError" role="alert" hidden></p>
+              </div>
+              <div class="field field-wide">
+                <label for="excludeNameRegex">文件名排除 · 正则（每行一条，最多 50 条）</label>
+                <textarea id="excludeNameRegex" rows="2" placeholder="^sample\."></textarea>
+                <p class="field-error" id="excludeNameRegexError" role="alert" hidden></p>
+                <label for="excludeNameGlob">文件名排除 · 通配符（每行一条，最多 50 条）</label>
+                <textarea id="excludeNameGlob" rows="2" placeholder="*.tmp&#10;~$*&#10;Thumbs.bd"></textarea>
+                <p class="field-error" id="excludeNameGlobError" role="alert" hidden></p>
+                <label class="check"><input id="ignoreFileEnabled" type="checkbox" checked>读取目录里的 .ignore 文件（gitignore 子集）</label>
+                <label class="check"><input id="incrementalScan" type="checkbox" checked>启用增量扫描缓存（内容未变不重复计算哈希）</label>
+                <label for="mediaSidecarMode">影视附属文件</label>
+                <select id="mediaSidecarMode">
+                  <option value="skip">跳过与视频同名的字幕 / 海报 / nfo（推荐）</option>
+                  <option value="include">参与判重</option>
+                </select>
+                <p class="hint">只在同目录存在同名视频时跳过附属文件；照片库里的图片不受影响。</p>
               </div>
             </div>
 
@@ -515,6 +558,9 @@
               </select>
             </div>
             <div class="toolbar-count" id="resultsCountLabel">—</div>
+            <label class="check inline-label" id="newOnlyLabel" hidden>
+              <input id="newOnlyToggle" type="checkbox">只看本次新增 / 变化
+            </label>
           </div>
           <div class="toolbar-row">
             <div class="toolbar-buttons">
@@ -1002,8 +1048,50 @@
             <input id="setMaxFiles" name="max_files" type="number" inputmode="numeric" min="1" step="1" value="500000">
             <p class="field-error" id="setMaxFilesError" role="alert" hidden></p>
           </div>
+          <div class="field field-wide">
+            <label for="setKeepPrimaryRule">高级保留规则 · 主规则（可选）</label>
+            <select id="setKeepPrimaryRule">
+              <option value="">沿用上面的“保留策略”</option>
+              <option value="created_latest">创建时间最晚</option>
+              <option value="created_earliest">创建时间最早</option>
+              <option value="mtime_latest">修改时间最晚</option>
+              <option value="mtime_earliest">修改时间最早</option>
+              <option value="size_largest">体积最大</option>
+              <option value="size_smallest">体积最小</option>
+              <option value="atime_latest">访问时间最晚（不可靠，仅参考）</option>
+            </select>
+            <div class="rule-grid">
+              <div class="field">
+                <label for="setKeepPathPriority">路径优先级（每行一个目录前缀，越靠前越优先）</label>
+                <textarea id="setKeepPathPriority" rows="2" placeholder="/volume1/video/收藏"></textarea>
+              </div>
+              <div class="field">
+                <label for="setKeepNamePriority">文件名优先级（每行一个通配符或 /正则/）</label>
+                <textarea id="setKeepNamePriority" rows="2" placeholder="*2160p*"></textarea>
+              </div>
+            </div>
+            <label class="check"><input id="setKeepPreferSubtitle" type="checkbox">优先保留带内嵌字幕的版本</label>
+            <label class="check"><input id="setKeepPreferMultiAudio" type="checkbox">优先保留内嵌音轨更多的版本</label>
+            <p class="hint">规则按顺序生效：先比主规则，平局再比路径 / 文件名 / 字幕 / 音轨；全部留空时使用上面的“保留策略”。</p>
           </div>
-        </details>
+          <div class="field field-wide">
+            <label for="setExcludeNameRegex">文件名排除 · 正则（每行一条，最多 50 条）</label>
+            <textarea id="setExcludeNameRegex" rows="2" placeholder="^sample\."></textarea>
+            <p class="field-error" id="setExcludeNameRegexError" role="alert" hidden></p>
+            <label for="setExcludeNameGlob">文件名排除 · 通配符（每行一条，最多 50 条）</label>
+            <textarea id="setExcludeNameGlob" rows="2" placeholder="*.tmp"></textarea>
+            <p class="field-error" id="setExcludeNameGlobError" role="alert" hidden></p>
+            <label class="check"><input id="setIgnoreFileEnabled" type="checkbox" checked>读取目录里的 .ignore 文件（gitignore 子集）</label>
+            <label class="check"><input id="setIncrementalScan" type="checkbox" checked>启用增量扫描缓存（内容未变不重复计算哈希）</label>
+            <label for="setMediaSidecarMode">影视附属文件</label>
+            <select id="setMediaSidecarMode">
+              <option value="skip">跳过与视频同名的字幕 / 海报 / nfo（推荐）</option>
+              <option value="include">参与判重</option>
+            </select>
+            <p class="hint">增量缓存清单位置：设置 → 系统 · 存储与运行诊断 → 缓存。</p>
+          </div>
+        </div>
+      </details>
 
         <details class="advanced settings-group" id="settingsSimilarityDetails">
           <summary><span class="settings-group-title">相似 · 内容相似默认值</span><span class="settings-summary" id="settingsSimilaritySummary"></span></summary>
@@ -1426,6 +1514,9 @@
               <button type="button" class="btn btn-ghost" id="storageMaintenanceBtn">
                 <svg class="icon" aria-hidden="true"><use href="#i-refresh"></use></svg>执行维护
               </button>
+              <button type="button" class="btn btn-ghost" id="clearHashCacheBtn">
+                <svg class="icon" aria-hidden="true"><use href="#i-trash"></use></svg>清理增量缓存
+              </button>
               <label class="check diag-vacuum"><input type="checkbox" id="storageMaintenanceVacuum">维护时执行 VACUUM（更慢，需要足够磁盘空间）</label>
             </div>
             <div class="state-box" id="storageActionLoading" hidden><span class="spinner" aria-hidden="true"></span>正在执行存储操作…</div>
@@ -1482,6 +1573,6 @@
   <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.6" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M12 10.8v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="12" cy="7.6" r="1.05" fill="currentColor"/></symbol>
 </svg>
 
-<script type="module" src="./app.js?v=1.1.0-0042"></script>
+<script type="module" src="./app.js?v=1.1.0-0043"></script>
 </body>
 </html>

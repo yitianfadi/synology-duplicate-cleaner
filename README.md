@@ -18,6 +18,10 @@
 - 🗣️ **云端字幕（实验，默认关闭）**：OpenAI 兼容 ASR（`/audio/transcriptions`）+ OpenAI 兼容 LLM（`/chat/completions`）翻译；FFmpeg 抽音频、自动分块、SRT/VTT/双语字幕下载；设置页支持从服务端 `GET /models` 获取模型列表、一键测试 ASR/LLM 连接（ASR 测试发送约 1 秒静音音频、LLM 测试发送 1 条测试文本，费用极小）；音频会发送到所配置的第三方服务，必须显式勾选确认。也可指向**局域网自建 [WhisperLiveKit](https://github.com/QuentinFuxa/WhisperLiveKit)**（OpenAI 兼容 `/v1/audio/transcriptions` + `/v1/models`），实现本地 ASR、音频不出局域网，见 [字幕契约 §9](docs/SUBTITLE_CONTRACT.md)
 - 📂 **目录批量字幕（v0028）**：独立「字幕」页，选目录 → 递归枚举视频 → 勾选批量提交；字幕以 `.srt` 直接写入视频同目录（Plex/Emby 可识别），已有同名 srt 默认跳过、绝不覆盖；也可对视频旁已有 `.srt` **只翻译**（不上传音频、不跑 ASR）；写回失败（只读/无写权限）时任务标记警告但仍可在任务中心下载。批次支持暂停/继续/取消/重试失败项。v0039 增加「批次总览」：进行中/最近完成的批次组可随时切回查看与控制，新提交不会让旧排队批次消失。契约见 [目录批量字幕契约](docs/SUBTITLE_BATCH_CONTRACT.md)
 - 🕒 保留策略：最晚创建（默认）/ 最早创建 / 指定路径；优先读取 `statx` btime；无创建时间时整组按修改时间自动选择并标记，拒绝用 `st_ctime` 冒充
+- 🧩 **保留规则链（v0043）**：可选的高级规则——创建/修改/访问时间（最早/最晚）、体积最大/最小、路径优先级（目录前缀列表）、文件名优先级（通配符或 `/正则/`）、优先带内嵌字幕、优先内嵌音轨更多；按顺序逐条比较，平局继续下一条，仍平局转人工（禁止自动删除）
+- ⚡ **增量扫描（v0043）**：跨扫描哈希缓存（SQLite `hash_cache`，键 = dev+inode，size/mtime 未变即复用 quick/full 哈希），第二次扫描几乎不再读盘；结果标注“本次新增/内容变化”，可“只看本次新增/变化”。**枚举仍会读目录**（否则发现不了跨时间的重复），加速的是哈希
+- 🗂️ **排除规则增强（v0043）**：文件名正则/通配符排除、`.ignore`（gitignore 常用子集）、大文件快速指纹加“中间段”采样；影视库里与视频同名的外挂字幕/海报/nfo 默认不参与判重（照片库不受影响）
+- 🧹 **缓存管理（v0043）**：设置页存储诊断显示增量哈希缓存/媒体探测缓存条目，可一键清理（只清缓存，不动扫描结果）
 - 📊 分组报告：路径、大小、完整哈希、创建时间、修改时间、匹配类型、相似度；保留项高亮；可预览、导出 CSV
 - ⏱️ **字幕步骤时间线（v0038）**：任务详情记录排队/媒体探测/音频提取+识别/翻译/写盘的开始、结束与耗时，并可展开每个 ASR 分片、每个翻译批次的明细；任务列表显示总耗时，便于定位慢在哪一步
 - ⚡ **分片音频预取（v0040）**：每个字幕任务只预读 1 片音频——识别当前分片时后台先抽下一分片，让 NAS 的 FFmpeg 与云端 ASR 重叠，单任务明显更快；设置页可关闭（默认开启），暂停/取消/错误码语义与串行实现完全一致
@@ -40,7 +44,7 @@
 ```bash
 python build/fetch_ffmpeg.py   # 首次构建：下载两个架构的静态 FFmpeg 到 vendor/ffmpeg/
 python build/build_spk.py
-# 生成 dist/DuplicateCleaner-1.1.0-0042.spk
+# 生成 dist/DuplicateCleaner-1.1.0-0043.spk
 ```
 
 构建机需要 Python 3.8+；FFmpeg 二进制不提交到 Git，首次构建需运行 `build/fetch_ffmpeg.py`。重新生成图标需要 Pillow（仓库已带 PNG，可 `--no-icons`）。
@@ -48,7 +52,7 @@ python build/build_spk.py
 ### 2. 安装到 DSM
 
 1. DSM 套件中心先安装 **Python3**（3.8+）。
-2. 套件中心 → 手动安装 → 选择 `dist/DuplicateCleaner-1.1.0-0042.spk`。
+2. 套件中心 → 手动安装 → 选择 `dist/DuplicateCleaner-1.1.0-0043.spk`。
 3. 启动套件；从 DSM 主菜单打开“重复文件清理与字幕”，或访问 `http://<NAS>:8787/`。
 4. 使用 administrators 组账号登录。
 5. 按页面黄色“权限提示”给 `duplicatecleaner` 系统内部用户授权目标共享文件夹（读取；删除副本需读取/写入）。
@@ -100,7 +104,9 @@ python qa/bench_search.py
 - [云端字幕契约](docs/SUBTITLE_CONTRACT.md)：OpenAI 兼容 ASR/LLM、分块、SRT/VTT、双语字幕、密钥与隐私；含自建 WhisperLiveKit 本地 ASR 部署与兼容性说明
 - [目录批量字幕契约](docs/SUBTITLE_BATCH_CONTRACT.md)：目录枚举、批次任务、同目录 `.srt` 落盘、已有字幕跳过、只翻译模式与写回失败回退
 - [存储层契约](docs/STORAGE_CONTRACT.md)：SQLite 元数据、旧 JSON 迁移、检查点、WAL 与备份
+- [增量扫描/保留规则/排除规则契约](docs/INCREMENTAL_SCAN_CONTRACT.md)：跨扫描哈希缓存、增量标记、保留规则链、`.ignore` 与影视附属文件（v0043）
 - [扫描暂停/升级 drain 契约](docs/RESUME_CONTRACT.md)：暂停断点、升级前 drain、重启后手动继续
+- [v2 需求可行性评估](docs/REQUIREMENTS_V2_ASSESSMENT.md)：需求逐条可行性（能做到/需改法/做不到）与分批实施计划
 - [QA 验收报告](qa/REPORT.md)：需求逐项对照与测试证据
 
 ## 仓库结构
@@ -149,6 +155,9 @@ dist/               构建产物（.spk 与 SHA256）
 - v0025 起 SQLite schema v5：`scan_files` 不再冗余保存 payload（组 payload 为真源）；FTS5 trigram 路径搜索仅在 FTS5 + trigram 都可用时启用，否则自动 LIKE 回退；搜索词 <3 字符始终走 LIKE。
 - 目录批量字幕（v0028）：字幕只写 `.srt` 到视频同目录，不写 `.vtt`；已有同名 srt 默认跳过且**不提供覆盖开关**；写回需要 `duplicatecleaner` 对目标目录有写权限，否则任务标记 `OUTPUT_NOT_WRITABLE` 并保留任务目录下载。默认同一时间只执行 1 个字幕任务（可在设置里调到 1–4 并行），已完成任务保留上限 200（`subtitle_job_limit`），清理时只删任务目录、**不删视频旁 srt**；单批最多 500 个视频、单次枚举最多 5000 个视频。
 - 目录批量字幕的「只翻译已有字幕」只识别视频同目录的 `<视频名>.srt`（大小写不敏感）；不支持说话人分离、字幕人工校对或对已有译文重新翻译。
+- 增量扫描（v0043）：只加速“哈希复用”，**枚举仍会 stat 全部文件**（否则发现不了跨时间的重复）；复用前提是 `dev/inode/size/mtime_ns` 未变，文件内容被原地修改而 mtime 未变的极端情况无法感知——但删除前仍会重新完整校验，不会误删。关闭 `incremental_scan` 或清理缓存后行为与 v0042 一致。
+- 保留规则（v0043）：精准重复组内文件大小必然相同，因此“体积最大/最小”只对相似/视频组有意义；`atime` 在 DSM 默认 `relatime` 下不可靠，仅作参考；规则链平局时转人工（该组禁止自动删除）。
+- 排除规则（v0043）：`.ignore` 只实现 gitignore 常用子集（不支持完整 `**` 语义）；影视附属文件只跳过“与同目录视频同源”的字幕/海报/nfo，不按后缀无差别跳过。
 - ES modules 需要通过后端 HTTP 访问页面（`http://<NAS>:8787/`），不能直接双击 `web/index.html`（浏览器 `file://` 模块 CORS 限制）。
 
 ## License

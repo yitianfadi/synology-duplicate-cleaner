@@ -131,7 +131,49 @@ scan_file_deletions(
   PRIMARY KEY (scan_id, path)
 );
 CREATE INDEX idx_scan_file_deletions_scan ON scan_file_deletions(scan_id);
+
+-- v8（v0043）：增量扫描跨扫描哈希缓存 / 媒体探测缓存
+-- 键 = (dev, inode)；内容身份由 size + mtime_ns 校验（见 docs/INCREMENTAL_SCAN_CONTRACT.md）。
+hash_cache(
+  dev INTEGER NOT NULL,
+  inode INTEGER NOT NULL,
+  path TEXT NOT NULL,
+  size INTEGER NOT NULL,
+  mtime_ns INTEGER NOT NULL,
+  quick_hash TEXT,
+  full_hash TEXT,
+  algo TEXT NOT NULL,
+  sample_kb INTEGER NOT NULL,
+  sample_version INTEGER NOT NULL,
+  first_scan_id TEXT,
+  last_scan_id TEXT,
+  first_seen_epoch REAL,
+  last_seen_epoch REAL,
+  last_used REAL NOT NULL,
+  PRIMARY KEY (dev, inode)
+);
+CREATE INDEX idx_hash_cache_used ON hash_cache(last_used);
+
+-- 保留规则“优先带内嵌字幕/音轨”的 FFmpeg 探测结果（按身份校验，LRU 上限 50000）
+media_probe_cache(
+  dev INTEGER NOT NULL,
+  inode INTEGER NOT NULL,
+  size INTEGER NOT NULL,
+  mtime_ns INTEGER NOT NULL,
+  payload_json TEXT NOT NULL,
+  probed_epoch REAL NOT NULL,
+  last_used REAL NOT NULL,
+  PRIMARY KEY (dev, inode)
+);
+CREATE INDEX idx_media_probe_cache_used ON media_probe_cache(last_used);
 ```
+
+- v8 迁移：只建 `hash_cache` / `media_probe_cache`，并给 `scan_groups` 补
+  `new_files`、`changed_files`（默认 0，历史组不重写）。不重算历史哈希、不改历史结果。
+- 有符号 64 位：Windows 的 `st_ino` 是 64 位无符号，`> 2^63-1` 时按补码映射成有符号值存库，
+  读写两侧使用同一映射（`store.sqlite_int`），避免 SQLite `OverflowError`。
+- 缓存上限：`hash_cache` 300000 条、`media_probe_cache` 50000 条，写入后按 `last_used` 裁剪；
+  `POST /api/cache/clear` 可手动清空。
 
 ## 2. Store 兼容 API
 

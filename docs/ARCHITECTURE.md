@@ -1,7 +1,7 @@
 # 整体方案架构
 
 > 项目：**重复文件清理与字幕（Duplicate Cleaner & Subtitles）** · 群晖 DSM 7.x SPK 套件
-> 版本：1.1.0-0042
+> 版本：1.1.0-0043
 > 原则：**先扫描、出报告、人工确认、二次确认、可回收、全程审计**。任何情况下都不自动静默删除。
 
 ## 1. 目标与边界
@@ -419,6 +419,46 @@ Linux 的 `st_ctime` 是 **inode 状态变更时间**，不是创建时间，复
 - **优化**：`_load_jobs` 以文件名即 job_id（`_job_json`）判定 DB 是否已有该任务，命中则跳过文件读取；仅 DB 缺失时才解析 JSON 并回写 DB（兜底语义不变）。终态任务的 ASR 分片缓存查询也跳过（分片只影响“能否继续执行”）。
 - **升级链路**：DSM 7 升级 = `preupgrade` → 停服务 → 换文件 → `postupgrade` → `start-stop-status start`；`start` 返回非 0 即被标记“启动失败”，套件中心要求【修复】。因此 `start` 的健康检查放宽到 90s，失败清理残留后重试一次，进程存活但未通过检查时返回成功（宁可显示运行中，也不判升级失败）；`PYTHONPYCACHEPREFIX` 指向 `<var>/pycache`，`postupgrade` 在 root 下补 `chown`。
 - 可观测：`<var>/log/start.log` 记录每次启动尝试、耗时与失败时的 backend.log 尾部。
+
+## 13. 增量扫描 / 保留规则链 / 排除规则（v0043）
+
+> 详细字段、语义与验收见 [INCREMENTAL_SCAN_CONTRACT.md](INCREMENTAL_SCAN_CONTRACT.md)。
+
+### 13.1 增量扫描（跨扫描哈希缓存）
+
+- 需求原文“仅对比上次扫描后新增/修改的文件”**不能照做**：会漏掉“新文件与未变化旧文件重复”、
+  “旧文件被修改后与另一旧文件重复”等主要场景。实现改为：枚举仍 `stat` 全部文件，
+  **哈希复用**——`(dev, inode)` + `size` + `mtime_ns` 未变、算法/采样配置一致时直接复用
+  `quick_hash`/`full_hash`，不读文件内容；第二次扫描 `bytes_hashed` 接近 0。
+- 新表 `hash_cache` / `media_probe_cache`（schema v8），只缓存候选文件；上限 + LRU 裁剪；
+  `GET /api/cache`、`POST /api/cache/clear` 可查看/清理。
+- 结果带增量标记：文件级 `new_since_last_scan` / `changed_since_last_scan` / `hash_cached`，
+  组级 `new_files` / `changed_files`；`GET /api/scans/{id}/groups?new_only=1` 只看增量，
+  UI 有“只看本次新增/变化”开关与组徽标。
+- 安全不变：缓存只影响速度；删除前仍做 size/mtime_ns/inode/dev + 全量哈希重校验。
+
+### 13.2 快速指纹 v2
+
+- `QUICK_SAMPLE_VERSION=2`；大文件（≥256 MiB）在头/尾之外加采样**中间段**，降低“只换中段”漏检。
+- 采样版本参与缓存校验：版本升级时旧条目只复用 `full_hash`，`quick_hash` 重算。
+
+### 13.3 保留规则链
+
+- `keep_rules` 为有序规则数组；某条分出唯一胜者即停止，平局继续下一条，仍平局转人工（禁止删除）。
+- 支持：创建/修改/访问时间（最早/最晚）、体积、路径优先级、文件名优先级（通配符或 `/正则/`）、
+  带内嵌字幕优先、内嵌音轨多者优先；后两者需要 FFmpeg 探测，结果进 `media_probe_cache`。
+- `keep_rules` 为空时逐字保持 `keep_mode`/`pinned_path` 的历史语义（含 btime 不可信时 mtime 回退）。
+- 注意：精准重复组内文件大小必然相同，`size_largest` 只在相似/视频组有意义；`atime` 在 DSM 默认
+  `relatime` 下不可靠，仅作参考。
+
+### 13.4 排除规则与附属文件
+
+- 文件名排除：正则（basename、IGNORECASE、保存时校验）与通配符（≤50 条）。
+- `.ignore`：gitignore 常用子集（`#` 注释、`!` 否定、前导 `/` 锚定、结尾 `/` 只匹配目录、
+  `*`/`?`，`**` 折叠为 `*`），带 base_dir 作用域；解析失败只告警不中断。
+- 影视附属文件：默认只跳过“与同目录视频同源”的字幕/海报/nfo（同名、带语言段、`X-poster.*`、
+  常见固定名），**不按后缀无差别跳过**（照片库不受影响）。
+
 
 
 

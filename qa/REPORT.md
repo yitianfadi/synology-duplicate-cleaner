@@ -819,6 +819,69 @@ python build/build_spk.py --no-icons --out-dir $env:TEMP\qa-build2
 - 下次升级安装后确认：套件中心不再出现「无法启动」，`/var/packages/DuplicateCleaner/var/log/start.log` 有 `started in Ns` 记录。
 - 若某次首启仍 >90s（例如数据量继续增长），`start.log` 会记录失败前后端日志尾部；届时可再评估把任务 JSON 目录或分片查询进一步批量化。
 
+## 25. 附：v0043 增量扫描 / 保留规则链 / 排除规则（2026-11-08）
+
+### 25.1 需求与评估结论
+
+用户给出 v2 需求文档（扫描 5 优化 + 3 新增、字幕 3 优化 + 视频监控、全局 4 项），要求先判断“有没有做不到或者不合适的内容”。
+逐条评估写在 [docs/REQUIREMENTS_V2_ASSESSMENT.md](../docs/REQUIREMENTS_V2_ASSESSMENT.md)：
+
+- **做不到 / 必须改法**：权限“一键配置”（非 root 无法改 ACL → 体检+指引）、
+  增量扫描“仅对比新增/修改文件”（会漏检跨时间重复 → 哈希复用 + 新增标记）、
+  相似视频“不同剪辑版本”（不可承诺 → 分档置信度+人工复核）、
+  缩略图/片段播放的浏览器编解码限制、硬链接合并不可逆、实时监控（标准库无 inotify → 轮询）。
+- 本版（v0043）实现扫描模块的三条：**增量扫描（哈希缓存）**、**保留策略规则链**、**排除规则增强**。
+
+### 25.2 实现
+
+- **跨扫描哈希缓存**（schema v8 `hash_cache`）：键 `(dev, inode)`，`size`/`mtime_ns`/`algo`/采样配置校验；
+  命中即复用 `quick_hash`/`full_hash`，不读文件内容。只缓存候选文件；上限 30 万条 + LRU 裁剪。
+  Windows 64 位无符号 `st_ino` 会超出 SQLite 有符号范围 → 统一按补码映射（`store.sqlite_int`）。
+- **增量标记**：文件级 `new_since_last_scan` / `changed_since_last_scan` / `hash_cached`；
+  组级 `new_files` / `changed_files`/`scan_groups` 索引列；`groups?new_only=1` 只看增量组。
+- **快速指纹 v2**：大文件（≥256 MiB）在头/尾之外加采样中间段；`QUICK_SAMPLE_VERSION` 参与缓存校验。
+- **保留规则链**（`keep_rules`）：创建/修改/访问时间、体积、路径优先级、文件名优先级（通配符或 `/正则/`）、
+  带内嵌字幕、内嵌音轨多者优先；某条分出唯一胜者即停止，平局继续，仍平局转人工。
+  后两条规则需要 FFmpeg 探测，结果进 `media_probe_cache`。`keep_rules=[]` 时历史语义逐字不变。
+- **排除规则**：文件名正则/通配符（保存时校验）、`.ignore`（gitignore 常用子集、base_dir 作用域）、
+  影视附属文件只跳过“与同目录视频同源”的字幕/海报/nfo。
+- **缓存管理**：`GET /api/cache`（状态）、`POST /api/cache/clear`（`confirm=true`，只清缓存）；
+  设置页存储诊断显示条目并提供清理入口。
+- **前端**：扫描选项/设置页的保留规则与排除规则表单、结果页“只看本次新增/变化”与组徽标、
+  摘要“增量缓存复用”“排除规则/附属文件”卡片。
+
+### 25.3 验证
+
+- 新增 `tests/test_v0043_incremental.py` **25 例**：缓存读写/大 inode/裁剪/清空、第二次扫描 `bytes_hashed=0`、
+  新增与变化标记、`incremental_scan=false`、`new_only` 过滤、规则链各规则与平局、
+  正则/通配符/`.ignore`/附属文件、设置校验、`/api/cache` 接口。
+- 既有 `ScanFilterTest.test_pause_resume_stop` 调整为显式 `incremental_scan=false`
+  （否则第二次扫描因缓存瞬间完成，无法测暂停/停止——这本身反证缓存生效）。
+- e2e 新增 `INC-01..04`、`KEEP-01`、`CACHE-01..04`；`PAUSE` 场景显式关闭缓存以保留运行窗口。
+- 静态检查新增 `BE-INC-HASH-CACHE`、`BE-INC-SAMPLE-V2`、`BE-KEEP-RULES`、`BE-EXCLUDE-RULES`、
+  `BE-CACHE-API`、`FE-KEEP-RULES`、`FE-EXCLUDE-UI`、`FE-INCREMENTAL-UI`、`FE-CACHE-UI`。
+- 结果（本地）：unittest **525 OK（5 skipped）**；static **PASS=178 / FAIL=0 / UNVERIFIED=0**；
+  e2e **166 PASS / 0 FAIL / 1 UNVERIFIED**（Windows symlink 历史项）；web modules 22/22；smoke 8/8。
+- **真实浏览器探针**（Playwright + dev 后端，`.uiprobe/probe_v0043.mjs`）**10/10 PASS**：
+  登录/dev meta 暴露规则、`PUT /api/settings` 保存、扫描选项控件齐全且按设置回填、
+  设置页把 `keep_rules` 反解回控件、页面保存后规则完整保留、诊断含增量缓存字段、
+  「清理增量缓存」按钮存在、无 console 错误；截图见 `.uiprobe/v0043-scan.png` / `v0043-settings.png`。
+- Python 3.8 兼容性：对 `dupcleaner/` 与 `tests/` 共 52 个 py 文件做 `ast.parse(feature_version=(3,8))`，无语法错误。
+
+### 25.4 产物
+
+- `dist/DuplicateCleaner-1.1.0-0043.spk`：**39,034,880 B**
+  - SHA256 `4984be135d2ef9b3590ee3d37f9b5bdcbf09e594bc7727e40bccbd0064f32437`
+  - package.tgz MD5 `91e9d6d00c90cc1fae2bc90bedb3ce53`
+- 版本 1.1.0-0043 同步 8 处；SQLite schema **v8**（`hash_cache`、`media_probe_cache`、
+  `scan_groups.new_files/changed_files`），只建表/加列，不重写历史数据。
+
+### 25.5 真机待验证
+
+- 真实媒体库第二次扫描的耗时与 `bytes_hashed` 对比；`.ignore`/附属文件后结果是否更干净；
+  规则链是否按预期选保留项；缓存清理后是否重新读盘。
+
+
 
 
 

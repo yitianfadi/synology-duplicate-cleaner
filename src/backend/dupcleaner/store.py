@@ -51,6 +51,24 @@ _CACHE_BATCH = 500
 _CHECKPOINT_RECORD_BATCH = 500
 
 
+def sqlite_int(value):
+    """把可能超出 SQLite INTEGER（有符号 64 位）的整数安全转换。
+
+    Windows 的 st_ino 是 64 位无符号数，可能 > 2^63-1；直接绑定会抛
+    OverflowError。这里按二进制补码映射到有符号区间，读写两侧使用同一映射，
+    因此缓存键仍然稳定。
+    """
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return 0
+    if number > 0x7FFFFFFFFFFFFFFF:
+        number -= 1 << 64
+    elif number < -0x8000000000000000:
+        return 0
+    return number
+
+
 class Store(object):
     def __init__(self, data_dir):
         self.data_dir = os.path.abspath(data_dir)
@@ -769,15 +787,17 @@ class Store(object):
     # ------------------------------------------------------------------
     _GROUP_COLUMNS = ("scan_id, ordinal, group_id, match_type, payload_json,"
                       " wasted_bytes, size, similarity_score, created_epoch,"
-                      " group_hash")
+                      " group_hash, new_files, changed_files")
     _GROUP_INSERT_SQL = ("INSERT OR IGNORE INTO scan_groups("
                          "scan_id, ordinal, group_id, match_type, payload_json,"
                          " wasted_bytes, size, similarity_score, created_epoch,"
-                         " group_hash) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+                         " group_hash, new_files, changed_files)"
+                         " VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
     _GROUP_REPLACE_SQL = ("INSERT OR REPLACE INTO scan_groups("
                           "scan_id, ordinal, group_id, match_type, payload_json,"
                           " wasted_bytes, size, similarity_score, created_epoch,"
-                          " group_hash) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+                          " group_hash, new_files, changed_files)"
+                          " VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
     # v5：scan_files 不再保存 payload_json（group payload 才是真源）。
     _FILE_INSERT_SQL = ("INSERT OR IGNORE INTO scan_files("
                         "scan_id, group_id, file_id, path, size, is_keep,"
@@ -797,7 +817,9 @@ class Store(object):
         return (scan_id, int(ordinal), meta["group_id"], meta["match_type"],
                 json.dumps(payload, ensure_ascii=False),
                 meta["wasted_bytes"], meta["size"], meta["similarity_score"],
-                meta["created_epoch"], meta["group_hash"])
+                meta["created_epoch"], meta["group_hash"],
+                int(meta.get("new_files") or 0),
+                int(meta.get("changed_files") or 0))
 
     @staticmethod
     def _group_file_rows(scan_id, ordinal, payload):
@@ -1048,7 +1070,7 @@ class Store(object):
 
     def query_scan_groups_page(self, scan_id, offset=0, limit=100, needle="",
                                sort="wasted_desc", match_type=None,
-                               use_fts=None):
+                               use_fts=None, new_only=False):
         """SQL 分页/搜索/排序（docs/STORAGE_CONTRACT.md §4/§6）。
 
         路径搜索：needle >= 3 且 FTS5(trigram) 可用时走 scan_files_fts MATCH
@@ -1104,6 +1126,9 @@ class Store(object):
             elif match_type in ("similar", "video"):
                 where.append(type_expr + " = ?")
                 params.append(match_type)
+            if new_only:
+                # v0043：只看“本次扫描新增/内容变化”的重复组
+                where.append("(g.new_files > 0 OR g.changed_files > 0)")
             if needle:
                 pattern = "%" + self._escape_like(needle) + "%"
                 hash_like = ("lower(COALESCE(g.group_hash, ''))"
@@ -1162,6 +1187,13 @@ class Store(object):
                     if payload is None:
                         continue
                 groups.append(payload)
+        try:
+            new_total = int(self.db.scalar(
+                "SELECT COUNT(*) FROM scan_groups g WHERE g.scan_id=?"
+                " AND (g.new_files > 0 OR g.changed_files > 0)",
+                (scan_id,), 0) or 0)
+        except sqlite3.Error:  # pragma: no cover - 旧库列缺失时忽略
+            new_total = 0
         return {
             "total": total,
             "offset": offset,
@@ -1170,6 +1202,8 @@ class Store(object):
             "exact_total": exact_total,
             "similar_total": similar_total,
             "video_total": video_total,
+            "new_only": bool(new_only),
+            "new_total": new_total,
             "groups": groups,
         }
 
@@ -1555,6 +1589,223 @@ class Store(object):
             if payload is not None:
                 result.append((row["cache_key"], payload))
         return result
+
+    # ------------------------------------------------------------------
+    # 跨扫描哈希缓存 / 媒体探测缓存（v0043 增量扫描）
+    # ------------------------------------------------------------------
+    _HASH_CACHE_KEYS = ("dev", "inode", "path", "size", "mtime_ns", "quick_hash",
+                        "full_hash", "algo", "sample_kb", "sample_version",
+                        "first_scan_id", "last_scan_id", "first_seen_epoch",
+                        "last_seen_epoch", "last_used")
+    # SQLite 旧版本的绑定变量上限为 999；每批 400 对键 = 800 个参数，留足余量。
+    _HASH_CACHE_LOOKUP_BATCH = 400
+
+    def hash_cache_get(self, entries):
+        """批量读取哈希缓存。
+
+        entries: [(dev, inode), ...] → 返回 {(dev, inode): dict}（dict 键见
+        _HASH_CACHE_KEYS）。同一 (dev, inode) 只查一次。
+        """
+        wanted = []
+        seen = set()
+        for item in entries or []:
+            if item is None or len(item) != 2:
+                continue
+            try:
+                key = (sqlite_int(item[0]), sqlite_int(item[1]))
+            except (TypeError, ValueError):
+                continue
+            if key in seen or key[1] == 0:
+                continue
+            seen.add(key)
+            wanted.append(key)
+        result = {}
+        if not wanted:
+            return result
+        columns = ", ".join(self._HASH_CACHE_KEYS)
+        batch = self._HASH_CACHE_LOOKUP_BATCH
+        for start in range(0, len(wanted), batch):
+            chunk = wanted[start:start + batch]
+            clause = " OR ".join(["(dev=? AND inode=?)"] * len(chunk))
+            params = []
+            for dev, inode in chunk:
+                params.extend([dev, inode])
+            rows = self.db.query(
+                "SELECT %s FROM hash_cache WHERE %s" % (columns, clause),
+                tuple(params))
+            for row in rows:
+                result[(int(row["dev"]), int(row["inode"]))] = {
+                    key: row[key] for key in self._HASH_CACHE_KEYS}
+        return result
+
+    def _next_last_used(self, epoch=None):
+        try:
+            current = float(self.db.scalar(
+                "SELECT COALESCE(MAX(last_used), 0) FROM hash_cache", (), 0.0) or 0.0)
+        except (TypeError, ValueError):
+            current = 0.0
+        seed = time.time() if epoch is None else float(epoch)
+        return max(seed, current + 1e-6)
+
+    def hash_cache_put_many(self, rows, epoch=None):
+        """批量写入/更新哈希缓存（按 (dev, inode) 覆盖）。返回写入行数。"""
+        rows = list(rows or [])
+        if not rows:
+            return 0
+        with self.db.transaction():
+            base = self._next_last_used(epoch)
+            payload = []
+            for index, row in enumerate(rows):
+                payload.append((
+                    sqlite_int(row.get("dev")),
+                    sqlite_int(row.get("inode")),
+                    str(row.get("path") or ""),
+                    sqlite_int(row.get("size")),
+                    sqlite_int(row.get("mtime_ns")),
+                    row.get("quick_hash"),
+                    row.get("full_hash"),
+                    str(row.get("algo") or "sha256"),
+                    sqlite_int(row.get("sample_kb")),
+                    sqlite_int(row.get("sample_version")),
+                    row.get("first_scan_id"),
+                    row.get("last_scan_id"),
+                    float(row.get("first_seen_epoch") or base),
+                    float(row.get("last_seen_epoch") or base),
+                    float(row.get("last_used") or (base + index * 1e-6)),
+                ))
+            self.db.executemany(
+                "INSERT OR REPLACE INTO hash_cache"
+                "(dev, inode, path, size, mtime_ns, quick_hash, full_hash, algo,"
+                " sample_kb, sample_version, first_scan_id, last_scan_id,"
+                " first_seen_epoch, last_seen_epoch, last_used)"
+                " VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", payload)
+        return len(payload)
+
+    def hash_cache_touch(self, keys, epoch=None):
+        keys = [item for item in (keys or []) if item is not None]
+        if not keys:
+            return 0
+        base = self._next_last_used(epoch)
+        payload = [(base + index * 1e-6, sqlite_int(dev), sqlite_int(inode))
+                   for index, (dev, inode) in enumerate(keys)]
+        with self.db.transaction():
+            self.db.executemany(
+                "UPDATE hash_cache SET last_used=? WHERE dev=? AND inode=?", payload)
+        return len(payload)
+
+    def hash_cache_count(self):
+        return int(self.db.scalar("SELECT COUNT(*) FROM hash_cache", (), 0) or 0)
+
+    def hash_cache_prune(self, max_entries):
+        limit = max(1, int(max_entries or 1))
+        with self.db.transaction():
+            self.db.execute(
+                "DELETE FROM hash_cache WHERE (dev, inode) NOT IN"
+                " (SELECT dev, inode FROM hash_cache"
+                "  ORDER BY last_used DESC, dev DESC, inode DESC LIMIT ?)", (limit,))
+
+    def hash_cache_clear(self):
+        with self.db.transaction():
+            self.db.execute("DELETE FROM hash_cache")
+
+    def hash_cache_stats(self):
+        row = self.db.query_one(
+            "SELECT COUNT(*) AS entries, COALESCE(SUM(size), 0) AS bytes,"
+            " MIN(last_used) AS oldest, MAX(last_used) AS newest FROM hash_cache")
+        if row is None:
+            return {"entries": 0, "bytes": 0, "oldest_epoch": None,
+                    "newest_epoch": None}
+        return {
+            "entries": int(row["entries"] or 0),
+            "bytes": int(row["bytes"] or 0),
+            "oldest_epoch": (float(row["oldest"]) if row["oldest"] else None),
+            "newest_epoch": (float(row["newest"]) if row["newest"] else None),
+        }
+
+    _MEDIA_PROBE_KEYS = ("dev", "inode", "size", "mtime_ns", "payload",
+                         "probed_epoch", "last_used")
+
+    def media_probe_cache_get(self, entries):
+        """批量读取媒体探测缓存：entries=[(dev,inode)] → {(dev,inode): dict}。"""
+        wanted = []
+        seen = set()
+        for item in entries or []:
+            if item is None or len(item) != 2:
+                continue
+            try:
+                key = (sqlite_int(item[0]), sqlite_int(item[1]))
+            except (TypeError, ValueError):
+                continue
+            if key in seen or key[1] == 0:
+                continue
+            seen.add(key)
+            wanted.append(key)
+        result = {}
+        if not wanted:
+            return result
+        batch = self._HASH_CACHE_LOOKUP_BATCH
+        for start in range(0, len(wanted), batch):
+            chunk = wanted[start:start + batch]
+            clause = " OR ".join(["(dev=? AND inode=?)"] * len(chunk))
+            params = []
+            for dev, inode in chunk:
+                params.extend([dev, inode])
+            rows = self.db.query(
+                "SELECT dev, inode, size, mtime_ns, payload_json, probed_epoch"
+                " FROM media_probe_cache WHERE " + clause, tuple(params))
+            for row in rows:
+                payload = self._loads(row["payload_json"], None)
+                if not isinstance(payload, dict):
+                    continue
+                result[(int(row["dev"]), int(row["inode"]))] = {
+                    "dev": int(row["dev"]),
+                    "inode": int(row["inode"]),
+                    "size": int(row["size"] or 0),
+                    "mtime_ns": int(row["mtime_ns"] or 0),
+                    "payload": payload,
+                    "probed_epoch": float(row["probed_epoch"] or 0.0),
+                }
+        return result
+
+    def media_probe_cache_put_many(self, items, epoch=None):
+        """items: [{dev,inode,size,mtime_ns,payload}, ...]；返回写入行数。"""
+        items = list(items or [])
+        if not items:
+            return 0
+        seed = time.time() if epoch is None else float(epoch)
+        payload = []
+        for index, item in enumerate(items):
+            payload.append((
+                sqlite_int(item.get("dev")),
+                sqlite_int(item.get("inode")),
+                sqlite_int(item.get("size")),
+                sqlite_int(item.get("mtime_ns")),
+                json.dumps(item.get("payload") or {}, ensure_ascii=False),
+                float(item.get("probed_epoch") or seed),
+                seed + index * 1e-6,
+            ))
+        with self.db.transaction():
+            self.db.executemany(
+                "INSERT OR REPLACE INTO media_probe_cache"
+                "(dev, inode, size, mtime_ns, payload_json, probed_epoch, last_used)"
+                " VALUES(?, ?, ?, ?, ?, ?, ?)", payload)
+        return len(payload)
+
+    def media_probe_cache_count(self):
+        return int(self.db.scalar(
+            "SELECT COUNT(*) FROM media_probe_cache", (), 0) or 0)
+
+    def media_probe_cache_prune(self, max_entries):
+        limit = max(1, int(max_entries or 1))
+        with self.db.transaction():
+            self.db.execute(
+                "DELETE FROM media_probe_cache WHERE (dev, inode) NOT IN"
+                " (SELECT dev, inode FROM media_probe_cache"
+                "  ORDER BY last_used DESC, dev DESC, inode DESC LIMIT ?)", (limit,))
+
+    def media_probe_cache_clear(self):
+        with self.db.transaction():
+            self.db.execute("DELETE FROM media_probe_cache")
 
     # ------------------------------------------------------------------
     # 扫描 checkpoint（plan B：FileRecord 明细拆到 scan_checkpoint_records）

@@ -22,7 +22,8 @@
 import {
   ACTIVE_STATUS, AUDIT_LABEL, CSRF_KEY, DEFAULT_SETTINGS, DEFAULT_SIMILARITY_EXTENSIONS,
   DEFAULT_VIDEO_EXTENSIONS, DELETE_REASON_LABEL, DELETE_STATUS_LABEL,
-  ERROR_FALLBACK, JOB_STATUS_LABEL, KEEP_LABEL, KEEP_MODE_LABEL, LEGACY_VIEW_ALIASES,
+  ERROR_FALLBACK, JOB_STATUS_LABEL, KEEP_LABEL, KEEP_MODE_LABEL,
+  KEEP_RULE_LABEL, SIDECAR_MODE_LABEL, LEGACY_VIEW_ALIASES,
   MTIME_FALLBACK_LABEL, MTIME_FALLBACK_REASONS, POLL_MS,
   SIZE_UNITS, SOURCE_INFO, STAGE_LABEL, STATUS_BADGE, STATUS_LABEL,
   SUBTITLE_ACTIVE_STATUS, SUBTITLE_LANGUAGES, SUBTITLE_OUTPUT_KIND_LABEL,
@@ -1062,7 +1063,11 @@ import {
     videoAsrCommand: { input: 'videoAsrCommand', error: 'videoAsrCommandError' },
     videoAsrWeight: { input: 'videoAsrWeight', error: 'videoAsrWeightError' },
     videoAsrTimeout: { input: 'videoAsrTimeout', error: 'videoAsrTimeoutError' },
-    videoAsrMaxSec: { input: 'videoAsrMaxSec', error: 'videoAsrMaxSecError' }
+    videoAsrMaxSec: { input: 'videoAsrMaxSec', error: 'videoAsrMaxSecError' },
+    // v0043：排除规则
+    excludeNameRegex: { input: 'excludeNameRegex', error: 'excludeNameRegexError' },
+    excludeNameGlob: { input: 'excludeNameGlob', error: 'excludeNameGlobError' },
+    keepRules: { input: 'keepPrimaryRule', error: 'keepRulesError' }
   };
 
   function renderRoots() {
@@ -1164,6 +1169,19 @@ import {
     if (state.excludes.length) { parts.push('排除 ' + state.excludes.length + ' 个目录'); }
     var mode = els.keepMode ? els.keepMode.value : 'latest';
     parts.push('保留策略：' + (KEEP_MODE_LABEL[mode] || mode));
+    var extraRules = composeKeepRules('keep');
+    if (extraRules.length) {
+      var ruleNames = extraRules.map(function (rule) {
+        var name = String(rule).split(':')[0];
+        return KEEP_RULE_LABEL[name] || name;
+      });
+      parts.push('高级保留规则 ' + ruleNames.length + ' 条');
+    }
+    if (els.incrementalScan && els.incrementalScan.checked) { parts.push('增量缓存'); }
+    var regexCount = textToLines(els.excludeNameRegex ? els.excludeNameRegex.value : '').length;
+    var globCount = textToLines(els.excludeNameGlob ? els.excludeNameGlob.value : '').length;
+    if (regexCount || globCount) { parts.push('文件名排除 ' + (regexCount + globCount) + ' 条'); }
+    if (els.mediaSidecarMode && els.mediaSidecarMode.value !== 'include') { parts.push('跳过影视附属文件'); }
     if (els.hashAlgo) { parts.push(els.hashAlgo.value === 'md5' ? 'MD5 哈希' : 'SHA-256 哈希'); }
     if (state.scanMode === 'similar') {
       var threshold = parseInt(els.simThreshold ? els.simThreshold.value : '85', 10);
@@ -2443,6 +2461,142 @@ import {
     return Math.round(num * (SIZE_UNITS[unitSelector.value] || 1024));
   }
 
+  // ---------- v0043：保留规则链 / 排除规则 / 增量扫描（扫描选项与设置页共用） ----------
+  var KEEP_PRIMARY_VALUES = ['created_latest', 'created_earliest', 'mtime_latest',
+    'mtime_earliest', 'size_largest', 'size_smallest', 'atime_latest'];
+
+  function textToLines(value) {
+    return String(value === undefined || value === null ? '' : value)
+      .split('\n')
+      .map(function (line) { return line.trim(); })
+      .filter(function (line) { return !!line; });
+  }
+
+  function linesToText(list) {
+    return Array.isArray(list) ? list.join('\n') : '';
+  }
+
+  /** 由表单控件组合出 keep_rules；空数组表示沿用 keep_mode/pinned_path。 */
+  function composeKeepRules(prefix) {
+    var primary = byId(prefix + 'PrimaryRule');
+    var pathInput = byId(prefix + 'PathPriority');
+    var nameInput = byId(prefix + 'NamePriority');
+    var preferSub = byId(prefix + 'PreferSubtitle');
+    var preferAudio = byId(prefix + 'PreferMultiAudio');
+    var rules = [];
+    var primaryValue = primary ? String(primary.value || '').trim() : '';
+    if (KEEP_PRIMARY_VALUES.indexOf(primaryValue) !== -1) { rules.push(primaryValue); }
+    textToLines(pathInput ? pathInput.value : '').forEach(function (path) {
+      rules.push('path_priority:' + path);
+    });
+    textToLines(nameInput ? nameInput.value : '').forEach(function (pattern) {
+      rules.push('filename_priority:' + pattern);
+    });
+    if (preferSub && preferSub.checked) { rules.push('has_subtitle_stream'); }
+    if (preferAudio && preferAudio.checked) { rules.push('has_audio_streams'); }
+    // 表单无法表达的规则（例如 API 直接写入的第二主规则）原样保留，避免保存设置时被静默丢弃。
+    var primaryNode = byId(prefix + 'PrimaryRule');
+    var extraRaw = primaryNode && primaryNode.dataset ? primaryNode.dataset.extraRules : '';
+    if (extraRaw) {
+      try {
+        var extra = JSON.parse(extraRaw);
+        if (Array.isArray(extra)) {
+          extra.forEach(function (rule) {
+            if (typeof rule === 'string' && rule && rules.indexOf(rule) === -1) {
+              rules.push(rule);
+            }
+          });
+        }
+      } catch (e) { /* 损坏的缓存值忽略 */ }
+    }
+    return rules;
+  }
+
+  /** 把 keep_rules 反解回控件（设置页/默认值回填用）。 */
+  function decomposeKeepRules(rules) {
+    var result = { primary: '', paths: [], names: [], preferSub: false, preferAudio: false, extra: [] };
+    (Array.isArray(rules) ? rules : []).forEach(function (raw) {
+      if (typeof raw !== 'string' || !raw) { return; }
+      var index = raw.indexOf(':');
+      var name = index === -1 ? raw : raw.slice(0, index);
+      var arg = index === -1 ? '' : raw.slice(index + 1);
+      if (KEEP_PRIMARY_VALUES.indexOf(name) !== -1) {
+        if (!result.primary) { result.primary = name; } else { result.extra.push(raw); }
+        return;
+      }
+      if (name === 'path_priority' && arg) { result.paths.push(arg); return; }
+      if (name === 'filename_priority' && arg) { result.names.push(arg); return; }
+      if (name === 'has_subtitle_stream') {
+        if (result.preferSub) { result.extra.push(raw); } else { result.preferSub = true; }
+        return;
+      }
+      if (name === 'has_audio_streams') {
+        if (result.preferAudio) { result.extra.push(raw); } else { result.preferAudio = true; }
+        return;
+      }
+      result.extra.push(raw);
+    });
+    return result;
+  }
+
+  function fillKeepRuleControls(prefix, rules) {
+    var parsed = decomposeKeepRules(rules);
+    var primary = byId(prefix + 'PrimaryRule');
+    var pathInput = byId(prefix + 'PathPriority');
+    var nameInput = byId(prefix + 'NamePriority');
+    var preferSub = byId(prefix + 'PreferSubtitle');
+    var preferAudio = byId(prefix + 'PreferMultiAudio');
+    if (primary) {
+      primary.value = parsed.primary;
+      if (primary.dataset) { primary.dataset.extraRules = JSON.stringify(parsed.extra); }
+    }
+    if (pathInput) { pathInput.value = parsed.paths.join('\n'); }
+    if (nameInput) { nameInput.value = parsed.names.join('\n'); }
+    if (preferSub) { preferSub.checked = parsed.preferSub; }
+    if (preferAudio) { preferAudio.checked = parsed.preferAudio; }
+  }
+
+  function applyIncrementalSettingsToScanForm(settings) {
+    if (!settings) { return; }
+    if (els.excludeNameRegex) {
+      els.excludeNameRegex.value = linesToText(settings.exclude_name_regex);
+    }
+    if (els.excludeNameGlob) {
+      els.excludeNameGlob.value = linesToText(settings.exclude_name_glob);
+    }
+    if (els.ignoreFileEnabled) {
+      els.ignoreFileEnabled.checked = settings.ignore_file_enabled !== false;
+    }
+    if (els.incrementalScan) {
+      els.incrementalScan.checked = settings.incremental_scan !== false;
+    }
+    if (els.mediaSidecarMode) {
+      els.mediaSidecarMode.value =
+        settings.media_sidecar_mode === 'include' ? 'include' : 'skip';
+    }
+    fillKeepRuleControls('keep', settings.keep_rules);
+  }
+
+  function readIncrementalOptions(options, errors) {
+    var regexList = textToLines(els.excludeNameRegex ? els.excludeNameRegex.value : '');
+    var globList = textToLines(els.excludeNameGlob ? els.excludeNameGlob.value : '');
+    if (regexList.length > 50) {
+      errors.excludeNameRegex = '文件名正则最多 50 条。';
+    } else {
+      options.exclude_name_regex = regexList;
+    }
+    if (globList.length > 50) {
+      errors.excludeNameGlob = '文件名通配符最多 50 条。';
+    } else {
+      options.exclude_name_glob = globList;
+    }
+    options.ignore_file_enabled = els.ignoreFileEnabled ? !!els.ignoreFileEnabled.checked : true;
+    options.incremental_scan = els.incrementalScan ? !!els.incrementalScan.checked : true;
+    options.media_sidecar_mode = els.mediaSidecarMode && els.mediaSidecarMode.value === 'include'
+      ? 'include' : 'skip';
+    options.keep_rules = composeKeepRules('keep');
+  }
+
   function applySettingsToScanForm(settings) {
     if (!settings) { return; }
     els.hashAlgo.value = settings.hash_algo === 'md5' ? 'md5' : 'sha256';
@@ -2465,6 +2619,7 @@ import {
     setScanMode(state.scanMode, { silent: true });
     applySimilaritySettingsToForm(settings);
     applyVideoSettingsToForm(settings);
+    applyIncrementalSettingsToScanForm(settings);
     updateKeepModeUi();
     clearOptionsErrors();
     updateScanSummary();
@@ -2605,6 +2760,7 @@ import {
       options.similarity_allow_binary = !!els.simAllowBinary.checked;
     }
     readVideoScanOptions(options, errors);
+    readIncrementalOptions(options, errors);
     return { options: options, errors: errors, valid: Object.keys(errors).length === 0 };
   }
 
@@ -3182,6 +3338,22 @@ import {
     await Promise.all(tasks);
   }
 
+  function newOnlyQuery() {
+    return state.results.newOnly ? '&new_only=1' : '';
+  }
+
+  function syncNewOnlyUi() {
+    if (!els.newOnlyToggle) { return; }
+    var visible = state.results.newOnly
+      || Number(state.results.newTotal || 0) > 0
+      || Number((currentScanStats() || {}).new_groups || 0) > 0;
+    setHidden(els.newOnlyLabel, !visible);
+    els.newOnlyToggle.checked = !!state.results.newOnly;
+    els.newOnlyToggle.title = visible
+      ? '只显示本次扫描新增或内容变化的重复组'
+      : '本次扫描没有新增/变化的重复组（首次全量扫描时正常）';
+  }
+
   async function loadExactPartition(reset, offsetOverride) {
     var results = state.results;
     if (!state.scan.id) { return; }
@@ -3198,7 +3370,8 @@ import {
       offset = Math.floor(offsetOverride);
     }
     var query = '?offset=' + offset + '&limit=' + results.limit +
-      '&q=' + encodeURIComponent(results.q) + '&sort=' + encodeURIComponent(results.sort);
+      '&q=' + encodeURIComponent(results.q) + '&sort=' + encodeURIComponent(results.sort) +
+      newOnlyQuery();
     if (results.scanMode === 'similar' || videoScanEnabledForResults()) { query += '&match_type=exact'; }
     try {
       var res = await api('/api/scans/' + encodePath(state.scan.id) + '/groups' + query, { timeout: 20000 });
@@ -3207,10 +3380,12 @@ import {
       results.total = Number(res.exact_total !== undefined ? res.exact_total : res.total) || 0;
       results.exactTotal = results.total;
       if (typeof res.similar_total === 'number') { results.similarTotal = res.similar_total; }
+      if (typeof res.new_total === 'number') { results.newTotal = res.new_total; }
       results.offset = res.offset === undefined ? offset : Number(res.offset);
       results.groups = reset ? groups : results.groups.concat(groups);
       results.loaded = true;
       results.loading = false;
+      syncNewOnlyUi();
       renderResults();
       if (reset) { await loadScanStats(); }
     } catch (err) {
@@ -3239,7 +3414,7 @@ import {
       offset = Math.floor(offsetOverride);
     }
     var query = '?offset=' + offset + '&limit=' + results.limit + '&match_type=similar&sort=similarity_desc' +
-      '&q=' + encodeURIComponent(results.q);
+      '&q=' + encodeURIComponent(results.q) + newOnlyQuery();
     try {
       var res = await api('/api/scans/' + encodePath(state.scan.id) + '/groups' + query, { timeout: 20000 });
       if (seq !== results.similarSeq) { return; }
@@ -3279,7 +3454,7 @@ import {
       offset = Math.floor(offsetOverride);
     }
     var query = '?offset=' + offset + '&limit=' + results.limit + '&match_type=video&sort=similarity_desc' +
-      '&q=' + encodeURIComponent(results.q);
+      '&q=' + encodeURIComponent(results.q) + newOnlyQuery();
     try {
       var res = await api('/api/scans/' + encodePath(state.scan.id) + '/groups' + query, { timeout: 25000 });
       if (seq !== results.videoSeq) { return; }
@@ -3469,6 +3644,26 @@ import {
       summaryCards.push(summaryCard('warning', 'is-amber', fmtInt(fallbackGroups) + ' 组', '修改时间降级',
         '无创建时间 · 按修改时间保留'));
     }
+    // v0043：增量扫描统计（首次全量扫描时 new_files 接近全部，属正常）
+    var newFiles = Number(stats.new_files) || 0;
+    var changedFiles = Number(stats.changed_files) || 0;
+    var cacheHits = Number(stats.hash_cache_hits) || 0;
+    var reusedBytes = Number(stats.bytes_hashed_reused) || 0;
+    if (cacheHits > 0 || newFiles > 0 || changedFiles > 0) {
+      var incrementalBits = '本次新增 ' + fmtInt(newFiles) + ' · 变化 ' + fmtInt(changedFiles) +
+        ' · 缓存命中 ' + fmtInt(cacheHits) + ' 个文件';
+      summaryCards.push(summaryCard('refresh', cacheHits > 0 ? 'is-green' : '',
+        fmtBytes(reusedBytes), '增量缓存复用',
+        incrementalBits + '（未重复读取 ' + fmtBytes(reusedBytes) + '）'));
+    }
+    var excludedByRule = Number(skipped.rule) || 0;
+    var sidecarFiles = Number(stats.sidecar_files !== undefined
+      ? stats.sidecar_files : skipped.sidecar) || 0;
+    if (excludedByRule > 0 || sidecarFiles > 0) {
+      summaryCards.push(summaryCard('lock', '',
+        fmtInt(excludedByRule) + ' / ' + fmtInt(sidecarFiles), '排除规则 / 附属文件',
+        '按文件名规则与 .ignore 跳过 ' + fmtInt(excludedByRule) + ' 个，影视附属文件跳过 ' + fmtInt(sidecarFiles) + ' 个'));
+    }
     var videoGroupCount = Number(stats.video_groups);
     if (!isFinite(videoGroupCount) || videoGroupCount <= 0) {
       videoGroupCount = state.results.videoGroups.length;
@@ -3589,6 +3784,21 @@ import {
     }
   }
 
+  function incrementalGroupBadge(group) {
+    if (!group || typeof group !== 'object') { return null; }
+    var newCount = Number(group.new_files || 0);
+    var changedCount = Number(group.changed_files || 0);
+    if (!newCount && !changedCount) { return null; }
+    var parts = [];
+    if (newCount) { parts.push('新增 ' + fmtInt(newCount)); }
+    if (changedCount) { parts.push('变化 ' + fmtInt(changedCount)); }
+    return el('span', {
+      className: 'badge badge-blue',
+      attrs: { title: '相对上次扫描：本次新增/内容变化的文件数（增量扫描统计）' },
+      text: '本次增量 · ' + parts.join(' / ')
+    });
+  }
+
   function renderGroupCard(group, index) {
     var manual = !!group.needs_manual_keep;
     var keeperId = manual ? null : (group.keep_file_id || null);
@@ -3618,6 +3828,8 @@ import {
     if (group.creation_time_suspect && !fallback) {
       badges.push(el('span', { className: 'badge badge-amber', text: '创建时间存疑' }));
     }
+    var exactIncrementalBadge = incrementalGroupBadge(group);
+    if (exactIncrementalBadge) { badges.push(exactIncrementalBadge); }
 
     var groupSubItems = [
       el('span', { className: 'mono', attrs: { title: group.hash || '' }, text: truncHash(group.hash) }),
@@ -3997,6 +4209,8 @@ import {
     }
     if (group.low_confidence) { badges.push(el('span', { className: 'badge low-confidence-badge', text: '低置信度' })); }
     if (group.creation_time_suspect && !fallback) { badges.push(el('span', { className: 'badge badge-amber', text: '创建时间存疑' })); }
+    var similarIncrementalBadge = incrementalGroupBadge(group);
+    if (similarIncrementalBadge) { badges.push(similarIncrementalBadge); }
 
     var similarSubItems = [
       el('span', { text: similarityMethodLabel(group.similarity_method) }),
@@ -4216,6 +4430,8 @@ import {
         text: 'ASR辅助'
       }));
     }
+    var videoIncrementalBadge = incrementalGroupBadge(group);
+    if (videoIncrementalBadge) { badges.push(videoIncrementalBadge); }
 
     var subItems = [
       el('span', { text: '时长 ' + fmtVideoDuration(group.video_duration) }),
@@ -5144,6 +5360,14 @@ import {
       clearSelectionState();
       loadResults(true);
     });
+    if (els.newOnlyToggle) {
+      els.newOnlyToggle.addEventListener('change', function () {
+        state.results.newOnly = !!els.newOnlyToggle.checked;
+        clearSelectionState();
+        loadResults(true);
+        syncNewOnlyUi();
+      });
+    }
     els.refreshResultsBtn.addEventListener('click', function () {
       if (!state.scan.id) { toast('当前没有可刷新的扫描结果。', 'info'); return; }
       clearSelectionState();
@@ -7964,7 +8188,8 @@ import {
     var tableLabel = {
       scans: '扫描任务', scan_groups: '结果分组', scan_files: '结果文件',
       feature_cache: '特征缓存', subtitle_jobs: '字幕任务', deletion_jobs: '删除任务',
-      scan_checkpoints: '扫描断点', subtitle_chunks: '字幕分块'
+      scan_checkpoints: '扫描断点', subtitle_chunks: '字幕分块',
+      hash_cache: '增量哈希缓存', media_probe_cache: '媒体探测缓存'
     };
     var tableRows = [];
     Object.keys(rowCounts).forEach(function (key) {
@@ -7975,12 +8200,18 @@ import {
     if (!tableRows.length) { tableRows.push(diagRow('表行数', '后端未返回')); }
     appendDiagRows(els.storageTablesList, tableRows);
 
+    var hashCache = diag.hash_cache || {};
+    var mediaProbeCache = diag.media_probe_cache || {};
     appendDiagRows(els.storageCachesList, [
       diagRow('特征缓存条目', featureEntries),
       diagRow('视频指纹缓存可用', diagLooseValue(videoCache, ['available'])),
       diagRow('视频指纹缓存条目', videoEntries),
       diagRow('视频指纹缓存大小', diagLooseValue(videoCache, ['size']), { bytes: true }),
-      diagRow('视频缓存路径', diagLooseValue(videoCache, ['path']), { mono: true })
+      diagRow('视频缓存路径', diagLooseValue(videoCache, ['path']), { mono: true }),
+      // v0043：增量扫描缓存
+      diagRow('增量哈希缓存条目', diagLooseValue(hashCache, ['entries'])),
+      diagRow('增量哈希缓存覆盖大小', diagLooseValue(hashCache, ['bytes']), { bytes: true }),
+      diagRow('媒体探测缓存条目', diagLooseValue(mediaProbeCache, ['entries']))
     ]);
 
     appendDiagRows(els.storageMediaList, [
@@ -8157,6 +8388,40 @@ import {
     }
   }
 
+  async function startIncrementalCacheClear() {
+    if (state.diagnostics.busy) { return; }
+    var ok = await confirmDialog({
+      title: '清理增量扫描缓存？',
+      message: '将清空“跨扫描哈希缓存”和“媒体探测缓存”。清理后下一次扫描会重新读取文件计算哈希（更慢），' +
+        '但不会删除任何扫描结果、字幕或文件。确定继续？',
+      confirmText: '清理缓存',
+      danger: false
+    });
+    if (!ok) { return; }
+    setStorageActionBusy(true);
+    try {
+      await api('/api/cache/clear', {
+        method: 'POST',
+        body: { confirm: true, targets: ['hash', 'media'] },
+        timeout: 30000
+      });
+      showStorageActionResult('增量缓存已清理；下一次扫描会重新计算哈希。', false);
+      toast('增量缓存已清理。', 'success');
+      await loadDiagnostics();
+    } catch (err) {
+      var message = errorMessage(err, '清理增量缓存失败，请稍后重试。');
+      if (err && err.status === 404) {
+        message = '当前后端未提供缓存清理接口；升级后端后可用。';
+      } else if (err && err.status === 403) {
+        message = '仅管理员可清理缓存。';
+      }
+      showStorageActionResult(message, true);
+      toast(message, 'error', 6000);
+    } finally {
+      setStorageActionBusy(false);
+    }
+  }
+
   function bindHistoryEvents() {
     if (els.historyRefreshBtn) { els.historyRefreshBtn.addEventListener('click', refreshTaskCenter); }
     if (els.subtitleJobsRefreshBtn) {
@@ -8170,6 +8435,7 @@ import {
     }
     if (els.storageBackupBtn) { els.storageBackupBtn.addEventListener('click', startStorageBackup); }
     if (els.storageMaintenanceBtn) { els.storageMaintenanceBtn.addEventListener('click', startStorageMaintenance); }
+    if (els.clearHashCacheBtn) { els.clearHashCacheBtn.addEventListener('click', startIncrementalCacheClear); }
     bindTaskTabs();
   }
 
@@ -8449,7 +8715,10 @@ import {
     subtitleTranslateTimeout: { input: 'subtitleTranslateTimeout', error: 'subtitleTranslateTimeoutError' },
     subtitleTranslateBatchSize: { input: 'subtitleTranslateBatchSize', error: 'subtitleTranslateBatchSizeError' },
     setSubtitleJobLimit: { input: 'setSubtitleJobLimit', error: 'setSubtitleJobLimitError' },
-    setSubtitleConcurrency: { input: 'setSubtitleConcurrency', error: 'setSubtitleConcurrencyError' }
+    setSubtitleConcurrency: { input: 'setSubtitleConcurrency', error: 'setSubtitleConcurrencyError' },
+    // v0043：排除规则（增量扫描无独立校验错误）
+    excludeNameRegex: { input: 'setExcludeNameRegex', error: 'setExcludeNameRegexError' },
+    excludeNameGlob: { input: 'setExcludeNameGlob', error: 'setExcludeNameGlobError' }
   };
 
   function bytesToMbValue(bytes) {
@@ -8470,6 +8739,11 @@ import {
       if (els.setKeepMode) { scanBits.push(KEEP_MODE_LABEL[els.setKeepMode.value] || els.setKeepMode.value || '—'); }
       var rate = els.setHashRate ? Number(els.setHashRate.value) || 0 : 0;
       scanBits.push(rate > 0 ? '限速 ' + rate + ' MB/s' : '不限速');
+      if (els.setIncrementalScan) {
+        scanBits.push(els.setIncrementalScan.checked ? '增量缓存开' : '增量缓存关');
+      }
+      var extraSettingsRules = composeKeepRules('setKeep');
+      if (extraSettingsRules.length) { scanBits.push('高级保留规则 ' + extraSettingsRules.length + ' 条'); }
       setText(els.settingsScanSummary, scanBits.join(' · '));
     }
     if (els.settingsSimilaritySummary) {
@@ -8581,6 +8855,15 @@ import {
     els.setRecycleDefault.checked = settings.recycle_default !== false;
     els.setCreateRecycleDir.checked = settings.create_recycle_dir === true;
     els.setAllowCtime.checked = settings.allow_ctime_fallback === true;
+    // v0043：增量扫描 / 保留规则链 / 排除规则
+    if (els.setIncrementalScan) { els.setIncrementalScan.checked = settings.incremental_scan !== false; }
+    if (els.setExcludeNameRegex) { els.setExcludeNameRegex.value = linesToText(settings.exclude_name_regex); }
+    if (els.setExcludeNameGlob) { els.setExcludeNameGlob.value = linesToText(settings.exclude_name_glob); }
+    if (els.setIgnoreFileEnabled) { els.setIgnoreFileEnabled.checked = settings.ignore_file_enabled !== false; }
+    if (els.setMediaSidecarMode) {
+      els.setMediaSidecarMode.value = settings.media_sidecar_mode === 'include' ? 'include' : 'skip';
+    }
+    fillKeepRuleControls('setKeep', settings.keep_rules);
     if (els.setScanMode) { els.setScanMode.value = settings.scan_mode === 'similar' ? 'similar' : 'exact'; }
     if (els.setSimilarityThreshold) {
       var threshold = parseInt(settings.similarity_threshold, 10);
@@ -8723,6 +9006,24 @@ import {
     }
     readVideoSettings(settings, errors);
     readSubtitleSettings(settings, errors);
+    // v0043：增量扫描 / 保留规则链 / 排除规则
+    settings.incremental_scan = els.setIncrementalScan ? !!els.setIncrementalScan.checked : true;
+    settings.keep_rules = composeKeepRules('setKeep');
+    var setRegexList = textToLines(els.setExcludeNameRegex ? els.setExcludeNameRegex.value : '');
+    var setGlobList = textToLines(els.setExcludeNameGlob ? els.setExcludeNameGlob.value : '');
+    if (setRegexList.length > 50) {
+      errors.excludeNameRegex = '文件名正则最多 50 条。';
+    } else {
+      settings.exclude_name_regex = setRegexList;
+    }
+    if (setGlobList.length > 50) {
+      errors.excludeNameGlob = '文件名通配符最多 50 条。';
+    } else {
+      settings.exclude_name_glob = setGlobList;
+    }
+    settings.ignore_file_enabled = els.setIgnoreFileEnabled ? !!els.setIgnoreFileEnabled.checked : true;
+    settings.media_sidecar_mode = els.setMediaSidecarMode && els.setMediaSidecarMode.value === 'include'
+      ? 'include' : 'skip';
     return { settings: settings, errors: errors, valid: Object.keys(errors).length === 0 };
   }
 

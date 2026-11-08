@@ -201,7 +201,9 @@ def check_backend():
                        "delete-plan", "delete", "/api/preview", "/api/logs",
                        "/api/logs/download", "/api/logs/audit/delete",
                        "/api/logs/files/delete", "/api/subtitles/queue",
-                       "/api/subtitles/batch-groups"]
+                       "/api/subtitles/batch-groups",
+                       # v0043：增量扫描缓存管理
+                       "/api/cache", "/api/cache/clear"]
     missing = []
     for marker in expected_routes:
         if marker.startswith("/api/"):
@@ -227,7 +229,7 @@ def check_backend():
                        "select", "queue", "math", "decimal", "calendar", "codecs",
                        "heapq", "mimetypes", "tests", "stringprep", "encodings",
                        "zipfile", "zlib", "html", "PIL", "logging.handlers", "sqlite3",
-                       "xml", "builtins")
+                       "xml", "builtins", "fnmatch")
     for path in py_files:
         rel = os.path.relpath(path, REPO)
         src = read(path)
@@ -520,6 +522,61 @@ def check_backend():
           and "fraction = (progress - 70) / 20.0" in subtitles_src
           and eta_test_ok,
           "subtitle job eta markers missing")
+
+    # ---- v0043：增量扫描 / 保留规则链 / 排除规则 ----
+    scanner_src = read(os.path.join(backend, "dupcleaner", "scanner.py"))
+    hash_src = read(os.path.join(backend, "dupcleaner", "hashing.py"))
+    store_src = read(os.path.join(backend, "dupcleaner", "store.py"))
+    db_src = read(os.path.join(backend, "dupcleaner", "db.py"))
+    excluder_path = os.path.join(backend, "dupcleaner", "excluder.py")
+    excluder_src = read(excluder_path) if os.path.isfile(excluder_path) else ""
+    check("BE-INC-HASH-CACHE",
+          "增量扫描：跨扫描哈希缓存（hash_cache 表 + store 读写 + 扫描器复用未变文件）",
+          "hash_cache" in db_src
+          and "CURRENT_SCHEMA_VERSION = 8" in db_src
+          and "def hash_cache_get" in store_src
+          and "def hash_cache_put_many" in store_src
+          and "def _load_hash_cache" in scanner_src
+          and "def _save_hash_cache" in scanner_src
+          and "record.cache_full = True" in scanner_src
+          and "incremental_scan" in settings_src,
+          "incremental hash cache markers missing")
+    check("BE-INC-SAMPLE-V2",
+          "快速指纹 v2：大文件头+中+尾三段采样，采样版本参与缓存校验（v0043）",
+          "QUICK_SAMPLE_VERSION = 2" in hash_src
+          and "LARGE_FILE_SAMPLE_THRESHOLD" in hash_src
+          and "quick_sample_hash" in scanner_src
+          and "sample_version" in store_src
+          and "sample_version" in db_src,
+          "quick sample v2 markers missing")
+    check("BE-KEEP-RULES",
+          "保留策略规则链：体积/路径优先级/文件名优先级/内嵌字幕与音轨/修改与访问时间（v0043）",
+          "def choose_keeper_rules" in scanner_src
+          and "KEEP_RULE_NAMES" in conf_src
+          and "size_largest" in conf_src
+          and "path_priority" in conf_src
+          and "filename_priority" in conf_src
+          and "has_subtitle_stream" in conf_src
+          and "def _check_keep_rules" in settings_src
+          and "def _media_probe_for_group" in scanner_src,
+          "keep rule chain markers missing")
+    check("BE-EXCLUDE-RULES",
+          "排除规则：文件名正则/通配符/.ignore 子集 + 影视附属文件过滤（v0043）",
+          os.path.isfile(excluder_path)
+          and "class ExcludeRules" in excluder_src
+          and "def load_ignore" in excluder_src
+          and "excluder.ExcludeRules(" in scanner_src
+          and "def _apply_sidecar_filter" in scanner_src
+          and "exclude_name_regex" in settings_src
+          and "exclude_name_glob" in settings_src
+          and "media_sidecar_mode" in settings_src,
+          "exclude rule markers missing")
+    check("BE-CACHE-API",
+          "增量缓存管理接口：GET /api/cache、POST /api/cache/clear（仅管理员）",
+          "/api/cache" in http_src and "/api/cache/clear" in http_src
+          and "def _cache_stats" in http_src and "def _cache_clear" in http_src
+          and "hash_cache_stats" in http_src,
+          "cache api markers missing")
 
 
 # ---------------------------------------------------------------------------
@@ -855,6 +912,39 @@ def check_frontend():
           "任务行展示当前步骤消息 / 已耗时 / 预计剩余（v0041）",
           job_meta_ok, "subtitle eta / step message markers missing")
 
+    # ---- v0043：增量扫描 / 保留规则链 / 排除规则 ----
+    check("FE-KEEP-RULES",
+          "扫描选项与设置页提供保留规则链：主规则 + 路径优先级 + 文件名优先级 + 字幕/音轨优先（v0043）",
+          "keepPrimaryRule" in html and "setKeepPrimaryRule" in html
+          and "keepPathPriority" in html and "keepNamePriority" in html
+          and "keepPreferSubtitle" in html and "keepPreferMultiAudio" in html
+          and "setKeepPathPriority" in html and "setKeepPreferMultiAudio" in html
+          and "function composeKeepRules" in app
+          and "function decomposeKeepRules" in app
+          and "KEEP_RULE_LABEL" in app,
+          "keep rule ui markers missing")
+    check("FE-EXCLUDE-UI",
+          "扫描选项与设置页提供文件名正则/通配符/.ignore/影视附属文件选项（v0043）",
+          "excludeNameRegex" in html and "excludeNameGlob" in html
+          and "ignoreFileEnabled" in html and "mediaSidecarMode" in html
+          and "setExcludeNameRegex" in html and "setExcludeNameGlob" in html
+          and "setIgnoreFileEnabled" in html and "setMediaSidecarMode" in html
+          and "function readIncrementalOptions" in app,
+          "exclude rule ui markers missing")
+    check("FE-INCREMENTAL-UI",
+          "结果页支持只看本次新增/变化（new_only）并在组卡片显示增量徽标（v0043）",
+          "newOnlyToggle" in html
+          and "new_only=1" in app
+          and "function incrementalGroupBadge" in app
+          and "function syncNewOnlyUi" in app,
+          "incremental result ui markers missing")
+    check("FE-CACHE-UI",
+          "设置页存储诊断显示增量缓存条目并提供清理入口（v0043）",
+          "clearHashCacheBtn" in html
+          and "function startIncrementalCacheClear" in app
+          and "hash_cache" in app,
+          "cache ui markers missing")
+
     check("FE-RISK-TEXT", "风险提示文案与契约逐字一致（index.html）",
           RISK_TEXT in html, "risk text not found verbatim")
     risk_region = ""
@@ -892,6 +982,7 @@ def check_frontend():
         ("/api/subtitles/test", "字幕连接测试"),
         ("/api/subtitles/queue", "字幕队列视图"),
         ("/api/subtitles/batch-groups", "字幕批次组总览"),
+        ("/api/cache/clear", "增量缓存清理"),
     ]
     missing = [name for marker, name in endpoints if marker not in app]
     check("FE-ENDPOINTS", "前端覆盖契约全部 API 端点",

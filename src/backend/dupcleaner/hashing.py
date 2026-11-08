@@ -2,8 +2,9 @@
 """哈希计算：快速采样指纹 + 全量分片哈希 + 全局限速。
 
 哈希计算点（重要）：
-- 快速指纹：文件大小 + 头部 sample_kb + 尾部 sample_kb，用于缩小候选集，
-  不能作为“重复”的最终依据。
+- 快速指纹：文件大小 + 头部 sample_kb + 尾部 sample_kb；大文件（默认
+  >= 256 MiB）额外采样中间段，避免仅在中间不同的文件被误判为同一指纹。
+  用于缩小候选集，不能作为“重复”的最终依据。
 - 全量哈希：按 HASH_CHUNK_SIZE 分片读取，支持进度回调、取消回调与全局限速，
   最终判定重复必须使用全量哈希。
 """
@@ -24,6 +25,14 @@ _HASHERS = {
     "md5": hashlib.md5,
 }
 
+# 快速指纹版本：v1 = 大小 + 头 + 尾；v2 = 大文件额外采样中间段。
+# 摘要输入以 b"dcq2" 开头，版本变化会让不同版本的指纹自然区分开。
+QUICK_SAMPLE_VERSION = 2
+# 达到该大小（字节）的文件，快速指纹额外采样中间段。
+LARGE_FILE_SAMPLE_THRESHOLD = 256 * 1024 * 1024
+
+_QUICK_MAGIC = b"dcq2"
+
 
 class HashCancelled(Exception):
     """哈希过程被暂停/停止/失败打断。"""
@@ -42,21 +51,62 @@ def hash_bytes(data, algo="sha256"):
     return hasher.hexdigest()
 
 
-def quick_sample_hash(path, algo="sha256", sample_kb=64):
-    """快速指纹（哈希计算点）：大小 + 头 N KB + 尾 N KB。"""
+def quick_sample_hash(path, algo="sha256", sample_kb=64, size=None,
+                      large_threshold=None):
+    """快速指纹（哈希计算点）：大小 + 头 + 尾（大文件再加中间段）。
+
+    采样规则（确定性、自描述）：
+    - sample = sample_kb * 1024 字节；
+    - 头：文件开头 min(sample, size) 字节；
+    - 尾：从 max(len(head), size - sample) 起读 sample 字节，与头不重叠；
+    - 中间：size >= (large_threshold or LARGE_FILE_SAMPLE_THRESHOLD) 且头/中/尾
+      三段放得下时，offset = clamp(size // 2 - sample // 2, len(head),
+      size - len(tail) - sample)，读 sample 字节。
+
+    摘要输入：b"dcq2" + struct.pack("<Q", size) + b"h" + head
+    + (b"m" + mid) + b"t" + tail。
+
+    size 不为 None 时直接使用，避免调用方重复 os.stat。
+    读文件失败按原样抛 OSError / IOError（调用方已有处理）。
+    """
     factory = hasher_factory(algo)
     sample = max(0, int(sample_kb)) * 1024
-    stat_result = os.stat(path)
-    size = int(stat_result.st_size)
-    hasher = factory()
-    hasher.update(struct.pack("<Q", size))
+    if size is None:
+        size = int(os.stat(path).st_size)
+    else:
+        size = int(size)
+    threshold = large_threshold or LARGE_FILE_SAMPLE_THRESHOLD
+
     with open(path, "rb") as handle:
-        head = handle.read(sample) if sample else b""
-        hasher.update(head)
+        head = handle.read(min(sample, size)) if sample > 0 else b""
+        tail = b""
         if size > len(head):
             tail_start = max(len(head), size - sample)
             handle.seek(tail_start)
-            hasher.update(handle.read(sample))
+            tail = handle.read(sample)
+        mid = None
+        if sample > 0 and size >= int(threshold):
+            upper = size - len(tail) - sample
+            lower = len(head)
+            if upper >= lower:
+                offset = size // 2 - sample // 2
+                if offset < lower:
+                    offset = lower
+                elif offset > upper:
+                    offset = upper
+                handle.seek(offset)
+                mid = handle.read(sample)
+
+    hasher = factory()
+    hasher.update(_QUICK_MAGIC)
+    hasher.update(struct.pack("<Q", size))
+    hasher.update(b"h")
+    hasher.update(head)
+    if mid is not None:
+        hasher.update(b"m")
+        hasher.update(mid)
+    hasher.update(b"t")
+    hasher.update(tail)
     return hasher.hexdigest()
 
 

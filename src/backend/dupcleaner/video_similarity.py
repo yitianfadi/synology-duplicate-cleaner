@@ -32,8 +32,56 @@ import time
 from . import config, hashing, similarity
 
 DURATION_RE = re.compile(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)")
+# v0043：`ffmpeg -i` 的流信息行，例如
+#   Stream #0:1(eng): Audio: aac (LC) (mp4a / 0x6134706D), 48000 Hz, stereo, ...
+#   Stream #0:2(chi): Subtitle: subrip (srt)
+_STREAM_RE = re.compile(
+    r"Stream #\d+:(?P<stream_index>\d+)"
+    r"(?:\[0x[0-9a-fA-F]+\])?"
+    r"(?:\((?P<language>[A-Za-z0-9_\-]+)\))?"
+    r": (?P<kind>Audio|Subtitle|Video): (?P<codec>[^,\n]+)"
+    r"(?P<rest>[^\n]*)")
+_CHANNELS_RE = re.compile(
+    r",\s*(mono|stereo|quad|5\.1|6\.1|7\.1|\d+ channels)")
+_STREAM_TITLE_RE = re.compile(r"title\s*:\s*([^,\n]+)")
 VIDEO_FILTER = ("scale=32:32:force_original_aspect_ratio=decrease,"
                 "pad=32:32:(ow-iw)/2:(oh-ih)/2:black,format=gray")
+
+
+def parse_media_streams(text):
+    """解析 ffmpeg `-i` 输出里的 Stream 行 → 音轨/字幕轨/视频轨列表。
+
+    纯文本解析（不依赖 ffprobe）；字段：stream_index/codec/language/channels/
+    default/title。语言标签可能缺失（很多容器不写），此时只能按序号选择。
+    """
+    result = {"audio_streams": [], "subtitle_streams": [], "video_streams": []}
+    for line in (text or "").splitlines():
+        match = _STREAM_RE.search(line)
+        if not match:
+            continue
+        rest = match.group("rest") or ""
+        item = {
+            "stream_index": int(match.group("stream_index")),
+            "codec": (match.group("codec") or "").strip(),
+            "language": (match.group("language") or "").strip().lower(),
+            "channels": "",
+            "default": "(default)" in rest,
+            "title": "",
+        }
+        title = _STREAM_TITLE_RE.search(rest)
+        if title:
+            item["title"] = title.group(1).strip()
+        channels = _CHANNELS_RE.search(rest)
+        if channels:
+            item["channels"] = channels.group(1).strip()
+        kind = match.group("kind").lower()
+        if kind == "audio":
+            result["audio_streams"].append(item)
+        elif kind == "subtitle":
+            result["subtitle_streams"].append(item)
+        else:
+            result["video_streams"].append(item)
+    return result
 
 _MASK64 = 0xFFFFFFFFFFFFFFFF
 _PROBE_LOCK = threading.RLock()
@@ -636,7 +684,11 @@ class FFmpegTool(object):
             return None
 
     def probe_media(self, path, timeout, stop_check=None):
-        """探测时长与是否含音轨（-loglevel info；不读取/记录隐私内容）。"""
+        """探测时长、音轨/字幕轨/视频轨列表（-loglevel info；不记录隐私内容）。
+
+        v0043：额外解析每路流的序号/语言/编码/声道，供“优先保留带内嵌字幕或
+        多音轨版本”的保留规则与后续音轨选择使用。
+        """
         args = ["-nostdin", "-hide_banner", "-loglevel", "info", "-i", path]
         try:
             _code, _stdout, stderr = self._run(args, timeout, stop_check)
@@ -652,8 +704,17 @@ class FFmpegTool(object):
                             + float(seconds))
             except (TypeError, ValueError):
                 duration = None
-        has_audio = re.search(r"Stream #\d+:\d+.*Audio:", text) is not None
-        return {"duration": duration, "has_audio": has_audio}
+        streams = parse_media_streams(text)
+        has_audio = (bool(streams["audio_streams"])
+                     or re.search(r"Stream #\d+:\d+.*Audio:", text) is not None)
+        return {
+            "duration": duration,
+            "has_audio": has_audio,
+            "has_subtitle": bool(streams["subtitle_streams"]),
+            "audio_streams": streams["audio_streams"],
+            "subtitle_streams": streams["subtitle_streams"],
+            "video_streams": streams["video_streams"],
+        }
 
     def extract_audio_mp3(self, path, out_path, start, duration, timeout,
                           stop_check=None):

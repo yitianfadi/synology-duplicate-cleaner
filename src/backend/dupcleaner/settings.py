@@ -96,6 +96,16 @@ DEFAULT_SETTINGS = {
     # v0034/v0037：同时执行的字幕任务数（默认 1 = 串行，与历史行为一致）；
     # 保存设置后立即生效（动态调整 worker，无需重启套件）。
     "subtitle_concurrency": config.SUBTITLE_DEFAULT_CONCURRENCY,
+    # --- v0043 增量扫描 / 保留策略规则链 / 排除规则（docs/INCREMENTAL_SCAN_CONTRACT.md）---
+    # 跨扫描哈希缓存：内容未变（dev/inode/size/mtime_ns 一致）不重算哈希。
+    "incremental_scan": config.INCREMENTAL_SCAN_ENABLED_DEFAULT,
+    # 保留策略规则链（空 = 沿用 keep_mode/pinned_path 历史语义）。
+    "keep_rules": [],
+    # 排除规则：文件名正则 / 通配符 / .ignore 文件 / 影视库附属文件。
+    "exclude_name_regex": [],
+    "exclude_name_glob": [],
+    "ignore_file_enabled": True,
+    "media_sidecar_mode": "skip",
 }
 
 # 密钥键：GET/日志/审计/扫描结果中绝不允许出现明文
@@ -172,6 +182,90 @@ def _check_ext_list(key, value):
         if "/" in ext or "\\" in ext or "*" in ext or "?" in ext:
             _err(u"后缀 %r 包含非法字符" % ext, {"key": key, "value": ext})
         out.append(ext)
+    return out
+
+
+def _check_exclude_patterns(key, value, is_regex):
+    """排除规则：文件名正则或通配符列表（v0043）。"""
+    if not isinstance(value, list):
+        _err(u"设置 %s 必须是字符串数组" % key, {"key": key})
+    if len(value) > config.EXCLUDE_PATTERN_MAX_COUNT:
+        _err(u"设置 %s 最多 %d 条" % (key, config.EXCLUDE_PATTERN_MAX_COUNT),
+             {"key": key})
+    out = []
+    for index, item in enumerate(value):
+        if not isinstance(item, str):
+            _err(u"设置 %s 的元素必须是字符串" % key, {"key": key})
+        pattern = item.strip()
+        if not pattern:
+            continue
+        if len(pattern) > config.EXCLUDE_PATTERN_MAX_LEN:
+            _err(u"设置 %s 第 %d 条超过 %d 字符"
+                 % (key, index + 1, config.EXCLUDE_PATTERN_MAX_LEN),
+                 {"key": key, "index": index, "value": pattern})
+        if is_regex:
+            try:
+                re.compile(pattern, re.IGNORECASE)
+            except re.error as exc:
+                _err(u"设置 %s 第 %d 条正则无效: %s" % (key, index + 1, exc),
+                     {"key": key, "index": index, "value": pattern})
+        elif "\x00" in pattern:
+            _err(u"设置 %s 第 %d 条包含非法字符" % (key, index + 1), {"key": key})
+        out.append(pattern)
+    return out
+
+
+def _split_keep_rule(item):
+    """拆分 "rule" / "rule:参数" → (rule, arg)。"""
+    if ":" in item:
+        name, arg = item.split(":", 1)
+        return name.strip(), arg.strip()
+    return item.strip(), ""
+
+
+def _check_keep_rules(key, value):
+    """保留策略规则链（v0043）：有序列表，前一条分胜负即停止。"""
+    if not isinstance(value, list):
+        _err(u"设置 %s 必须是字符串数组" % key, {"key": key})
+    if len(value) > config.KEEP_RULES_MAX:
+        _err(u"设置 %s 最多 %d 条" % (key, config.KEEP_RULES_MAX), {"key": key})
+    out = []
+    for index, item in enumerate(value):
+        if not isinstance(item, str):
+            _err(u"设置 %s 的元素必须是字符串" % key, {"key": key})
+        text = item.strip()
+        if not text:
+            continue
+        if len(text) > config.KEEP_RULE_MAX_LEN:
+            _err(u"设置 %s 第 %d 条超过 %d 字符"
+                 % (key, index + 1, config.KEEP_RULE_MAX_LEN), {"key": key})
+        name, arg = _split_keep_rule(text)
+        if name not in config.KEEP_RULE_NAMES:
+            _err(u"未知的保留规则: %s" % name,
+                 {"key": key, "index": index, "rule": name,
+                  "allowed": list(config.KEEP_RULE_NAMES)})
+        if name in ("path_priority", "filename_priority"):
+            if not arg:
+                _err(u"保留规则 %s 缺少参数" % name,
+                     {"key": key, "index": index, "rule": name})
+            if name == "path_priority":
+                arg = os.path.normpath(arg)
+            else:
+                if arg.startswith("/") and arg.endswith("/") and len(arg) > 2:
+                    try:
+                        re.compile(arg[1:-1], re.IGNORECASE)
+                    except re.error as exc:
+                        _err(u"文件名优先级正则无效: %s" % exc,
+                             {"key": key, "index": index, "value": arg})
+        elif arg:
+            _err(u"保留规则 %s 不接受参数" % name,
+                 {"key": key, "index": index, "rule": name})
+        if name == "path_priority":
+            out.append(u"%s:%s" % (name, arg))
+        elif name == "filename_priority":
+            out.append(u"%s:%s" % (name, arg))
+        else:
+            out.append(name)
     return out
 
 
@@ -382,6 +476,21 @@ def _normalize_value(key, value):
         return value
     if key == "subtitle_concurrency":
         return _check_int(key, value, 1, config.SUBTITLE_CONCURRENCY_MAX)
+    # --- v0043 增量扫描 / 保留规则链 / 排除规则 ---
+    if key == "incremental_scan":
+        return _check_bool(key, value)
+    if key == "keep_rules":
+        return _check_keep_rules(key, value)
+    if key == "exclude_name_regex":
+        return _check_exclude_patterns(key, value, True)
+    if key == "exclude_name_glob":
+        return _check_exclude_patterns(key, value, False)
+    if key == "ignore_file_enabled":
+        return _check_bool(key, value)
+    if key == "media_sidecar_mode":
+        if value not in config.SIDECAR_MODES:
+            _err(u"media_sidecar_mode 只能是 skip/include", {"key": key})
+        return value
     if key == "skip_symlinks":
         # 无论前端传什么，符号链接一律跳过（安全强制）
         if not isinstance(value, bool):

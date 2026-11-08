@@ -1,7 +1,7 @@
 {
-  "generated_at": "2026-11-08T14:23:49+0800",
+  "generated_at": "2026-11-08T20:27:36+0800",
   "summary": {
-    "PASS": 169,
+    "PASS": 178,
     "FAIL": 0,
     "UNVERIFIED": 0
   },
@@ -28,7 +28,7 @@
       "id": "BE-FILE-COUNT",
       "name": "后端 Python 文件数",
       "status": "INFO",
-      "detail": "49"
+      "detail": "53"
     },
     {
       "id": "BE-SRC-HYGIENE",
@@ -52,7 +52,7 @@
       "id": "BE-UNITTEST-LOG",
       "name": "unittest 结果",
       "status": "INFO",
-      "detail": "Ran 459 tests in 118.102s"
+      "detail": "Ran 525 tests in 168.483s"
     },
     {
       "id": "BE-NO-AUTODELETE",
@@ -295,6 +295,36 @@
       "detail": ""
     },
     {
+      "id": "BE-INC-HASH-CACHE",
+      "name": "增量扫描：跨扫描哈希缓存（hash_cache 表 + store 读写 + 扫描器复用未变文件）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "BE-INC-SAMPLE-V2",
+      "name": "快速指纹 v2：大文件头+中+尾三段采样，采样版本参与缓存校验（v0043）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "BE-KEEP-RULES",
+      "name": "保留策略规则链：体积/路径优先级/文件名优先级/内嵌字幕与音轨/修改与访问时间（v0043）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "BE-EXCLUDE-RULES",
+      "name": "排除规则：文件名正则/通配符/.ignore 子集 + 影视附属文件过滤（v0043）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "BE-CACHE-API",
+      "name": "增量缓存管理接口：GET /api/cache、POST /api/cache/clear（仅管理员）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
       "id": "FE-FILES",
       "name": "前端 index.html/app.js/styles.css 存在",
       "status": "PASS",
@@ -507,6 +537,30 @@
     {
       "id": "FE-SUBTITLE-ETA",
       "name": "任务行展示当前步骤消息 / 已耗时 / 预计剩余（v0041）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "FE-KEEP-RULES",
+      "name": "扫描选项与设置页提供保留规则链：主规则 + 路径优先级 + 文件名优先级 + 字幕/音轨优先（v0043）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "FE-EXCLUDE-UI",
+      "name": "扫描选项与设置页提供文件名正则/通配符/.ignore/影视附属文件选项（v0043）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "FE-INCREMENTAL-UI",
+      "name": "结果页支持只看本次新增/变化（new_only）并在组卡片显示增量徽标（v0043）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "FE-CACHE-UI",
+      "name": "设置页存储诊断显示增量缓存条目并提供清理入口（v0043）",
       "status": "PASS",
       "detail": ""
     },
@@ -926,7 +980,7 @@
     },
     {
       "id": "SPK-DIST",
-      "name": "构建产物存在（DuplicateCleaner-1.1.0-0042.spk）",
+      "name": "构建产物存在（DuplicateCleaner-1.1.0-0043.spk）",
       "status": "PASS",
       "detail": ""
     },
@@ -938,7 +992,7 @@
     },
     {
       "id": "SPK-VERSION",
-      "name": "SPK INFO.version 与当前源码 APP_VERSION（1.1.0-0042）一致",
+      "name": "SPK INFO.version 与当前源码 APP_VERSION（1.1.0-0043）一致",
       "status": "PASS",
       "detail": ""
     },

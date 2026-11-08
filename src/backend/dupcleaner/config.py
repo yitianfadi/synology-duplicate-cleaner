@@ -7,9 +7,9 @@ import os
 import re
 
 APP_NAME = "DuplicateCleaner"
-APP_VERSION = "1.1.0-0042"
+APP_VERSION = "1.1.0-0043"
 DISPLAY_NAME = "重复文件清理与字幕"
-SPK_VERSION = "1.1.0-0042"
+SPK_VERSION = "1.1.0-0043"
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8787
@@ -38,6 +38,72 @@ JOB_RESULTS_MEMORY_LIMIT = 5000
 # 计划阶段做“候选+保留文件全量哈希复核”的总字节预算；超出则把哈希复核
 # 推迟到后台删除任务中逐文件执行（删除任务始终会复核全量哈希）。
 PLAN_HASH_VERIFY_BUDGET_BYTES = 512 * 1024 * 1024
+
+# ---------------------------------------------------------------------------
+# 增量扫描 / 跨扫描哈希缓存（v0043，docs/INCREMENTAL_SCAN_CONTRACT.md）
+# ---------------------------------------------------------------------------
+# 缓存键 = (st_dev, st_ino)；用 size + mtime_ns + 算法 + 采样配置校验有效性。
+# 文件内容未变（size/mtime_ns 未变）时直接复用 quick_hash/full_hash，不再读盘。
+INCREMENTAL_SCAN_ENABLED_DEFAULT = True
+HASH_CACHE_MAX_ENTRIES = 300000
+# 快速指纹算法版本：采样方式变化必须递增；旧版本缓存只复用全量哈希，
+# quick_hash 重算（避免新旧指纹混用）。
+QUICK_SAMPLE_VERSION = 2
+# 大文件（>= 阈值）快速指纹改为“头 + 中 + 尾”三段采样，降低“中段被替换”漏检。
+LARGE_FILE_SAMPLE_THRESHOLD_BYTES = 256 * 1024 * 1024
+# 媒体探测缓存（保留策略“优先带字幕/内嵌音轨”用）；按 (dev,inode)+身份校验。
+MEDIA_PROBE_CACHE_MAX_ENTRIES = 50000
+# 影视库附属文件（外挂字幕/海报/nfo 等）：media_sidecar_mode=skip（默认）时
+# 只跳过“与同目录视频同名”的附属文件，不按后缀无差别跳过（避免照片误伤）。
+SIDECAR_EXTENSIONS = frozenset([
+    ".srt", ".ass", ".ssa", ".sub", ".vtt", ".idx", ".sup", ".nfo", ".sfv",
+    ".jpg", ".jpeg", ".png", ".webp", ".bif", ".tbn",
+])
+SIDECAR_MODES = ("skip", "include")
+KNOWN_SIDECAR_NAMES = frozenset([
+    "poster.jpg", "poster.png", "folder.jpg", "folder.png", "fanart.jpg",
+    "fanart.png", "backdrop.jpg", "backdrop.png", "banner.jpg", "banner.png",
+    "logo.png", "clearlogo.png", "clearart.png", "landscape.jpg",
+    "thumb.jpg", "thumb.png", "movie.nfo", "tvshow.nfo", "season.nfo",
+    "albumart.jpg", "albumartsmall.jpg",
+])
+
+# ---------------------------------------------------------------------------
+# 保留策略规则链（v0043）
+# ---------------------------------------------------------------------------
+# keep_rules 为空时沿用 keep_mode/pinned_path 的历史语义；非空时按顺序逐条比较，
+# 前一条分出胜负就停止（平局继续下一条）。规则格式："rule" 或 "rule:参数"。
+KEEP_RULE_NAMES = (
+    "created_latest", "created_earliest",
+    "mtime_latest", "mtime_earliest",
+    "atime_latest", "atime_earliest",
+    "size_largest", "size_smallest",
+    "path_priority",      # 参数 = 目录/路径前缀；命中者优先保留
+    "filename_priority",  # 参数 = 通配符，或 /正则/ 形式；命中者优先保留
+    "has_subtitle_stream",  # 需要媒体探测（仅视频/音频文件有意义）
+    "has_audio_streams",
+)
+KEEP_RULES_MAX = 40
+KEEP_RULE_MAX_LEN = 300
+KEEP_RULE_LABELS = {
+    "created_latest": u"创建时间最晚",
+    "created_earliest": u"创建时间最早",
+    "mtime_latest": u"修改时间最晚",
+    "mtime_earliest": u"修改时间最早",
+    "atime_latest": u"访问时间最晚（不可靠）",
+    "atime_earliest": u"访问时间最早（不可靠）",
+    "size_largest": u"体积最大",
+    "size_smallest": u"体积最小",
+    "path_priority": u"路径优先级",
+    "filename_priority": u"文件名优先级",
+    "has_subtitle_stream": u"带内嵌字幕优先",
+    "has_audio_streams": u"带内嵌音轨优先",
+}
+# 排除规则（v0043）：文件名正则/通配符、.ignore 文件
+EXCLUDE_PATTERN_MAX_COUNT = 50
+EXCLUDE_PATTERN_MAX_LEN = 200
+IGNORE_FILE_NAME = ".ignore"
+IGNORE_FILE_MAX_LINES = 1000
 
 # ---------------------------------------------------------------------------
 # 内容相似度模式常量（docs/SIMILARITY_CONTRACT.md）

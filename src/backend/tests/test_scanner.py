@@ -531,8 +531,12 @@ class ScanFilterTest(ScannerBase):
             write_bytes(os.path.join(self.root, "big%d.txt" % index),
                         shared_content)
         scanner = self.harness.services.scanner
+        # v0043 起默认开启跨扫描哈希缓存：第二次扫描会直接复用哈希（不读盘），
+        # 限速也就不再生效。这里把缓存关掉，保持“暂停/继续/停止”用时的确定性。
+        scan_options = {"concurrency": 1, "hash_rate_mbps": 1,
+                        "incremental_scan": False}
         scan_id = scanner.start_scan(
-            [self.root], [], {"concurrency": 1, "hash_rate_mbps": 1}, "admin")
+            [self.root], [], scan_options, "admin")
         deadline = time.time() + 10
         while time.time() < deadline:
             meta = scanner.get_scan(scan_id)
@@ -551,7 +555,7 @@ class ScanFilterTest(ScannerBase):
         self.assertGreater(meta["stats"]["groups"], 0)
 
         scan_id2 = scanner.start_scan(
-            [self.root], [], {"concurrency": 1, "hash_rate_mbps": 1}, "admin")
+            [self.root], [], scan_options, "admin")
         time.sleep(0.3)
         stopped = scanner.stop(scan_id2)
         self.assertIn(stopped["status"], ("stopping", "stopped"))

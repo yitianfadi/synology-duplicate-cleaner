@@ -31,8 +31,24 @@ export var KEEP_LABEL = {
   pinned_path: '指定路径', manual: '需手动选择', tie: '创建时间相同',
   latest_modified_fallback: '按修改时间保留（无创建时间，最晚修改）',
   earliest_modified_fallback: '按修改时间保留（无创建时间，最早修改）',
-  mtime_tie: '修改时间相同（按修改时间保留）'
+  mtime_tie: '修改时间相同（按修改时间保留）',
+  // v0043：保留规则链（keep_rules）结果
+  latest_modified: '修改时间最晚', earliest_modified: '修改时间最早',
+  size_largest: '体积最大', size_smallest: '体积最小',
+  path_priority: '路径优先级', filename_priority: '文件名优先级',
+  has_subtitle_stream: '带内嵌字幕', has_audio_streams: '内嵌音轨更多',
+  atime_latest: '访问时间最晚（不可靠）', atime_earliest: '访问时间最早（不可靠）'
 };
+// v0043：保留规则链（与后端 config.KEEP_RULE_NAMES 对齐）
+export var KEEP_RULE_LABEL = {
+  created_latest: '创建时间最晚', created_earliest: '创建时间最早',
+  mtime_latest: '修改时间最晚', mtime_earliest: '修改时间最早',
+  atime_latest: '访问时间最晚（不可靠）', atime_earliest: '访问时间最早（不可靠）',
+  size_largest: '体积最大', size_smallest: '体积最小',
+  path_priority: '路径优先级', filename_priority: '文件名优先级',
+  has_subtitle_stream: '带内嵌字幕优先', has_audio_streams: '内嵌音轨更多优先'
+};
+export var SIDECAR_MODE_LABEL = { skip: '跳过附属文件', include: '参与判重' };
 export var MTIME_FALLBACK_LABEL = '无创建时间 · 按修改时间保留';
 export var MTIME_FALLBACK_REASONS = ['latest_modified_fallback', 'earliest_modified_fallback', 'mtime_tie'];
 export var KEEP_MODE_LABEL = { latest: '最晚创建', earliest: '最早创建', pinned: '指定路径' };
@@ -237,6 +253,13 @@ export var DEFAULT_SETTINGS = {
   subtitle_translate_outputs: 'both',
   subtitle_job_limit: 200,
   // v0034/v0037：同时执行的字幕任务数（1..4，默认 1 串行；保存后立即生效，无需重启）
-  subtitle_concurrency: 1
+  subtitle_concurrency: 1,
+  // v0043：增量扫描 / 保留规则链 / 排除规则（与后端 settings.DEFAULT_SETTINGS 对齐）
+  incremental_scan: true,
+  keep_rules: [],
+  exclude_name_regex: [],
+  exclude_name_glob: [],
+  ignore_file_enabled: true,
+  media_sidecar_mode: 'skip'
 };
 export var SIZE_UNITS = { kb: 1024, mb: 1048576, gb: 1073741824 };

@@ -36,7 +36,7 @@ DB_FILENAME = "dupcleaner.sqlite3"
 # + 触发器同步，trigram 不可用时自动回退 LIKE 子串搜索。
 # v6（v0028 目录批量字幕）：新增 subtitle_batches 批次表
 # （docs/SUBTITLE_BATCH_CONTRACT.md §7.3）。
-CURRENT_SCHEMA_VERSION = 7
+CURRENT_SCHEMA_VERSION = 8
 FTS_TABLE = "scan_files_fts"
 FTS_TRIGGER_NAMES = (
     "scan_files_fts_ai",
@@ -89,6 +89,8 @@ _SCHEMA_STATEMENTS = (
         similarity_score INTEGER NOT NULL DEFAULT 0,
         created_epoch REAL NOT NULL DEFAULT 0,
         group_hash TEXT,
+        new_files INTEGER NOT NULL DEFAULT 0,
+        changed_files INTEGER NOT NULL DEFAULT 0,
         PRIMARY KEY (scan_id, ordinal)
     )
     """,
@@ -221,6 +223,47 @@ _SCHEMA_STATEMENTS = (
     CREATE INDEX IF NOT EXISTS idx_scan_file_deletions_scan
         ON scan_file_deletions(scan_id)
     """,
+    # v8（v0043）：跨扫描哈希缓存 + 媒体探测缓存（增量扫描/保留策略用）
+    """
+    CREATE TABLE IF NOT EXISTS hash_cache (
+        dev INTEGER NOT NULL,
+        inode INTEGER NOT NULL,
+        path TEXT NOT NULL,
+        size INTEGER NOT NULL,
+        mtime_ns INTEGER NOT NULL,
+        quick_hash TEXT,
+        full_hash TEXT,
+        algo TEXT NOT NULL,
+        sample_kb INTEGER NOT NULL,
+        sample_version INTEGER NOT NULL,
+        first_scan_id TEXT,
+        last_scan_id TEXT,
+        first_seen_epoch REAL,
+        last_seen_epoch REAL,
+        last_used REAL NOT NULL,
+        PRIMARY KEY (dev, inode)
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_hash_cache_used
+        ON hash_cache(last_used)
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS media_probe_cache (
+        dev INTEGER NOT NULL,
+        inode INTEGER NOT NULL,
+        size INTEGER NOT NULL,
+        mtime_ns INTEGER NOT NULL,
+        payload_json TEXT NOT NULL,
+        probed_epoch REAL NOT NULL,
+        last_used REAL NOT NULL,
+        PRIMARY KEY (dev, inode)
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_media_probe_cache_used
+        ON media_probe_cache(last_used)
+    """,
 )
 
 # v4：plan C 字幕 ASR 分片缓存表（v3 升级时只建表；chunk 行由任务运行时写入）。
@@ -277,6 +320,53 @@ _V7_MIGRATION_STATEMENTS = (
     """
     CREATE INDEX IF NOT EXISTS idx_scan_file_deletions_scan
         ON scan_file_deletions(scan_id)
+    """,
+)
+
+# v8（v0043）：增量扫描所需的跨扫描哈希缓存 + 媒体探测缓存（幂等；行由扫描期写入）。
+# - hash_cache：键 (dev, inode)，内容身份由 size/mtime_ns 校验；命中即复用
+#   quick_hash/full_hash，避免每次全量重算 SHA-256（docs/INCREMENTAL_SCAN_CONTRACT.md）。
+# - media_probe_cache：保留策略“优先带内嵌字幕/音轨”需要 FFmpeg 探测结果缓存。
+_V8_MIGRATION_STATEMENTS = (
+    """
+    CREATE TABLE IF NOT EXISTS hash_cache (
+        dev INTEGER NOT NULL,
+        inode INTEGER NOT NULL,
+        path TEXT NOT NULL,
+        size INTEGER NOT NULL,
+        mtime_ns INTEGER NOT NULL,
+        quick_hash TEXT,
+        full_hash TEXT,
+        algo TEXT NOT NULL,
+        sample_kb INTEGER NOT NULL,
+        sample_version INTEGER NOT NULL,
+        first_scan_id TEXT,
+        last_scan_id TEXT,
+        first_seen_epoch REAL,
+        last_seen_epoch REAL,
+        last_used REAL NOT NULL,
+        PRIMARY KEY (dev, inode)
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_hash_cache_used
+        ON hash_cache(last_used)
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS media_probe_cache (
+        dev INTEGER NOT NULL,
+        inode INTEGER NOT NULL,
+        size INTEGER NOT NULL,
+        mtime_ns INTEGER NOT NULL,
+        payload_json TEXT NOT NULL,
+        probed_epoch REAL NOT NULL,
+        last_used REAL NOT NULL,
+        PRIMARY KEY (dev, inode)
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_media_probe_cache_used
+        ON media_probe_cache(last_used)
     """,
 )
 
@@ -349,6 +439,13 @@ V2_SCAN_GROUP_COLUMNS = (
     ("group_hash", "TEXT"),
 )
 
+# v8（v0043）：增量扫描所需的 scan_groups 索引列（组内新增/变化文件数），
+# 供“只看本次新增/变化的重复组”筛选与徽标；历史组回填 0。
+V8_SCAN_GROUP_COLUMNS = (
+    ("new_files", "INTEGER NOT NULL DEFAULT 0"),
+    ("changed_files", "INTEGER NOT NULL DEFAULT 0"),
+)
+
 # v2 迁移兜底建表/建索引（幂等；正常新建库已在 _SCHEMA_STATEMENTS 中创建）。
 _V2_MIGRATION_STATEMENTS = (
     """
@@ -415,6 +512,24 @@ def group_index_columns(payload, ordinal):
     if match_type in ("similar", "video"):
         similarity = _as_int(payload.get("similarity_score"))
     group_hash = payload.get("hash")
+    # v0043：组内“本次新增 / 内容变化”的文件数（增量扫描筛选与徽标用）。
+    new_files = payload.get("new_files")
+    changed_files = payload.get("changed_files")
+    if not isinstance(new_files, int) or not isinstance(changed_files, int):
+        computed_new = 0
+        computed_changed = 0
+        if isinstance(files, list):
+            for item in files:
+                if not isinstance(item, dict):
+                    continue
+                if item.get("new_since_last_scan"):
+                    computed_new += 1
+                if item.get("changed_since_last_scan"):
+                    computed_changed += 1
+        if not isinstance(new_files, int):
+            new_files = computed_new
+        if not isinstance(changed_files, int):
+            changed_files = computed_changed
     return {
         "group_id": group_identity(payload, ordinal),
         "match_type": match_type,
@@ -423,6 +538,8 @@ def group_index_columns(payload, ordinal):
         "similarity_score": similarity,
         "created_epoch": float(created),
         "group_hash": group_hash if isinstance(group_hash, str) else "",
+        "new_files": max(0, int(new_files)),
+        "changed_files": max(0, int(changed_files)),
     }
 
 
@@ -612,6 +729,8 @@ class Database(object):
                 self._migrate_v6()
             elif next_version == 7:
                 self._migrate_v7()
+            elif next_version == 8:
+                self._migrate_v8()
             version = next_version
             self._conn.execute(
                 "INSERT OR REPLACE INTO schema_meta(key, value) "
@@ -710,6 +829,20 @@ class Database(object):
             conn.execute(statement)
         logger.info(u"SQLite schema 迁移到 v7 完成：已创建 subtitle_batch_groups /"
                     u" scan_file_deletions 表")
+
+    def _migrate_v8(self):
+        """v7→v8：增量扫描哈希缓存 + 扫描组“新增/变化文件数”索引列（幂等）。"""
+        conn = self._conn
+        for statement in _V8_MIGRATION_STATEMENTS:
+            conn.execute(statement)
+        existing = {str(row[1]) for row in
+                    conn.execute("PRAGMA table_info(scan_groups)").fetchall()}
+        for column, declaration in V8_SCAN_GROUP_COLUMNS:
+            if column not in existing:
+                conn.execute("ALTER TABLE scan_groups ADD COLUMN %s %s"
+                             % (column, declaration))
+        logger.info(u"SQLite schema 迁移到 v8 完成：已创建 hash_cache /"
+                    u" media_probe_cache 表并补齐 scan_groups 增量列")
 
     def _backfill_scan_group_columns(self):
         """按 rowid 分批回填 scan_groups 索引列与 scan_files（不整表载入）。"""

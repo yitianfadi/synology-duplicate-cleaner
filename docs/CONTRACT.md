@@ -1,7 +1,7 @@
 # 实现契约（前后端共享，版本 1.0）
 
 > 本文件是前后端并行开发的唯一接口约定。任何一方需要改动字段，先改本文件并在团队任务中说明。
-> 产品名：**DuplicateCleaner**；显示名：**重复文件清理与字幕**；SPK 版本：**1.1.0-0042**。
+> 产品名：**DuplicateCleaner**；显示名：**重复文件清理与字幕**；SPK 版本：**1.1.0-0043**。
 > v1.1 新增内容相似度模式；相似模式字段与行为见 [SIMILARITY_CONTRACT.md](SIMILARITY_CONTRACT.md)，**精准模式规则不变**。
 
 ## 1. 仓库与写入边界
@@ -154,7 +154,7 @@ v0042 增量（升级启动稳定性）：
 ### GET /api/meta
 ```json
 {
- "app_version": "1.1.0-0042",
+ "app_version": "1.1.0-0043",
  "dsm_version": "7.2.2-72806" | "dev",
  "python_version": "3.8.16",
  "creation_time_supported": true,
@@ -227,6 +227,26 @@ v0042 增量（升级启动稳定性）：
 约束：`min_size_bytes <= max_size_bytes`（max=0 除外）；`quick_sample_kb` 4..1024；`concurrency` 1..8；
 `hash_rate_mbps` 0..2000；扩展名必须以 `.` 开头且长度 <= 16。
 
+### v0043 新增设置键（增量扫描 / 保留规则链 / 排除规则）
+
+> 详细语义与验收见 [INCREMENTAL_SCAN_CONTRACT.md](INCREMENTAL_SCAN_CONTRACT.md)。
+
+| key | 类型 | 默认 | 说明 |
+|---|---|---|---|
+| incremental_scan | bool | true | 跨扫描哈希缓存：`(dev,inode)` + size/mtime_ns 未变时复用 quick/full 哈希，不重读文件 |
+| keep_rules | string[] | [] | 保留规则链；空=沿用 keep_mode/pinned_path 历史语义。元素形如 `size_largest`、`path_priority:/volume1/video/keep`、`filename_priority:*2160p*`、`filename_priority:/国语/` |
+| exclude_name_regex | string[] | [] | 文件名正则排除（对 basename，IGNORECASE；≤50 条、≤200 字符/条，非法正则 400） |
+| exclude_name_glob | string[] | [] | 文件名通配符排除（对 basename，不区分大小写；≤50 条） |
+| ignore_file_enabled | bool | true | 读取目录内 `.ignore`（gitignore 常用子集） |
+| media_sidecar_mode | "skip"\|"include" | "skip" | 影视附属文件（与同目录视频同名的字幕/海报/nfo）默认不参与判重 |
+
+`keep_rules` 允许的规则名（顺序即优先级；某条分出唯一胜者即停止，平局继续下一条）：
+`created_latest`、`created_earliest`、`mtime_latest`、`mtime_earliest`、`atime_latest`、`atime_earliest`、
+`size_largest`、`size_smallest`（仅相似/视频组有意义，精准组内大小必然相同）、
+`path_priority:<目录前缀>`、`filename_priority:<通配符或 /正则/>`、
+`has_subtitle_stream`（需要 FFmpeg 探测媒体流，结果缓存）、`has_audio_streams`（音轨数多者优先）。
+规则链耗尽仍平局 → `needs_manual_keep=true`（禁止自动删除）。
+
 ## 7. 扫描
 
 ### POST /api/scans
@@ -266,7 +286,11 @@ v0042 增量（升级启动稳定性）：
     "groups": 0, "duplicate_groups": 0, "duplicate_files": 0, "reclaimable_bytes": 0,
     "bytes_hashed": 0, "bytes_per_sec": 0, "errors": 0,
     "skipped": {"symlink":0,"hidden":0,"empty":0,"extension":0,"size":0,"hardlink":0,
-                "excluded":0,"permission":0,"other":0}
+                "excluded":0,"permission":0,"other":0,"rule":0,"sidecar":0},
+    "new_files":0,"changed_files":0,"unchanged_files":0,
+    "hash_cache_hits":0,"hash_cache_misses":0,"bytes_hashed_reused":0,
+    "new_groups":0,"sidecar_files":0,"media_probe_hits":0,
+    "keep_rule_hits":{},"exclude_rule_errors":0
   },
   "creation_time_unsafe": false,
   "needs_manual_keep_groups": 0,
@@ -275,31 +299,47 @@ v0042 增量（升级启动稳定性）：
  }
 }
 ```
+- v0043：`new_files`/`changed_files`/`unchanged_files` 只统计**候选文件**（进入大小重复组、有判重意义的文件）；
+  `hash_cache_hits` 为复用缓存的候选数，`bytes_hashed_reused` 为因此省下的读取字节数；
+  `skipped.rule` 为命中文件名正则/通配符/`.ignore` 的数量，`skipped.sidecar` 为影视附属文件数量；
+  `keep_rule_hits` 为本次各组保留规则命中分布（规则名 → 组数）。
+- `config` 额外带 `keep_rules` / `incremental_scan` / `media_sidecar_mode` / `ignore_file_enabled` /
+  `exclude_name_regex` / `exclude_name_glob`（便于历史回看扫描参数）。
 
 ### POST /api/scans/{scan_id}/pause | /resume | /stop
 返回 `{"ok":true,"scan":{...}}`；状态必须合法，否则 `INVALID_ARGUMENT`。
 
-### GET /api/scans/{scan_id}/groups?offset=0&limit=100&q=&sort=wasted_desc
+### GET /api/scans/{scan_id}/groups?offset=0&limit=100&q=&sort=wasted_desc&new_only=0
 ```json
-{"ok": true, "total": 12, "offset": 0, "limit": 100, "groups": [{
+{"ok": true, "total": 12, "offset": 0, "limit": 100,
+ "exact_total": 10, "similar_total": 1, "video_total": 1,
+ "new_only": false, "new_total": 0,
+ "groups": [{
   "group_id": "g-000001", "hash": "ab12...", "algo": "sha256", "size": 1024,
   "count": 3, "wasted_bytes": 2048, "keep_file_id": "f-...",
-  "keep_reason": "latest_created|earliest_created|pinned_path|manual|tie",
+  "keep_reason": "latest_created|earliest_created|pinned_path|size_largest|path_priority|filename_priority|has_subtitle_stream|has_audio_streams|manual|tie",
   "needs_manual_keep": false, "creation_time_suspect": false,
-  "time_fallback": false, "keep_time_source": "btime"
+  "time_fallback": false, "keep_time_source": "btime|mtime|atime|rule",
+  "new_files": 1, "changed_files": 0,
   "files": [{
     "file_id":"f-000001","path":"/volume1/photo/a.jpg","name":"a.jpg","size":1024,
     "hash":"ab12...","quick_hash":"...",
     "created_at":"2026-11-01T20:00:00+08:00","created_ts":1762084800,"created_ns":0,
     "created_source":"statx|birthtime|ctime|unknown",
     "modified_at":"...","mtime_ns":1762084800123456789,
-    "inode":123,"dev":45,"is_keep":true,"default_selected":false
+    "accessed_at":"...","atime_ns":1762084800123456789,
+    "inode":123,"dev":45,"is_keep":true,"default_selected":false,
+    "new_since_last_scan": true, "changed_since_last_scan": false,
+    "hash_cached": true, "quick_hash_cached": true, "first_scan_id": "20261101-..."
   }]
 }]}
 ```
 - 默认排序：wasted_bytes 降序；支持 `size_desc`, `created_desc`, `wasted_desc`。
 - `default_selected`：安全组内非保留项为 true；`needs_manual_keep=true` 的组全部 false。
 - `created_at` 为 NAS 本地时区 ISO8601；同时给 epoch 供前端排序。
+- v0043：`new_only=1` 只返回组内存在“本次新增/内容变化”文件的组（`new_total` 为总组数）；
+  历史扫描（v0043 之前）没有增量标记，`new_files`/`changed_files` 为 0，`new_only=1` 返回空。
+  组内标记来自哈希缓存：首次出现的文件 `new_since_last_scan=true`，size/mtime 变化的 `changed_since_last_scan=true`。
 
 ### GET /api/scans/{scan_id}/stats
 完整统计（摘要 + 按后缀/目录 TopN），供结果页头部使用；失败不阻塞。
@@ -392,6 +432,21 @@ Content-Disposition: attachment; filename="duplicate-scan-<id>.csv"
 请求二选一：`{"names":["scan-....log"]}` 或 `{"keep_days":30}`（删除 N 天前的扫描/删除日志文件）。
 响应 `{"ok":true,"deleted":N}`；文件名必须匹配白名单正则；删除动作追加 `log_delete` 审计。
 
+### GET /api/cache（管理员，v0043）
+增量扫描缓存状态：
+```json
+{"ok":true,
+ "hash_cache":{"entries":1234,"bytes":567890,"oldest_epoch":1762000000.0,"newest_epoch":1762084800.0},
+ "hash_cache_max_entries":300000,
+ "media_probe_cache":{"entries":12,"max_entries":50000},
+ "incremental_scan":true}
+```
+
+### POST /api/cache/clear（管理员 + CSRF，v0043）
+请求：`{"confirm": true, "targets": ["hash","media"]}`（`targets` 可选，默认两者都清）。
+响应：`{"ok":true,"cleared":{"hash":true,"media":true}}`；缺少 `confirm=true` 返回 400。
+只清理缓存（哈希缓存/媒体探测缓存），**不删除任何扫描结果、字幕或用户文件**；动作写 `cache_clear` 审计。
+
 ## 9. 文件/目录安全规则（后端强制）
 
 - 只允许共享文件夹根及其子目录；禁止 `/`、`/etc`、`/usr`、`/var`、`/root`、`/volumeX` 根、
@@ -427,4 +482,4 @@ Content-Disposition: attachment; filename="duplicate-scan-<id>.csv"
 - 后端 unittest 覆盖：statx 时间读取降级、哈希分片/限速、重复分组与三种保留策略、
   路径黑名单、删除前重校验、回收站路径生成、CSV、API 鉴权。
 - 前端可用静态检查 + 本地 dev 后端联调；QA 用 dev 模式在临时目录生成重复文件跑完整 API 流程。
-- 打包产物 `dist/DuplicateCleaner-1.1.0-0042.spk` 必须能通过 `tar -tf` 检查，包含 INFO/package.tgz/scripts/conf/ui。
+- 打包产物 `dist/DuplicateCleaner-1.1.0-0043.spk` 必须能通过 `tar -tf` 检查，包含 INFO/package.tgz/scripts/conf/ui。

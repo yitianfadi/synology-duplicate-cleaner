@@ -1,23 +1,23 @@
 {
-  "generated_at": "2026-11-08T14:23:58+0800",
-  "python": "3.12.14 (main, Sep  1 2026, 14:17:39) [MSC v.1944 64 bit (AMD64)]",
+  "generated_at": "2026-11-08T20:27:48+0800",
+  "python": "3.12.9 | packaged by Anaconda, Inc. | (main, Feb  6 2025, 18:49:16) [MSC v.1929 64 bit (AMD64)]",
   "repo": "D:\\code\\zhouyi\\qunhui\\synology-duplicate-cleaner",
   "summary": {
-    "PASS": 157,
+    "PASS": 166,
     "FAIL": 0,
     "UNVERIFIED": 1
   },
   "evidence": {
     "fixture_files": 46,
-    "python": "3.12.14",
+    "python": "3.12.9",
     "birthtime_supported": true,
-    "backend_port": 12977,
+    "backend_port": 3484,
     "csrf_token_len": 43,
     "meta": {
       "ok": true,
-      "app_version": "1.1.0-0042",
+      "app_version": "1.1.0-0043",
       "dsm_version": "dev",
-      "python_version": "3.12.14",
+      "python_version": "3.12.9",
       "creation_time_supported": true,
       "statx_supported": false,
       "platform": "AMD64",
@@ -118,6 +118,12 @@
         "subtitle_job_limit": 200,
         "subtitle_translate_outputs": "both",
         "subtitle_concurrency": 1,
+        "incremental_scan": true,
+        "keep_rules": [],
+        "exclude_name_regex": [],
+        "exclude_name_glob": [],
+        "ignore_file_enabled": true,
+        "media_sidecar_mode": "skip",
         "subtitle_asr_api_key_set": false,
         "subtitle_llm_api_key_set": false
       },
@@ -202,8 +208,8 @@
           ".zip",
           ".zst"
         ],
-        "image_backend": "pillow",
-        "pillow_available": true,
+        "image_backend": "stdlib-png",
+        "pillow_available": false,
         "default_threshold": 85,
         "signature_size": 64,
         "cache": "feature_cache.json"
@@ -296,6 +302,81 @@
           "video_asr_max_sec": 600
         }
       },
+      "scan": {
+        "keep_rules": [
+          {
+            "name": "created_latest",
+            "label": "创建时间最晚",
+            "needs_arg": false
+          },
+          {
+            "name": "created_earliest",
+            "label": "创建时间最早",
+            "needs_arg": false
+          },
+          {
+            "name": "mtime_latest",
+            "label": "修改时间最晚",
+            "needs_arg": false
+          },
+          {
+            "name": "mtime_earliest",
+            "label": "修改时间最早",
+            "needs_arg": false
+          },
+          {
+            "name": "atime_latest",
+            "label": "访问时间最晚（不可靠）",
+            "needs_arg": false
+          },
+          {
+            "name": "atime_earliest",
+            "label": "访问时间最早（不可靠）",
+            "needs_arg": false
+          },
+          {
+            "name": "size_largest",
+            "label": "体积最大",
+            "needs_arg": false
+          },
+          {
+            "name": "size_smallest",
+            "label": "体积最小",
+            "needs_arg": false
+          },
+          {
+            "name": "path_priority",
+            "label": "路径优先级",
+            "needs_arg": true
+          },
+          {
+            "name": "filename_priority",
+            "label": "文件名优先级",
+            "needs_arg": true
+          },
+          {
+            "name": "has_subtitle_stream",
+            "label": "带内嵌字幕优先",
+            "needs_arg": false
+          },
+          {
+            "name": "has_audio_streams",
+            "label": "带内嵌音轨优先",
+            "needs_arg": false
+          }
+        ],
+        "keep_rules_max": 40,
+        "sidecar_modes": [
+          "skip",
+          "include"
+        ],
+        "exclude_pattern_max_count": 50,
+        "exclude_pattern_max_len": 200,
+        "quick_sample_version": 2,
+        "large_file_sample_threshold_bytes": 268435456,
+        "hash_cache_max_entries": 300000,
+        "ignore_file_name": ".ignore"
+      },
       "subtitle": {
         "supported": true,
         "batch_max_items": 500,
@@ -314,7 +395,7 @@
       }
     },
     "subtitle_enumerate_count": 0,
-    "main_scan_id": "20261108-142351-23299e",
+    "main_scan_id": "20261108-202741-42bab6",
     "main_scan_final": "completed",
     "main_stats": {
       "files_seen": 38,
@@ -328,7 +409,7 @@
       "selectable_duplicate_files": 15,
       "selectable_reclaimable_bytes": 4403200,
       "bytes_hashed": 8753152,
-      "bytes_per_sec": 402166530,
+      "bytes_per_sec": 327178737,
       "errors": 0,
       "skipped": {
         "symlink": 0,
@@ -339,8 +420,22 @@
         "hardlink": 1,
         "excluded": 4,
         "permission": 0,
-        "other": 0
+        "other": 0,
+        "rule": 0,
+        "sidecar": 0
       },
+      "new_files": 29,
+      "changed_files": 0,
+      "unchanged_files": 0,
+      "hash_cache_hits": 0,
+      "hash_cache_misses": 29,
+      "bytes_hashed_reused": 0,
+      "rule_excluded_files": 0,
+      "sidecar_files": 0,
+      "media_probe_hits": 0,
+      "keep_rule_hits": {},
+      "new_groups": 12,
+      "exclude_rule_errors": 0,
       "exact_groups": 12,
       "exact_files": 27,
       "similar_groups": 0,
@@ -388,13 +483,13 @@
     },
     "main_groups_total": 12,
     "recycle_plan": {
-      "plan_id": "plan-4127aab43c7aa984",
+      "plan_id": "plan-b06d6a2227564f48",
       "count": 2,
       "bytes": 40960,
       "groups_affected": 1
     },
     "recycle_job": {
-      "job_id": "del-20261108-142352-e35e25",
+      "job_id": "del-20261108-202742-15f1da",
       "status": "completed",
       "done": 2,
       "failed": 0,
@@ -910,7 +1005,7 @@
       "id": "SKIP-04",
       "name": "符号链接跳过（当前环境无法创建 symlink）",
       "status": "UNVERIFIED",
-      "detail": "os.symlink failed: [WinError 1314] 客户端没有所需的特权。: 'C:\\\\Users\\\\zhouyi\\\\AppData\\\\Local\\\\Temp\\\\dupqa-zkgyk7lo\\\\qa-share-a\\\\dup' -> 'C:\\\\Users\\\\zhouyi\\\\AppData\\\\Local\\\\Temp\\\\dupqa-zkgyk7lo\\\\qa-share-a\\\\link_to_dup'"
+      "detail": "os.symlink failed: [WinError 1314] 客户端没有所需的特权。: 'C:\\\\Users\\\\zhouyi\\\\AppData\\\\Local\\\\Temp\\\\dupqa-2ukkw9a8\\\\qa-share-a\\\\dup' -> 'C:\\\\Users\\\\zhouyi\\\\AppData\\\\Local\\\\Temp\\\\dupqa-2ukkw9a8\\\\qa-share-a\\\\link_to_dup'"
     },
     {
       "id": "HARDLINK-01",
@@ -1311,6 +1406,60 @@
     {
       "id": "PAUSE-04",
       "name": "扫描可停止（stop -> stopped/completed）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "INC-01",
+      "name": "v0043 首次扫描：排除规则与影视附属文件被跳过",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "INC-02",
+      "name": "播放附属文件过滤后，同尺寸的 mkv 仍正常成组",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "INC-03",
+      "name": "v0043 第二次扫描复用哈希缓存（bytes_hashed=0 且命中>0）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "INC-04",
+      "name": "v0043 新增文件被标记，new_only=1 只返回增量组",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "KEEP-01",
+      "name": "v0043 keep_rules 文件名优先级命中并作为保留项",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "CACHE-01",
+      "name": "v0043 GET /api/cache 返回缓存条目",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "CACHE-02",
+      "name": "v0043 POST /api/cache/clear 缺少 confirm 被拒绝",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "CACHE-03",
+      "name": "v0043 清理缓存成功（只清缓存）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "CACHE-04",
+      "name": "v0043 清空缓存后扫描重新计算哈希",
       "status": "PASS",
       "detail": ""
     },

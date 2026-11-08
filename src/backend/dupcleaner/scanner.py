@@ -15,19 +15,22 @@ from __future__ import absolute_import
 import concurrent.futures
 import copy
 import csv
+import fnmatch
 import heapq
 import logging
 import os
+import re
 import secrets
 import stat as stat_module
 import threading
 import time
 import traceback
 
-from . import (config, fsutil, hashing, settings as settings_module,
+from . import (config, excluder, fsutil, hashing, settings as settings_module,
                similarity, timeutil, video_similarity, xlsx)
 from .errors import ApiError, invalid, not_found
 from .store import RESUME_STAGES
+from .store import sqlite_int as store_sqlite_int
 
 logger = logging.getLogger("dupcleaner.scanner")
 
@@ -64,18 +67,27 @@ class ScanLimitError(Exception):
 
 
 class FileRecord(object):
-    __slots__ = ("path", "size", "mtime_ns", "inode", "dev", "nlink",
-                 "quick_hash", "hash")
+    __slots__ = ("path", "size", "mtime_ns", "atime_ns", "inode", "dev", "nlink",
+                 "quick_hash", "hash", "first_scan_id", "cache_state",
+                 "cache_quick", "cache_full")
 
-    def __init__(self, path, size, mtime_ns, inode, dev, nlink):
+    def __init__(self, path, size, mtime_ns, inode, dev, nlink, atime_ns=0):
         self.path = path
         self.size = int(size)
         self.mtime_ns = int(mtime_ns)
+        self.atime_ns = int(atime_ns or 0)
         self.inode = int(inode)
         self.dev = int(dev)
         self.nlink = int(nlink)
         self.quick_hash = None
         self.hash = None
+        # 增量扫描标记（v0043）：
+        # first_scan_id 首次见到的扫描 ID；cache_state = new/changed/same；
+        # cache_quick/cache_full 表示对应哈希来自哈希缓存（不是本次现算）。
+        self.first_scan_id = None
+        self.cache_state = "new"
+        self.cache_quick = False
+        self.cache_full = False
 
     def to_checkpoint(self):
         """断点快照（docs/RESUME_CONTRACT.md §2）。"""
@@ -83,11 +95,14 @@ class FileRecord(object):
             "path": self.path,
             "size": self.size,
             "mtime_ns": self.mtime_ns,
+            "atime_ns": self.atime_ns,
             "inode": self.inode,
             "dev": self.dev,
             "nlink": self.nlink,
             "quick_hash": self.quick_hash,
             "hash": self.hash,
+            "first_scan_id": self.first_scan_id,
+            "cache_state": self.cache_state,
         }
 
     @classmethod
@@ -102,13 +117,20 @@ class FileRecord(object):
                          int(item.get("mtime_ns") or 0),
                          int(item.get("inode") or 0),
                          int(item.get("dev") or 0),
-                         int(item.get("nlink") or 1))
+                         int(item.get("nlink") or 1),
+                         int(item.get("atime_ns") or 0))
         except (TypeError, ValueError):
             return None
         quick_hash = item.get("quick_hash")
         digest = item.get("hash")
         record.quick_hash = quick_hash if isinstance(quick_hash, str) else None
         record.hash = digest if isinstance(digest, str) else None
+        first_scan_id = item.get("first_scan_id")
+        record.first_scan_id = (first_scan_id
+                                if isinstance(first_scan_id, str) else None)
+        cache_state = item.get("cache_state")
+        record.cache_state = (cache_state if cache_state in ("new", "changed",
+                                                             "same") else "new")
         return record
 
 
@@ -123,6 +145,9 @@ def _empty_skipped():
         "excluded": 0,
         "permission": 0,
         "other": 0,
+        # v0043：命中文件名正则/通配符/.ignore 排除，或影视库附属文件
+        "rule": 0,
+        "sidecar": 0,
     }
 
 
@@ -142,6 +167,19 @@ def _empty_stats():
         "bytes_per_sec": 0,
         "errors": 0,
         "skipped": _empty_skipped(),
+        # v0043：增量扫描（跨扫描哈希缓存）与排除规则统计
+        "new_files": 0,
+        "changed_files": 0,
+        "unchanged_files": 0,
+        "hash_cache_hits": 0,
+        "hash_cache_misses": 0,
+        "bytes_hashed_reused": 0,
+        "rule_excluded_files": 0,
+        "sidecar_files": 0,
+        "media_probe_hits": 0,
+        "keep_rule_hits": {},
+        "new_groups": 0,
+        "exclude_rule_errors": 0,
         # 相似度模式统计（docs/SIMILARITY_CONTRACT.md §3.4）
         "exact_groups": 0,
         "exact_files": 0,
@@ -221,6 +259,127 @@ def _choose_by_mtime(files, latest):
     return keeper, reason, False, False
 
 
+_KEEP_RULE_REASONS = {
+    "created_latest": "latest_created",
+    "created_earliest": "earliest_created",
+    "mtime_latest": "latest_modified",
+    "mtime_earliest": "earliest_modified",
+    "atime_latest": "atime_latest",
+    "atime_earliest": "atime_earliest",
+    "size_largest": "size_largest",
+    "size_smallest": "size_smallest",
+    "path_priority": "path_priority",
+    "filename_priority": "filename_priority",
+    "has_subtitle_stream": "has_subtitle_stream",
+    "has_audio_streams": "has_audio_streams",
+}
+# 这些规则取最大值为优，其余取最小值为优（has_audio_streams 取音轨数最多）。
+_KEEP_RULE_PREFER_MAX = (
+    "created_latest", "mtime_latest", "atime_latest", "size_largest",
+    "path_priority", "filename_priority", "has_subtitle_stream",
+    "has_audio_streams",
+)
+
+
+def _split_keep_rule(item):
+    if ":" in item:
+        name, arg = item.split(":", 1)
+        return name.strip(), arg.strip()
+    return item.strip(), ""
+
+
+def _filename_priority_match(pattern, path):
+    name = os.path.basename(path or "")
+    if not pattern:
+        return False
+    if pattern.startswith("/") and pattern.endswith("/") and len(pattern) > 2:
+        try:
+            return re.search(pattern[1:-1], name, re.IGNORECASE) is not None
+        except re.error:
+            return False
+    return fnmatch.fnmatchcase(name.lower(), pattern.lower())
+
+
+def choose_keeper_rules(files, options):
+    """保留规则链求值（v0043）；keep_rules 为空时返回 None（回退历史语义）。
+
+    返回与 choose_keeper 相同的 6 元组。规则链按顺序逐条比较候选集，
+    某条规则分出唯一胜者即停止；全部平局则确定性选一个但仍要求人工确认。
+    """
+    rules = []
+    for raw in (options.get("keep_rules") or []):
+        if not isinstance(raw, str):
+            continue
+        name, arg = _split_keep_rule(raw)
+        if name in config.KEEP_RULE_NAMES:
+            rules.append((name, arg))
+    if not rules:
+        return None
+
+    all_trusted = all(_time_key(info) is not None for info in files)
+    suspect = any(info.get("created_source") in ("ctime", "unknown")
+                  for info in files)
+    time_fallback = not all_trusted
+    candidates = list(range(len(files)))
+    direction = None
+    for name, arg in rules:
+        values = []
+        for index in candidates:
+            info = files[index]
+            if name in ("created_latest", "created_earliest"):
+                key = _time_key(info) if all_trusted else None
+                values.append(key if key is not None else _mtime_key(info))
+            elif name in ("mtime_latest", "mtime_earliest"):
+                values.append(_mtime_key(info))
+            elif name in ("atime_latest", "atime_earliest"):
+                values.append(int(info.get("atime_ns") or 0))
+            elif name in ("size_largest", "size_smallest"):
+                values.append(int(info.get("size") or 0))
+            elif name == "path_priority":
+                path = info.get("path") or ""
+                values.append(1 if (path == arg or fsutil.is_under(path, arg))
+                              else 0)
+            elif name == "filename_priority":
+                values.append(1 if _filename_priority_match(
+                    arg, info.get("path") or "") else 0)
+            elif name == "has_subtitle_stream":
+                values.append(1 if int(info.get("subtitle_stream_count") or 0) > 0
+                              else 0)
+            elif name == "has_audio_streams":
+                values.append(int(info.get("audio_stream_count") or 0))
+            else:
+                values.append(0)
+        want_max = name in _KEEP_RULE_PREFER_MAX
+        best = max(values) if want_max else min(values)
+        direction = want_max
+        winners = [candidates[position] for position, value in enumerate(values)
+                   if value == best]
+        if len(winners) == 1:
+            keeper = winners[0]
+            reason = _KEEP_RULE_REASONS.get(name, name)
+            keep_fallback = False
+            keep_source = "rule"
+            if name == "created_latest":
+                reason = "latest_created" if all_trusted else (
+                    "latest_modified_fallback")
+                keep_source = "btime" if all_trusted else "mtime"
+                keep_fallback = not all_trusted
+            elif name == "created_earliest":
+                reason = "earliest_created" if all_trusted else (
+                    "earliest_modified_fallback")
+                keep_source = "btime" if all_trusted else "mtime"
+                keep_fallback = not all_trusted
+            elif name in ("mtime_latest", "mtime_earliest"):
+                keep_source = "mtime"
+            elif name in ("atime_latest", "atime_earliest"):
+                keep_source = "atime"
+            return (keeper, reason, False, suspect, keep_fallback, keep_source)
+        if len(winners) < len(candidates):
+            candidates = winners
+    keeper = max(candidates) if direction else min(candidates)
+    return keeper, "tie", True, suspect, False, "rule"
+
+
 def choose_keeper(files, options):
     """选择保留文件。
 
@@ -235,6 +394,10 @@ def choose_keeper(files, options):
     - pinned：命中路径优先保留；btime 不可信时仍保留 pinned（无需人工）；
       未命中任何文件时按 mtime 兜底（新的确定性行为，不再 needs_manual）。
     """
+    # v0043：配置了保留规则链时优先使用规则链（空则保持下方历史语义）。
+    chain = choose_keeper_rules(files, options)
+    if chain is not None:
+        return chain
     keep_mode = options.get("keep_mode") or "latest"
     pinned = (options.get("pinned_path") or "").strip()
     all_trusted = all(_time_key(file_info) is not None for file_info in files)
@@ -318,6 +481,10 @@ class ScanState(object):
         self.thread = None
         self.last_persist = 0.0
         self.keep_reason = options.get("keep_mode") or "latest"
+        # v0043：排除规则（正则/通配符/.ignore）与保留规则链
+        self.excluder = None
+        self.keep_rules = list(options.get("keep_rules") or [])
+        self.media_engine = None
         # 暂停/升级断点（docs/RESUME_CONTRACT.md）
         self.pause_reason = ""
         self.resumable = False
@@ -360,7 +527,18 @@ class ScanState(object):
                     "roots": list(self.roots),
                     "excludes": list(self.excludes),
                     "keep_mode": self.options.get("keep_mode"),
+                    "keep_rules": list(self.options.get("keep_rules") or []),
                     "hash_algo": self.options.get("hash_algo"),
+                    "incremental_scan": bool(
+                        self.options.get("incremental_scan", True)),
+                    "media_sidecar_mode": self.options.get(
+                        "media_sidecar_mode") or "skip",
+                    "ignore_file_enabled": bool(
+                        self.options.get("ignore_file_enabled", True)),
+                    "exclude_name_regex": list(
+                        self.options.get("exclude_name_regex") or []),
+                    "exclude_name_glob": list(
+                        self.options.get("exclude_name_glob") or []),
                 },
                 "user": self.user,
             }
@@ -504,6 +682,17 @@ class ScanManager(object):
             u"video_similarity_enabled: %s" % state.options.get("video_similarity_enabled"),
             u"video_similarity_threshold: %s" % state.options.get(
                 "video_similarity_threshold"),
+            u"incremental_scan: %s" % state.options.get("incremental_scan"),
+            u"keep_rules: %s" % (
+                ", ".join(state.options.get("keep_rules") or []) or "(none)"),
+            u"exclude_name_regex: %s" % (
+                ", ".join(state.options.get("exclude_name_regex") or [])
+                or "(none)"),
+            u"exclude_name_glob: %s" % (
+                ", ".join(state.options.get("exclude_name_glob") or [])
+                or "(none)"),
+            u"ignore_file_enabled: %s" % state.options.get("ignore_file_enabled"),
+            u"media_sidecar_mode: %s" % state.options.get("media_sidecar_mode"),
             u"",
         ]
         return "\n".join(lines) + "\n"
@@ -805,7 +994,7 @@ class ScanManager(object):
         return meta
 
     def groups_page(self, scan_id, offset=0, limit=100, q=None,
-                    sort="wasted_desc", match_type=None):
+                    sort="wasted_desc", match_type=None, new_only=False):
         self.require_completed(scan_id)
         try:
             offset = max(0, int(offset or 0))
@@ -826,15 +1015,15 @@ class ScanManager(object):
         # v2：SQL 分页/搜索/排序（不遍历全部 group payload）。
         page = self.store.query_scan_groups_page(
             scan_id, offset=offset, limit=limit, needle=needle,
-            sort=sort, match_type=match_type)
+            sort=sort, match_type=match_type, new_only=bool(new_only))
         if page is not None:
             return page
         # 兼容旧 JSON / v1 未回填数据：回退逐组内存实现（响应不变）。
         return self._groups_page_memory(scan_id, offset, limit, needle, sort,
-                                        match_type)
+                                        match_type, new_only=bool(new_only))
 
     def _groups_page_memory(self, scan_id, offset, limit, needle, sort,
-                            match_type):
+                            match_type, new_only=False):
         def group_match_type(group):
             return group.get("match_type") or "exact"
 
@@ -867,9 +1056,20 @@ class ScanManager(object):
                 return (similarity, wasted, size, group.get("group_id") or "")
             return (wasted, size, group.get("group_id") or "")
 
+        def group_has_new(group):
+            if (int(group.get("new_files") or 0) > 0
+                    or int(group.get("changed_files") or 0) > 0):
+                return True
+            for file_info in group.get("files") or []:
+                if (file_info.get("new_since_last_scan")
+                        or file_info.get("changed_since_last_scan")):
+                    return True
+            return False
+
         exact_total = 0
         similar_total = 0
         video_total = 0
+        new_total = 0
         total = 0
         wanted = offset + limit
         top = []
@@ -883,7 +1083,12 @@ class ScanManager(object):
                 video_total += 1
             else:
                 exact_total += 1
+            has_new = group_has_new(group)
+            if has_new:
+                new_total += 1
             if match_type is not None and group_match_type(group) != match_type:
+                continue
+            if new_only and not has_new:
                 continue
             if not matches(group):
                 continue
@@ -904,6 +1109,8 @@ class ScanManager(object):
             "exact_total": exact_total,
             "similar_total": similar_total,
             "video_total": video_total,
+            "new_only": bool(new_only),
+            "new_total": new_total,
             "groups": page,
         }
 
@@ -1115,6 +1322,8 @@ class ScanManager(object):
                 hashed_buckets = self._hash_stage(state, candidate_buckets,
                                                   reuse_existing=True)
                 candidate_buckets = None
+                # v0043：本次算出的（或复用的）哈希写回跨扫描缓存
+                self._save_hash_cache(state, records)
                 stage = "similarity"
                 self._save_checkpoint(state, "similarity")
                 self._check_control(state)
@@ -1550,23 +1759,133 @@ class ScanManager(object):
         records = []
         seen_inodes = {}
         max_files = int(state.options.get("max_files") or config.MAX_FILES_DEFAULT)
+        # v0043：排除规则（文件名正则/通配符/.ignore）。构造失败不影响扫描。
+        try:
+            state.excluder = excluder.ExcludeRules(
+                name_regex=state.options.get("exclude_name_regex") or [],
+                name_glob=state.options.get("exclude_name_glob") or [],
+                use_ignore_files=bool(
+                    state.options.get("ignore_file_enabled", True)))
+        except Exception:  # pragma: no cover - 防御性兜底
+            state.excluder = None
+            logger.warning(u"初始化排除规则失败", exc_info=True)
         self._set_progress(state, "enumerate", 0.02, u"正在枚举文件")
         for root in state.roots:
             if self._is_excluded(state, root):
                 continue
             self._walk(state, root, records, seen_inodes, max_files)
+        self._apply_sidecar_filter(state, records)
         records.sort(key=lambda record: record.path)
         with state.lock:
             state.stats["files_scanned"] = len(records)
+        errors = list(getattr(state.excluder, "errors", None) or [])
+        with state.lock:
+            state.stats["exclude_rule_errors"] = len(errors)
+        if errors:
+            lines = [u"排除规则告警（%d 条）：" % len(errors)]
+            for item in errors[:50]:
+                lines.append(u"- [%s] %s：%s"
+                             % (item.get("source"), item.get("pattern"),
+                                item.get("message")))
+            try:
+                self.store.write_log("scan-%s.log" % state.scan_id,
+                                     "\n".join(lines) + "\n", append=True)
+            except Exception:  # pragma: no cover
+                pass
         self._set_progress(state, "size", 0.18,
-                           u"枚举完成：%d 个文件" % len(records))
+                           u"枚举完成：%d 个文件（排除规则跳过 %d，附属文件 %d）"
+                           % (len(records),
+                              int(state.stats.get("skipped", {}).get("rule") or 0),
+                              int(state.stats.get("sidecar_files") or 0)))
         return records
+
+    def _apply_sidecar_filter(self, state, records):
+        """影视库附属文件过滤（v0043）：只跳过“与同目录视频同名”的附属文件。
+
+        不按后缀无差别跳过：照片库里没有同名视频的 jpg 仍然正常参与判重。
+        """
+        mode = state.options.get("media_sidecar_mode") or "skip"
+        if mode != "skip" or not records:
+            return
+        media_stems = {}
+        video_extensions = set(
+            str(item).lower()
+            for item in (state.options.get("video_extensions")
+                         or config.DEFAULT_VIDEO_EXTENSIONS))
+        for record in records:
+            extension = fsutil.extension_of(record.path).lower()
+            if extension not in video_extensions:
+                continue
+            directory = os.path.dirname(record.path)
+            stem = os.path.splitext(os.path.basename(record.path))[0]
+            media_stems.setdefault(directory, set()).add(stem)
+        if not media_stems:
+            return
+        kept = []
+        sidecar_count = 0
+        for record in records:
+            extension = fsutil.extension_of(record.path).lower()
+            if extension not in config.SIDECAR_EXTENSIONS:
+                kept.append(record)
+                continue
+            stems = media_stems.get(os.path.dirname(record.path))
+            if not stems:
+                kept.append(record)
+                continue
+            name = os.path.basename(record.path)
+            stem = os.path.splitext(name)[0]
+            if (name.lower() in config.KNOWN_SIDECAR_NAMES
+                    or self._sidecar_stem_matches(stem, stems)):
+                sidecar_count += 1
+                continue
+            kept.append(record)
+        if sidecar_count:
+            with state.lock:
+                state.stats["sidecar_files"] = sidecar_count
+                state.stats["skipped"]["sidecar"] = (
+                    int(state.stats["skipped"].get("sidecar") or 0) + sidecar_count)
+        records[:] = kept
+
+    @staticmethod
+    def _sidecar_stem_matches(stem, media_stems):
+        if not stem:
+            return False
+        if stem in media_stems:
+            return True
+        for media_stem in media_stems:
+            if not media_stem:
+                continue
+            for separator in (".", "-", "_", " "):
+                if stem.startswith(media_stem + separator):
+                    return True
+        return False
 
     def _is_excluded(self, state, path):
         for exclude in state.excludes:
             if fsutil.is_under(path, exclude):
                 return True
         return False
+
+    def _load_ignore_file(self, state, directory):
+        """读取当前目录的 .ignore（v0043）；失败只记录、不中断扫描。"""
+        rules = state.excluder
+        if rules is None:
+            return 0
+        try:
+            return rules.load_ignore(directory)
+        except Exception:  # pragma: no cover - 防御性兜底
+            logger.warning(u"读取 .ignore 失败：%s", directory, exc_info=True)
+            return 0
+
+    def _match_exclude_rule(self, state, path, name, is_dir=False):
+        """命中文件名正则/通配符/.ignore 时返回 True（v0043）。"""
+        rules = state.excluder
+        if rules is None:
+            return False
+        try:
+            return bool(rules.match(path, name=name, is_dir=is_dir))
+        except Exception:  # pragma: no cover
+            return False
 
     def _walk(self, state, root, records, seen_inodes, max_files):
         skip_hidden = bool(state.options.get("skip_hidden", True))
@@ -1585,6 +1904,7 @@ class ScanManager(object):
         while stack:
             current = stack.pop()
             self._check_control(state)
+            self._load_ignore_file(state, current)
             with state.lock:
                 state.current_path = current
                 state.stats["dirs_scanned"] += 1
@@ -1629,6 +1949,10 @@ class ScanManager(object):
                     if self._is_excluded(state, entry.path):
                         self._inc_skip(state, "excluded")
                         continue
+                    if self._match_exclude_rule(state, entry.path, name,
+                                                is_dir=True):
+                        self._inc_skip(state, "rule")
+                        continue
                     stack.append(entry.path)
                     continue
 
@@ -1645,6 +1969,9 @@ class ScanManager(object):
                     continue
                 if skip_hidden and fsutil.is_hidden_name(name):
                     self._inc_skip(state, "hidden")
+                    continue
+                if self._match_exclude_rule(state, entry.path, name):
+                    self._inc_skip(state, "rule")
                     continue
 
                 extension = fsutil.extension_of(name)
@@ -1693,8 +2020,10 @@ class ScanManager(object):
 
                 mtime_ns = int(getattr(st, "st_mtime_ns",
                                        int(st.st_mtime * 1000000000)))
+                atime_ns = int(getattr(st, "st_atime_ns",
+                                       int(getattr(st, "st_atime", 0) * 1000000000)))
                 records.append(FileRecord(entry.path, size, mtime_ns, inode,
-                                          dev, nlink))
+                                          dev, nlink, atime_ns))
             if processed % 512 == 0:
                 self._set_progress(state, "enumerate", 0.05,
                                    u"正在枚举文件…")
@@ -1707,13 +2036,145 @@ class ScanManager(object):
         for record in records:
             by_size.setdefault(record.size, []).append(record)
         buckets = [items for items in by_size.values() if len(items) >= 2]
+        del by_size
         candidate_files = sum(len(items) for items in buckets)
         with state.lock:
             state.stats["candidate_files"] = candidate_files
+        # v0043：增量扫描——只对“大小重复”的候选文件查跨扫描哈希缓存，
+        # 命中即复用 quick_hash/full_hash（不读文件内容）。
+        candidates = []
+        for items in buckets:
+            candidates.extend(items)
+        self._load_hash_cache(state, candidates)
+        del candidates
         self._set_progress(state, "size", 0.2,
                            u"按大小分组：%d 个候选文件" % candidate_files)
-        del by_size
         return buckets
+
+    # ------------------------------------------------------------------
+    # 增量扫描：跨扫描哈希缓存（v0043，docs/INCREMENTAL_SCAN_CONTRACT.md）
+    # ------------------------------------------------------------------
+    def _load_hash_cache(self, state, records):
+        """为候选文件填充缓存哈希与增量标记（new/changed/same）。
+
+        命中条件：同一 (dev, inode) 且 size/mtime_ns 未变（内容未变）；
+        quick_hash 额外要求采样配置与版本一致，full_hash 只要求算法一致。
+        """
+        if not records:
+            return
+        enabled = bool(state.options.get("incremental_scan", True))
+        algo = state.options.get("hash_algo") or "sha256"
+        sample_kb = int(state.options.get("quick_sample_kb") or 64)
+        version = config.QUICK_SAMPLE_VERSION
+        rows = {}
+        if enabled:
+            try:
+                rows = self.store.hash_cache_get(
+                    [(store_sqlite_int(record.dev), store_sqlite_int(record.inode))
+                     for record in records])
+            except Exception:  # pragma: no cover - 缓存失败不影响扫描正确性
+                logger.warning(u"读取哈希缓存失败，本次全量计算", exc_info=True)
+                rows = {}
+        hits = 0
+        misses = 0
+        new_files = 0
+        changed_files = 0
+        unchanged_files = 0
+        reused_bytes = 0
+        touched = []
+        for record in records:
+            row = rows.get((store_sqlite_int(record.dev),
+                            store_sqlite_int(record.inode)))
+            if row is None:
+                record.cache_state = "new"
+                new_files += 1
+                misses += 1
+                continue
+            same_identity = (int(row.get("size") or 0) == record.size
+                             and int(row.get("mtime_ns") or 0) == record.mtime_ns)
+            first_scan_id = row.get("first_scan_id")
+            if isinstance(first_scan_id, str) and first_scan_id:
+                record.first_scan_id = first_scan_id
+            if not same_identity:
+                record.cache_state = "changed"
+                changed_files += 1
+                misses += 1
+                continue
+            record.cache_state = "same"
+            unchanged_files += 1
+            algo_same = str(row.get("algo") or "") == algo
+            quick_ok = (algo_same
+                        and int(row.get("sample_kb") or 0) == sample_kb
+                        and int(row.get("sample_version") or 0) == version
+                        and isinstance(row.get("quick_hash"), str)
+                        and bool(row.get("quick_hash")))
+            full_ok = (algo_same
+                       and isinstance(row.get("full_hash"), str)
+                       and bool(row.get("full_hash")))
+            if full_ok:
+                record.hash = row["full_hash"]
+                record.cache_full = True
+                reused_bytes += record.size
+            if quick_ok:
+                record.quick_hash = row["quick_hash"]
+                record.cache_quick = True
+            if quick_ok or full_ok:
+                hits += 1
+                touched.append((store_sqlite_int(record.dev),
+                                store_sqlite_int(record.inode)))
+            else:
+                misses += 1
+        if touched:
+            try:
+                self.store.hash_cache_touch(touched)
+            except Exception:  # pragma: no cover
+                pass
+        with state.lock:
+            stats = state.stats
+            stats["new_files"] = new_files
+            stats["changed_files"] = changed_files
+            stats["unchanged_files"] = unchanged_files
+            stats["hash_cache_hits"] = hits
+            stats["hash_cache_misses"] = misses
+            stats["bytes_hashed_reused"] = reused_bytes
+
+    def _save_hash_cache(self, state, records):
+        """把本次候选文件的哈希写回缓存（未变文件下次直接复用）。"""
+        if not records or not bool(state.options.get("incremental_scan", True)):
+            return
+        algo = state.options.get("hash_algo") or "sha256"
+        sample_kb = int(state.options.get("quick_sample_kb") or 64)
+        version = config.QUICK_SAMPLE_VERSION
+        now = time.time()
+        rows = []
+        for record in records:
+            if record.inode <= 0 or record.dev < 0:
+                continue
+            if not record.quick_hash and not record.hash:
+                continue
+            rows.append({
+                "dev": record.dev,
+                "inode": record.inode,
+                "path": record.path,
+                "size": record.size,
+                "mtime_ns": record.mtime_ns,
+                "quick_hash": record.quick_hash,
+                "full_hash": record.hash,
+                "algo": algo,
+                "sample_kb": sample_kb,
+                "sample_version": version,
+                "first_scan_id": record.first_scan_id or state.scan_id,
+                "last_scan_id": state.scan_id,
+                "first_seen_epoch": now,
+                "last_seen_epoch": now,
+            })
+        if not rows:
+            return
+        try:
+            self.store.hash_cache_put_many(rows)
+            self.store.hash_cache_prune(config.HASH_CACHE_MAX_ENTRIES)
+        except Exception:  # pragma: no cover - 缓存失败只影响下次速度
+            logger.warning(u"写入哈希缓存失败：%s", exc_info=True)
 
     # ------------------------------------------------------------------
     # 阶段三：快速指纹（哈希计算点：头尾采样）
@@ -1737,7 +2198,8 @@ class ScanManager(object):
                 try:
                     # 哈希计算点：快速采样指纹（非最终判定）
                     record.quick_hash = hashing.quick_sample_hash(
-                        record.path, algo=algo, sample_kb=sample_kb)
+                        record.path, algo=algo, sample_kb=sample_kb,
+                        size=record.size)
                 except (OSError, IOError):
                     self._inc_skip(state, "permission")
                     self._inc_error(state)
@@ -2224,14 +2686,146 @@ class ScanManager(object):
             "created_unsafe": bool(created.get("created_unsafe", True)),
             "modified_at": timeutil.iso_local(modified_sec),
             "mtime_ns": record.mtime_ns,
+            "atime_ns": int(getattr(record, "atime_ns", 0) or 0),
+            "accessed_at": timeutil.iso_local(
+                int(getattr(record, "atime_ns", 0) or 0) // 1000000000 or None),
             "inode": record.inode,
             "dev": record.dev,
             "match_type": match_type,
             "similarity_score": 100 if match_type == "exact" else 0,
             "is_keep": False,
             "default_selected": False,
+            # v0043 增量扫描标记：new/changed 相对“上次扫描的哈希缓存”判定
+            "new_since_last_scan": record.cache_state == "new",
+            "changed_since_last_scan": record.cache_state == "changed",
+            "hash_cached": bool(getattr(record, "cache_full", False)),
+            "quick_hash_cached": bool(getattr(record, "cache_quick", False)),
+            "first_scan_id": getattr(record, "first_scan_id", None),
         }
         return file_info
+
+    def _needs_media_probe(self, state):
+        for rule in (state.options.get("keep_rules") or []):
+            if not isinstance(rule, str):
+                continue
+            name = rule.split(":", 1)[0].strip()
+            if name in ("has_subtitle_stream", "has_audio_streams"):
+                return True
+        return False
+
+    def _media_probe_for_group(self, state, file_infos):
+        """为保留规则“优先带内嵌字幕/音轨”探测媒体流（v0043）。
+
+        只对音视频后缀探测；结果进 media_probe_cache（按 dev/inode+身份校验），
+        非音视频文件与探测失败一律计 0，不影响其它规则与删除安全。
+        """
+        if not file_infos or not self._needs_media_probe(state):
+            return
+        media_extensions = set(
+            str(item).lower()
+            for item in (state.options.get("video_extensions")
+                         or config.DEFAULT_VIDEO_EXTENSIONS))
+        media_extensions.update((
+            ".mp3", ".m4a", ".aac", ".flac", ".wav", ".ogg", ".opus", ".wma",
+            ".ape", ".mka", ".m4b",
+        ))
+        keys = []
+        targets = []
+        for info in file_infos:
+            extension = fsutil.extension_of(info.get("name") or info.get("path")
+                                            or "").lower()
+            if extension not in media_extensions:
+                info["audio_stream_count"] = 0
+                info["subtitle_stream_count"] = 0
+                info["media_probed"] = False
+                continue
+            key = (store_sqlite_int(info.get("dev")),
+                   store_sqlite_int(info.get("inode")))
+            if key[1] <= 0:
+                info["audio_stream_count"] = 0
+                info["subtitle_stream_count"] = 0
+                info["media_probed"] = False
+                continue
+            keys.append(key)
+            targets.append(info)
+        if not targets:
+            return
+        cached = {}
+        try:
+            cached = self.store.media_probe_cache_get(keys)
+        except Exception:  # pragma: no cover - 缓存失败不影响正确性
+            cached = {}
+        timeout = float(state.options.get("video_timeout_sec") or 60)
+        engine = None
+        writes = []
+        for info, key in zip(targets, keys):
+            payload = None
+            row = cached.get(key)
+            if (row is not None
+                    and int(row.get("size") or 0) == int(info.get("size") or 0)
+                    and int(row.get("mtime_ns") or 0) == int(info.get("mtime_ns") or 0)):
+                payload = row.get("payload")
+                with state.lock:
+                    state.stats["media_probe_hits"] = (
+                        int(state.stats.get("media_probe_hits") or 0) + 1)
+            if not isinstance(payload, dict):
+                try:
+                    if engine is None:
+                        engine = self._video_engine_factory(self.config)
+                    probe = engine.ffmpeg.probe_media(
+                        info.get("path") or "", timeout,
+                        lambda: self._should_stop(state))
+                except Exception:
+                    probe = {}
+                if not isinstance(probe, dict):
+                    probe = {}
+                audio_streams = probe.get("audio_streams")
+                subtitle_streams = probe.get("subtitle_streams")
+                payload = {
+                    "audio_stream_count": (
+                        len(audio_streams) if isinstance(audio_streams, list)
+                        else (1 if probe.get("has_audio") else 0)),
+                    "subtitle_stream_count": (
+                        len(subtitle_streams)
+                        if isinstance(subtitle_streams, list) else 0),
+                    "audio_langs": [
+                        item.get("language") for item in (audio_streams or [])
+                        if isinstance(item, dict) and item.get("language")
+                    ] if isinstance(audio_streams, list) else [],
+                    "subtitle_langs": [
+                        item.get("language") for item in (subtitle_streams or [])
+                        if isinstance(item, dict) and item.get("language")
+                    ] if isinstance(subtitle_streams, list) else [],
+                    "duration": probe.get("duration"),
+                }
+                writes.append({
+                    "dev": key[0],
+                    "inode": key[1],
+                    "size": info.get("size"),
+                    "mtime_ns": info.get("mtime_ns"),
+                    "payload": payload,
+                })
+            info["audio_stream_count"] = int(payload.get("audio_stream_count") or 0)
+            info["subtitle_stream_count"] = int(
+                payload.get("subtitle_stream_count") or 0)
+            info["media_probed"] = True
+        if writes:
+            try:
+                self.store.media_probe_cache_put_many(writes)
+                self.store.media_probe_cache_prune(
+                    config.MEDIA_PROBE_CACHE_MAX_ENTRIES)
+            except Exception:  # pragma: no cover
+                logger.warning(u"写入媒体探测缓存失败", exc_info=True)
+
+    def _count_keep_reason(self, state, reason):
+        if not state.keep_rules:
+            return
+        with state.lock:
+            hits = state.stats.get("keep_rule_hits")
+            if not isinstance(hits, dict):
+                hits = {}
+                state.stats["keep_rule_hits"] = hits
+            hits[reason] = int(hits.get(reason) or 0) + 1
 
     def _build_exact_groups(self, state, hashed_buckets):
         options = state.options
@@ -2242,8 +2836,10 @@ class ScanManager(object):
             self._check_control(state)
             files = [self._file_info(state, record, "exact")
                      for record in bucket]
+            self._media_probe_for_group(state, files)
             (keeper, reason, needs_manual, suspect, time_fallback,
              keep_time_source) = choose_keeper(files, options)
+            self._count_keep_reason(state, reason)
             group_suspect = (suspect or time_fallback
                              or any(file_info["created_unsafe"]
                                     for file_info in files))
@@ -2295,8 +2891,10 @@ class ScanManager(object):
                 file_info["similarity_method"] = feature.get("method")
                 file_info["low_confidence"] = bool(feature.get("low_confidence"))
                 files.append(file_info)
+            self._media_probe_for_group(state, files)
             (keeper, reason, needs_manual, suspect, time_fallback,
              keep_time_source) = choose_keeper(files, options)
+            self._count_keep_reason(state, reason)
             group_suspect = (suspect or time_fallback
                              or any(file_info["created_unsafe"]
                                     for file_info in files))
@@ -2376,8 +2974,10 @@ class ScanManager(object):
                     analysis.get("low_confidence"))
                 file_info["similarity_score"] = 0
                 files.append(file_info)
+            self._media_probe_for_group(state, files)
             (keeper, reason, needs_manual, suspect, time_fallback,
              keep_time_source) = choose_keeper(files, options)
+            self._count_keep_reason(state, reason)
             group_suspect = (suspect or time_fallback
                              or any(file_info["created_unsafe"]
                                     for file_info in files))
@@ -2495,6 +3095,17 @@ class ScanManager(object):
             group["keep_file_id"] = group["files"][0]["file_id"]
 
         groups = exact_groups + similar_groups + video_groups
+        # v0043：组级增量标记（“只看本次新增/变化的重复组”）
+        new_group_count = 0
+        for group in groups:
+            new_count = sum(1 for item in group.get("files") or []
+                            if item.get("new_since_last_scan"))
+            changed_count = sum(1 for item in group.get("files") or []
+                                if item.get("changed_since_last_scan"))
+            group["new_files"] = new_count
+            group["changed_files"] = changed_count
+            if new_count or changed_count:
+                new_group_count += 1
         exact_files = sum(group["count"] for group in exact_groups)
         similar_files = sum(group["count"] for group in similar_groups)
         video_files = sum(group["count"] for group in video_groups)
@@ -2531,6 +3142,7 @@ class ScanManager(object):
             stats["selectable_reclaimable_bytes"] = reclaimable
             stats["mtime_fallback_groups"] = mtime_fallback_groups
             stats["mtime_fallback_files"] = mtime_fallback_files
+            stats["new_groups"] = new_group_count
             state.needs_manual_keep_groups = needs_manual_groups
             state.creation_time_unsafe = creation_unsafe
         self._set_progress(state, "finalize", 0.995, u"正在保存扫描结果")

@@ -193,6 +193,9 @@ class Api(object):
              self._delete_log_files, False),
             # v0021 P0：诊断 / 存储维护 / 删除任务历史（仅管理员）
             ("GET", re.compile(r"^/api/diagnostics$"), self._diagnostics, False),
+            # v0043：增量扫描缓存管理（哈希缓存/媒体探测缓存）
+            ("GET", re.compile(r"^/api/cache$"), self._cache_stats, False),
+            ("POST", re.compile(r"^/api/cache/clear$"), self._cache_clear, False),
             ("POST", re.compile(r"^/api/storage/backup$"), self._storage_backup, False),
             ("POST", re.compile(r"^/api/storage/maintenance$"),
              self._storage_maintenance, False),
@@ -370,6 +373,26 @@ class Api(object):
             # 视频视觉相似能力（docs/VIDEO_CONTRACT.md §2）
             "video": video_similarity.video_capabilities(
                 self.config, self.services.settings.get()),
+            # v0043 增量扫描 / 保留规则链 / 排除规则能力
+            # （docs/INCREMENTAL_SCAN_CONTRACT.md）
+            "scan": {
+                "keep_rules": [
+                    {"name": name,
+                     "label": config.KEEP_RULE_LABELS.get(name, name),
+                     "needs_arg": name in ("path_priority",
+                                           "filename_priority")}
+                    for name in config.KEEP_RULE_NAMES
+                ],
+                "keep_rules_max": config.KEEP_RULES_MAX,
+                "sidecar_modes": list(config.SIDECAR_MODES),
+                "exclude_pattern_max_count": config.EXCLUDE_PATTERN_MAX_COUNT,
+                "exclude_pattern_max_len": config.EXCLUDE_PATTERN_MAX_LEN,
+                "quick_sample_version": config.QUICK_SAMPLE_VERSION,
+                "large_file_sample_threshold_bytes":
+                    config.LARGE_FILE_SAMPLE_THRESHOLD_BYTES,
+                "hash_cache_max_entries": config.HASH_CACHE_MAX_ENTRIES,
+                "ignore_file_name": config.IGNORE_FILE_NAME,
+            },
             # v0028 目录批量字幕能力（docs/SUBTITLE_BATCH_CONTRACT.md）
             "subtitle": {
                 "supported": self.services.subtitles is not None,
@@ -516,6 +539,12 @@ class Api(object):
             "database": database,
             "row_counts": row_counts,
             "feature_cache": {"entries": int(feature_entries)},
+            # v0043：增量扫描缓存（哈希缓存/媒体探测缓存）
+            "hash_cache": store.hash_cache_stats(),
+            "media_probe_cache": {
+                "entries": store.media_probe_cache_count(),
+                "max_entries": config.MEDIA_PROBE_CACHE_MAX_ENTRIES,
+            },
             "video_cache": video_cache,
             "ffmpeg": {
                 "available": bool(ffmpeg_info.get("available")),
@@ -589,6 +618,46 @@ class Api(object):
             "reclaimed_bytes": result.get("reclaimed_bytes"),
         })
         return json_response({"ok": True, "maintenance": result})
+
+    def _cache_stats(self, request, session, params):
+        """增量扫描缓存状态（哈希缓存 + 媒体探测缓存；v0043 仅管理员）。"""
+        self._require_admin(session, u"仅管理员可以查看缓存状态")
+        store = self.services.store
+        settings = self.services.settings.get()
+        return json_response({
+            "ok": True,
+            "hash_cache": store.hash_cache_stats(),
+            "hash_cache_max_entries": config.HASH_CACHE_MAX_ENTRIES,
+            "media_probe_cache": {
+                "entries": store.media_probe_cache_count(),
+                "max_entries": config.MEDIA_PROBE_CACHE_MAX_ENTRIES,
+            },
+            "incremental_scan": bool(settings.get("incremental_scan", True)),
+        })
+
+    def _cache_clear(self, request, session, params):
+        """清理增量扫描缓存（需 confirm=true；只删缓存，不动扫描结果）。"""
+        self._require_admin(session, u"仅管理员可以清理缓存")
+        body = _json_body(request)
+        if body.get("confirm") is not True:
+            raise invalid(u"清理缓存需要 confirm=true 确认")
+        targets = body.get("targets")
+        if not isinstance(targets, list) or not targets:
+            targets = ["hash", "media"]
+        allowed = {"hash", "media"}
+        wanted = [item for item in targets if item in allowed]
+        if not wanted:
+            raise invalid(u"targets 只能是 hash / media")
+        store = self.services.store
+        cleared = {}
+        if "hash" in wanted:
+            store.hash_cache_clear()
+            cleared["hash"] = True
+        if "media" in wanted:
+            store.media_probe_cache_clear()
+            cleared["media"] = True
+        store.audit("cache_clear", session.user, {"targets": wanted})
+        return json_response({"ok": True, "cleared": cleared})
 
     _DELETION_JOB_FIELDS = (
         "job_id", "scan_id", "plan_id", "status", "total", "done", "failed",
@@ -897,7 +966,8 @@ class Api(object):
             limit=_query_int(request, "limit", 100),
             q=request.query_last("q", "") or "",
             sort=request.query_last("sort", "wasted_desc") or "wasted_desc",
-            match_type=request.query_last("match_type", None) or None)
+            match_type=request.query_last("match_type", None) or None,
+            new_only=_query_bool(request, "new_only", False))
         payload = {"ok": True}
         payload.update(page)
         return json_response(payload)

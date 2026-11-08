@@ -1973,8 +1973,11 @@ def run():
               "sizes=%s" % [g.get("size") for g in sgroups])
 
         # ---------------- 暂停 / 继续 / 停止 ----------------
+        # v0043：默认开启增量哈希缓存，重复扫描会直接复用哈希而瞬间完成；
+        # 这里关掉缓存，保证暂停/停止场景有足够长的运行窗口。
         resp = post_scan(client, roots,
-                         options={"hash_rate_mbps": 1, "concurrency": 1})
+                         options={"hash_rate_mbps": 1, "concurrency": 1,
+                                  "incremental_scan": False})
         data = jd(resp)
         pause_id = data.get("scan_id")
         check("PAUSE-00", "创建限速扫描用于暂停/停止测试",
@@ -2024,6 +2027,124 @@ def run():
         check("PAUSE-02", "扫描进行中创建新扫描返回 409 SCAN_BUSY", busy_ok)
         check("PAUSE-03", "扫描可继续（resume）", resume_ok)
         check("PAUSE-04", "扫描可停止（stop -> stopped/completed）", stop_ok)
+
+        # ---------------- v0043：增量扫描 / 保留规则 / 排除规则 ----------------
+        inc_dir = os.path.join(fx["share_a"], "inc0043")
+        write_bytes(os.path.join(inc_dir, "one.bin"), blob("inc-1", 700 * 1024))
+        write_bytes(os.path.join(inc_dir, "two.bin"), blob("inc-1", 700 * 1024))
+        write_bytes(os.path.join(inc_dir, "sample.tmp"), blob("inc-2", 1024))
+        write_bytes(os.path.join(inc_dir, "keep.log"), blob("inc-3", 1024))
+        write_bytes(os.path.join(inc_dir, "drop.log"), blob("inc-4", 1024))
+        write_bytes(os.path.join(inc_dir, "movie.mkv"), blob("inc-5", 2048))
+        write_bytes(os.path.join(inc_dir, "movie.srt"), b"1\n00:00:00,000 --> 00:00:01,000\nhi\n")
+        write_bytes(os.path.join(inc_dir, "movie-poster.jpg"), blob("inc-6", 512))
+        with open(os.path.join(inc_dir, ".ignore"), "w", encoding="utf-8") as handle:
+            handle.write("drop.log\n")
+        with open(os.path.join(inc_dir, "movie-2160p.mkv"), "wb") as handle:
+            handle.write(blob("inc-5", 2048))
+        resp = post_scan(client, [inc_dir], options={
+            "exclude_name_regex": [r"^sample\."],
+            "incremental_scan": True,
+        })
+        inc_scan_id = jd(resp).get("scan_id")
+        inc_scan = wait_scan(client, inc_scan_id) if inc_scan_id else {}
+        inc_stats = inc_scan.get("stats") or {}
+        inc_skipped = inc_stats.get("skipped") or {}
+        check("INC-01", "v0043 首次扫描：排除规则与影视附属文件被跳过",
+              inc_scan.get("status") == "completed"
+              and int(inc_skipped.get("rule") or 0) >= 2
+              and int(inc_stats.get("sidecar_files") or 0) >= 2,
+              "status=%s skipped=%s sidecar=%s"
+              % (inc_scan.get("status"), inc_skipped,
+                 inc_stats.get("sidecar_files")))
+        inc_groups, _inc_total, _ = fetch_groups(client, inc_scan_id) if inc_scan_id else ([], 0, None)
+        movie_group = group_with_path(inc_groups, os.path.join(inc_dir, "movie-2160p.mkv"))
+        check("INC-02", "播放附属文件过滤后，同尺寸的 mkv 仍正常成组",
+              movie_group is not None and int(movie_group.get("count") or 0) >= 2,
+              "group=%s" % (movie_group or {}).get("count"))
+
+        # 第二次扫描：哈希全部复用，不再读盘
+        resp = post_scan(client, [inc_dir], options={
+            "exclude_name_regex": [r"^sample\."]})
+        inc_scan2_id = jd(resp).get("scan_id")
+        inc_scan2 = wait_scan(client, inc_scan2_id) if inc_scan2_id else {}
+        inc_stats2 = inc_scan2.get("stats") or {}
+        check("INC-03", "v0043 第二次扫描复用哈希缓存（bytes_hashed=0 且命中>0）",
+              inc_scan2.get("status") == "completed"
+              and int(inc_stats2.get("hash_cache_hits") or 0) > 0
+              and int(inc_stats2.get("bytes_hashed") or 0) == 0,
+              "status=%s hits=%s bytes_hashed=%s"
+              % (inc_scan2.get("status"), inc_stats2.get("hash_cache_hits"),
+                 inc_stats2.get("bytes_hashed")))
+
+        # 新增一个重复文件 → 增量标记 + new_only 过滤
+        write_bytes(os.path.join(inc_dir, "three.bin"), blob("inc-1", 700 * 1024))
+        resp = post_scan(client, [inc_dir], options={
+            "exclude_name_regex": [r"^sample\."]})
+        inc_scan3_id = jd(resp).get("scan_id")
+        inc_scan3 = wait_scan(client, inc_scan3_id) if inc_scan3_id else {}
+        inc_stats3 = inc_scan3.get("stats") or {}
+        new_page, new_total, _ = fetch_groups(client, inc_scan3_id, new_only=1) if inc_scan3_id else ([], 0, None)
+        new_group = group_with_path(new_page, os.path.join(inc_dir, "three.bin"))
+        check("INC-04", "v0043 新增文件被标记，new_only=1 只返回增量组",
+              inc_scan3.get("status") == "completed"
+              and int(inc_stats3.get("new_files") or 0) >= 1
+              and new_group is not None
+              and int(new_group.get("new_files") or 0) >= 1
+              and int(new_total or 0) >= 1,
+              "new_files=%s new_total=%s group=%s"
+              % (inc_stats3.get("new_files"), new_total,
+                 (new_group or {}).get("new_files")))
+
+        # 保留规则链：文件名优先级（*2160p*）
+        resp = post_scan(client, [inc_dir], options={
+            "exclude_name_regex": [r"^sample\."],
+            "keep_rules": ["filename_priority:*2160p*"]})
+        rule_scan_id = jd(resp).get("scan_id")
+        rule_scan = wait_scan(client, rule_scan_id) if rule_scan_id else {}
+        rule_groups, _rule_total, _ = fetch_groups(client, rule_scan_id) if rule_scan_id else ([], 0, None)
+        rule_group = group_with_path(rule_groups, os.path.join(inc_dir, "movie-2160p.mkv"))
+        rule_keeper = keeper_of(rule_group) if rule_group else None
+        check("KEEP-01", "v0043 keep_rules 文件名优先级命中并作为保留项",
+              rule_scan.get("status") == "completed" and rule_keeper is not None
+              and norm(rule_keeper.get("path") or "") == norm(
+                  os.path.join(inc_dir, "movie-2160p.mkv"))
+              and (rule_group or {}).get("keep_reason") == "filename_priority",
+              "status=%s reason=%s keeper=%s"
+              % (rule_scan.get("status"),
+                 (rule_group or {}).get("keep_reason"),
+                 (rule_keeper or {}).get("path")))
+
+        # 缓存管理接口
+        resp = client.get("/api/cache")
+        cache_data = jd(resp)
+        check("CACHE-01", "v0043 GET /api/cache 返回缓存条目",
+              resp.status == 200 and isinstance(cache_data.get("hash_cache"), dict)
+              and int((cache_data.get("hash_cache") or {}).get("entries") or 0) > 0,
+              "status=%s cache=%s" % (resp.status,
+                                      (cache_data.get("hash_cache") or {}).get("entries")))
+        resp = client.post_json("/api/cache/clear", {})
+        code, _ = err_code(resp)
+        check("CACHE-02", "v0043 POST /api/cache/clear 缺少 confirm 被拒绝",
+              resp.status == 400 and code == "INVALID_ARGUMENT",
+              "status=%s code=%s" % (resp.status, code))
+        resp = client.post_json("/api/cache/clear", {"confirm": True})
+        check("CACHE-03", "v0043 清理缓存成功（只清缓存）",
+              resp.status == 200 and (jd(resp).get("cleared") or {}).get("hash"),
+              "status=%s data=%s" % (resp.status, jd(resp)))
+        # 清理后再次扫描应重新读盘（证明缓存确实生效过而不是统计造假）
+        resp = post_scan(client, [inc_dir], options={
+            "exclude_name_regex": [r"^sample\."]})
+        after_id = jd(resp).get("scan_id")
+        after_scan = wait_scan(client, after_id) if after_id else {}
+        after_stats = after_scan.get("stats") or {}
+        check("CACHE-04", "v0043 清空缓存后扫描重新计算哈希",
+              after_scan.get("status") == "completed"
+              and int(after_stats.get("hash_cache_hits") or 0) == 0
+              and int(after_stats.get("bytes_hashed") or 0) > 0,
+              "status=%s hits=%s bytes_hashed=%s"
+              % (after_scan.get("status"), after_stats.get("hash_cache_hits"),
+                 after_stats.get("bytes_hashed")))
 
         # ---------------- 重启持久化 ----------------
         client.put_json("/api/settings", {"settings": {"concurrency": 3}})

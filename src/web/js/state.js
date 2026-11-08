@@ -35,7 +35,9 @@ export var state = {
     similarGroups: [], similarOffset: 0, similarLoading: false, similarLoaded: false,
     similarSeq: 0, similarReview: new Set(), similarSelected: new Map(),
     videoGroups: [], videoTotal: 0, videoOffset: 0, videoLoading: false, videoLoaded: false,
-    videoSeq: 0, videoSelected: new Map(), videoSelectAllMode: false
+    videoSeq: 0, videoSelected: new Map(), videoSelectAllMode: false,
+    // v0043：只看本次新增/内容变化的重复组
+    newOnly: false, newTotal: 0
   },
   // 删除流程
   deleteFlow: { plan: null, job: null, timer: null, abort: null, running: false, busy: false, modal: null, recycle: true, override: null },
@@ -129,4 +131,13 @@ export var IDS = ('loginView loginForm loginUsername loginPassword loginOtp logi
   'storageMediaList storageRuntimeList storageKeysList storageOtherSection storageOtherList ' +
   'storageBackupBtn storageMaintenanceBtn storageMaintenanceVacuum ' +
   'storageActionLoading storageActionResult ' +
+  'keepRulesField keepPrimaryRule keepPathPriority keepNamePriority keepPreferSubtitle ' +
+  'keepPreferMultiAudio keepRulesHint keepRulesError ' +
+  'excludeNameRegex excludeNameRegexError excludeNameGlob excludeNameGlobError ' +
+  'ignoreFileEnabled incrementalScan mediaSidecarMode ' +
+  'newOnlyLabel newOnlyToggle ' +
+  'setKeepPrimaryRule setKeepPathPriority setKeepNamePriority setKeepPreferSubtitle ' +
+  'setKeepPreferMultiAudio setIncrementalScan setExcludeNameRegex setExcludeNameRegexError ' +
+  'setExcludeNameGlob setExcludeNameGlobError setIgnoreFileEnabled setMediaSidecarMode ' +
+  'cacheStatsText clearHashCacheBtn cacheClearResult ' +
   'footerMeta toastRoot modalRoot').split(' ');
