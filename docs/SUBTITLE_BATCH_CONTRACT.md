@@ -518,6 +518,9 @@ CREATE TABLE IF NOT EXISTS subtitle_batches (
 - 版本 1.1.0-0047；本次改动为相似视频识别增强（视频指纹/配对/设置），**字幕任务接口/行为/数据结构不变**（schema 仍 v8）。
 - 版本 1.1.0-0048；本次改动为字幕失败分类/自动重试/失败清单/负载与优先级/音轨选择/目录监控（任务 payload 增加 audio_track、priority、attempt、failure_category 等字段，**兼容旧 JSON**；schema 仍 v8）。
 - 版本 1.1.0-0049；本次改动为任务检索筛选、批量操作、权限体检与日志检索（接口与 UI 增强，**任务数据结构不变**；schema 仍 v8）。
+
+## 23. v0050 批次取消 / 强制删除 / 任务明细增强
+
 - 版本 1.1.0-0050；本次改动为批量取消异步化、批次组强制删除、任务明细“取消剩余/取消当前筛选”、下滑自动加载、已取消任务独立筛选（group JSON 增加 `cancel_state/delete_state/job_ids`，**兼容旧记录**；schema 仍 v8）。
   - `POST /cancel` 大批次组立即返回 **202** `{cancelling:true, requested, cancel_state}`；小批次组 2s 内完成仍返回旧 `{group}` 形状。
   - 新增 `POST /api/subtitles/batch-groups/{id}/cancel-remaining`（`scope=all|filter`）与 `POST .../delete`（`force=true` 时先取消、全部停止后删除，202）。

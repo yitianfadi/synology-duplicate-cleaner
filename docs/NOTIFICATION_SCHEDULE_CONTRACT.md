@@ -2,7 +2,7 @@
 
 > 版本：`1.1.0-0046` · SQLite schema 仍 **v8**（调度/通知去重状态是 `<var>/` 下的 JSON）
 > 关联：[CONTRACT.md](CONTRACT.md) §6/§8、[ARCHITECTURE.md](ARCHITECTURE.md) §16、
-> [REQUIREMENTS_V2_ASSESSMENT.md](REQUIREMENTS_V2_ASSESSMENT.md) §2.1/§2.2、§4.1/§4.2
+> [REQUIREMENTS_V2_ASSESSMENT.md](REQUIREMENTS_V2_ASSESSMENT.md) §1 第 9–10 项、§4 默认值
 
 ## 0. 一句话
 

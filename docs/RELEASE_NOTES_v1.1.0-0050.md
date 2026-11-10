@@ -96,7 +96,7 @@
 
 ## 文档
 
-- 需求评估与分批计划：`docs/REQUIREMENTS_V2_ASSESSMENT.md`
+- v2 需求交付与取舍：`docs/REQUIREMENTS_V2_ASSESSMENT.md`
 - 增量扫描/保留/排除：`docs/INCREMENTAL_SCAN_CONTRACT.md`
 - 预览与删除白名单：`docs/PREVIEW_PROTECTION_CONTRACT.md`
 - 硬链接合并与回收站：`docs/MERGE_TRASH_CONTRACT.md`
@@ -104,5 +104,5 @@
 - 相似视频 v2：`docs/VIDEO_MATCHING_V2_CONTRACT.md`
 - 字幕 ASR v2：`docs/SUBTITLE_ASR_V2_CONTRACT.md`
 - 任务中心/权限体检/日志：`docs/TASK_CENTER_V2_CONTRACT.md`
-- 字幕批次取消/删除：`docs/SUBTITLE_BATCH_CONTRACT.md` §13
-- QA 报告：`qa/REPORT.md` §25–§32
+- 字幕批次取消/删除：`docs/SUBTITLE_BATCH_CONTRACT.md` §23、`docs/ARCHITECTURE.md` §20
+- QA 报告：`qa/REPORT.md` §3.1（v2 交付映射）与 §6（版本验收记录）

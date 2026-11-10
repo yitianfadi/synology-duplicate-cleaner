@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """v0035 补翻译测试：派生仅翻译任务 / 两个接口 / 组快照 / 重启恢复。
 
-覆盖契约（docs/SUBTITLE_TRANSLATE_CONTRACT.md）：
+覆盖契约（docs/SUBTITLE_BATCH_CONTRACT.md §15）：
 - 已完成 ASR（translate=false）任务补翻译 → 新任务 source=existing_srt、
   source_job_id 指向源任务、只调用 LLM、任务目录生成 <target>.srt 与
   bilingual.<target>.srt，原任务快照/文件不变；

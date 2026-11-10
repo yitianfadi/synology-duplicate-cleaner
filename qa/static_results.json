@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-11-08T22:50:55+0800",
+  "generated_at": "2026-11-10T21:26:10+0800",
   "summary": {
     "PASS": 197,
     "FAIL": 0,
@@ -52,7 +52,7 @@
       "id": "BE-UNITTEST-LOG",
       "name": "unittest 结果",
       "status": "INFO",
-      "detail": "Ran 666 tests in 159.643s"
+      "detail": "Ran 666 tests in 134.936s"
     },
     {
       "id": "BE-NO-AUTODELETE",

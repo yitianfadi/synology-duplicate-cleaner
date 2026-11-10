@@ -2,7 +2,7 @@
 
 > 版本：`1.1.0-0045` · SQLite schema 仍 **v8**（清单是 `<var>/` 下的 JSON，不进数据库）
 > 关联：[CONTRACT.md](CONTRACT.md) §6/§7、[ARCHITECTURE.md](ARCHITECTURE.md) §15、
-> [REQUIREMENTS_V2_ASSESSMENT.md](REQUIREMENTS_V2_ASSESSMENT.md) §2.5
+> [REQUIREMENTS_V2_ASSESSMENT.md](REQUIREMENTS_V2_ASSESSMENT.md) §1 第 7–8 项、§2 第 4 条
 
 ## 0. 一句话
 
