@@ -25,7 +25,12 @@ export var state = {
   subtitle: { supported: false, enabled: false, asrKeySet: false, llmKeySet: false, asrLanguage: 'auto', translateEnabled: false, targetLang: 'zh' },
   subtitleJobs: { list: [], timer: null, loading: false, lastError: '', modal: null, snapshot: null },
   // v0051：下载中心（列表/队列快照/轮询）
-  download: { jobs: [], snapshot: null, timer: null, loading: false, loaded: false, lastError: '', submitting: false },
+  download: {
+    jobs: [], snapshot: null, timer: null, loading: false, loaded: false,
+    lastError: '', submitting: false,
+    // v0052：网页解析（候选地址 + 服务端暂存的登录态 token）
+    parseCandidates: [], parseSession: '', parseBusy: false, parseSeq: 0
+  },
   // 当前扫描
   scan: { id: null, data: null, stats: null, timer: null, abort: null, polling: false, errors: 0, handled: false },
   // 结果
@@ -209,4 +214,11 @@ export var IDS = ('loginView loginForm loginUsername loginPassword loginOtp logi
   'setDownloadKeepTemp setDownloadMinFreeGb setDownloadMinFreeGbError ' +
   'setDownloadVerifyTolerance setDownloadJobLimit setDownloadJobLimitError ' +
   'setDownloadAutoScan setDownloadAutoSubtitle ' +
+  'downloadParseUrl downloadParseBtn downloadParseManual downloadParseHtml ' +
+  'downloadParseCurl downloadParseManualBtn downloadParseManualHint ' +
+  'downloadParseError downloadParseLoading downloadParseResult ' +
+  'downloadParseResultHeading downloadParseSummary downloadParseEmpty ' +
+  'downloadCandidatesList downloadApplyCandidatesBtn ' +
+  'downloadSelectAllCandidatesBtn downloadClearCandidatesBtn ' +
+  'downloadApplyHint ' +
   'footerMeta toastRoot modalRoot').split(' ');

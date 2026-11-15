@@ -15,25 +15,23 @@
 
 ## 1. 当前基线
 
-最新一次全量验收为 1.1.0-0051：
+最新一次全量验收集：1.1.0-0052（**源码级**，按用户要求未打包，`SPK-SYNC`/`SPK-BUILD-VERSION` 未执行）。
 
 | 套件 | 命令 | 结果 |
 |---|---|---|
-| 后端单元测试 | `cd src/backend && python -m unittest discover -s tests` | **694 OK（5 skipped）** |
-| 静态检查 | `python qa/static_checks.py` | **207 PASS / 0 FAIL / 0 UNVERIFIED** |
-| 端到端 | `python qa/e2e_test.py` | **214 PASS / 0 FAIL / 1 UNVERIFIED**（Windows symlink 历史项；含 DL-00…DL-05、RESTART-08） |
+| 后端单元测试 | `cd src/backend && python -m unittest discover -s tests` | **713 OK（5 skipped）** |
+| 静态检查 | `python qa/static_checks.py` | **未执行**（依赖最新 SPK；打包后需重跑） |
+| 端到端 | `python qa/e2e_test.py` | **217 PASS / 0 FAIL / 1 UNVERIFIED**（Windows symlink 历史项；含 DL-00…DL-08、RESTART-08） |
 | 前端模块图 | `node qa/check_web_modules.mjs` | **25/25 PASS** |
-| 无头浏览器冒烟 | `python qa/web_smoke.py` | **8/8 PASS**（static 内联执行） |
-| 真实 Chromium 探针 | `.uiprobe/probe_v0043..v0050.mjs` | v0043–v0050 **全通过**（10/10、8/8、13/13、8/8、7/7、6/6、11/11、8/8） |
+| 无头浏览器冒烟 | `python qa/web_smoke.py` | 8/8 PASS（最近一次 static 内联执行于 v0051） |
+| 真实 Chromium 探针 | `.uiprobe/probe_v0043..v0050.mjs` | v0043–v0050 全通过；v0051/v0052 未加新探针 |
 
 | 产物项 | 值 |
 |---|---|
-| 文件 | `dist/DuplicateCleaner-1.1.0-0051.spk` |
-| 大小 | 39,168,000 B |
-| SHA256 | `c1103858798fb436e92445d7091e1d3e6257ef4935b3840511eedc6bce33d37f` |
-| package.tgz MD5 | `80a42f2415d329f3d76cf8083b591680`（= INFO.checksum） |
-| SQLite schema | v9（v0051 新增 download_jobs / download_groups；打开 v8 库自动迁移） |
-| 版本同步 | 1.1.0-0051 同步 8 处 |
+| 当前源码版本 | `1.1.0-0052`（未打包） |
+| dist 中的产物 | `dist/DuplicateCleaner-1.1.0-0051.spk` 39,168,000 B，SHA256 `c1103858…bce33d37f`（= INFO.checksum `80a42f24…`） |
+| SQLite schema | v9（v0051 新增 download_jobs / download_groups；v0052 无迁移） |
+| 版本同步 | 1.1.0-0052 已同步 8 处源码/文档；待打包后由 static 兜底校验 |
 
 判定口径：
 
@@ -42,18 +40,18 @@
 - UNVERIFIED：当前环境无法构造（仅 Windows symlink 一项）。
 - 探针、冒烟、模块图不替代 e2e/static，仅作为浏览器层补充证据。
 
-### 1.1 基线变化（v0042 → v0051）
+### 1.1 基线变化（v0042 → v0052）
 
-| 指标 | v0042 | v0050 | v0051 |
-|---|---|---|---|
-| unittest | 459（skip 6） | 666（skip 5） | 694（skip 5） |
-| static | 169 PASS | 197 PASS | 207 PASS |
-| e2e | 157 PASS / 1 UNVERIFIED | 207 PASS / 1 UNVERIFIED | 214 PASS / 1 UNVERIFIED |
-| SQLite schema | v7 | v8 | v9 |
-| SPK 大小 | 39,014,400 B | 39,127,040 B | 39,168,000 B |
-| 浏览器探针 | 真机 1 组（无计数） | 本地 8 组（v0043–v0050） | 同左（下载页未加新探针，由 web_smoke/模块图覆盖） |
+| 指标 | v0042 | v0050 | v0051 | v0052（未打包） |
+|---|---|---|---|---|
+| unittest | 459（skip 6） | 666（skip 5） | 694（skip 5） | 713（skip 5） |
+| static | 169 PASS | 197 PASS | 207 PASS | 未执行（未打包） |
+| e2e | 157 PASS / 1 UNVERIFIED | 207 PASS / 1 UNVERIFIED | 214 PASS / 1 UNVERIFIED | 217 PASS / 1 UNVERIFIED |
+| SQLite schema | v7 | v8 | v9 | v9（无迁移） |
+| SPK 大小 | 39,014,400 B | 39,127,040 B | 39,168,000 B | 未打包 |
+| 浏览器探针 | 真机 1 组（无计数） | 本地 8 组（v0043–v0050） | 同左 | 同左（下载/解析由模块图与 e2e 覆盖） |
 
-v0043 是分界点：schema 升到 v8、引入增量哈希缓存；v0044–v0050 均为增量能力；v0051 新增下载中心并升到 v9。
+v0043 是分界点：schema 升到 v8、引入增量哈希缓存；v0044–v0050 均为增量能力；v0051 新增下载中心并升到 v9；v0052 新增播放网页解析（无 schema 变化）。
 
 ### 1.2 验收范围
 
@@ -299,6 +297,7 @@ REQ 编号沿用 v1.0 基线，状态按当前版本事实更新。
 | v0049 | 2026-11-08 | 任务检索/权限体检/日志 | 659（skip 5） | 195 | 204/0/1 | 11/11 | `000cd592…3e2aab54` |
 | v0050 | 2026-11-08 | 批次取消/删除/明细增强 | 666（skip 5） | 197 | 207/0/1 | 8/8 | `3c7b8a68…8a4c3c94` |
 | v0051 | 2026-11-15 | 下载中心（直链 / HLS → MP4） | 694（skip 5） | 207 | 214/0/1 | — | `c1103858…bce33d37f` |
+| v0052 | 2026-11-15 | 播放网页解析（未打包） | 713（skip 5） | —（未打包） | 217/0/1 | — | 未打包 |
 
 说明：
 
@@ -316,6 +315,7 @@ REQ 编号沿用 v1.0 基线，状态按当前版本事实更新。
 - v0048：字幕进入“可运营”阶段（失败分类、重试、监控、优先级、ETA）。
 - v0050：批量取消改两阶段，几千任务不再触发前端 20s 超时。
 - v0051：新增下载中心（直链 Range 续传 / HLS 分片 + 本地化播放列表交给 FFmpeg 解密封装）；schema 升 v9；e2e 新增 DL-00…DL-05、RESTART-08。
+- v0052：新增播放网页解析（静态提取 + cURL 登录态暂存）；e2e 新增 DL-06…DL-08；按用户要求本次不打包。
 
 ### 6.2 原报告记录异常（保留说明，不再重复展开）
 
@@ -356,7 +356,7 @@ python build/build_spk.py --no-icons --out-dir $env:TEMP\qa-build1
 |---|---|---|
 | e2e 结果 | `qa/e2e_results.json` | 逐条 `id`/结论/说明 |
 | static 结果 | `qa/static_results.json` | 逐条 `id`/结论 |
-| SPK | `dist/DuplicateCleaner-1.1.0-0051.spk` | 39,168,000 B |
+| SPK | `dist/DuplicateCleaner-1.1.0-0051.spk` | 39,168,000 B（当前源码为 0052，尚未打包） |
 | 校验文件 | `dist/DuplicateCleaner-1.1.0-0051.spk.sha256` | 与产物 SHA256 一致 |
 | 探针脚本/截图 | `.uiprobe/probe_v0043..v0050.mjs`、`.uiprobe/*.png` | 真实 Chromium |
 | 契约 | `docs/*_CONTRACT.md` | 逐版本接口与行为 |

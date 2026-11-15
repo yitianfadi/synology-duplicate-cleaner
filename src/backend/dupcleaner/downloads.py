@@ -41,7 +41,7 @@ import urllib.request
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from . import config, hls
+from . import config, hls, pageparse
 from .errors import ApiError, invalid, not_found, path_not_allowed
 from .fsutil import (check_path_safety, is_safe_dir_name, writable_dir)
 from .video_similarity import (FFmpegTool, VideoSkip, VideoStopped,
@@ -679,6 +679,9 @@ class DownloadService(object):
             runtime_config=runtime_config,
             settings_provider=settings_provider)
         self._on_complete = on_complete
+        # v0052：网页解析得到的 Cookie/Referer 临时暂存（不进设置、不落盘）
+        self._parse_sessions = {}
+        self._parse_lock = threading.Lock()
         self._load_jobs()
 
     # -- 生命周期 -------------------------------------------------------
@@ -1492,6 +1495,195 @@ class DownloadService(object):
     def _touch(self, job, force=False):
         self._persist(job, force=force)
 
+    # -- 对外：网页解析（v0052） ----------------------------------------
+    def parse_target(self, user, payload):
+        """解析一个播放网页 / 粘贴的源码 / curl 命令，返回候选媒体地址。"""
+        settings = self._settings_snapshot()
+        if not settings.get("download_enabled"):
+            raise ApiError("DOWNLOAD_DISABLED",
+                           u"下载功能未启用，请先在设置中开启")
+        if not isinstance(payload, dict):
+            raise invalid(u"请求体必须是 JSON 对象")
+        allow_private = bool(settings.get("download_allow_private"))
+        page_url = str(payload.get("url") or u"").strip()
+        raw_html = payload.get("html")
+        raw_curl = payload.get("curl")
+        headers = {}
+        if raw_curl:
+            try:
+                parsed = pageparse.parse_curl(str(raw_curl))
+            except pageparse.PageParseError as exc:
+                raise ApiError(exc.code, exc.message)
+            page_url = page_url or parsed.get("url") or u""
+            headers.update(parsed.get("headers") or {})
+        if not page_url and not raw_html:
+            raise invalid(u"请提供网页地址、网页源码或 curl 命令之一")
+
+        if raw_html:
+            body = str(raw_html)
+            final_url = page_url
+            client = None
+        else:
+            try:
+                assert_url_allowed(page_url, allow_private)
+            except DownloadError as exc:
+                raise ApiError(exc.code, exc.message, details=exc.details)
+            client = _HttpClient(
+                timeout=float(settings.get("download_timeout_sec")
+                              or config.DOWNLOAD_DEFAULT_TIMEOUT_SEC),
+                user_agent=headers.get("user_agent")
+                or settings.get("download_user_agent")
+                or config.DOWNLOAD_DEFAULT_USER_AGENT,
+                referer=headers.get("referer")
+                or settings.get("download_referer") or u"",
+                cookie=headers.get("cookie")
+                or settings.get("download_cookie") or u"",
+                proxy=settings.get("download_proxy") or u"",
+                allow_private=allow_private)
+            try:
+                raw_body, resp_headers, final_url = client.read_text(
+                    page_url, limit=config.DOWNLOAD_PAGE_MAX_BYTES)
+            except DownloadError as exc:
+                raise ApiError(exc.code, exc.message, details=exc.details)
+            body = pageparse.decode_body(
+                raw_body, resp_headers.get("Content-Type") if resp_headers
+                else u"")
+
+        playlist_summary = None
+        if hls.is_playlist(body):
+            # 直接把 m3u8 地址当网页解析：返回单个候选 + 清晰度/时长摘要。
+            playlist_summary = self._playlist_summary(final_url, body)
+            candidates = [{
+                "url": final_url,
+                "kind": "hls",
+                "ext": ".m3u8",
+                "source": "direct",
+                "label": u"播放列表",
+                "score": 200,
+                "valid": True,
+            }]
+        else:
+            candidates = pageparse.extract_candidates(body, final_url)
+            candidates = candidates[:config.DOWNLOAD_PARSE_CANDIDATE_LIMIT]
+            self._validate_candidates(candidates, client, settings)
+
+        token = self._remember_parse_session(
+            headers, final_url, settings)
+        hint = u""
+        if not candidates:
+            hint = (u"没有从页面里找到媒体地址。该页可能需要登录或由 JS 动态加载，"
+                    u"请用「粘贴网页源码」或浏览器 DevTools 的「Copy as cURL」再试。")
+        return {
+            "ok": True,
+            "page_url": final_url,
+            "title": pageparse.extract_title(body),
+            "summary": pageparse.summarize(candidates),
+            "candidates": candidates,
+            "playlist": playlist_summary,
+            "parse_session": token,
+            "hint": hint,
+        }
+
+    def _playlist_summary(self, url, body):
+        try:
+            playlist = hls.parse(body, url)
+        except hls.HlsError as exc:
+            raise ApiError(exc.code, exc.message)
+        if playlist.get("kind") == "master":
+            variants = []
+            for item in hls.sorted_variants(playlist):
+                variants.append({
+                    "label": hls.variant_label(item),
+                    "bandwidth": item.get("bandwidth") or 0,
+                    "height": item.get("height") or 0,
+                    "url": item.get("uri") or u"",
+                })
+            return {"kind": "master", "variants": variants[:20],
+                    "encryption": hls.encryption_label(playlist)}
+        return {
+            "kind": "media",
+            "segments": hls.segment_count(playlist),
+            "duration": round(float(playlist.get("duration") or 0.0), 1),
+            "encryption": hls.encryption_label(playlist),
+        }
+
+    def _validate_candidates(self, candidates, client, settings):
+        """对前 N 个 m3u8/DASH 候选做一次范围请求，标记是否真的是播放列表。"""
+        if client is None:
+            return
+        budget = int(config.DOWNLOAD_PARSE_VALIDATE_MAX)
+        for item in candidates:
+            if budget <= 0:
+                break
+            if item.get("kind") not in ("hls", "dash"):
+                continue
+            budget -= 1
+            try:
+                response = client.open(item["url"], byte_range=(0, 65535))
+                try:
+                    head = response.read(65536)
+                finally:
+                    response.close()
+            except DownloadError as exc:
+                item["valid"] = False
+                item["note"] = _sanitize_error(exc.message)
+                continue
+            if item.get("kind") == "hls" and hls.is_playlist(head):
+                item["valid"] = True
+                item["note"] = u"播放列表"
+            elif item.get("kind") == "dash":
+                item["valid"] = head[:256].lstrip().startswith(b"<?xml") \
+                    or b"<MPD" in head[:4096]
+                item["note"] = u"MPD" if item.get("valid") else u"不是 MPD"
+            else:
+                item["valid"] = False
+                item["note"] = u"不是有效的 m3u8"
+
+    def _remember_parse_session(self, headers, page_url, settings):
+        """暂存 curl/页面得到的登录态；返回一次性引用 token。"""
+        cookie = (headers or {}).get("cookie") or ""
+        referer = (headers or {}).get("referer") or page_url or ""
+        ua = (headers or {}).get("user_agent") or ""
+        if not cookie and not ua and not referer:
+            return u""
+        token = "ps-" + uuid.uuid4().hex[:20]
+        now = time.time()
+        with self._parse_lock:
+            if len(self._parse_sessions) >= config.DOWNLOAD_PARSE_SESSION_MAX:
+                self._prune_parse_sessions_locked(now)
+            self._parse_sessions[token] = {
+                "referer": referer, "cookie": cookie, "user_agent": ua,
+                "created": now,
+            }
+        return token
+
+    def _peek_parse_session(self, token):
+        if not token or not isinstance(token, str):
+            return None
+        now = time.time()
+        with self._parse_lock:
+            entry = self._parse_sessions.get(token)
+            if entry is None:
+                return None
+            ttl = config.DOWNLOAD_PARSE_SESSION_TTL_SEC
+            if now - float(entry.get("created") or 0) > ttl:
+                self._parse_sessions.pop(token, None)
+                return None
+            return dict(entry)
+
+    def _prune_parse_sessions_locked(self, now):
+        ttl = config.DOWNLOAD_PARSE_SESSION_TTL_SEC
+        expired = [key for key, value in self._parse_sessions.items()
+                   if now - float((value or {}).get("created") or 0) > ttl]
+        for key in expired:
+            self._parse_sessions.pop(key, None)
+        if len(self._parse_sessions) < config.DOWNLOAD_PARSE_SESSION_MAX:
+            return
+        ordered = sorted(self._parse_sessions.items(),
+                         key=lambda pair: (pair[1] or {}).get("created") or 0)
+        for key, _value in ordered[:max(1, len(ordered) // 2)]:
+            self._parse_sessions.pop(key, None)
+
     # -- 对外：创建 -----------------------------------------------------
     def create(self, user, payload):
         settings = self._settings_snapshot()
@@ -1523,7 +1715,19 @@ class DownloadService(object):
             except DownloadError as exc:
                 # 提交期校验失败要变成 4xx API 错误（运行期才走任务失败）。
                 raise ApiError(exc.code, exc.message, details=exc.details)
-        options = self._options_for(settings, payload.get("options") or {})
+        raw_options = payload.get("options") or {}
+        session = None
+        if isinstance(raw_options, dict):
+            session = self._peek_parse_session(
+                raw_options.get("parse_session"))
+        options = self._options_for(settings, raw_options)
+        if session:
+            options["referer"] = (options.get("referer")
+                                  or session.get("referer") or u"")
+            options["cookie"] = (options.get("cookie")
+                                 or session.get("cookie") or u"")
+            options["user_agent"] = (options.get("user_agent")
+                                     or session.get("user_agent") or u"")
         with self._lock:
             active = [job for job in self._jobs.values()
                       if job.status in ACTIVE_STATUSES]

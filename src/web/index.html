@@ -1,4 +1,4 @@
-﻿<!doctype html>
+<!doctype html>
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
@@ -6,8 +6,8 @@
 <meta name="color-scheme" content="light">
 <meta name="referrer" content="same-origin">
 <title>重复文件清理与字幕 · Duplicate Cleaner &amp; Subtitles</title>
-<link rel="icon" href="./assets/favicon.svg?v=1.1.0-0051" type="image/svg+xml">
-<link rel="stylesheet" href="./styles.css?v=1.1.0-0051">
+<link rel="icon" href="./assets/favicon.svg?v=1.1.0-0052" type="image/svg+xml">
+<link rel="stylesheet" href="./styles.css?v=1.1.0-0052">
 </head>
 <body>
 <a class="skip-link" href="#main">跳到主要内容</a>
@@ -841,6 +841,55 @@
         </div>
         <span class="badge badge-gray" id="downloadPageStatusBadge">检测中…</span>
       </div>
+
+      <section class="card" aria-labelledby="downloadParseHeading">
+        <div class="card-head">
+          <h2 id="downloadParseHeading">解析播放网页</h2>
+          <span class="muted">从网页里找出真正的视频 / m3u8 地址</span>
+        </div>
+        <div class="field">
+          <label for="downloadParseUrl">网页地址</label>
+          <div class="subtitle-dir-row">
+            <input id="downloadParseUrl" type="text" placeholder="https://example.com/watch/123" autocomplete="off" spellcheck="false">
+            <button type="button" class="btn btn-ghost" id="downloadParseBtn">解析网页</button>
+          </div>
+          <p class="hint">只做 HTML/脚本的静态提取，<strong>不执行 JavaScript</strong>；需要登录或 JS 渲染的页面请用下面的「粘贴源码 / cURL」。</p>
+        </div>
+        <details class="advanced" id="downloadParseManual">
+          <summary>手动粘贴（网页源码 / 浏览器 cURL 命令）</summary>
+          <div class="form-grid">
+            <div class="field field-wide">
+              <label for="downloadParseHtml">网页源码</label>
+              <textarea id="downloadParseHtml" rows="4" placeholder="&lt;html&gt;…&lt;/html&gt;（可省略，填了就不用再抓网页）" spellcheck="false"></textarea>
+            </div>
+            <div class="field field-wide">
+              <label for="downloadParseCurl">cURL 命令（DevTools → 网络 → 右键 Copy as cURL）</label>
+              <textarea id="downloadParseCurl" rows="3" placeholder="curl 'https://…' -H 'referer: …' -H 'cookie: …'" spellcheck="false"></textarea>
+              <p class="hint">会取出地址与 Referer / Cookie / UA，仅本次解析与随后的下载使用，不写入设置。</p>
+            </div>
+            <div class="field field-wide">
+              <button type="button" class="btn btn-ghost" id="downloadParseManualBtn">解析粘贴内容</button>
+              <span class="muted" id="downloadParseManualHint"></span>
+            </div>
+          </div>
+        </details>
+        <p class="field-error" id="downloadParseError" role="alert" hidden></p>
+        <div class="state-box" id="downloadParseLoading" hidden><span class="spinner" aria-hidden="true"></span>正在解析…</div>
+        <div id="downloadParseResult" hidden>
+          <div class="card-head">
+            <h3 id="downloadParseResultHeading">候选地址</h3>
+            <span class="muted" id="downloadParseSummary"></span>
+          </div>
+          <div class="state-box state-empty" id="downloadParseEmpty" hidden>没有找到媒体地址</div>
+          <div id="downloadCandidatesList" class="download-candidates"></div>
+          <div class="subtitle-submit-row">
+            <button type="button" class="btn btn-primary" id="downloadApplyCandidatesBtn">加入下载列表</button>
+            <button type="button" class="btn btn-link btn-sm" id="downloadSelectAllCandidatesBtn">全选</button>
+            <button type="button" class="btn btn-link btn-sm" id="downloadClearCandidatesBtn">清空</button>
+            <span class="muted" id="downloadApplyHint"></span>
+          </div>
+        </div>
+      </section>
 
       <section class="card" aria-labelledby="downloadInputHeading">
         <div class="card-head">
@@ -2049,6 +2098,6 @@
   <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.6" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M12 10.8v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="12" cy="7.6" r="1.05" fill="currentColor"/></symbol>
 </svg>
 
-<script type="module" src="./app.js?v=1.1.0-0051"></script>
+<script type="module" src="./app.js?v=1.1.0-0052"></script>
 </body>
 </html>

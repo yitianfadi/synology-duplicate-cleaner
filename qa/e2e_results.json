@@ -1,9 +1,9 @@
 {
-  "generated_at": "2026-11-15T16:40:31+0800",
+  "generated_at": "2026-11-15T16:53:58+0800",
   "python": "3.12.9 | packaged by Anaconda, Inc. | (main, Feb  6 2025, 18:49:16) [MSC v.1929 64 bit (AMD64)]",
   "repo": "D:\\code\\zhouyi\\qunhui\\synology-duplicate-cleaner",
   "summary": {
-    "PASS": 214,
+    "PASS": 217,
     "FAIL": 0,
     "UNVERIFIED": 1
   },
@@ -11,11 +11,11 @@
     "fixture_files": 46,
     "python": "3.12.9",
     "birthtime_supported": true,
-    "backend_port": 5748,
+    "backend_port": 4970,
     "csrf_token_len": 43,
     "meta": {
       "ok": true,
-      "app_version": "1.1.0-0051",
+      "app_version": "1.1.0-0052",
       "dsm_version": "dev",
       "python_version": "3.12.9",
       "creation_time_supported": true,
@@ -500,7 +500,8 @@
         ],
         "batch_max_items": 200,
         "job_limit_default": 500,
-        "output_ext": ".mp4"
+        "output_ext": ".mp4",
+        "page_parse": true
       },
       "notify": {
         "enabled": false,
@@ -588,7 +589,7 @@
       }
     },
     "subtitle_enumerate_count": 0,
-    "main_scan_id": "20261115-164018-29d0e7",
+    "main_scan_id": "20261115-165346-34ae3d",
     "main_scan_final": "completed",
     "main_stats": {
       "files_seen": 38,
@@ -602,7 +603,7 @@
       "selectable_duplicate_files": 15,
       "selectable_reclaimable_bytes": 4403200,
       "bytes_hashed": 8753152,
-      "bytes_per_sec": 386647925,
+      "bytes_per_sec": 368604536,
       "errors": 0,
       "skipped": {
         "symlink": 0,
@@ -678,13 +679,13 @@
     },
     "main_groups_total": 12,
     "recycle_plan": {
-      "plan_id": "plan-6d8efc9028771ac4",
+      "plan_id": "plan-8c3ee689e66dd2a0",
       "count": 2,
       "bytes": 40960,
       "groups_affected": 1
     },
     "recycle_job": {
-      "job_id": "del-20261115-164019-f75dbf",
+      "job_id": "del-20261115-165347-2dc1dc",
       "status": "completed",
       "done": 2,
       "failed": 0,
@@ -1200,7 +1201,7 @@
       "id": "SKIP-04",
       "name": "符号链接跳过（当前环境无法创建 symlink）",
       "status": "UNVERIFIED",
-      "detail": "os.symlink failed: [WinError 1314] 客户端没有所需的特权。: 'C:\\\\Users\\\\zhouyi\\\\AppData\\\\Local\\\\Temp\\\\dupqa-tvgbz54u\\\\qa-share-a\\\\dup' -> 'C:\\\\Users\\\\zhouyi\\\\AppData\\\\Local\\\\Temp\\\\dupqa-tvgbz54u\\\\qa-share-a\\\\link_to_dup'"
+      "detail": "os.symlink failed: [WinError 1314] 客户端没有所需的特权。: 'C:\\\\Users\\\\zhouyi\\\\AppData\\\\Local\\\\Temp\\\\dupqa-2s2xl6ay\\\\qa-share-a\\\\dup' -> 'C:\\\\Users\\\\zhouyi\\\\AppData\\\\Local\\\\Temp\\\\dupqa-2s2xl6ay\\\\qa-share-a\\\\link_to_dup'"
     },
     {
       "id": "HARDLINK-01",
@@ -1937,6 +1938,24 @@
     {
       "id": "DL-05",
       "name": "内网地址在未放行时返回 403 URL_PRIVATE_ADDRESS",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "DL-06",
+      "name": "网页解析返回候选并校验 m3u8（含标题/摘要/暂存 token）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "DL-07",
+      "name": "cURL 解析出地址与登录态，并把 session 下发给下载任务",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "DL-08",
+      "name": "解析 session 携带的 Cookie/Referer 进入任务快照",
       "status": "PASS",
       "detail": ""
     },

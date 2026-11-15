@@ -1378,6 +1378,8 @@ def check_frontend():
         ("/api/downloads", "下载任务"),
         ("/api/downloads/queue", "下载队列视图"),
         ("/api/downloads/groups", "下载批量组"),
+        # v0052 播放网页解析
+        ("/api/downloads/parse", "播放网页解析"),
     ]
     missing = [name for marker, name in endpoints if marker not in app]
     check("FE-ENDPOINTS", "前端覆盖契约全部 API 端点",
@@ -1436,6 +1438,36 @@ def check_frontend():
           and ("downloadHeading" in app)
           and ("showDownloadPage" in app),
           "download navigation markers missing")
+    # ---- v0052 播放网页解析（docs/DOWNLOAD_CONTRACT.md §14）----
+    pageparse_path = os.path.join(backend, "dupcleaner", "pageparse.py")
+    pageparse_src = read(pageparse_path) if os.path.isfile(pageparse_path) else ""
+    check("BE-DOWNLOAD-PAGEPARSE", "pageparse 模块存在且只做静态提取（不执行 JS）",
+          bool(pageparse_src)
+          and ("extract_candidates" in pageparse_src)
+          and ("parse_curl" in pageparse_src)
+          and ("subprocess" not in pageparse_src)
+          and ("selenium" not in pageparse_src)
+          and ("playwright" not in pageparse_src),
+          "pageparse markers missing")
+    check("BE-DOWNLOAD-PAGEPARSE-SOURCES",
+          "解析覆盖 标签/meta/JSON-LD/脚本字面量/curl 五类来源",
+          all(marker in pageparse_src for marker in (
+              "_HTML_ATTR_KEYS", "_META_VIDEO_KEYS", "_JSONLD_KEYS",
+              "_QUOTED_MEDIA_RE", "def parse_curl")),
+          "pageparse source markers missing")
+    check("BE-DOWNLOAD-PARSE-SESSION",
+          "解析得到的登录态服务端暂存（TTL + 上限），不进设置",
+          ("_remember_parse_session" in downloads_src)
+          and ("DOWNLOAD_PARSE_SESSION_TTL_SEC" in downloads_src)
+          and ("DOWNLOAD_PARSE_SESSION_MAX" in downloads_src),
+          "parse session markers missing")
+    check("FE-DOWNLOAD-PARSE-UI",
+          "下载页含解析入口/候选列表/加入下载按钮与 cURL 粘贴",
+          all(marker in html for marker in (
+              "downloadParseUrl", "downloadParseBtn", "downloadParseCurl",
+              "downloadParseManualBtn", "downloadCandidatesList",
+              "downloadApplyCandidatesBtn")),
+          "parse UI markers missing")
 
     two_step = (("delete-plan" in app) and ("/api/scans/' + encodePath(state.scan.id) + '/delete" in app
                 or "/delete'" in app))

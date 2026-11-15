@@ -7,9 +7,9 @@ import os
 import re
 
 APP_NAME = "DuplicateCleaner"
-APP_VERSION = "1.1.0-0051"
+APP_VERSION = "1.1.0-0052"
 DISPLAY_NAME = "重复文件清理与字幕"
-SPK_VERSION = "1.1.0-0051"
+SPK_VERSION = "1.1.0-0052"
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8787
@@ -451,6 +451,17 @@ DOWNLOAD_PROGRESS_FLUSH_SEC = 2.0
 DOWNLOAD_TEMP_PREFIX = ".dc-download-"
 # 任务详情里保留的分片明细条数上限（大播放列表只留尾部，避免 JSON 膨胀）。
 DOWNLOAD_SEGMENT_DETAIL_LIMIT = 500
+# v0052：播放网页解析（docs/DOWNLOAD_CONTRACT.md §14）
+# 解析页面时抓取的最大字节数（超过按前 4MB 提取，足够覆盖内联配置）。
+DOWNLOAD_PAGE_MAX_BYTES = 4 * 1024 * 1024
+# 从 curl 命令解析出的 Cookie/Referer 只在服务端暂存，供随后的下载任务使用。
+# 单次解析的有效期与最多保留条数（避免长期留存登录态）。
+DOWNLOAD_PARSE_SESSION_TTL_SEC = 900
+DOWNLOAD_PARSE_SESSION_MAX = 32
+# 解析结果里最多校验前 N 个 m3u8 候选是否真的是播放列表（每条约 5s 超时）。
+DOWNLOAD_PARSE_VALIDATE_MAX = 5
+# 单次解析返回的候选上限（页面里常有重复/无关地址）。
+DOWNLOAD_PARSE_CANDIDATE_LIMIT = 50
 
 # 系统 / 隐藏目录名：任何一层路径出现都必须拒绝（回收站目标除外）。
 SYSTEM_DIR_NAMES = frozenset([

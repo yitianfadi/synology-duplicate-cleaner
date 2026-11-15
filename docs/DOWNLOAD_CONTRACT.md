@@ -1,6 +1,6 @@
-# 下载中心契约（v0051）
+# 下载中心契约（v0051 / v0052）
 
-> 适用范围：`src/backend/dupcleaner/downloads.py`、`hls.py`、`httpapi.py` 的 `/api/downloads*`、`src/web/js/download-page.js` 与设置页「下载」分组。
+> 适用范围：`src/backend/dupcleaner/downloads.py`、`hls.py`、`pageparse.py`、`httpapi.py` 的 `/api/downloads*`、`src/web/js/download-page.js` 与设置页「下载」分组。
 > 本文是下载功能的**唯一事实来源**：接口、字段、错误码、默认值、落盘与清理规则以此为准；README 只做概览。
 
 ## 1. 范围
@@ -10,6 +10,7 @@
 - 直链（mp4/mkv/zip/……任意 http(s) 文件），支持 HTTP Range 断点续传；
 - HLS（`.m3u8`）：解析主播放列表 → 选清晰度 → 并发下载分片 → 本地化播放列表 → FFmpeg 无损封装为 MP4；
 - 批量：一次提交多条地址，自动成组，可整组暂停/继续/取消/重试；
+- **播放网页解析（v0052）**：给一个网页地址（或粘贴网页源码 / 浏览器 cURL），静态提取出里面的 m3u8 / 直链候选；
 - 完成后可选联动：自动入队扫描该目录 / 自动提交字幕任务。
 
 ## 2. 支持矩阵
@@ -27,6 +28,7 @@
 | 直播 / 滚动列表（无 `#EXT-X-ENDLIST`） | 拒绝 | `LIVE_UNSUPPORTED` |
 | `file://`、`ftp://`、`data:` | 拒绝 | `URL_UNSUPPORTED_SCHEME` |
 | 内网/回环地址 | 默认拒绝（SSRF） | `URL_PRIVATE_ADDRESS` |
+| 播放网页 URL / 源码 / cURL | 静态提取（不执行 JS） | 候选列表（见 §14） |
 
 ## 3. API
 
@@ -35,6 +37,7 @@
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | POST | `/api/downloads` | 创建任务（202）。body：`{urls: [], group_title?, options?}` |
+| POST | `/api/downloads/parse` | 解析播放网页（v0052）。body：`{url}` / `{html}` / `{curl}`，返回候选列表（不建任务） |
 | GET | `/api/downloads` | 列表：`?status=queued,running&group_id=&offset=&limit=&q=` |
 | GET | `/api/downloads/queue` | 队列快照：`active/queued/paused/recent` + `counts` + `concurrency` |
 | GET | `/api/downloads/{job_id}` | 任务详情（含 `timeline.steps` 与 `options`，Cookie 只给 `cookie_set`） |
@@ -167,5 +170,83 @@ DRM 解密、直播录制、内置浏览器/JS 渲染、BT/磁力、站点专用
 ## 13. 测试与验收
 
 - 单测 `tests/test_v0051_downloads.py`：播放列表全 tag 组合（master/media/AES/fMP4/BYTERANGE/直播/DRM）、URL 与命名清洗、直链与 HLS 全链路（本地假 CDN，含 Range 续传）、失败保留临时目录 + 重试、任务上限、组总览；
+- 单测 `tests/test_v0052_pageparse.py`：网页解析与 cURL 解析（详见 §14.8）；
 - 静态检查新增 `BE-DOWNLOAD-*`、`FE-DOWNLOAD-*`、端点与设置键覆盖；
-- e2e 另见 `qa/e2e_test.py` 的下载用例（假 CDN + 真 FFmpeg 可选）。
+- e2e 见 `qa/e2e_test.py` 的 DL-00…DL-07（本地假 CDN，直链/直播拒绝/SSRF/网页解析）。
+
+## 14. 播放网页解析（v0052）
+
+### 14.1 输入
+
+`POST /api/downloads/parse`，三种形态（可同时给，按以下优先级）：
+
+1. `{"html": "…"}` —— 直接解析粘贴的网页源码（不联网）；
+2. `{"curl": "curl 'https://…' -H 'referer: …' -H 'cookie: …'"}` —— 从浏览器「Copy as cURL」提取地址与 Referer/Cookie/UA；
+3. `{"url": "https://…"}` —— 服务器抓取页面（带设置里的 UA/Referer/Cookie/代理，遵守 SSRF 规则，最多读 4 MB）。
+
+缺省时 `url` 与 `curl` 都为空 → `INVALID_ARGUMENT`；抓取失败 → `HTTP_STATUS` / `URL_*`。
+
+### 14.2 提取规则
+
+`pageparse.extract_candidates(html, page_url)` 纯函数，按顺序合并、去重（同一绝对地址只留一次）：
+
+| 来源 | 内容 |
+|---|---|
+| `video-tag` | `<video>/<audio>/<source>` 的 `src`、`data-src`、`data-video`、`data-url`、`data-file`、`data-stream`、`data-source`、`data-mp4`、`data-hls`、`data-live`、`data-playurl` |
+| `link-preload` | `<link rel="preload" as="video|audio|fetch">` 的 href |
+| `meta` | `og:video`、`og:video:url`、`og:video:secure_url`、`twitter:player:stream` |
+| `json-ld` | `application/ld+json` 里的 `contentUrl`、`embedUrl`、`videoUrl`（递归，深度 ≤8） |
+| `script` | 引号内以 `.m3u8/.mpd/.mp4/.webm/.mkv/.mov/.flv/.ts/.m4s` 结尾的地址（含 `\\u002F`、`\\/`、HTML 实体解码与相对路径补全），并记录上下文键名（file/source/url/src/loadSource…） |
+
+- 丢弃 `data:` / `blob:` / `javascript:` / `about:` / `mailto:` 与非 http(s) 协议；
+- 评分排序：HLS 100 > DASH 80 > 直链 60，页面标签/JSON-LD/meta 加权，路径含 `master/index/playlist` 再 +5，同分按出现顺序；
+- `embedUrl` 等嵌入式播放页标记为 `kind=embed`（不是媒体文件，仅供打开），默认不勾选；
+- 结果上限 `DOWNLOAD_PARSE_CANDIDATE_LIMIT=50`。
+
+若抓到的正文本身就是播放列表（直接把 m3u8 地址填进解析框），返回单个 `direct` 候选，并在 `playlist` 里给出摘要：master → `variants[]`（清晰度/码率/url），media → `segments`/`duration`/`encryption`。
+
+### 14.3 候选校验
+
+对前 `DOWNLOAD_PARSE_VALIDATE_MAX=5` 个 `hls`/`dash` 候选发一次 `Range: bytes=0-65535` 请求：
+
+- HLS：正文以 `#EXTM3U` 开头 → `valid=true`，否则 `valid=false` + `note`；
+- DASH：正文含 `<MPD` → `valid=true`；
+- 网络失败 → `valid=false` + `note`（错误文本经查询串/Cookie 清洗）；
+- 直链与 `embed` 不做校验（`valid` 缺省）。
+
+### 14.4 登录态暂存
+
+解析出的 Referer/Cookie/UA **不返回给浏览器**，而是暂存在服务端：
+
+- 响应返回 `parse_session`（`ps-` + 20 位 hex，单次解析一个）；
+- 提交任务时把该 token 放进 `options.parse_session`，服务端合并进任务选项快照（`options.referer/cookie/user_agent`），Cookie 仍按密钥处理（详情只给 `cookie_set`）；
+- TTL `DOWNLOAD_PARSE_SESSION_TTL_SEC=900` 秒，最多 `DOWNLOAD_PARSE_SESSION_MAX=32` 条，超限按创建时间淘汰；不写设置、不落盘、不进日志。
+
+### 14.5 响应
+
+```json
+{
+  "ok": true, "page_url": "…", "title": "页面标题",
+  "summary": "HLS 2 · 直链 4",
+  "candidates": [{"url": "…", "kind": "hls|dash|file|embed", "ext": ".m3u8",
+                  "source": "video-tag|link-preload|meta|json-ld|script|direct",
+                  "label": "file", "score": 105, "valid": true, "note": "播放列表"}],
+  "playlist": {"kind": "master", "variants": []},
+  "parse_session": "ps-…",
+  "hint": "没找到媒体地址时的中文提示"
+}
+```
+
+未找到任何候选时返回 200 + 空数组 + `hint`（不报错，前端提示改用源码/cURL）。
+
+### 14.6 前端
+
+下载页顶部「解析播放网页」卡片：网页地址 + 「解析网页」；折叠「手动粘贴」放网页源码与 cURL（解析粘贴内容）；候选列表每行 = 勾选框 + 类型徽标 + 地址 + 校验徽标 + 来源说明；「全选 / 清空 / 加入下载列表」把勾选地址追加到下方地址框（自动去重），随后的提交会带上 `parse_session`。
+
+### 14.7 非目标
+
+不执行 JavaScript、不内置浏览器、不解决 Cloudflare 五秒盾、不做站点专用提取器；JS 渲染页请用「粘贴源码」或「Copy as cURL」兜底。
+
+### 14.8 测试
+
+`tests/test_v0052_pageparse.py`（19 例）：五类来源提取、相对/协议相对/转义/实体地址、embed 标记、去重与排序、忽略协议、标题/空页、编码回退（gb18030）、cURL 三种写法；服务级：真实页面抓取 + m3u8 校验、直接 m3u8 摘要、粘贴源码、cURL 登录态随任务下发、未启用/内网/缺参错误。

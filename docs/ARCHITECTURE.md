@@ -1,7 +1,7 @@
 # 整体方案架构
 
 > 项目：**重复文件清理与字幕（Duplicate Cleaner & Subtitles）** · 群晖 DSM 7.x SPK 套件
-> 版本：1.1.0-0051
+> 版本：1.1.0-0052
 > 原则：**先扫描、出报告、人工确认、二次确认、可回收、全程审计**。任何情况下都不自动静默删除。
 
 ## 1. 目标与边界
@@ -633,3 +633,10 @@ Linux 的 `st_ctime` 是 **inode 状态变更时间**，不是创建时间，复
 - **IO 保护**：任务级并发 1–4（默认 2）、分片并发 1–16（默认 4）、全局限速按运行任务均分、剩余空间闸门；NAS 上字幕/索引与下载同时跑时建议 1–2 任务。
 - **联动**：任务完成回调在 `services._make_download_complete` 里实现自动扫描（同目录 600s 去抖）与自动字幕（`create_batch`），全部 best-effort。
 - **安全**：`assert_url_allowed` 做协议/长度/凭据/内网地址校验（`download_allow_private` 可放开）；输出目录经 `check_path_safety` + `ShareService.share_root`；Cookie 是密钥键，日志与任务详情都不回显。
+
+### 21.1 播放网页解析（v0052）
+
+- `pageparse.py` 纯函数：从 HTML 的五类来源（media 标签属性、`<link rel=preload>`、社交卡片 meta、JSON-LD、脚本字面量）提取媒体地址，解码 `\u002F`/`\/`/HTML 实体、补全相对地址、按 HLS>DASH>直链 评分去重；**不执行 JS、不发请求**。
+- `DownloadService.parse_target`：抓页面（≤4MB，按 Content-Type/meta charset 解码，utf-8→gb18030 回退）→ 提取 → 对前 5 个 m3u8 候选做一次 `Range 64KB` 校验 → 返回候选。
+- cURL 解析出的 Referer/Cookie/UA 不进响应：存 `parse_session`（TTL 900s、上限 32），提交任务时用 token 合并进任务选项快照。
+- 前端：下载页「解析播放网页」卡片 + 候选勾选 → 追加到地址框，再走原有提交。

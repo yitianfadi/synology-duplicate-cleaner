@@ -275,6 +275,222 @@ function readOptions() {
   return options;
 }
 
+// ---------------------------------------------------------------------
+// v0052：播放网页解析
+// ---------------------------------------------------------------------
+var KIND_LABEL = { hls: 'HLS', dash: 'DASH', file: '直链', embed: '嵌入页' };
+
+var SOURCE_LABEL = {
+  'video-tag': '页面标签',
+  'link-preload': '预加载',
+  meta: '社交卡片',
+  'json-ld': '结构化数据',
+  script: '脚本文本',
+  direct: '播放列表',
+  curl: 'cURL'
+};
+
+function parseError(message) {
+  if (!els.downloadParseError) { return; }
+  setText(els.downloadParseError, message || '');
+  setHidden(els.downloadParseError, !message);
+}
+
+function setParseBusy(busy) {
+  var ds = downloadState();
+  ds.parseBusy = !!busy;
+  setHidden(els.downloadParseLoading, !busy);
+  if (els.downloadParseBtn) { els.downloadParseBtn.disabled = !!busy; }
+  if (els.downloadParseManualBtn) { els.downloadParseManualBtn.disabled = !!busy; }
+}
+
+function candidateRow(item, index) {
+  var box = el('input', {
+    attrs: { type: 'checkbox', 'data-index': String(index) }
+  });
+  box.checked = item.valid !== false && item.kind !== 'embed';
+  var badge = el('span', {
+    className: 'badge ' + (item.kind === 'hls' ? 'badge-blue'
+      : (item.kind === 'embed' ? 'badge-gray' : 'badge-green')),
+    text: KIND_LABEL[item.kind] || item.kind || '直链'
+  });
+  var valid = null;
+  if (item.valid === true) {
+    valid = el('span', { className: 'badge badge-green', text: '已校验' });
+  } else if (item.valid === false) {
+    valid = el('span', { className: 'badge badge-red', text: '校验失败' });
+  }
+  var metaParts = [];
+  if (item.label) { metaParts.push('键名 ' + item.label); }
+  if (item.source) {
+    metaParts.push(SOURCE_LABEL[item.source] || item.source);
+  }
+  if (item.note) { metaParts.push(item.note); }
+  return el('label', { className: 'download-candidate' }, [
+    box,
+    badge,
+    el('span', { className: 'download-candidate-url', text: item.url || '' }),
+    valid,
+    metaParts.length ? el('span', {
+      className: 'muted download-candidate-meta', text: metaParts.join(' · ')
+    }) : null
+  ]);
+}
+
+function renderCandidates() {
+  var ds = downloadState();
+  var list = els.downloadCandidatesList;
+  if (!list) { return; }
+  clear(list);
+  (ds.parseCandidates || []).forEach(function (item, index) {
+    list.appendChild(candidateRow(item, index));
+  });
+  setHidden(els.downloadParseResult, false);
+  setHidden(els.downloadParseEmpty, (ds.parseCandidates || []).length > 0);
+}
+
+function applyParseResult(res, options) {
+  var ds = downloadState();
+  ds.parseCandidates = (res && res.candidates) || [];
+  ds.parseSession = (res && res.parse_session) || '';
+  ds.parseSeq += 1;
+  parseError('');
+  renderCandidates();
+  var summary = (res && res.summary) || '';
+  setText(els.downloadParseSummary,
+    summary ? ('共 ' + ds.parseCandidates.length + ' 个候选（' + summary + '）')
+      : ('共 ' + ds.parseCandidates.length + ' 个候选'));
+  setText(els.downloadParseResultHeading,
+    (res && res.title) ? ('候选地址 — ' + res.title) : '候选地址');
+  if (res && res.hint) {
+    parseError(res.hint);
+  } else if (!ds.parseCandidates.length) {
+    parseError('没有找到媒体地址。');
+  }
+  var hint = [];
+  if (res && res.page_url) { hint.push('页面 ' + res.page_url); }
+  if (ds.parseSession) { hint.push('已暂存登录态（15 分钟）'); }
+  setText(els.downloadParseManualHint, hint.join(' · '));
+  if (options && options.scroll) {
+    var target = els.downloadParseResult;
+    if (target && target.scrollIntoView) {
+      try { target.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }
+      catch (e) { target.scrollIntoView(); }
+    }
+  }
+}
+
+async function runParse(body, options) {
+  var ds = downloadState();
+  if (ds.parseBusy) { return; }
+  setParseBusy(true);
+  parseError('');
+  try {
+    var res = await api('/api/downloads/parse', {
+      method: 'POST', body: body, timeout: 60000
+    });
+    applyParseResult(res, options);
+    toast('解析完成，共 ' + (res.candidates || []).length + ' 个候选', 'success');
+  } catch (err) {
+    setHidden(els.downloadParseResult, true);
+    parseError(errorMessage(err, '解析失败。'));
+  } finally {
+    setParseBusy(false);
+  }
+}
+
+function parsePage() {
+  var url = els.downloadParseUrl ? String(els.downloadParseUrl.value || '').trim() : '';
+  if (!url) {
+    parseError('请先填写网页地址。');
+    return;
+  }
+  runParse({ url: url }, { scroll: true });
+}
+
+function parseManual() {
+  var html = els.downloadParseHtml ? String(els.downloadParseHtml.value || '').trim() : '';
+  var curl = els.downloadParseCurl ? String(els.downloadParseCurl.value || '').trim() : '';
+  if (!html && !curl) {
+    parseError('请粘贴网页源码或 cURL 命令。');
+    return;
+  }
+  var body = {};
+  if (html) { body.html = html; }
+  if (curl) { body.curl = curl; }
+  var url = els.downloadParseUrl ? String(els.downloadParseUrl.value || '').trim() : '';
+  if (url) { body.url = url; }
+  runParse(body, { scroll: true });
+}
+
+function selectedCandidateUrls() {
+  var ds = downloadState();
+  var list = els.downloadCandidatesList;
+  if (!list) { return []; }
+  var boxes = Array.prototype.slice.call(
+    list.querySelectorAll('input[type="checkbox"]'));
+  var urls = [];
+  boxes.forEach(function (box) {
+    if (!box.checked) { return; }
+    var index = parseInt(box.getAttribute('data-index'), 10);
+    var item = (ds.parseCandidates || [])[index];
+    if (item && item.url) { urls.push(item.url); }
+  });
+  return urls;
+}
+
+function applyCandidates() {
+  var urls = selectedCandidateUrls();
+  if (!urls.length) {
+    toast('请先勾选要下载的地址', 'error');
+    return;
+  }
+  if (!els.downloadUrls) { return; }
+  var existing = String(els.downloadUrls.value || '').split(/\r?\n/)
+    .map(function (line) { return line.trim(); })
+    .filter(Boolean);
+  var added = 0;
+  urls.forEach(function (url) {
+    if (existing.indexOf(url) === -1) {
+      existing.push(url);
+      added += 1;
+    }
+  });
+  els.downloadUrls.value = existing.join('\n');
+  setText(els.downloadApplyHint,
+    '已加入 ' + added + ' 个地址（共 ' + existing.length + ' 行）');
+  toast('已加入 ' + added + ' 个下载地址', 'success');
+  updateSubmitHint();
+}
+
+function toggleAllCandidates() {
+  var ds = downloadState();
+  var list = els.downloadCandidatesList;
+  if (!list) { return; }
+  var boxes = Array.prototype.slice.call(
+    list.querySelectorAll('input[type="checkbox"]'));
+  var allChecked = boxes.length > 0 && boxes.every(function (box) {
+    return box.checked;
+  });
+  boxes.forEach(function (box) {
+    var index = parseInt(box.getAttribute('data-index'), 10);
+    var item = (ds.parseCandidates || [])[index];
+    box.checked = !allChecked && (!item || item.kind !== 'embed');
+  });
+}
+
+function clearCandidates() {
+  var ds = downloadState();
+  ds.parseCandidates = [];
+  ds.parseSession = '';
+  clear(els.downloadCandidatesList);
+  setHidden(els.downloadParseResult, true);
+  setHidden(els.downloadParseEmpty, true);
+  setText(els.downloadParseSummary, '');
+  setText(els.downloadApplyHint, '');
+  parseError('');
+}
+
 async function submitDownloads() {
   var ds = downloadState();
   if (ds.submitting || !els.downloadUrls) { return; }
@@ -293,7 +509,9 @@ async function submitDownloads() {
   ds.submitting = true;
   if (els.downloadSubmitBtn) { els.downloadSubmitBtn.disabled = true; }
   try {
-    var payload = { urls: urls, options: readOptions() };
+    var submitOptions = readOptions();
+    if (ds.parseSession) { submitOptions.parse_session = ds.parseSession; }
+    var payload = { urls: urls, options: submitOptions };
     var res = await api('/api/downloads', {
       method: 'POST', body: payload, timeout: 30000
     });
@@ -376,6 +594,28 @@ export function initDownloadPage() {
         }
       });
     });
+  }
+  // v0052：播放网页解析
+  if (els.downloadParseBtn) {
+    els.downloadParseBtn.addEventListener('click', parsePage);
+  }
+  if (els.downloadParseUrl) {
+    els.downloadParseUrl.addEventListener('keydown', function (event) {
+      if (event.key === 'Enter') { event.preventDefault(); parsePage(); }
+    });
+  }
+  if (els.downloadParseManualBtn) {
+    els.downloadParseManualBtn.addEventListener('click', parseManual);
+  }
+  if (els.downloadApplyCandidatesBtn) {
+    els.downloadApplyCandidatesBtn.addEventListener('click', applyCandidates);
+  }
+  if (els.downloadSelectAllCandidatesBtn) {
+    els.downloadSelectAllCandidatesBtn.addEventListener('click',
+      toggleAllCandidates);
+  }
+  if (els.downloadClearCandidatesBtn) {
+    els.downloadClearCandidatesBtn.addEventListener('click', clearCandidates);
   }
   updateSubmitHint();
 }

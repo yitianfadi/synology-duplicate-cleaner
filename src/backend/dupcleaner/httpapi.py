@@ -340,6 +340,9 @@ class Api(object):
              self._download_list, False),
             ("POST", re.compile(r"^/api/downloads$"),
              self._download_create, False),
+            # v0052：播放网页解析（HTML / 源码 / curl → 候选媒体地址）
+            ("POST", re.compile(r"^/api/downloads/parse$"),
+             self._download_parse, False),
             ("GET", re.compile(r"^/api/downloads/queue$"),
              self._download_queue, False),
             ("GET", re.compile(r"^/api/downloads/groups$"),
@@ -534,6 +537,8 @@ class Api(object):
                 "batch_max_items": config.DOWNLOAD_BATCH_MAX_ITEMS,
                 "job_limit_default": config.DOWNLOAD_JOB_LIMIT_DEFAULT,
                 "output_ext": config.DOWNLOAD_OUTPUT_EXT,
+                # v0052：播放网页解析（静态提取，不执行 JS）
+                "page_parse": True,
             },
             # v0046：通知 / 计划扫描能力
             "notify": {
@@ -695,6 +700,11 @@ class Api(object):
         service = self._require_download_admin(session)
         body = _json_body(request)
         return json_response(service.create(session.user, body), status=202)
+
+    def _download_parse(self, request, session, params):
+        service = self._require_download_admin(session)
+        body = _json_body(request)
+        return json_response(service.parse_target(session.user, body))
 
     def _download_queue(self, request, session, params):
         service = self._require_download_admin(session)

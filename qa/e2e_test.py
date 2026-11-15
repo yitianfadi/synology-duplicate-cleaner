@@ -2922,21 +2922,88 @@ def run():
                   and live_detail.get("error_code") == "LIVE_UNSUPPORTED",
                   "status=%s code=%s" % (live_detail.get("status"),
                                          live_detail.get("error_code")))
+
+            # DL-05：SSRF 默认拒绝（放行开关关闭时）
+            client.put_json("/api/settings",
+                            {"settings": {"download_allow_private": False}})
+            resp = client.post_json("/api/downloads", {
+                "urls": ["http://127.0.0.1:9/blocked.bin"]})
+            code, _ = err_code(resp)
+            check("DL-05", "内网地址在未放行时返回 403 URL_PRIVATE_ADDRESS",
+                  resp.status == 403 and code == "URL_PRIVATE_ADDRESS",
+                  "status=%s code=%s" % (resp.status, code))
+            client.put_json("/api/settings",
+                            {"settings": {"download_allow_private": True}})
+
+            # DL-06：播放网页解析（静态提取 + m3u8 校验）
+            served["/p/index.m3u8"] = (
+                b"#EXTM3U\n#EXT-X-TARGETDURATION:4\n#EXTINF:4.0,\n"
+                b"seg0.ts\n#EXT-X-ENDLIST\n")
+            served["/p/page.html"] = (
+                u"<html><head><title>QA 播放页</title></head><body>"
+                u'<video data-src="%s/p/index.m3u8">' % cdn_base
+                + u"</video></body></html>").encode("utf-8")
+            resp = client.post_json("/api/downloads/parse", {
+                "url": cdn_base + "/p/page.html"})
+            data = jd(resp)
+            cands = data.get("candidates") or []
+            hls_cand = [item for item in cands
+                        if item.get("url", "").endswith("/p/index.m3u8")]
+            check("DL-06", "网页解析返回候选并校验 m3u8（含标题/摘要/暂存 token）",
+                  resp.status == 200 and hls_cand
+                  and hls_cand[0].get("valid") is True
+                  and hls_cand[0].get("kind") == "hls"
+                  and u"QA 播放页" in (data.get("title") or "")
+                  and bool(data.get("parse_session")),
+                  "status=%s data=%s" % (resp.status, data))
+
+            # DL-07：解析浏览器 cURL（地址 + 登录态随任务下发）
+            curl = ("curl '%s/p/page.html' -H 'Referer: https://ref.example.com/' "
+                    "-H 'Cookie: sid=QA-TOKEN'" % cdn_base)
+            resp = client.post_json("/api/downloads/parse", {"curl": curl})
+            data = jd(resp)
+            cands = data.get("candidates") or []
+            hls_cand = [item for item in cands
+                        if item.get("url", "").endswith("/p/index.m3u8")]
+            token = data.get("parse_session") or ""
+            check("DL-07", "cURL 解析出地址与登录态，并把 session 下发给下载任务",
+                  resp.status == 200 and hls_cand and bool(token),
+                  "status=%s candidates=%s" % (resp.status, cands))
+            if hls_cand and token:
+                created = client.post_json("/api/downloads", {
+                    "urls": [hls_cand[0]["url"]],
+                    "options": {"parse_session": token},
+                })
+                created_data = jd(created)
+                job_view = (created_data.get("jobs") or [{}])[0]
+                dl_parse_job_id = job_view.get("job_id")
+                detail = {}
+                if dl_parse_job_id:
+                    detail_resp = client.get(
+                        "/api/downloads/%s" % quote(dl_parse_job_id))
+                    detail = jd(detail_resp).get("job") or {}
+                opts = detail.get("options") or {}
+                check("DL-08", "解析 session 携带的 Cookie/Referer 进入任务快照",
+                      created.status == 202
+                      and opts.get("cookie_set") is True
+                      and "cookie" not in opts
+                      and opts.get("referer") == "https://ref.example.com/",
+                      "status=%s options=%s" % (created.status, opts))
+                if dl_parse_job_id:
+                    deadline = time.time() + 30
+                    while time.time() < deadline:
+                        r4 = client.get(
+                            "/api/downloads/%s" % quote(dl_parse_job_id))
+                        if (jd(r4).get("job") or {}).get("status") in (
+                                "done", "failed", "cancelled"):
+                            break
+                        time.sleep(0.2)
         finally:
             try:
                 cdn.shutdown()
             finally:
                 cdn.server_close()
                 cdn_thread.join(timeout=5)
-
-        client.put_json("/api/settings",
-                        {"settings": {"download_allow_private": False}})
-        resp = client.post_json("/api/downloads", {
-            "urls": ["http://127.0.0.1:9/blocked.bin"]})
-        code, _ = err_code(resp)
-        check("DL-05", "内网地址在未放行时返回 403 URL_PRIVATE_ADDRESS",
-              resp.status == 403 and code == "URL_PRIVATE_ADDRESS",
-              "status=%s code=%s" % (resp.status, code))
 
         # ---------------- 重启持久化 ----------------
         client.put_json("/api/settings", {"settings": {"concurrency": 3}})
