@@ -1,9 +1,9 @@
 {
-  "generated_at": "2026-11-15T16:53:58+0800",
+  "generated_at": "2026-11-15T17:30:52+0800",
   "python": "3.12.9 | packaged by Anaconda, Inc. | (main, Feb  6 2025, 18:49:16) [MSC v.1929 64 bit (AMD64)]",
   "repo": "D:\\code\\zhouyi\\qunhui\\synology-duplicate-cleaner",
   "summary": {
-    "PASS": 217,
+    "PASS": 221,
     "FAIL": 0,
     "UNVERIFIED": 1
   },
@@ -11,11 +11,11 @@
     "fixture_files": 46,
     "python": "3.12.9",
     "birthtime_supported": true,
-    "backend_port": 4970,
+    "backend_port": 5053,
     "csrf_token_len": 43,
     "meta": {
       "ok": true,
-      "app_version": "1.1.0-0052",
+      "app_version": "1.1.0-0053",
       "dsm_version": "dev",
       "python_version": "3.12.9",
       "creation_time_supported": true,
@@ -167,7 +167,9 @@
           "scan_failed",
           "subtitle_batch_done",
           "failure_burst",
-          "freed_threshold"
+          "freed_threshold",
+          "download_done",
+          "download_failed"
         ],
         "notify_webhook_url": "",
         "notify_telegram_bot_token": "",
@@ -200,6 +202,14 @@
         "download_job_limit": 500,
         "download_auto_scan": false,
         "download_auto_subtitle": false,
+        "download_skip_existing": true,
+        "download_auto_retry": true,
+        "download_auto_retry_max": 2,
+        "download_offpeak_enabled": false,
+        "download_offpeak_start": "01:00",
+        "download_offpeak_end": "08:00",
+        "download_offpeak_rate_limit_kbps": 0,
+        "download_name_template": "{title}",
         "subtitle_asr_api_key_set": false,
         "subtitle_llm_api_key_set": false,
         "notify_telegram_bot_token_set": false,
@@ -515,14 +525,18 @@
           "scan_failed",
           "subtitle_batch_done",
           "failure_burst",
-          "freed_threshold"
+          "freed_threshold",
+          "download_done",
+          "download_failed"
         ],
         "event_labels": {
           "scan_complete": "扫描完成",
           "scan_failed": "扫描失败",
           "subtitle_batch_done": "字幕批次结束",
           "failure_burst": "批量失败超阈值",
-          "freed_threshold": "释放空间达阈值"
+          "freed_threshold": "释放空间达阈值",
+          "download_done": "下载完成",
+          "download_failed": "下载失败"
         }
       },
       "scheduler": {
@@ -589,7 +603,7 @@
       }
     },
     "subtitle_enumerate_count": 0,
-    "main_scan_id": "20261115-165346-34ae3d",
+    "main_scan_id": "20261115-173009-f99c3b",
     "main_scan_final": "completed",
     "main_stats": {
       "files_seen": 38,
@@ -603,7 +617,7 @@
       "selectable_duplicate_files": 15,
       "selectable_reclaimable_bytes": 4403200,
       "bytes_hashed": 8753152,
-      "bytes_per_sec": 368604536,
+      "bytes_per_sec": 430095482,
       "errors": 0,
       "skipped": {
         "symlink": 0,
@@ -679,13 +693,13 @@
     },
     "main_groups_total": 12,
     "recycle_plan": {
-      "plan_id": "plan-8c3ee689e66dd2a0",
+      "plan_id": "plan-ff1763dd5399cdfe",
       "count": 2,
       "bytes": 40960,
       "groups_affected": 1
     },
     "recycle_job": {
-      "job_id": "del-20261115-165347-2dc1dc",
+      "job_id": "del-20261115-173009-1009bb",
       "status": "completed",
       "done": 2,
       "failed": 0,
@@ -1201,7 +1215,7 @@
       "id": "SKIP-04",
       "name": "符号链接跳过（当前环境无法创建 symlink）",
       "status": "UNVERIFIED",
-      "detail": "os.symlink failed: [WinError 1314] 客户端没有所需的特权。: 'C:\\\\Users\\\\zhouyi\\\\AppData\\\\Local\\\\Temp\\\\dupqa-2s2xl6ay\\\\qa-share-a\\\\dup' -> 'C:\\\\Users\\\\zhouyi\\\\AppData\\\\Local\\\\Temp\\\\dupqa-2s2xl6ay\\\\qa-share-a\\\\link_to_dup'"
+      "detail": "os.symlink failed: [WinError 1314] 客户端没有所需的特权。: 'C:\\\\Users\\\\zhouyi\\\\AppData\\\\Local\\\\Temp\\\\dupqa-4m3cl70q\\\\qa-share-a\\\\dup' -> 'C:\\\\Users\\\\zhouyi\\\\AppData\\\\Local\\\\Temp\\\\dupqa-4m3cl70q\\\\qa-share-a\\\\link_to_dup'"
     },
     {
       "id": "HARDLINK-01",
@@ -1956,6 +1970,30 @@
     {
       "id": "DL-08",
       "name": "解析 session 携带的 Cookie/Referer 进入任务快照",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "DL-09",
+      "name": "队列快照返回下载目录空间看板（剩余/已用/总量）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "DL-10",
+      "name": "下载任务可导出 CSV（含 BOM 与中文表头）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "DL-11",
+      "name": "批量暂停返回 matched/affected 并进入已暂停",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "DL-12",
+      "name": "任务置顶接口返回加分后的优先级",
       "status": "PASS",
       "detail": ""
     },

@@ -1468,6 +1468,59 @@ def check_frontend():
               "downloadParseManualBtn", "downloadCandidatesList",
               "downloadApplyCandidatesBtn")),
           "parse UI markers missing")
+    # ---- v0053 下载增强（docs/DOWNLOAD_CONTRACT.md §15）----
+    config_src = read(os.path.join(backend, "dupcleaner", "config.py"))
+    check("BE-DOWNLOAD-DEDUP",
+          "下载前去重：skip_existing + 体积一致才跳过",
+          ("DOWNLOAD_SKIP_EXISTING_DEFAULT" in config_src)
+          and ("def _maybe_skip" in downloads_src)
+          and ("def _base_path" in downloads_src)
+          and ("_JobSkipped" in downloads_src),
+          "dedupe markers missing")
+    check("BE-DOWNLOAD-RETRY",
+          "任务级自动重试：可重试码 + 退避 + retry_at 调度",
+          ("RETRYABLE_CODES" in downloads_src)
+          and ("def _schedule_retry" in downloads_src)
+          and ("retry_at" in downloads_src)
+          and ("DOWNLOAD_AUTO_RETRY_MAX_LIMIT" in config_src),
+          "retry markers missing")
+    check("BE-DOWNLOAD-OFFPEAK",
+          "分时限速：HH:MM 窗口（支持跨零点）",
+          ("def _in_offpeak" in downloads_src)
+          and ("_parse_hhmm" in downloads_src)
+          and ("download_offpeak_start" in download_settings_src)
+          and ("_check_hhmm" in download_settings_src),
+          "offpeak markers missing")
+    check("BE-DOWNLOAD-NAME-TEMPLATE",
+          "文件名模板：占位符白名单 + 季集识别",
+          ("def _render_name" in downloads_src)
+          and ("_split_season_episode" in downloads_src)
+          and ("DOWNLOAD_NAME_TEMPLATE_TOKENS" in config_src)
+          and ("_check_name_template" in download_settings_src),
+          "name template markers missing")
+    check("BE-DOWNLOAD-NOTIFY",
+          "下载完成/失败通知接入通知系统",
+          ("download_done" in config_src)
+          and ("download_failed" in config_src)
+          and ("def _notify" in downloads_src)
+          and ("download_done" in downloads_src),
+          "download notify markers missing")
+    check("FE-DOWNLOAD-BULK",
+          "下载页批量操作与导出入口",
+          all(marker in html for marker in (
+              "downloadPauseAllBtn", "downloadResumeAllBtn",
+              "downloadRetryFailedBtn", "downloadExportLink"))
+          and ("/api/downloads/bulk" in app)
+          and ("/api/downloads/export" in html)
+          and ("/priority" in app),
+          "bulk UI markers missing")
+    check("FE-DOWNLOAD-BOOKMARKLET",
+          "书签脚本生成与 #/download?parse= 自动解析",
+          ("downloadBookmarkletCode" in html)
+          and ("javascript:(function()" in app)
+          and ("hashQuery" in app)
+          and ("autoParsed" in app),
+          "bookmarklet markers missing")
 
     two_step = (("delete-plan" in app) and ("/api/scans/' + encodePath(state.scan.id) + '/delete" in app
                 or "/delete'" in app))

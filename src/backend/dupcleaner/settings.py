@@ -181,6 +181,21 @@ DEFAULT_SETTINGS = {
     # 下载完成后可选动作：自动入队扫描判重 / 自动提交字幕任务。
     "download_auto_scan": False,
     "download_auto_subtitle": False,
+    # --- v0053 下载增强（docs/DOWNLOAD_CONTRACT.md §15）---
+    # 目标文件已存在（体积一致）时跳过下载，避免重复占用空间。
+    "download_skip_existing": config.DOWNLOAD_SKIP_EXISTING_DEFAULT,
+    # 网络类错误自动重试（任务级，退避重排），次数上限 0–5。
+    "download_auto_retry": config.DOWNLOAD_AUTO_RETRY_DEFAULT,
+    "download_auto_retry_max": config.DOWNLOAD_AUTO_RETRY_MAX_DEFAULT,
+    # 分时限速：低谷窗口内使用另一档限速（0 = 不限），支持跨零点。
+    "download_offpeak_enabled": config.DOWNLOAD_OFFPEAK_ENABLED_DEFAULT,
+    "download_offpeak_start": config.DOWNLOAD_OFFPEAK_START_DEFAULT,
+    "download_offpeak_end": config.DOWNLOAD_OFFPEAK_END_DEFAULT,
+    "download_offpeak_rate_limit_kbps":
+        config.DOWNLOAD_OFFPEAK_RATE_LIMIT_DEFAULT,
+    # 输出文件名模板：{title} {site} {date} {yyyy} {mm} {dd} {height}
+    # {season} {episode} {ext}
+    "download_name_template": config.DOWNLOAD_NAME_TEMPLATE_DEFAULT,
 }
 
 # 密钥键：GET/日志/审计/扫描结果中绝不允许出现明文
@@ -384,6 +399,38 @@ def _check_subdir_template(key, value):
     if "{" in stripped or "}" in stripped:
         _err(u"设置 %s 的占位符未闭合" % key, {"key": key})
     return normalized
+
+
+_HHMM_RE = re.compile(r"^([01][0-9]|2[0-3]):([0-5][0-9])$")
+
+
+def _check_hhmm(key, value):
+    """HH:MM（00:00–23:59），供分时限速窗口使用。"""
+    text = _check_str(key, value, max_len=5).strip()
+    if not _HHMM_RE.match(text):
+        _err(u"设置 %s 必须是 HH:MM（00:00–23:59）" % key, {"key": key})
+    return text
+
+
+def _check_name_template(key, value):
+    """输出文件名模板（v0053）：只允许列出的占位符，不允许路径分隔符。"""
+    text = _check_str(key, value,
+                      max_len=config.DOWNLOAD_NAME_TEMPLATE_MAX).strip()
+    if not text:
+        return config.DOWNLOAD_NAME_TEMPLATE_DEFAULT
+    if "/" in text or "\\" in text:
+        _err(u"设置 %s 不能包含路径分隔符（目录请用 download_subdir_template）"
+             % key, {"key": key})
+    for token in re.findall(r"\{([^{}]*)\}", text):
+        if token not in config.DOWNLOAD_NAME_TEMPLATE_TOKENS:
+            _err(u"设置 %s 含未知占位符 {%s}（可用：%s）"
+                 % (key, token, ", ".join("{%s}" % t for t in
+                                          config.DOWNLOAD_NAME_TEMPLATE_TOKENS)),
+                 {"key": key})
+    stripped = re.sub(r"\{[^{}]*\}", "", text)
+    if "{" in stripped or "}" in stripped:
+        _err(u"设置 %s 的占位符未闭合" % key, {"key": key})
+    return text
 
 
 def _split_keep_rule(item):
@@ -828,6 +875,18 @@ def _normalize_value(key, value):
     if key == "download_job_limit":
         return _check_int(key, value, config.DOWNLOAD_JOB_LIMIT_MIN,
                           config.DOWNLOAD_JOB_LIMIT_MAX)
+    # --- v0053 下载增强（docs/DOWNLOAD_CONTRACT.md §15）---
+    if key in ("download_skip_existing", "download_auto_retry",
+               "download_offpeak_enabled"):
+        return _check_bool(key, value)
+    if key == "download_auto_retry_max":
+        return _check_int(key, value, 0, config.DOWNLOAD_AUTO_RETRY_MAX_LIMIT)
+    if key in ("download_offpeak_start", "download_offpeak_end"):
+        return _check_hhmm(key, value)
+    if key == "download_offpeak_rate_limit_kbps":
+        return _check_int(key, value, 0, config.DOWNLOAD_RATE_LIMIT_MAX_KBPS)
+    if key == "download_name_template":
+        return _check_name_template(key, value)
     if key == "skip_symlinks":
         # 无论前端传什么，符号链接一律跳过（安全强制）
         if not isinstance(value, bool):

@@ -39,6 +39,7 @@ _ATTR_RE = re.compile(
 
 _TAG_RE = re.compile(r"<\s*(video|audio|source|link)\b([^>]*)>",
                      re.IGNORECASE)
+_IFRAME_RE = re.compile(r"<\s*(?:iframe|frame)\b([^>]*)>", re.IGNORECASE)
 _META_TAG_RE = re.compile(r"<\s*meta\b([^>]*)>", re.IGNORECASE)
 _TITLE_RE = re.compile(r"<title[^>]*>(.*?)</title>", re.IGNORECASE | re.DOTALL)
 _JSONLD_RE = re.compile(
@@ -409,6 +410,26 @@ def parse_curl(text):
     if ua and "user_agent" not in headers:
         headers["user_agent"] = ua.group("value").strip()
     return {"url": url, "headers": headers}
+
+
+def extract_iframes(page_html, page_url=u"", limit=8):
+    """提取页面里的 iframe/frame 地址（v0053：解析时最多跟一层）。"""
+    text = normalize_text(page_html)
+    result = []
+    seen = set()
+    for match in _IFRAME_RE.finditer(text):
+        attrs = _parse_attrs(match.group(1))
+        value = attrs.get("src") or attrs.get("data-src") or u""
+        absolute = _absolutize(value, page_url)
+        if not absolute or absolute in seen:
+            continue
+        if not absolute.lower().startswith(("http://", "https://")):
+            continue
+        seen.add(absolute)
+        result.append(absolute)
+        if len(result) >= limit:
+            break
+    return result
 
 
 def summarize(candidates):

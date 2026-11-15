@@ -209,7 +209,8 @@ def build_services(runtime_config):
     download_service = DownloadService(
         runtime_config, store, share_service, settings_manager.get,
         on_complete=_make_download_complete(
-            scan_manager, subtitle_service, settings_manager))
+            scan_manager, subtitle_service, settings_manager),
+        notifier=notification_service)
     download_service.start()
     # 升级 drain 握手：preupgrade 写 <var>/upgrade.drain，后端暂停扫描后写 done。
     upgrade_monitor = UpgradeDrainMonitor(runtime_config.data_dir, scan_manager)

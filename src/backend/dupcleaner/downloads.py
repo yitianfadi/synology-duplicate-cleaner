@@ -94,6 +94,16 @@ class _JobCancelled(Exception):
     pass
 
 
+class _JobSkipped(Exception):
+    """目标文件已存在：按「下载前去重」直接完成，不消耗流量。"""
+
+    def __init__(self, path, size, expected=None):
+        super(_JobSkipped, self).__init__(u"已存在: %s" % path)
+        self.path = path
+        self.size = size
+        self.expected = expected
+
+
 class _JobPaused(Exception):
     pass
 
@@ -237,6 +247,59 @@ def _human_bytes(value):
     if index == 0:
         return u"%d %s" % (int(value), units[index])
     return u"%.1f %s" % (value, units[index])
+
+
+_HHMM_RE = re.compile(r"^([01][0-9]|2[0-3]):([0-5][0-9])$")
+
+
+def _parse_hhmm(text):
+    """'01:30' → 90（分钟）；非法返回 None。"""
+    match = _HHMM_RE.match((text or u"").strip())
+    if match is None:
+        return None
+    return int(match.group(1)) * 60 + int(match.group(2))
+
+
+_SEASON_EPISODE_RE = re.compile(
+    r"[Ss](\d{1,2})[ ._-]*[Ee](\d{1,4})")
+_SEASON_CN_RE = re.compile(u"第([0-9一二三四五六七八九十百]{1,4})季")
+_EPISODE_CN_RE = re.compile(u"第([0-9一二三四五六七八九十百]{1,4})集")
+_CN_NUMBERS = {u"一": 1, u"二": 2, u"三": 3, u"四": 4, u"五": 5, u"六": 6,
+               u"七": 7, u"八": 8, u"九": 9, u"十": 10}
+
+
+def _cn_number(text):
+    if not text:
+        return None
+    if text.isdigit():
+        try:
+            return int(text)
+        except ValueError:
+            return None
+    if text in _CN_NUMBERS:
+        return _CN_NUMBERS[text]
+    return None
+
+
+def _split_season_episode(title):
+    """从标题里猜季/集：S01E02 / 第1季 第2集 → ('S01', 'E02')。"""
+    text = title or u""
+    season = episode = ""
+    match = _SEASON_EPISODE_RE.search(text)
+    if match:
+        season = u"S%02d" % int(match.group(1))
+        episode = u"E%02d" % int(match.group(2))
+        return season, episode
+    cn_season_match = _SEASON_CN_RE.search(text)
+    cn_episode_match = _EPISODE_CN_RE.search(text)
+    cn_season = _cn_number(cn_season_match.group(1)) if cn_season_match else None
+    cn_episode = (_cn_number(cn_episode_match.group(1))
+                  if cn_episode_match else None)
+    if cn_season:
+        season = u"S%02d" % cn_season
+    if cn_episode:
+        episode = u"E%02d" % cn_episode
+    return season, episode
 
 
 class _SpeedMeter(object):
@@ -425,6 +488,11 @@ class DownloadJob(object):
         self.temp_dir = ""
         self.temp_kept = False
         self.attempts = 0
+        # v0053：去重跳过 / 优先级 / 自动重试排期 / 产物高度（命名模板用）
+        self.skipped = False
+        self.priority = 0
+        self.retry_at = 0.0
+        self.height = 0
         self.created_epoch = float(created_epoch or time.time())
         self.started_epoch = 0.0
         self.finished_epoch = 0.0
@@ -566,6 +634,11 @@ class DownloadJob(object):
             "attempts": self.attempts,
             "verify": dict(self.verify or {}),
             "temp_kept": bool(self.temp_kept),
+            # v0053：去重跳过 / 优先级 / 自动重试排期
+            "skipped": bool(self.skipped),
+            "priority": int(self.priority or 0),
+            "retry_at": _iso(self.retry_at) if self.retry_at else None,
+            "height": int(self.height or 0),
             "created_at": _iso(self.created_epoch),
             "started_at": _iso(self.started_epoch),
             "finished_at": _iso(self.finished_epoch),
@@ -611,6 +684,10 @@ class DownloadJob(object):
             "temp_dir": self.temp_dir,
             "temp_kept": self.temp_kept,
             "attempts": self.attempts,
+            "skipped": bool(self.skipped),
+            "priority": int(self.priority or 0),
+            "retry_at": float(self.retry_at or 0.0),
+            "height": int(self.height or 0),
             "created_epoch": self.created_epoch,
             "started_epoch": self.started_epoch,
             "finished_epoch": self.finished_epoch,
@@ -632,6 +709,7 @@ class DownloadJob(object):
                       "variant", "encryption", "segments_total",
                       "segments_done", "bytes_total", "bytes_done",
                       "verify", "temp_dir", "temp_kept", "attempts",
+                      "skipped", "priority", "retry_at", "height",
                       "started_epoch", "finished_epoch", "updated_epoch",
                       "timeline"):
             if field in record:
@@ -664,7 +742,7 @@ def _public_options(options):
 # ----------------------------------------------------------------------
 class DownloadService(object):
     def __init__(self, runtime_config, store, share_service, settings_provider,
-                 ffmpeg_tool=None, on_complete=None):
+                 ffmpeg_tool=None, on_complete=None, notifier=None):
         self.config = runtime_config
         self.store = store
         self._shares = share_service
@@ -679,6 +757,10 @@ class DownloadService(object):
             runtime_config=runtime_config,
             settings_provider=settings_provider)
         self._on_complete = on_complete
+        # v0053：下载完成/失败通知（NotificationService.notify）
+        self._notifier = notifier
+        # v0053：页面解析短时缓存（同一 URL 10 分钟内不重复抓取）
+        self._parse_cache = {}
         # v0052：网页解析得到的 Cookie/Referer 临时暂存（不进设置、不落盘）
         self._parse_sessions = {}
         self._parse_lock = threading.Lock()
@@ -760,13 +842,18 @@ class DownloadService(object):
 
     def _dispatch_once(self):
         limit = self._concurrency()
+        now = time.time()
         with self._lock:
             while len(self._running) < limit and self._queue:
-                job_id = self._queue.pop(0)
+                index = self._next_queue_index_locked(now)
+                if index is None:
+                    break
+                job_id = self._queue.pop(index)
                 job = self._jobs.get(job_id)
                 if job is None or job.status != STATUS_QUEUED:
                     continue
                 job.status = STATUS_RUNNING
+                job.retry_at = 0.0
                 job.started_epoch = job.started_epoch or time.time()
                 job.progress = max(int(job.progress or 0), 1)
                 thread = threading.Thread(
@@ -774,6 +861,22 @@ class DownloadService(object):
                     name="dl-job-%s" % job_id[-6:], daemon=True)
                 self._running[job_id] = thread
                 thread.start()
+
+    def _next_queue_index_locked(self, now):
+        """按 (优先级高, 创建早) 取下一个可运行任务；自动重试未到期的先跳过。"""
+        best_index = None
+        best_key = None
+        for index, job_id in enumerate(self._queue):
+            job = self._jobs.get(job_id)
+            if job is None or job.status != STATUS_QUEUED:
+                continue
+            if job.retry_at and job.retry_at > now:
+                continue
+            key = (-int(job.priority or 0), job.created_epoch)
+            if best_key is None or key < best_key:
+                best_key = key
+                best_index = index
+        return best_index
 
     def _run_job(self, job):
         try:
@@ -783,10 +886,23 @@ class DownloadService(object):
         except _JobCancelled:
             self._cleanup_temp(job)
             self._finish_status(job, STATUS_CANCELLED, u"已取消")
+        except _JobSkipped as exc:
+            job.skipped = True
+            job.output_path = exc.path
+            job.output_size = exc.size
+            job.output_name = os.path.basename(exc.path)
+            job.progress = 100
+            job.stage = "done"
+            self._finish_status(
+                job, STATUS_DONE,
+                u"已存在同名文件，跳过下载：%s（%s）"
+                % (job.output_name, _human_bytes(exc.size)))
         except DownloadError as exc:
-            self._fail(job, exc.code, exc.message)
+            if not self._schedule_retry(job, exc):
+                self._fail(job, exc.code, exc.message)
         except ApiError as exc:
-            self._fail(job, exc.code, exc.message)
+            if not self._schedule_retry(job, exc):
+                self._fail(job, exc.code, exc.message)
         except Exception:
             logger.exception(u"下载任务异常: %s", job.job_id)
             self._fail(job, "INTERNAL_ERROR", u"下载失败（内部错误）")
@@ -795,12 +911,79 @@ class DownloadService(object):
                 self._running.pop(job.job_id, None)
             self._persist(job, force=True)
 
+    # v0053：网络类错误可自动重试（指数退避重排），确定性错误不重试。
+    RETRYABLE_CODES = frozenset(["HTTP_STATUS", "SEGMENT_FAILED",
+                                 "INTERNAL_ERROR"])
+
+    def _schedule_retry(self, job, exc):
+        options = job.options
+        if not options.get("auto_retry"):
+            return False
+        code = getattr(exc, "code", "") or "INTERNAL_ERROR"
+        if code not in self.RETRYABLE_CODES:
+            return False
+        try:
+            limit = int(options.get("auto_retry_max") or 0)
+        except (TypeError, ValueError):
+            limit = 0
+        attempts = int(job.attempts or 0)
+        if attempts > limit:
+            return False
+        delay = config.DOWNLOAD_AUTO_RETRY_BACKOFF_SEC * max(1, attempts)
+        message = getattr(exc, "message", u"") or u""
+        with self._lock:
+            job.status = STATUS_QUEUED
+            job.stage = STATUS_QUEUED
+            job.retry_at = time.time() + delay
+            job.message = u"自动重试 %d/%d（%d 秒后）" % (
+                attempts, limit, int(delay))
+            job.error_code = code
+            job.error_message = _sanitize_error(
+                message, job.options.get("cookie") or u"")
+            if job.job_id not in self._queue:
+                self._queue.append(job.job_id)
+        self._persist(job, force=True)
+        logger.info(u"下载任务自动重试 %s（%s/%s）", job.job_id,
+                    attempts, limit)
+        return True
+
+    def _effective_rate_limit(self, job):
+        """v0053：分时限速——低谷窗口用 offpeak 档，其余用常规档。"""
+        options = job.options
+        try:
+            base = int(options.get("rate_limit_kbps") or 0)
+        except (TypeError, ValueError):
+            base = 0
+        if not options.get("offpeak_enabled"):
+            return max(0, base) * 1024
+        if self._in_offpeak(options.get("offpeak_start") or "",
+                            options.get("offpeak_end") or "",
+                            time.localtime()):
+            try:
+                offpeak = int(options.get("offpeak_rate_limit_kbps") or 0)
+            except (TypeError, ValueError):
+                offpeak = 0
+            return max(0, offpeak) * 1024
+        return max(0, base) * 1024
+
+    @staticmethod
+    def _in_offpeak(start_text, end_text, now):
+        start = _parse_hhmm(start_text)
+        end = _parse_hhmm(end_text)
+        if start is None or end is None or start == end:
+            return False
+        minutes = int(now.tm_hour) * 60 + int(now.tm_min)
+        if start < end:
+            return start <= minutes < end
+        # 跨零点：（如 23:00–07:00）
+        return minutes >= start or minutes < end
+
     def _execute(self, job):
         options = job.options
         job.attempts = int(job.attempts or 0) + 1
         job._cancel.clear()
         job._abort.clear()
-        speed_bps = int(options.get("rate_limit_kbps") or 0) * 1024
+        speed_bps = self._effective_rate_limit(job)
         job._limiter = _RateLimiter(speed_bps) if speed_bps > 0 else None
 
         job.step_start("resolve")
@@ -816,6 +999,8 @@ class DownloadService(object):
 
         if kind == "hls":
             job.step_end("resolve")
+            self._maybe_skip(job, self._base_path(
+                job, config.DOWNLOAD_OUTPUT_EXT))
             self._step_start(job, "download")
             local_list, audio_list = self._materialize_hls(
                 job, client, playlist)
@@ -824,12 +1009,30 @@ class DownloadService(object):
             self._verify(job)
         else:
             job.step_end("resolve")
+            self._maybe_skip(job, self._base_path(
+                job, self._extension_for(job)), job.bytes_total or None)
             self._step_start(job, "download")
             self._download_direct(job, client)
             self._step_end(job, "download")
             self._finalize_direct(job)
 
         self._complete(job)
+
+    def _maybe_skip(self, job, final_path, expected_bytes=None):
+        """v0053：下载前去重——目标文件已存在且体积吻合时直接完成。"""
+        if not job.options.get("skip_existing"):
+            return
+        if job.options.get("overwrite") or not final_path:
+            return
+        if not os.path.isfile(final_path):
+            return
+        try:
+            size = os.path.getsize(final_path)
+        except OSError:
+            return
+        if expected_bytes and int(expected_bytes) != int(size):
+            return
+        raise _JobSkipped(final_path, size, expected_bytes)
 
     # -- 输出目录 -------------------------------------------------------
     def _prepare_output_dir(self, job):
@@ -1005,6 +1208,11 @@ class DownloadService(object):
             variant = hls.pick_variant(
                 playlist, int(job.options.get("max_height") or 0))
             job.variant = hls.variant_label(variant)
+            # v0053：记录清晰度高度，供文件名模板 {height} 使用
+            try:
+                job.height = int(variant.get("height") or 0)
+            except (TypeError, ValueError):
+                job.height = 0
             job.title = job.title or self._title_from(
                 u"", variant.get("uri") or url)
             text, _headers, media_url = client.read_text(variant["uri"])
@@ -1409,6 +1617,28 @@ class DownloadService(object):
             logger.warning(u"下载失败 %s: %s %s", job.job_id,
                            job.error_code, job.error_message)
         self._persist(job, force=True)
+        if status == STATUS_DONE:
+            self._notify(job, "download_done", u"下载完成", job.message,
+                         level="info")
+        elif status == STATUS_FAILED:
+            self._notify(job, "download_failed", u"下载失败", job.message,
+                         level="error")
+
+    def _notify(self, job, event, title, message, level="info"):
+        """v0053：复用通知系统（DSM/Webhook/Telegram），失败只记日志。"""
+        if self._notifier is None:
+            return
+        try:
+            self._notifier.notify(
+                event, title,
+                u"%s：%s" % (title, message or job.job_id),
+                level=level,
+                detail={"job_id": job.job_id,
+                        "name": job.output_name or job.title,
+                        "size": int(job.output_size or 0),
+                        "url": _sanitize_error(job.url)})
+        except Exception:
+            logger.debug(u"下载通知发送失败: %s", job.job_id)
 
     def _fail(self, job, code, message):
         job.error_code = code or "INTERNAL_ERROR"
@@ -1528,6 +1758,15 @@ class DownloadService(object):
                 assert_url_allowed(page_url, allow_private)
             except DownloadError as exc:
                 raise ApiError(exc.code, exc.message, details=exc.details)
+            # v0053：同一 URL 短时缓存，避免重复抓取（curl/源码不缓存）
+            if not raw_curl:
+                cached = self._parse_cache_get(page_url)
+                if cached is not None:
+                    result = dict(cached)
+                    result["cached"] = True
+                    result["parse_session"] = self._remember_parse_session(
+                        {}, result.get("page_url") or page_url, settings)
+                    return result
             client = _HttpClient(
                 timeout=float(settings.get("download_timeout_sec")
                               or config.DOWNLOAD_DEFAULT_TIMEOUT_SEC),
@@ -1564,6 +1803,9 @@ class DownloadService(object):
             }]
         else:
             candidates = pageparse.extract_candidates(body, final_url)
+            # v0053：跟随一层 iframe（最多 N 个）再提取
+            candidates = self._merge_iframe_candidates(
+                candidates, body, final_url, client, settings)
             candidates = candidates[:config.DOWNLOAD_PARSE_CANDIDATE_LIMIT]
             self._validate_candidates(candidates, client, settings)
 
@@ -1573,7 +1815,7 @@ class DownloadService(object):
         if not candidates:
             hint = (u"没有从页面里找到媒体地址。该页可能需要登录或由 JS 动态加载，"
                     u"请用「粘贴网页源码」或浏览器 DevTools 的「Copy as cURL」再试。")
-        return {
+        result = {
             "ok": True,
             "page_url": final_url,
             "title": pageparse.extract_title(body),
@@ -1583,6 +1825,77 @@ class DownloadService(object):
             "parse_session": token,
             "hint": hint,
         }
+        # v0053：只有纯 URL 请求才缓存（curl/源码带不同的登录态）
+        if not raw_html and not raw_curl:
+            self._parse_cache_put(page_url, result)
+        return result
+
+    def _parse_cache_get(self, key):
+        if not key:
+            return None
+        now = time.time()
+        with self._parse_lock:
+            entry = self._parse_cache.get(key)
+            if entry is None:
+                return None
+            if now - float(entry.get("at") or 0) > \
+                    config.DOWNLOAD_PARSE_CACHE_TTL_SEC:
+                self._parse_cache.pop(key, None)
+                return None
+            return dict(entry.get("result") or {})
+
+    def _parse_cache_put(self, key, result):
+        if not key:
+            return
+        now = time.time()
+        with self._parse_lock:
+            expired = [item for item, value in self._parse_cache.items()
+                       if now - float((value or {}).get("at") or 0)
+                       > config.DOWNLOAD_PARSE_CACHE_TTL_SEC]
+            for item in expired:
+                self._parse_cache.pop(item, None)
+            while len(self._parse_cache) >= config.DOWNLOAD_PARSE_CACHE_MAX:
+                oldest = min(self._parse_cache.items(),
+                             key=lambda pair: (pair[1] or {}).get("at") or 0)
+                self._parse_cache.pop(oldest[0], None)
+            self._parse_cache[key] = {"at": now, "result": dict(result)}
+
+    def _merge_iframe_candidates(self, candidates, body, page_url, client,
+                                 settings):
+        """v0053：跟随一层 iframe，把里面的候选并进来（失败忽略）。"""
+        if client is None:
+            return candidates
+        frames = pageparse.extract_iframes(
+            body, page_url, limit=config.DOWNLOAD_PARSE_IFRAME_MAX)
+        if not frames:
+            return candidates
+        seen = {item.get("url") for item in candidates}
+        merged = list(candidates)
+        for frame in frames:
+            try:
+                frame_body, _headers, frame_url = client.read_text(
+                    frame, limit=config.DOWNLOAD_PAGE_MAX_BYTES)
+            except DownloadError:
+                continue
+            if hls.is_playlist(frame_body):
+                # iframe 里直接是播放列表：作为候选保留
+                if frame_url not in seen:
+                    seen.add(frame_url)
+                    merged.append({
+                        "url": frame_url, "kind": "hls", "ext": ".m3u8",
+                        "source": "iframe", "label": u"iframe 播放列表",
+                        "score": 95, "valid": True,
+                    })
+                continue
+            for item in pageparse.extract_candidates(frame_body, frame_url):
+                if item.get("url") in seen:
+                    continue
+                seen.add(item.get("url"))
+                item["source"] = "iframe"
+                merged.append(item)
+        merged.sort(key=lambda item: (-int(item.get("score") or 0),
+                                      int(item.get("order") or 0)))
+        return merged
 
     def _playlist_summary(self, url, body):
         try:
@@ -1817,6 +2130,21 @@ class DownloadService(object):
                            settings.get("download_subdir_mode") or u"none")
         if subdir_mode not in config.DOWNLOAD_SUBDIR_MODES:
             subdir_mode = config.DOWNLOAD_SUBDIR_DEFAULT
+        try:
+            auto_retry_max = int(pick(
+                "auto_retry_max",
+                settings.get("download_auto_retry_max")) or 0)
+        except (TypeError, ValueError):
+            auto_retry_max = config.DOWNLOAD_AUTO_RETRY_MAX_DEFAULT
+        auto_retry_max = max(0, min(auto_retry_max,
+                                    config.DOWNLOAD_AUTO_RETRY_MAX_LIMIT))
+        try:
+            offpeak_rate = int(pick(
+                "offpeak_rate_limit_kbps",
+                settings.get("download_offpeak_rate_limit_kbps")) or 0)
+        except (TypeError, ValueError):
+            offpeak_rate = 0
+        offpeak_rate = max(0, offpeak_rate)
         return {
             "title": _safe_name(pick("title", u""), u"") if pick("title", u"")
             else u"",
@@ -1846,6 +2174,25 @@ class DownloadService(object):
                                    settings.get("download_keep_temp"))),
             "auto_scan": bool(settings.get("download_auto_scan")),
             "auto_subtitle": bool(settings.get("download_auto_subtitle")),
+            # --- v0053 下载增强 ---
+            "skip_existing": bool(pick(
+                "skip_existing", settings.get("download_skip_existing"))),
+            "name_template": (pick(
+                "name_template",
+                settings.get("download_name_template")
+                or config.DOWNLOAD_NAME_TEMPLATE_DEFAULT) or u""),
+            "auto_retry": bool(pick(
+                "auto_retry", settings.get("download_auto_retry"))),
+            "auto_retry_max": auto_retry_max,
+            "offpeak_enabled": bool(pick(
+                "offpeak_enabled", settings.get("download_offpeak_enabled"))),
+            "offpeak_start": pick(
+                "offpeak_start", settings.get("download_offpeak_start")
+                or config.DOWNLOAD_OFFPEAK_START_DEFAULT),
+            "offpeak_end": pick(
+                "offpeak_end", settings.get("download_offpeak_end")
+                or config.DOWNLOAD_OFFPEAK_END_DEFAULT),
+            "offpeak_rate_limit_kbps": offpeak_rate,
         }
 
     # -- 对外：查询 -----------------------------------------------------
@@ -1910,11 +2257,13 @@ class DownloadService(object):
         queued = [job for job in jobs if job.status == STATUS_QUEUED]
         for index, job_id in enumerate(queued_ids):
             position[job_id] = index + 1
-        for job in sorted(queued, key=lambda item: item.created_epoch):
+        # v0053：排队顺序 = 优先级高 → 创建早（与调度器的取队规则一致）
+        queued.sort(key=lambda item: (-int(item.priority or 0),
+                                      item.created_epoch))
+        for job in queued:
             item = job.snapshot()
             item["queue_position"] = position.get(job.job_id)
             ordered.append(item)
-        queued.sort(key=lambda item: item.created_epoch)
         recent = [job for job in jobs if job.status in FINAL_STATUSES]
         recent.sort(key=lambda item: item.finished_epoch or 0, reverse=True)
         return {
@@ -1925,6 +2274,30 @@ class DownloadService(object):
             "recent": [job.snapshot() for job in recent[:recent_limit]],
             "counts": self.counts(),
             "concurrency": self._concurrency(),
+            # v0053：下载目录空间看板
+            "storage": self.storage_stats(),
+        }
+
+    def storage_stats(self, directory=None):
+        """v0053：输出目录所在卷的剩余空间（用于看板与告警）。"""
+        raw = directory or self._settings_snapshot().get(
+            "download_output_dir") or u""
+        if not raw:
+            return None
+        try:
+            usage = shutil.disk_usage(raw)
+        except OSError:
+            return None
+        total = float(usage.total or 0)
+        used_pct = round(100.0 * float(usage.used) / total, 1) if total else 0.0
+        return {
+            "path": raw,
+            "free_bytes": int(usage.free),
+            "used_bytes": int(usage.used),
+            "total_bytes": int(total),
+            "used_pct": used_pct,
+            "min_free_gb": int(self._settings_snapshot().get(
+                "download_min_free_gb") or 0),
         }
 
     def get(self, job_id):
@@ -2043,6 +2416,88 @@ class DownloadService(object):
         return {"ok": True, "deleted": job_id,
                 "deleted_file": removed_file, "group": group}
 
+    # -- v0053：优先级 / 批量操作 / 导出 -------------------------------
+    def set_priority(self, job_id, priority=None, top=False):
+        job = self.get(job_id)
+        with self._lock:
+            if job.status in FINAL_STATUSES:
+                raise ApiError("DOWNLOAD_BUSY", u"任务已结束，不能调整优先级")
+            if top:
+                values = [int(item.priority or 0)
+                          for item in self._jobs.values()
+                          if item.status in ACTIVE_STATUSES]
+                job.priority = (max(values) if values else 0) + 1
+            elif priority is not None:
+                try:
+                    value = int(priority)
+                except (TypeError, ValueError):
+                    raise invalid(u"priority 必须是整数")
+                job.priority = max(0, min(value,
+                                          config.DOWNLOAD_PRIORITY_MAX))
+        self._persist(job, force=True)
+        return job.snapshot()
+
+    def bulk_action(self, user, action, scope="all"):
+        """批量暂停/继续/取消/重试（v0053）。
+
+        scope: all（活动任务）/ queued / running / paused / failed（失败+取消）。
+        """
+        if action not in ("pause", "resume", "cancel", "retry"):
+            raise invalid(u"不支持的操作: %s" % action)
+        mapping = {
+            "all": ACTIVE_STATUSES,
+            "queued": (STATUS_QUEUED,),
+            "running": (STATUS_RUNNING,),
+            "paused": (STATUS_PAUSED,),
+            "failed": (STATUS_FAILED, STATUS_CANCELLED),
+        }
+        statuses = mapping.get(scope or "all")
+        if statuses is None:
+            raise invalid(u"不支持的批量范围: %s" % scope)
+        with self._lock:
+            targets = [job.job_id for job in self._jobs.values()
+                       if job.status in statuses]
+        targets = targets[:config.DOWNLOAD_BULK_MAX]
+        results = []
+        for job_id in targets:
+            try:
+                if action == "pause":
+                    results.append(self.pause(job_id))
+                elif action == "resume":
+                    results.append(self.resume(job_id))
+                elif action == "cancel":
+                    results.append(self.cancel(job_id))
+                else:
+                    results.append(self.retry(job_id))
+            except ApiError:
+                continue
+        return {"ok": True, "action": action, "scope": scope,
+                "matched": len(targets), "affected": len(results),
+                "counts": self.counts()}
+
+    EXPORT_HEADERS = (
+        ("job_id", u"任务 ID"), ("title", u"名称"), ("status", u"状态"),
+        ("stage_label", u"阶段"), ("kind", u"类型"), ("variant", u"清晰度"),
+        ("segments_total", u"分片总数"), ("segments_done", u"已完成分片"),
+        ("bytes_total", u"总字节"), ("bytes_done", u"已下载字节"),
+        ("output_name", u"文件名"), ("output_size", u"产物字节"),
+        ("error_code", u"错误码"), ("error_message", u"错误信息"),
+        ("attempts", u"尝试次数"), ("skipped", u"已跳过"),
+        ("priority", u"优先级"), ("created_at", u"创建时间"),
+        ("finished_at", u"完成时间"), ("output_path", u"产物路径"),
+        ("url", u"地址"),
+    )
+
+    def export_rows(self, status=None, group_id=None):
+        """v0053：导出下载任务（表头 + 行），供 CSV 下载。"""
+        data = self.list_page(status=status, group_id=group_id,
+                              offset=0, limit=5000)
+        rows = [[label for _key, label in self.EXPORT_HEADERS]]
+        for job in data.get("jobs") or []:
+            rows.append([job.get(key, u"") for key, _label in
+                         self.EXPORT_HEADERS])
+        return rows
+
     # -- 批量组 ---------------------------------------------------------
     def _create_group_locked(self, title, output_dir, urls):
         now = time.time()
@@ -2137,18 +2592,45 @@ class DownloadService(object):
                 "group": self.get_group(group_id), "jobs": results}
 
     # -- 最终路径 -------------------------------------------------------
+    def _render_name(self, job, ext):
+        """v0053：按 download_name_template 渲染文件名（不含目录）。"""
+        options = job.options
+        when = time.localtime(job.created_epoch or time.time())
+        fallback_title = (job.title or self._title_from(u"", job.url)
+                          or u"download-" + time.strftime("%Y%m%d-%H%M%S", when))
+        season, episode = _split_season_episode(fallback_title)
+        tokens = {
+            "title": _safe_name(fallback_title, u"video"),
+            "site": _site_of(job.url),
+            "date": time.strftime("%Y-%m-%d", when),
+            "yyyy": time.strftime("%Y", when),
+            "mm": time.strftime("%m", when),
+            "dd": time.strftime("%d", when),
+            "height": (u"%dp" % int(job.height)) if job.height else u"",
+            "season": season,
+            "episode": episode,
+            "ext": (ext or u"").lstrip(u"."),
+        }
+        template = (options.get("name_template")
+                    or config.DOWNLOAD_NAME_TEMPLATE_DEFAULT)
+        try:
+            rendered = template.format(**tokens)
+        except (KeyError, IndexError, ValueError):
+            rendered = u"{title}"
+            rendered = rendered.format(**tokens)
+        rendered = re.sub(r"\s+", u" ", rendered or u"").strip()
+        stem = _safe_name(rendered, u"video")
+        if not stem.lower().endswith(ext):
+            stem += ext
+        if len(stem) > _NAME_MAX + len(ext):
+            stem = stem[:len(stem) - len(ext)][:_NAME_MAX] + ext
+        return stem
+
     def _final_path(self, job, ext):
         directory = job.output_dir or u""
         if not directory:
             raise DownloadError("OUTPUT_DIR_INVALID", u"下载目录未确定")
-        stem = job.title or self._title_from(u"", job.url) or \
-            u"download-" + time.strftime("%Y%m%d-%H%M%S",
-                                         time.localtime(job.created_epoch))
-        stem = _safe_name(stem)
-        if not stem.lower().endswith(ext):
-            name = stem + ext
-        else:
-            name = stem
+        name = self._render_name(job, ext)
         candidate = os.path.join(directory, name)
         if job.options.get("overwrite"):
             return candidate
@@ -2162,6 +2644,13 @@ class DownloadService(object):
                 return candidate
         raise DownloadError("OUTPUT_EXISTS",
                             u"同名文件过多，无法确定输出文件名")
+
+    def _base_path(self, job, ext):
+        """v0053：不含「重名加序号」的首选路径（去重判断用）。"""
+        directory = job.output_dir or u""
+        if not directory:
+            raise DownloadError("OUTPUT_DIR_INVALID", u"下载目录未确定")
+        return os.path.join(directory, self._render_name(job, ext))
 
     # -- 清理 -----------------------------------------------------------
     def _prune_locked(self, limit):

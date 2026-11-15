@@ -1,7 +1,7 @@
 # 整体方案架构
 
 > 项目：**重复文件清理与字幕（Duplicate Cleaner & Subtitles）** · 群晖 DSM 7.x SPK 套件
-> 版本：1.1.0-0052
+> 版本：1.1.0-0053
 > 原则：**先扫描、出报告、人工确认、二次确认、可回收、全程审计**。任何情况下都不自动静默删除。
 
 ## 1. 目标与边界
@@ -640,3 +640,13 @@ Linux 的 `st_ctime` 是 **inode 状态变更时间**，不是创建时间，复
 - `DownloadService.parse_target`：抓页面（≤4MB，按 Content-Type/meta charset 解码，utf-8→gb18030 回退）→ 提取 → 对前 5 个 m3u8 候选做一次 `Range 64KB` 校验 → 返回候选。
 - cURL 解析出的 Referer/Cookie/UA 不进响应：存 `parse_session`（TTL 900s、上限 32），提交任务时用 token 合并进任务选项快照。
 - 前端：下载页「解析播放网页」卡片 + 候选勾选 → 追加到地址框，再走原有提交。
+
+### 21.2 下载增强（v0053）
+
+- **去重**：`_base_path` 给出不含「重名加序号」的首选路径，命中且体积一致即抛 `_JobSkipped` → 任务直接 `done` + `skipped=true`，不写临时目录。
+- **自动重试**：`_schedule_retry` 只处理 `HTTP_STATUS/SEGMENT_FAILED/INTERNAL_ERROR`；退避 `15s×次数`，`retry_at` 由调度器跳过；`attempts > auto_retry_max` 才失败。
+- **分时限速**：`_effective_rate_limit` 在任务开始时按 `_in_offpeak`（支持跨零点）选择常规/低谷档，写入 `_RateLimiter`。
+- **命名模板**：`_render_name` 用 `{title}{site}{date}{height}{season}{episode}…` 渲染，`_split_season_episode` 识别 `S01E02`/「第二季第三集」。
+- **队列与导出**：`_next_queue_index_locked` 按（优先级、创建时间）取任务；`bulk_action` 按 scope 批量处理；`export_rows` 供 `/api/downloads/export`。
+- **通知**：`_finish_status` 在 done/failed 时调用 `notify(download_done|download_failed)`，复用通知队列，失败只记日志。
+- **解析增强**：同 URL 结果缓存 600s（`cached=true`）；跟随一层 iframe（最多 3 个）；书签脚本走 `#/download?parse=`，前端 `state.hashQuery` 自动解析。

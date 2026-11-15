@@ -7,9 +7,9 @@ import os
 import re
 
 APP_NAME = "DuplicateCleaner"
-APP_VERSION = "1.1.0-0052"
+APP_VERSION = "1.1.0-0053"
 DISPLAY_NAME = "重复文件清理与字幕"
-SPK_VERSION = "1.1.0-0052"
+SPK_VERSION = "1.1.0-0053"
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8787
@@ -168,13 +168,16 @@ RECYCLE_MODE_LABELS = {
 # ---------------------------------------------------------------------------
 NOTIFY_CHANNELS = ("dsm", "webhook", "telegram")
 NOTIFY_EVENTS = ("scan_complete", "scan_failed", "subtitle_batch_done",
-                 "failure_burst", "freed_threshold")
+                 "failure_burst", "freed_threshold",
+                 "download_done", "download_failed")
 NOTIFY_EVENT_LABELS = {
     "scan_complete": u"扫描完成",
     "scan_failed": u"扫描失败",
     "subtitle_batch_done": u"字幕批次结束",
     "failure_burst": u"批量失败超阈值",
     "freed_threshold": u"释放空间达阈值",
+    "download_done": u"下载完成",
+    "download_failed": u"下载失败",
 }
 DSM_NOTIFY_PATH = "/usr/syno/bin/synodsmnotify"
 NOTIFY_TIMEOUT_DEFAULT = 5
@@ -462,6 +465,34 @@ DOWNLOAD_PARSE_SESSION_MAX = 32
 DOWNLOAD_PARSE_VALIDATE_MAX = 5
 # 单次解析返回的候选上限（页面里常有重复/无关地址）。
 DOWNLOAD_PARSE_CANDIDATE_LIMIT = 50
+# ---------------------------------------------------------------------------
+# v0053 下载增强（docs/DOWNLOAD_CONTRACT.md §15）
+# ---------------------------------------------------------------------------
+# 下载前去重：目标文件已存在（且体积一致/未知）时直接跳过，不再重复下载。
+DOWNLOAD_SKIP_EXISTING_DEFAULT = True
+# 任务级自动重试：只对网络类错误生效（HTTP/分片），退避 = 次数 × 基础秒数。
+DOWNLOAD_AUTO_RETRY_DEFAULT = True
+DOWNLOAD_AUTO_RETRY_MAX_DEFAULT = 2
+DOWNLOAD_AUTO_RETRY_MAX_LIMIT = 5
+DOWNLOAD_AUTO_RETRY_BACKOFF_SEC = 15.0
+# 分时限速：低谷时段用另一档限速（0=不限），窗口可跨零点。
+DOWNLOAD_OFFPEAK_ENABLED_DEFAULT = False
+DOWNLOAD_OFFPEAK_START_DEFAULT = "01:00"
+DOWNLOAD_OFFPEAK_END_DEFAULT = "08:00"
+DOWNLOAD_OFFPEAK_RATE_LIMIT_DEFAULT = 0
+# 输出文件名模板（子目录模板见 DOWNLOAD_SUBDIR_TEMPLATE_*）。
+DOWNLOAD_NAME_TEMPLATE_DEFAULT = "{title}"
+DOWNLOAD_NAME_TEMPLATE_MAX = 200
+DOWNLOAD_NAME_TEMPLATE_TOKENS = ("title", "site", "date", "yyyy", "mm", "dd",
+                                 "height", "season", "episode", "ext")
+# 批量操作范围上限与任务优先级上限。
+DOWNLOAD_BULK_MAX = 500
+DOWNLOAD_PRIORITY_MAX = 100
+# 页面解析缓存（同一 URL 短时间重复解析不重复抓取）。
+DOWNLOAD_PARSE_CACHE_TTL_SEC = 600
+DOWNLOAD_PARSE_CACHE_MAX = 32
+# 解析时最多跟随的 iframe 数（只抓一层，避免递归爆炸）。
+DOWNLOAD_PARSE_IFRAME_MAX = 3
 
 # 系统 / 隐藏目录名：任何一层路径出现都必须拒绝（回收站目标除外）。
 SYSTEM_DIR_NAMES = frozenset([

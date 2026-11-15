@@ -75,6 +75,12 @@ class FakeCdnHandler(http.server.BaseHTTPRequestHandler):
         server = self.server
         server.requests.append(self.path)
         path = self.path.split("?")[0]
+        if server.fail_remaining > 0:
+            server.fail_remaining -= 1
+            self.send_response(500)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
         body, content_type = self._body_for(path)
         if body is None:
             self.send_response(404)
@@ -122,6 +128,7 @@ class FakeCdn(object):
         self.httpd.blobs = {}
         self.httpd.requests = []
         self.httpd.ranges = []
+        self.httpd.fail_remaining = 0
         self.httpd.range_support = True
         self.port = self.httpd.server_address[1]
         self.thread = threading.Thread(target=self.httpd.serve_forever,
@@ -200,7 +207,7 @@ class ShareStub(object):
 
 
 class DownloadHarness(object):
-    def __init__(self):
+    def __init__(self, notifier=None):
         self.tmpdir = tempfile.mkdtemp(prefix="dc-dl-")
         self.share = os.path.join(self.tmpdir, "share")
         self.downloads = os.path.join(self.share, "downloads")
@@ -239,10 +246,20 @@ class DownloadHarness(object):
             "download_subdir_template": "{site}/{date}",
             "download_auto_scan": False,
             "download_auto_subtitle": False,
+            # v0053 下载增强
+            "download_skip_existing": True,
+            "download_auto_retry": False,
+            "download_auto_retry_max": 2,
+            "download_offpeak_enabled": False,
+            "download_offpeak_start": "01:00",
+            "download_offpeak_end": "08:00",
+            "download_offpeak_rate_limit_kbps": 0,
+            "download_name_template": "{title}",
         }
         self.service = DownloadService(
             self.config, self.store, ShareStub(self.share),
-            lambda: dict(self.settings), ffmpeg_tool=self.tool)
+            lambda: dict(self.settings), ffmpeg_tool=self.tool,
+            notifier=notifier)
         self.service.start()
 
     def wait(self, job_id, timeout=20.0):

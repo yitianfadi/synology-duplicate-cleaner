@@ -268,7 +268,7 @@ import {
       els.navSettingsBtn.addEventListener('click', function () { setView('settings'); });
     }
     window.addEventListener('hashchange', function () {
-      var raw = String(window.location.hash || '').replace(/^#\/?/, '');
+      var raw = splitHashQuery(window.location.hash);
       var view = LEGACY_VIEW_ALIASES[raw] || raw;
       if (raw === 'logs') {
         // v0038：旧 #/logs 书签兼容 → 任务中心「操作日志」标签页
@@ -389,8 +389,29 @@ import {
     });
   }
 
+  function splitHashQuery(rawHash) {
+    var raw = String(rawHash || '').replace(/^#\/?/, '');
+    var query = {};
+    var index = raw.indexOf('?');
+    if (index !== -1) {
+      var search = raw.slice(index + 1);
+      raw = raw.slice(0, index);
+      search.split('&').forEach(function (pair) {
+        if (!pair) { return; }
+        var eq = pair.indexOf('=');
+        var key = eq === -1 ? pair : pair.slice(0, eq);
+        var value = eq === -1 ? '' : pair.slice(eq + 1);
+        try { value = decodeURIComponent(value.replace(/\+/g, ' ')); }
+        catch (e) { /* 保留原文 */ }
+        query[key] = value;
+      });
+    }
+    state.hashQuery = query;
+    return raw;
+  }
+
   function initialViewFromHash() {
-    var raw = String(window.location.hash || '').replace(/^#\/?/, '');
+    var raw = splitHashQuery(window.location.hash);
     if (raw === 'logs') {
       // v0038：旧 #/logs 兼容到任务中心「操作日志」
       state.taskTab = 'logs';
@@ -2450,6 +2471,28 @@ import {
     if (els.setDownloadAutoSubtitle) {
       els.setDownloadAutoSubtitle.checked = s.download_auto_subtitle === true;
     }
+    // v0053：去重 / 自动重试 / 分时限速 / 文件名模板
+    if (els.setDownloadSkipExisting) {
+      els.setDownloadSkipExisting.checked = s.download_skip_existing !== false;
+    }
+    if (els.setDownloadAutoRetry) {
+      els.setDownloadAutoRetry.checked = s.download_auto_retry !== false;
+    }
+    setVideoNumberValue(els.setDownloadAutoRetryMax, s.download_auto_retry_max, 2, 0, 5);
+    if (els.setDownloadOffpeakEnabled) {
+      els.setDownloadOffpeakEnabled.checked = s.download_offpeak_enabled === true;
+    }
+    if (els.setDownloadOffpeakStart) {
+      els.setDownloadOffpeakStart.value = s.download_offpeak_start || '01:00';
+    }
+    if (els.setDownloadOffpeakEnd) {
+      els.setDownloadOffpeakEnd.value = s.download_offpeak_end || '08:00';
+    }
+    setVideoNumberValue(els.setDownloadOffpeakRate,
+      s.download_offpeak_rate_limit_kbps, 0, 0, 1048576);
+    if (els.setDownloadNameTemplate) {
+      els.setDownloadNameTemplate.value = s.download_name_template || '{title}';
+    }
     if (els.settingsDownloadSummary) {
       setText(els.settingsDownloadSummary, s.download_enabled
         ? ('默认目录 ' + (s.download_output_dir || '未设置') +
@@ -2549,6 +2592,45 @@ import {
       && els.setDownloadAutoScan.checked);
     settings.download_auto_subtitle = !!(els.setDownloadAutoSubtitle
       && els.setDownloadAutoSubtitle.checked);
+    // v0053：去重 / 自动重试 / 分时限速 / 文件名模板
+    settings.download_skip_existing = !!(els.setDownloadSkipExisting
+      && els.setDownloadSkipExisting.checked);
+    settings.download_auto_retry = !!(els.setDownloadAutoRetry
+      && els.setDownloadAutoRetry.checked);
+    var autoRetryMax = readSubtitleInt(els.setDownloadAutoRetryMax, 0, 5,
+      '自动重试次数上限', errors, 'downloadAutoRetryMax');
+    if (autoRetryMax !== null) { settings.download_auto_retry_max = autoRetryMax; }
+    settings.download_offpeak_enabled = !!(els.setDownloadOffpeakEnabled
+      && els.setDownloadOffpeakEnabled.checked);
+    var hhmmRe = /^([01]\d|2[0-3]):[0-5]\d$/;
+    var offpeakStart = String(els.setDownloadOffpeakStart
+      ? els.setDownloadOffpeakStart.value : '').trim();
+    if (!hhmmRe.test(offpeakStart)) {
+      errors.downloadOffpeakStart = '低谷开始时间需为 HH:MM（如 01:00）。';
+    } else {
+      settings.download_offpeak_start = offpeakStart;
+    }
+    var offpeakEnd = String(els.setDownloadOffpeakEnd
+      ? els.setDownloadOffpeakEnd.value : '').trim();
+    if (!hhmmRe.test(offpeakEnd)) {
+      errors.downloadOffpeakEnd = '低谷结束时间需为 HH:MM（如 08:00）。';
+    } else {
+      settings.download_offpeak_end = offpeakEnd;
+    }
+    var offpeakRate = readSubtitleInt(els.setDownloadOffpeakRate, 0, 1048576,
+      '低谷限速', errors, 'downloadOffpeakRate');
+    if (offpeakRate !== null) {
+      settings.download_offpeak_rate_limit_kbps = offpeakRate;
+    }
+    var nameTemplate = String(els.setDownloadNameTemplate
+      ? els.setDownloadNameTemplate.value : '').trim();
+    if (!nameTemplate) {
+      errors.downloadNameTemplate = '文件名模板不能为空（例如 {title}）。';
+    } else if (/[\\/]/.test(nameTemplate)) {
+      errors.downloadNameTemplate = '文件名模板不能包含路径分隔符。';
+    } else {
+      settings.download_name_template = nameTemplate;
+    }
   }
 
   // ---------- 云端字幕：获取模型列表 / 测试连接（v0026） ----------
@@ -10517,7 +10599,13 @@ import {
     downloadCookie: { input: 'setDownloadCookie', error: 'setDownloadCookieError' },
     downloadProxy: { input: 'setDownloadProxy', error: 'setDownloadProxyError' },
     downloadMinFreeGb: { input: 'setDownloadMinFreeGb', error: 'setDownloadMinFreeGbError' },
-    downloadJobLimit: { input: 'setDownloadJobLimit', error: 'setDownloadJobLimitError' }
+    downloadJobLimit: { input: 'setDownloadJobLimit', error: 'setDownloadJobLimitError' },
+    // v0053 下载增强
+    downloadAutoRetryMax: { input: 'setDownloadAutoRetryMax', error: 'setDownloadAutoRetryMaxError' },
+    downloadOffpeakStart: { input: 'setDownloadOffpeakStart', error: 'setDownloadOffpeakStartError' },
+    downloadOffpeakEnd: { input: 'setDownloadOffpeakEnd', error: 'setDownloadOffpeakEndError' },
+    downloadOffpeakRate: { input: 'setDownloadOffpeakRate', error: 'setDownloadOffpeakRateError' },
+    downloadNameTemplate: { input: 'setDownloadNameTemplate', error: 'setDownloadNameTemplateError' }
   };
 
   function bytesToMbValue(bytes) {

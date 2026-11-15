@@ -250,3 +250,55 @@ DRM 解密、直播录制、内置浏览器/JS 渲染、BT/磁力、站点专用
 ### 14.8 测试
 
 `tests/test_v0052_pageparse.py`（19 例）：五类来源提取、相对/协议相对/转义/实体地址、embed 标记、去重与排序、忽略协议、标题/空页、编码回退（gb18030）、cURL 三种写法；服务级：真实页面抓取 + m3u8 校验、直接 m3u8 摘要、粘贴源码、cURL 登录态随任务下发、未启用/内网/缺参错误。
+## 15. 下载增强（v0053）
+
+### 15.1 下载前去重（`download_skip_existing`，默认开）
+
+- 解析出最终文件名后（直链用 URL 后缀、HLS 用 `.mp4`），若目标路径已存在：
+  - 直链且已知总大小：**体积一致**才跳过，体积不同视为不同文件，按重名规则输出 `名称 (2).ext`；
+  - HLS 或大小未知：直接跳过；
+- 命中后任务直接置 `done` 且 `skipped=true`、`message` 说明「已存在同名文件，跳过下载」，不写临时目录、不消耗流量（探测请求除外）；
+- `overwrite=true` 或关闭该设置时不跳过；任务选项是提交时快照。
+
+### 15.2 任务级自动重试（`download_auto_retry` / `download_auto_retry_max`）
+
+- 只对 `HTTP_STATUS` / `SEGMENT_FAILED` / `INTERNAL_ERROR` 生效；`LIVE_/DRM_/PLAYLIST_INVALID/URL_*/OUTPUT_*/INSUFFICIENT_SPACE/FFMPEG_UNAVAILABLE` 不重试；
+- 退避：`15s × 已尝试次数`，任务回队列并带 `retry_at`，调度器跳过未到期任务；`attempts` 超过 `auto_retry_max`（0–5，默认 2）后标 `failed`；
+- 队列顺序仍按「优先级 → 创建时间」，重试任务不抢占。
+
+### 15.3 分时限速（`download_offpeak_*`）
+
+- `download_offpeak_enabled` 打开后，`[start, end)` 窗口内使用 `download_offpeak_rate_limit_kbps`，窗口外使用 `download_rate_limit_kbps`；
+- 窗口支持跨零点（如 `23:00–07:00`）；非法/空窗口视为不生效；
+- 生效判定在**任务开始时**（长任务不会中途切换档位）。
+
+### 15.4 文件名模板（`download_name_template`，默认 `{title}`）
+
+- 占位符：`{title} {site} {date} {yyyy} {mm} {dd} {height} {season} {episode} {ext}`；
+- `{height}` 来自所选清晰度（主列表变体高度）；`{season}/{episode}` 从标题识别 `S01E02` 或 `第2季 第3集`，识别不到为空；
+- 不允许路径分隔符（目录用 `download_subdir_template`）；渲染结果做文件名清洗并保证带上扩展名；同名文件按 `名称 (2)` 递增。
+
+### 15.5 优先级 / 批量 / 导出
+
+- `POST /api/downloads/{job_id}/priority`：`{priority: 0–100}` 或 `{top: true}`（当前最大值 +1）；
+- `POST /api/downloads/bulk`：`{action: pause|resume|cancel|retry, scope: all|queued|running|paused|failed}`，单次最多 `DOWNLOAD_BULK_MAX=500`，返回 `matched/affected`；
+- `GET /api/downloads/export?status=&group_id=`：CSV（UTF-8 BOM，Excel 直接打开），列见 `DownloadService.EXPORT_HEADERS`。
+
+### 15.6 空间看板
+
+`GET /api/downloads/queue` 新增 `storage`：输出目录所在卷的 `path/free_bytes/used_bytes/total_bytes/used_pct/min_free_gb`；前端在任务列表标题旁显示「剩余 X（已用 Y%）」，低于 `download_min_free_gb` 标红提示。
+
+### 15.7 通知联动
+
+- 新增事件 `download_done` / `download_failed`（`config.NOTIFY_EVENTS` + 标签），复用 `NotificationService`（DSM/Webhook/Telegram 与 `notify_events` 订阅）；
+- 详情只带 `job_id/name/size/url`（URL 查询串清洗）；发送失败只记 debug 日志，不影响任务状态。
+
+### 15.8 解析增强
+
+- 同一 `url` 解析结果缓存 `DOWNLOAD_PARSE_CACHE_TTL_SEC=600` 秒（最多 32 条），命中返回 `cached=true` 并重新发放 `parse_session`；`html`/`curl` 不缓存；
+- 跟随一层 `<iframe>/<frame>`（最多 `DOWNLOAD_PARSE_IFRAME_MAX=3` 个）：iframe 内是 m3u8 时直接作为候选，否则继续静态提取并标记 `source=iframe`；
+- 前端新增书签脚本：`javascript:` 打开 `<NAS>/#/download?parse=<当前页>`，下载页读取 `state.hashQuery.parse` 自动填入并解析。
+
+### 15.9 测试
+
+`tests/test_v0053_download_extras.py`（19 例）：去重跳过（同体积/不同体积/关闭）、文件名模板与季集识别、分时限速判定（含跨零点）、自动重试成功/放弃/不可重试、优先级排序、批量暂停恢复、CSV 导出、空间看板、解析缓存与 iframe、完成/失败通知。

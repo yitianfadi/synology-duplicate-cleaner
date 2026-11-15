@@ -12,6 +12,8 @@ export var state = {
   settings: null,
   defaults: null,
   view: 'scan',
+  // v0053：`#/view?k=v` 里的查询参数（下载页书签脚本用）
+  hashQuery: {},
   booted: false,
   loginSubmitting: false,
   // 扫描范围
@@ -29,7 +31,9 @@ export var state = {
     jobs: [], snapshot: null, timer: null, loading: false, loaded: false,
     lastError: '', submitting: false,
     // v0052：网页解析（候选地址 + 服务端暂存的登录态 token）
-    parseCandidates: [], parseSession: '', parseBusy: false, parseSeq: 0
+    parseCandidates: [], parseSession: '', parseBusy: false, parseSeq: 0,
+    // v0053：空间看板
+    storage: null
   },
   // 当前扫描
   scan: { id: null, data: null, stats: null, timer: null, abort: null, polling: false, errors: 0, handled: false },
@@ -220,5 +224,14 @@ export var IDS = ('loginView loginForm loginUsername loginPassword loginOtp logi
   'downloadParseResultHeading downloadParseSummary downloadParseEmpty ' +
   'downloadCandidatesList downloadApplyCandidatesBtn ' +
   'downloadSelectAllCandidatesBtn downloadClearCandidatesBtn ' +
-  'downloadApplyHint ' +
+  'downloadApplyHint downloadStorageHint downloadPauseAllBtn ' +
+  'downloadResumeAllBtn downloadRetryFailedBtn downloadExportLink ' +
+  'downloadBookmarkletDetails downloadBookmarkletCode ' +
+  'downloadBookmarkletCopyBtn downloadBookmarkletHint ' +
+  'setDownloadSkipExisting setDownloadAutoRetry setDownloadAutoRetryMax ' +
+  'setDownloadAutoRetryMaxError setDownloadOffpeakEnabled ' +
+  'setDownloadOffpeakStart setDownloadOffpeakStartError ' +
+  'setDownloadOffpeakEnd setDownloadOffpeakEndError ' +
+  'setDownloadOffpeakRate setDownloadOffpeakRateError ' +
+  'setDownloadNameTemplate setDownloadNameTemplateError ' +
   'footerMeta toastRoot modalRoot').split(' ');

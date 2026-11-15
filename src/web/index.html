@@ -6,8 +6,8 @@
 <meta name="color-scheme" content="light">
 <meta name="referrer" content="same-origin">
 <title>重复文件清理与字幕 · Duplicate Cleaner &amp; Subtitles</title>
-<link rel="icon" href="./assets/favicon.svg?v=1.1.0-0052" type="image/svg+xml">
-<link rel="stylesheet" href="./styles.css?v=1.1.0-0052">
+<link rel="icon" href="./assets/favicon.svg?v=1.1.0-0053" type="image/svg+xml">
+<link rel="stylesheet" href="./styles.css?v=1.1.0-0053">
 </head>
 <body>
 <a class="skip-link" href="#main">跳到主要内容</a>
@@ -954,13 +954,33 @@
       <section class="card" aria-labelledby="downloadQueueHeading">
         <div class="card-head">
           <h2 id="downloadQueueHeading">下载任务</h2>
-          <span class="muted" id="downloadQueueHint"></span>
+          <div class="download-toolbar">
+            <span class="muted" id="downloadQueueHint"></span>
+            <span class="muted download-storage" id="downloadStorageHint"></span>
+            <button type="button" class="btn btn-link btn-sm" id="downloadPauseAllBtn">全部暂停</button>
+            <button type="button" class="btn btn-link btn-sm" id="downloadResumeAllBtn">全部继续</button>
+            <button type="button" class="btn btn-link btn-sm" id="downloadRetryFailedBtn">重试失败</button>
+            <a class="btn btn-link btn-sm" id="downloadExportLink" href="/api/downloads/export" download="downloads.csv">导出 CSV</a>
+          </div>
         </div>
         <div class="state-box state-empty" id="downloadEmpty" hidden>暂无下载任务。粘贴地址后点「开始下载」即可入队。</div>
         <p class="field-error" id="downloadListError" role="alert" hidden></p>
         <div id="downloadJobsList" class="download-jobs-list"></div>
         <div class="state-box" id="downloadRecentEmpty" hidden>最近没有完成的下载任务。</div>
       </section>
+
+      <details class="advanced" id="downloadBookmarkletDetails">
+        <summary>书签脚本：在播放页一键发送到 NAS</summary>
+        <p class="hint">把下面的代码保存为浏览器书签（网址以 <code>javascript:</code> 开头）。在播放页点击该书签，会把当前页面地址发送到本页并自动解析。需要浏览器能访问本 NAS 地址。</p>
+        <div class="field">
+          <label for="downloadBookmarkletCode">书签代码（点击下方按钮复制）</label>
+          <textarea id="downloadBookmarkletCode" rows="3" readonly spellcheck="false"></textarea>
+          <div class="subtitle-submit-row">
+            <button type="button" class="btn btn-ghost btn-sm" id="downloadBookmarkletCopyBtn">复制书签代码</button>
+            <span class="muted" id="downloadBookmarkletHint"></span>
+          </div>
+        </div>
+      </details>
     </section>
 
     <section id="view-history" class="view" data-view="history" aria-labelledby="historyHeading" hidden>
@@ -1952,6 +1972,42 @@
               <p class="field-error" id="setDownloadJobLimitError" role="alert" hidden></p>
             </div>
             <div class="field field-wide">
+              <label class="check"><input id="setDownloadSkipExisting" type="checkbox" checked>目标文件已存在时跳过下载（去重）</label>
+              <p class="hint">按最终文件名判断；直链还会比对体积。开启后重复提交/重复订阅不会重复占空间。</p>
+              <label class="check"><input id="setDownloadAutoRetry" type="checkbox" checked>网络类错误自动重试</label>
+              <label for="setDownloadAutoRetryMax">自动重试次数上限（0–5，默认 2）</label>
+              <input id="setDownloadAutoRetryMax" type="number" inputmode="numeric" min="0" max="5" step="1" value="2">
+              <p class="hint">只对网络/分片错误生效；退避 = 次数 × 15 秒。DRM、地址非法、空间不足等不重试。</p>
+              <p class="field-error" id="setDownloadAutoRetryMaxError" role="alert" hidden></p>
+            </div>
+            <div class="field field-wide">
+              <label class="check"><input id="setDownloadOffpeakEnabled" type="checkbox">分时限速（低谷时段用另一档限速）</label>
+              <div class="form-grid">
+                <div class="field">
+                  <label for="setDownloadOffpeakStart">低谷开始（HH:MM）</label>
+                  <input id="setDownloadOffpeakStart" type="text" placeholder="01:00" autocomplete="off" spellcheck="false">
+                  <p class="field-error" id="setDownloadOffpeakStartError" role="alert" hidden></p>
+                </div>
+                <div class="field">
+                  <label for="setDownloadOffpeakEnd">低谷结束（HH:MM，可跨零点）</label>
+                  <input id="setDownloadOffpeakEnd" type="text" placeholder="08:00" autocomplete="off" spellcheck="false">
+                  <p class="field-error" id="setDownloadOffpeakEndError" role="alert" hidden></p>
+                </div>
+                <div class="field">
+                  <label for="setDownloadOffpeakRate">低谷限速（KB/s，0 = 不限）</label>
+                  <input id="setDownloadOffpeakRate" type="number" inputmode="numeric" min="0" step="1" value="0">
+                  <p class="field-error" id="setDownloadOffpeakRateError" role="alert" hidden></p>
+                </div>
+              </div>
+              <p class="hint">低谷窗口外使用上面的「全局限速」。窗口在任务开始时判定。</p>
+            </div>
+            <div class="field">
+              <label for="setDownloadNameTemplate">文件名模板</label>
+              <input id="setDownloadNameTemplate" type="text" placeholder="{title}" autocomplete="off" spellcheck="false">
+              <p class="hint">可用：{title} {site} {date} {yyyy} {mm} {dd} {height} {season} {episode} {ext}；不含目录分隔符。</p>
+              <p class="field-error" id="setDownloadNameTemplateError" role="alert" hidden></p>
+            </div>
+            <div class="field field-wide">
               <label class="check"><input id="setDownloadAutoScan" type="checkbox">下载完成后自动入队扫描该目录</label>
               <p class="hint">同一目录 10 分钟内只触发一次，避免批量下载时反复全量扫描。</p>
               <label class="check"><input id="setDownloadAutoSubtitle" type="checkbox">下载完成后自动提交字幕任务</label>
@@ -2098,6 +2154,6 @@
   <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.6" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M12 10.8v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="12" cy="7.6" r="1.05" fill="currentColor"/></symbol>
 </svg>
 
-<script type="module" src="./app.js?v=1.1.0-0052"></script>
+<script type="module" src="./app.js?v=1.1.0-0053"></script>
 </body>
 </html>

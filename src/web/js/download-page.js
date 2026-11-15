@@ -118,6 +118,11 @@ function renderJobRow(job) {
   }
 
   var actions = el('div', { className: 'download-row-actions' });
+  if (job.status === 'queued') {
+    actions.appendChild(actionButton('置顶', 'btn-link btn-sm', function () {
+      return jobPriority(job.job_id);
+    }));
+  }
   if (job.status === 'running' || job.status === 'queued') {
     actions.appendChild(actionButton('暂停', 'btn-ghost', function () {
       return downloadAction(job.job_id, 'pause');
@@ -181,6 +186,7 @@ function renderJobs(snapshot) {
     ' · 失败 ' + (counts.failed || 0));
   setText(els.downloadConcurrencyHint,
     '同时下载 ' + (snapshot && snapshot.concurrency ? snapshot.concurrency : '—') + ' 个');
+  renderStorage(snapshot);
 }
 
 function renderError(message) {
@@ -287,8 +293,86 @@ var SOURCE_LABEL = {
   'json-ld': '结构化数据',
   script: '脚本文本',
   direct: '播放列表',
+  iframe: '内嵌页',
   curl: 'cURL'
 };
+
+// v0053：书签脚本、批量操作、空间看板
+function buildBookmarklet() {
+  if (!els.downloadBookmarkletCode) { return; }
+  var origin = '';
+  try {
+    if (window.location.origin) {
+      origin = window.location.origin;
+    } else if (window.location.protocol && window.location.host) {
+      origin = window.location.protocol + '//' + window.location.host;
+    }
+  } catch (e) { origin = ''; }
+  var code = "javascript:(function(){window.open('" + origin +
+    "/#/download?parse='+encodeURIComponent(location.href),'_blank');})();";
+  els.downloadBookmarkletCode.value = code;
+  setText(els.downloadBookmarkletHint,
+    origin ? ('目标：' + origin + '/#/download') : '无法识别当前站点地址');
+}
+
+function renderStorage(snapshot) {
+  if (!els.downloadStorageHint) { return; }
+  var storage = snapshot && snapshot.storage;
+  if (!storage) {
+    setText(els.downloadStorageHint, '');
+    return;
+  }
+  var warn = storage.min_free_gb > 0 &&
+    storage.free_bytes < storage.min_free_gb * 1073741824;
+  setText(els.downloadStorageHint,
+    '剩余 ' + fmtBytes(storage.free_bytes) + '（已用 ' + storage.used_pct + '%）' +
+    (warn ? ' · 低于保留阈值' : ''));
+  els.downloadStorageHint.className =
+    'muted download-storage' + (warn ? ' is-warn' : '');
+}
+
+async function bulkDownloadAction(action, scope) {
+  try {
+    var res = await api('/api/downloads/bulk', {
+      method: 'POST', body: { action: action, scope: scope || 'all' },
+      timeout: 30000
+    });
+    toast('批量' + action + '：受影响 ' + ((res && res.affected) || 0) + ' 个任务',
+      'success');
+  } catch (err) {
+    toast(errorMessage(err, '批量操作失败。'), 'error');
+  }
+  refreshDownloadQueue();
+}
+
+async function jobPriority(jobId) {
+  try {
+    await api('/api/downloads/' + encodeURIComponent(jobId) + '/priority', {
+      method: 'POST', body: { top: true }, timeout: 15000
+    });
+    toast('已置顶', 'success');
+  } catch (err) {
+    toast(errorMessage(err, '调整优先级失败。'), 'error');
+  }
+  refreshDownloadQueue();
+}
+
+async function copyBookmarklet() {
+  var code = els.downloadBookmarkletCode
+    ? String(els.downloadBookmarkletCode.value || '') : '';
+  if (!code) { return; }
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(code);
+    } else if (els.downloadBookmarkletCode) {
+      els.downloadBookmarkletCode.select();
+      document.execCommand('copy');
+    }
+    toast('书签代码已复制', 'success');
+  } catch (err) {
+    toast('复制失败，请手动选择复制', 'error');
+  }
+}
 
 function parseError(message) {
   if (!els.downloadParseError) { return; }
@@ -358,8 +442,10 @@ function applyParseResult(res, options) {
   renderCandidates();
   var summary = (res && res.summary) || '';
   setText(els.downloadParseSummary,
-    summary ? ('共 ' + ds.parseCandidates.length + ' 个候选（' + summary + '）')
-      : ('共 ' + ds.parseCandidates.length + ' 个候选'));
+    summary ? ('共 ' + ds.parseCandidates.length + ' 个候选（' + summary + '）' +
+      (res && res.cached ? ' · 缓存' : ''))
+      : ('共 ' + ds.parseCandidates.length + ' 个候选' +
+      (res && res.cached ? ' · 缓存' : '')));
   setText(els.downloadParseResultHeading,
     (res && res.title) ? ('候选地址 — ' + res.title) : '候选地址');
   if (res && res.hint) {
@@ -567,8 +653,20 @@ function updatePageBadge() {
 
 export function showDownloadPage() {
   updatePageBadge();
+  buildBookmarklet();
   refreshDownloadQueue();
   startDownloadPolling();
+  maybeAutoParse();
+}
+
+function maybeAutoParse() {
+  var ds = downloadState();
+  var query = state.hashQuery || {};
+  var target = query.parse || '';
+  if (!target || ds.autoParsed === target) { return; }
+  ds.autoParsed = target;
+  if (els.downloadParseUrl) { els.downloadParseUrl.value = target; }
+  runParse({ url: target }, { scroll: true });
 }
 
 export function hideDownloadPage() {
@@ -617,5 +715,25 @@ export function initDownloadPage() {
   if (els.downloadClearCandidatesBtn) {
     els.downloadClearCandidatesBtn.addEventListener('click', clearCandidates);
   }
+  // v0053：批量操作 / 书签脚本
+  if (els.downloadPauseAllBtn) {
+    els.downloadPauseAllBtn.addEventListener('click', function () {
+      bulkDownloadAction('pause', 'all');
+    });
+  }
+  if (els.downloadResumeAllBtn) {
+    els.downloadResumeAllBtn.addEventListener('click', function () {
+      bulkDownloadAction('resume', 'all');
+    });
+  }
+  if (els.downloadRetryFailedBtn) {
+    els.downloadRetryFailedBtn.addEventListener('click', function () {
+      bulkDownloadAction('retry', 'failed');
+    });
+  }
+  if (els.downloadBookmarkletCopyBtn) {
+    els.downloadBookmarkletCopyBtn.addEventListener('click', copyBookmarklet);
+  }
+  buildBookmarklet();
   updateSubmitHint();
 }

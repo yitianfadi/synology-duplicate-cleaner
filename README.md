@@ -2,8 +2,8 @@
 
 一款为 Synology DSM 7.x 编写的重复文件清理套件：提供**哈希精准匹配**、**图片/文档内容相似**与**视频视觉相似**三种扫描模式，默认只保留**创建时间最晚**的一份；先出报告，人工核对、两次确认后才删除，默认移入群晖回收站，并持久化操作日志。图片/文档相似结果必须人工复核、禁止一键批量删除；视频相似组默认不勾选，允许手动全选批量删除。
 
-> **当前代码版本：1.1.0-0052（未打包 / 未发布）**（2026-11-15）—— 新增下载中心（v0051：直链 / HLS → MP4）与播放网页解析（v0052）。
-> 最近一次正式发布仍为 [v1.1.0-0050](https://github.com/yitianfadi/synology-duplicate-cleaner/releases/tag/v1.1.0-0050)；v0051/v0052 的说明见 [发布说明](docs/RELEASE_NOTES_v1.1.0-0052.md)。
+> **当前代码版本：1.1.0-0053（未打包 / 未发布）**（2026-11-15）—— 新增下载中心（v0051：直链 / HLS → MP4）与播放网页解析（v0052）。
+> 最近一次正式发布仍为 [v1.1.0-0050](https://github.com/yitianfadi/synology-duplicate-cleaner/releases/tag/v1.1.0-0050)；v0051/v0052 的说明见 [发布说明](docs/RELEASE_NOTES_v1.1.0-0053.md)。
 
 > ## ⚠️ 风险提示
 > **删除文件存在数据丢失风险，重要数据建议先备份；本工具仅基于哈希判定重复，无法保证业务文件适用性，请核对扫描结果再操作。**
@@ -57,7 +57,13 @@
 - **防盗链与登录态**：可配置 User-Agent / Referer / Cookie / 代理；Cookie 只写不读，不进日志
 - **播放网页解析（v0052）**：给一个网页地址即可静态提取里面的 m3u8 / 直链候选（`<video>`/`<source>`/`data-*`、社交卡片、JSON-LD、播放器脚本文本），候选带「是否真是播放列表」校验；JS 渲染/需登录的页面可用「粘贴网页源码」或浏览器「Copy as cURL」兜底，cURL 里的 Referer/Cookie 只在服务端暂存 15 分钟并只用于随后提交的下载任务
 - **安全默认**：拒绝内网/回环地址（SSRF）、拒绝带账号密码的 URL、输出目录必须落在共享文件夹内；明确不支持 DRM 与直播
-- **完成后联动（可选）**：自动入队扫描该目录、自动提交字幕任务
+'- **下载前去重（v0053）**：目标文件已存在且体积一致时直接跳过（不消耗流量）；可关
+- **自动重试（v0053）**：网络/分片类错误自动退避重排（次数 0–5 可设），DRM/地址非法等确定性错误不重试
+- **分时限速（v0053）**：低谷时段（支持跨零点）用另一档限速，白天走常规限速
+- **文件名模板（v0053）**：`{title}/{site}/{date}/{height}/{season}/{episode}…`，自动识别 `S01E02` 与「第二季第三集」
+- **队列操作（v0053）**：任务置顶、全部暂停/继续、重试失败、导出 CSV；任务列表显示下载目录剩余空间
+- **书签脚本（v0053）**：在播放页一键把当前地址发到 NAS 下载页并自动解析
+- **完成后联动（可选）**：自动入队扫描该目录、自动提交字幕任务'
 
 **任务中心与运维**
 
@@ -76,7 +82,7 @@
 ```bash
 python build/fetch_ffmpeg.py   # 首次构建：下载两个架构的静态 FFmpeg 到 vendor/ffmpeg/
 python build/build_spk.py
-# 生成 dist/DuplicateCleaner-1.1.0-0052.spk
+# 生成 dist/DuplicateCleaner-1.1.0-0053.spk
 ```
 
 构建机需要 Python 3.8+；FFmpeg 二进制不提交到 Git，首次构建需运行 `build/fetch_ffmpeg.py`。重新生成图标需要 Pillow（仓库已带 PNG，可 `--no-icons`）。
@@ -84,7 +90,7 @@ python build/build_spk.py
 ### 2. 安装到 DSM
 
 1. DSM 套件中心先安装 **Python3**（3.8+）。
-2. 套件中心 → 手动安装 → 选择 `dist/DuplicateCleaner-1.1.0-0052.spk`。
+2. 套件中心 → 手动安装 → 选择 `dist/DuplicateCleaner-1.1.0-0053.spk`。
 3. 启动套件；从 DSM 主菜单打开“重复文件清理与字幕”，或访问 `http://<NAS>:8787/`。
 4. 使用 administrators 组账号登录。
 5. 按页面黄色“权限提示”给 `duplicatecleaner` 系统内部用户授权目标共享文件夹（读取；删除副本需读取/写入）。
@@ -133,7 +139,7 @@ python qa/bench_search.py
 - 契约：[前后端接口](docs/CONTRACT.md) · [内容相似](docs/SIMILARITY_CONTRACT.md) · [视频相似](docs/VIDEO_CONTRACT.md) · [存储层](docs/STORAGE_CONTRACT.md)
 - 字幕：[云端字幕](docs/SUBTITLE_CONTRACT.md) · [目录批量字幕](docs/SUBTITLE_BATCH_CONTRACT.md) · [字幕 ASR v2](docs/SUBTITLE_ASR_V2_CONTRACT.md)
 - 下载：[下载中心契约](docs/DOWNLOAD_CONTRACT.md) · [架构 §21](docs/ARCHITECTURE.md)
-- 交付与验收：[v2 需求交付与取舍](docs/REQUIREMENTS_V2_ASSESSMENT.md) · [发布说明 1.1.0-0052](docs/RELEASE_NOTES_v1.1.0-0052.md) · [QA 验收报告](qa/REPORT.md)
+- 交付与验收：[v2 需求交付与取舍](docs/REQUIREMENTS_V2_ASSESSMENT.md) · [发布说明 1.1.0-0053](docs/RELEASE_NOTES_v1.1.0-0053.md) · [QA 验收报告](qa/REPORT.md)
 
 ## 仓库结构
 
@@ -207,7 +213,8 @@ dist/               构建产物（.spk 与 SHA256）
 - 不内置浏览器、不执行 JS：需要 JS 渲染或 Cloudflare 挑战的播放页无法自动解析；v0052 起可把页面源码或浏览器「Copy as cURL」粘贴到下载页解析，仍不会执行脚本
 - 合并为 MP4 采用 `-c copy` 无损封装；失败时只尝试一次音频转 AAC，不做完整转码（NAS 上转码很慢）
 - 下载会与扫描/字幕抢磁盘 IO：NAS 磁盘忙时建议任务并发 1–2，并给全局限速设置一个上限
-- 失败任务会保留 `.dc-download-<job_id>` 临时目录以便续传，需手动删除或在任务行「删除」
+'- 失败任务会保留 `.dc-download-<job_id>` 临时目录以便续传，需手动删除或在任务行「删除」
+- 「下载前去重」按最终文件名 + 体积判断：改过文件名模板后历史文件不会自动匹配；分时限速在任务开始时判定，长任务不会中途换档'
 
 **升级与数据**
 

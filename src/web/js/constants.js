@@ -369,5 +369,14 @@ export var DEFAULT_SETTINGS = {
   download_job_limit: 500,
   download_auto_scan: false,
   download_auto_subtitle: false,
+  // v0053 下载增强
+  download_skip_existing: true,
+  download_auto_retry: true,
+  download_auto_retry_max: 2,
+  download_offpeak_enabled: false,
+  download_offpeak_start: '01:00',
+  download_offpeak_end: '08:00',
+  download_offpeak_rate_limit_kbps: 0,
+  download_name_template: '{title}',
 };
 export var SIZE_UNITS = { kb: 1024, mb: 1048576, gb: 1073741824 };

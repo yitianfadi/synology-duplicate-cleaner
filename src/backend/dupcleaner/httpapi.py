@@ -345,6 +345,11 @@ class Api(object):
              self._download_parse, False),
             ("GET", re.compile(r"^/api/downloads/queue$"),
              self._download_queue, False),
+            # v0053：批量操作 / 任务导出（必须排在 {job_id} 通用路由之前）
+            ("POST", re.compile(r"^/api/downloads/bulk$"),
+             self._download_bulk, False),
+            ("GET", re.compile(r"^/api/downloads/export$"),
+             self._download_export, False),
             ("GET", re.compile(r"^/api/downloads/groups$"),
              self._download_groups, False),
             ("GET", re.compile(r"^/api/downloads/groups/(?P<group_id>[^/]+)$"),
@@ -361,6 +366,9 @@ class Api(object):
                 r"^/api/downloads/(?P<job_id>[^/]+)/"
                 r"(?P<action>pause|resume|cancel|retry)$"),
              self._download_control, False),
+            # v0053：单任务优先级（置顶 / 指定数值）
+            ("POST", re.compile(r"^/api/downloads/(?P<job_id>[^/]+)/priority$"),
+             self._download_priority, False),
             ("DELETE", re.compile(r"^/api/downloads/(?P<job_id>[^/]+)$"),
              self._download_delete, False),
         ]
@@ -705,6 +713,44 @@ class Api(object):
         service = self._require_download_admin(session)
         body = _json_body(request)
         return json_response(service.parse_target(session.user, body))
+
+    def _download_bulk(self, request, session, params):
+        service = self._require_download_admin(session)
+        body = _json_body(request)
+        return json_response(service.bulk_action(
+            session.user, body.get("action"), body.get("scope") or "all"))
+
+    def _download_priority(self, request, session, params):
+        service = self._require_download_admin(session)
+        body = _json_body(request, required=False) or {}
+        return json_response({
+            "ok": True,
+            "job": service.set_priority(params["job_id"],
+                                        priority=body.get("priority"),
+                                        top=bool(body.get("top"))),
+        })
+
+    def _download_export(self, request, session, params):
+        service = self._require_download_admin(session)
+        rows = service.export_rows(
+            status=request.query_last("status"),
+            group_id=request.query_last("group_id") or None)
+        buffer = io.StringIO()
+        writer = csv.writer(buffer)
+        for row in rows:
+            writer.writerow(row)
+        # 加 BOM，Excel 打开中文不乱码
+        data = (u"\ufeff" + buffer.getvalue()).encode("utf-8")
+        return Response(
+            status=200,
+            content_type="text/csv; charset=utf-8",
+            body=data,
+            headers={
+                "Content-Disposition":
+                    'attachment; filename="downloads.csv"',
+                "Cache-Control": "no-store",
+            },
+        )
 
     def _download_queue(self, request, session, params):
         service = self._require_download_admin(session)

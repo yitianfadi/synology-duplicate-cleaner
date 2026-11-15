@@ -1,9 +1,9 @@
 {
-  "generated_at": "2026-11-15T16:40:16+0800",
+  "generated_at": "2026-11-15T17:36:08+0800",
   "summary": {
-    "PASS": 207,
+    "PASS": 199,
     "FAIL": 0,
-    "UNVERIFIED": 0
+    "UNVERIFIED": 1
   },
   "results": [
     {
@@ -28,7 +28,7 @@
       "id": "BE-FILE-COUNT",
       "name": "后端 Python 文件数",
       "status": "INFO",
-      "detail": "74"
+      "detail": "77"
     },
     {
       "id": "BE-SRC-HYGIENE",
@@ -52,7 +52,7 @@
       "id": "BE-UNITTEST-LOG",
       "name": "unittest 结果",
       "status": "INFO",
-      "detail": "Ran 694 tests in 138.288s"
+      "detail": "Ran 732 tests in 147.374s"
     },
     {
       "id": "BE-NO-AUTODELETE",
@@ -757,6 +757,72 @@
       "detail": ""
     },
     {
+      "id": "BE-DOWNLOAD-PAGEPARSE",
+      "name": "pageparse 模块存在且只做静态提取（不执行 JS）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "BE-DOWNLOAD-PAGEPARSE-SOURCES",
+      "name": "解析覆盖 标签/meta/JSON-LD/脚本字面量/curl 五类来源",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "BE-DOWNLOAD-PARSE-SESSION",
+      "name": "解析得到的登录态服务端暂存（TTL + 上限），不进设置",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "FE-DOWNLOAD-PARSE-UI",
+      "name": "下载页含解析入口/候选列表/加入下载按钮与 cURL 粘贴",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "BE-DOWNLOAD-DEDUP",
+      "name": "下载前去重：skip_existing + 体积一致才跳过",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "BE-DOWNLOAD-RETRY",
+      "name": "任务级自动重试：可重试码 + 退避 + retry_at 调度",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "BE-DOWNLOAD-OFFPEAK",
+      "name": "分时限速：HH:MM 窗口（支持跨零点）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "BE-DOWNLOAD-NAME-TEMPLATE",
+      "name": "文件名模板：占位符白名单 + 季集识别",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "BE-DOWNLOAD-NOTIFY",
+      "name": "下载完成/失败通知接入通知系统",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "FE-DOWNLOAD-BULK",
+      "name": "下载页批量操作与导出入口",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "FE-DOWNLOAD-BOOKMARKLET",
+      "name": "书签脚本生成与 #/download?parse= 自动解析",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
       "id": "FE-DELETE-FLOW",
       "name": "删除流程先 delete-plan 再 delete（两步）",
       "status": "PASS",
@@ -1154,117 +1220,9 @@
     },
     {
       "id": "SPK-DIST",
-      "name": "构建产物存在（DuplicateCleaner-1.1.0-0051.spk）",
-      "status": "PASS",
-      "detail": ""
-    },
-    {
-      "id": "SPK-TAR-OUTER",
-      "name": "SPK 外层 tar 结构完整",
-      "status": "PASS",
-      "detail": ""
-    },
-    {
-      "id": "SPK-VERSION",
-      "name": "SPK INFO.version 与当前源码 APP_VERSION（1.1.0-0051）一致",
-      "status": "PASS",
-      "detail": ""
-    },
-    {
-      "id": "SPK-CHECKSUM",
-      "name": "INFO.checksum 与 package.tgz MD5 一致",
-      "status": "PASS",
-      "detail": ""
-    },
-    {
-      "id": "SPK-DIST-PRIVILEGE",
-      "name": "产物 conf/privilege 为 run-as=package + duplicatecleaner（无 root）",
-      "status": "PASS",
-      "detail": ""
-    },
-    {
-      "id": "SPK-SCRIPT-MODE",
-      "name": "SPK 内 scripts 全部为可执行（755）",
-      "status": "PASS",
-      "detail": ""
-    },
-    {
-      "id": "SPK-SHA256",
-      "name": ".spk.sha256 与实际 SHA256 一致",
-      "status": "PASS",
-      "detail": ""
-    },
-    {
-      "id": "SPK-PKG-STRUCT",
-      "name": "package.tgz 含 app/web/ui/port_conf/VERSION",
-      "status": "PASS",
-      "detail": ""
-    },
-    {
-      "id": "SPK-PKG-CLEAN",
-      "name": "package.tgz 不含 tests/__pycache__/pyc/调试/测试输出文件",
-      "status": "PASS",
-      "detail": ""
-    },
-    {
-      "id": "SPK-PKG-WHITELIST",
-      "name": "package.tgz 内容符合白名单（app 仅 .py，无临时/输出文件）",
-      "status": "PASS",
-      "detail": ""
-    },
-    {
-      "id": "SPK-PKG-UI-PLACEHOLDER",
-      "name": "打包后 ui/index.html 占位符已被替换",
-      "status": "PASS",
-      "detail": ""
-    },
-    {
-      "id": "SPK-PKG-RISK",
-      "name": "打包后 web/index.html 仍含精确风险提示",
-      "status": "PASS",
-      "detail": ""
-    },
-    {
-      "id": "SPK-PKG-ACL",
-      "name": "打包后 UI 含系统内部用户 duplicatecleaner 的读/写 ACL 提示",
-      "status": "PASS",
-      "detail": ""
-    },
-    {
-      "id": "SPK-PKG-WEB",
-      "name": "package.tgz 含完整前端文件",
-      "status": "PASS",
-      "detail": ""
-    },
-    {
-      "id": "SPK-SYNC",
-      "name": "SPK 产物与当前源码一致（构建后未再修改源码）",
-      "status": "PASS",
-      "detail": ""
-    },
-    {
-      "id": "SPK-DEV-ENV",
-      "name": "打包内容中不含 DUP_CLEANER_DEV=1 生产开启",
-      "status": "PASS",
-      "detail": ""
-    },
-    {
-      "id": "SPK-APP-MODE",
-      "name": "package.tgz 内 app/app.py 可执行",
-      "status": "PASS",
-      "detail": ""
-    },
-    {
-      "id": "SPK-SH-SYNTAX",
-      "name": "shell 脚本 bash -n 语法检查通过",
-      "status": "PASS",
-      "detail": ""
-    },
-    {
-      "id": "SPK-SH-LF",
-      "name": "SPK 脚本为 LF 换行（DSM shell 兼容）",
-      "status": "PASS",
-      "detail": ""
+      "name": "构建产物 dist/DuplicateCleaner-1.1.0-0053.spk",
+      "status": "UNVERIFIED",
+      "detail": "SPK 尚未构建（Lead 构建后重跑）"
     }
   ]
 }

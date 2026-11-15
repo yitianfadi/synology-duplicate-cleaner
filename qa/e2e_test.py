@@ -2998,6 +2998,55 @@ def run():
                                 "done", "failed", "cancelled"):
                             break
                         time.sleep(0.2)
+
+            # DL-09：队列快照带空间看板
+            resp = client.get("/api/downloads/queue")
+            data = jd(resp)
+            storage = data.get("storage") or {}
+            check("DL-09", "队列快照返回下载目录空间看板（剩余/已用/总量）",
+                  resp.status == 200
+                  and int(storage.get("total_bytes") or 0) > 0
+                  and int(storage.get("free_bytes") or 0) >= 0
+                  and isinstance(storage.get("used_pct"), (int, float)),
+                  "status=%s storage=%s" % (resp.status, storage))
+
+            # DL-10：导出 CSV（UTF-8 BOM + 中文表头）
+            resp = client.get("/api/downloads/export")
+            head = resp.body[:200].decode("utf-8", "replace")
+            check("DL-10", "下载任务可导出 CSV（含 BOM 与中文表头）",
+                  resp.status == 200
+                  and "text/csv" in (resp.header("content-type") or "")
+                  and head.startswith(u"\ufeff")
+                  and u"任务 ID" in head,
+                  "status=%s type=%s head=%s"
+                  % (resp.status, resp.header("content-type"), head[:80]))
+
+            # DL-11：批量暂停 / 恢复
+            batch_urls = [cdn_base + "/media/movie.bin?n=%d" % index
+                          for index in range(3)]
+            client.post_json("/api/downloads", {"urls": batch_urls})
+            resp = client.post_json("/api/downloads/bulk",
+                                    {"action": "pause", "scope": "all"})
+            data = jd(resp)
+            check("DL-11", "批量暂停返回 matched/affected 并进入已暂停",
+                  resp.status == 200 and isinstance(data.get("matched"), int)
+                  and data.get("matched", 0) >= 1
+                  and data.get("affected", 0) >= 1,
+                  "status=%s data=%s" % (resp.status, data))
+            client.post_json("/api/downloads/bulk",
+                             {"action": "resume", "scope": "paused"})
+
+            # DL-12：优先级接口
+            created_p = client.post_json("/api/downloads", {
+                "urls": [cdn_base + "/media/movie.bin?prio=1"]})
+            prio_id = ((jd(created_p).get("jobs") or [{}])[0]).get("job_id")
+            resp = client.post_json(
+                "/api/downloads/%s/priority" % quote(prio_id or "dl-x"),
+                {"top": True})
+            job = jd(resp).get("job") or {}
+            check("DL-12", "任务置顶接口返回加分后的优先级",
+                  resp.status == 200 and int(job.get("priority") or 0) >= 1,
+                  "status=%s job=%s" % (resp.status, job))
         finally:
             try:
                 cdn.shutdown()
