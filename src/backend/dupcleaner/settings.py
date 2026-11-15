@@ -196,6 +196,10 @@ DEFAULT_SETTINGS = {
     # 输出文件名模板：{title} {site} {date} {yyyy} {mm} {dd} {height}
     # {season} {episode} {ext}
     "download_name_template": config.DOWNLOAD_NAME_TEMPLATE_DEFAULT,
+    # --- v0054 下载订阅（docs/DOWNLOAD_CONTRACT.md §16）---
+    # 订阅自动轮询总开关（默认关）：关闭时不自动轮询，但下载页仍可对
+    # 单个订阅「立即检查」（手动触发不受此开关限制）。
+    "download_subscribe_enabled": False,
 }
 
 # 密钥键：GET/日志/审计/扫描结果中绝不允许出现明文
@@ -887,6 +891,9 @@ def _normalize_value(key, value):
         return _check_int(key, value, 0, config.DOWNLOAD_RATE_LIMIT_MAX_KBPS)
     if key == "download_name_template":
         return _check_name_template(key, value)
+    # --- v0054 下载订阅 ---
+    if key == "download_subscribe_enabled":
+        return _check_bool(key, value)
     if key == "skip_symlinks":
         # 无论前端传什么，符号链接一律跳过（安全强制）
         if not isinstance(value, bool):

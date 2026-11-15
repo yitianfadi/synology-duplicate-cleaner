@@ -1,9 +1,9 @@
 {
-  "generated_at": "2026-11-15T17:54:07+0800",
+  "generated_at": "2026-11-15T19:01:08+0800",
   "python": "3.12.9 | packaged by Anaconda, Inc. | (main, Feb  6 2025, 18:49:16) [MSC v.1929 64 bit (AMD64)]",
   "repo": "D:\\code\\zhouyi\\qunhui\\synology-duplicate-cleaner",
   "summary": {
-    "PASS": 227,
+    "PASS": 230,
     "FAIL": 0,
     "UNVERIFIED": 1
   },
@@ -11,11 +11,11 @@
     "fixture_files": 46,
     "python": "3.12.9",
     "birthtime_supported": true,
-    "backend_port": 11400,
+    "backend_port": 10998,
     "csrf_token_len": 43,
     "meta": {
       "ok": true,
-      "app_version": "1.1.0-0054",
+      "app_version": "1.1.0-0055",
       "dsm_version": "dev",
       "python_version": "3.12.9",
       "creation_time_supported": true,
@@ -210,6 +210,7 @@
         "download_offpeak_end": "08:00",
         "download_offpeak_rate_limit_kbps": 0,
         "download_name_template": "{title}",
+        "download_subscribe_enabled": false,
         "subtitle_asr_api_key_set": false,
         "subtitle_llm_api_key_set": false,
         "notify_telegram_bot_token_set": false,
@@ -603,7 +604,7 @@
       }
     },
     "subtitle_enumerate_count": 0,
-    "main_scan_id": "20261115-175322-83bdf7",
+    "main_scan_id": "20261115-190027-a19198",
     "main_scan_final": "completed",
     "main_stats": {
       "files_seen": 38,
@@ -617,7 +618,7 @@
       "selectable_duplicate_files": 15,
       "selectable_reclaimable_bytes": 4403200,
       "bytes_hashed": 8753152,
-      "bytes_per_sec": 428799453,
+      "bytes_per_sec": 414199267,
       "errors": 0,
       "skipped": {
         "symlink": 0,
@@ -693,13 +694,13 @@
     },
     "main_groups_total": 12,
     "recycle_plan": {
-      "plan_id": "plan-cae29863027dc09d",
+      "plan_id": "plan-b3b0d8a6dba39472",
       "count": 2,
       "bytes": 40960,
       "groups_affected": 1
     },
     "recycle_job": {
-      "job_id": "del-20261115-175323-f98f3a",
+      "job_id": "del-20261115-190028-686eeb",
       "status": "completed",
       "done": 2,
       "failed": 0,
@@ -1056,6 +1057,24 @@
       "detail": ""
     },
     {
+      "id": "SET-08",
+      "name": "PUT /api/settings 可保存订阅总开关并回显",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SET-09",
+      "name": "download_subscribe_enabled 非布尔值被拒绝",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SET-10",
+      "name": "GET 得到的完整设置可原样回传（保存设置不整单失败）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
       "id": "SEC-01",
       "name": "扫描共享根之外目录被拒绝",
       "status": "PASS",
@@ -1215,7 +1234,7 @@
       "id": "SKIP-04",
       "name": "符号链接跳过（当前环境无法创建 symlink）",
       "status": "UNVERIFIED",
-      "detail": "os.symlink failed: [WinError 1314] 客户端没有所需的特权。: 'C:\\\\Users\\\\zhouyi\\\\AppData\\\\Local\\\\Temp\\\\dupqa-9ty7lelk\\\\qa-share-a\\\\dup' -> 'C:\\\\Users\\\\zhouyi\\\\AppData\\\\Local\\\\Temp\\\\dupqa-9ty7lelk\\\\qa-share-a\\\\link_to_dup'"
+      "detail": "os.symlink failed: [WinError 1314] 客户端没有所需的特权。: 'C:\\\\Users\\\\zhouyi\\\\AppData\\\\Local\\\\Temp\\\\dupqa-s2rjd2uj\\\\qa-share-a\\\\dup' -> 'C:\\\\Users\\\\zhouyi\\\\AppData\\\\Local\\\\Temp\\\\dupqa-s2rjd2uj\\\\qa-share-a\\\\link_to_dup'"
     },
     {
       "id": "HARDLINK-01",

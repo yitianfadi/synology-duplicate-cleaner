@@ -74,7 +74,8 @@
 | 文档 | 内容 | 状态 |
 |---|---|---|
 | [REQUIREMENTS_V2_ASSESSMENT.md](REQUIREMENTS_V2_ASSESSMENT.md) | v2 需求 → 版本交付映射、关键取舍、明确不做、默认值、真机清单 | 现行（结论） |
-| [RELEASE_NOTES_v1.1.0-0054.md](RELEASE_NOTES_v1.1.0-0054.md) | 未发布增量（v0051 下载中心 + v0052 网页解析 + v0053 下载增强 + v0054 DASH/订阅）、兼容性、校验值、打包与回退 | 现行（已打包） |
+| [RELEASE_NOTES_v1.1.0-0055.md](RELEASE_NOTES_v1.1.0-0055.md) | 修复 v0054 设置键回归（`download_subscribe_enabled` 漏加后端白名单导致保存设置 400）、新增设置键一致性静态/单元/e2e 校验 | 现行（已打包） |
+| [RELEASE_NOTES_v1.1.0-0054.md](RELEASE_NOTES_v1.1.0-0054.md) | v0051 下载中心 + v0052 网页解析 + v0053 下载增强 + v0054 DASH/订阅、兼容性、校验值、打包与回退 | 历史 |
 | [RELEASE_NOTES_v1.1.0-0053.md](RELEASE_NOTES_v1.1.0-0053.md) | 上一版未发布增量说明（v0051–v0053） | 历史 |
 | [RELEASE_NOTES_v1.1.0-0050.md](RELEASE_NOTES_v1.1.0-0050.md) | 上一版正式发布说明（v0043–v0050 累计） | 历史 |
 | [qa/REPORT.md](../qa/REPORT.md) | 当前 QA 基线、验收方法、需求追溯、偏差与残余风险、版本验收记录 | 现行 |
@@ -95,3 +96,4 @@
 |---|---|
 | 2026-11-10 | 建立本文档索引；压缩 `qa/REPORT.md` 与 `REQUIREMENTS_V2_ASSESSMENT.md`；重写会话交接 `SESSION_SUMMARY.md`；合并 README 功能/限制条目；归档并删除只对 `1.1.0-0003` 有效的旧 `qa/SIMILARITY_REPORT.md` |
 | 2026-11-15 | 新增下载中心、网页解析、下载增强、DASH/订阅：`DOWNLOAD_CONTRACT.md`（§1–§17）+ `ARCHITECTURE.md` §21–§21.3 + `CONTRACT.md` §12；索引状态列更新（v0051–v0054） |
+| 2026-11-15 | v0055 修 bug：`download_subscribe_enabled` 漏加后端 `DEFAULT_SETTINGS`/校验分支，前端整体提交设置时整单 400；新增静态检查 `BE-SETTINGS-KEYS`/`BE-SETTINGS-NORMALIZE`、单元 `tests/test_v0054_settings_keys.py`、e2e `SET-08/09/10` 兜底 |

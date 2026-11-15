@@ -1,7 +1,7 @@
 {
-  "generated_at": "2026-11-15T18:15:53+0800",
+  "generated_at": "2026-11-15T19:00:21+0800",
   "summary": {
-    "PASS": 222,
+    "PASS": 224,
     "FAIL": 0,
     "UNVERIFIED": 0
   },
@@ -28,7 +28,7 @@
       "id": "BE-FILE-COUNT",
       "name": "后端 Python 文件数",
       "status": "INFO",
-      "detail": "80"
+      "detail": "81"
     },
     {
       "id": "BE-SRC-HYGIENE",
@@ -52,7 +52,7 @@
       "id": "BE-UNITTEST-LOG",
       "name": "unittest 结果",
       "status": "INFO",
-      "detail": "Ran 748 tests in 205.851s"
+      "detail": "Ran 757 tests in 154.583s"
     },
     {
       "id": "BE-NO-AUTODELETE",
@@ -381,6 +381,18 @@
     {
       "id": "BE-TRASH",
       "name": "套件独立回收站：删除到 #duplicate-cleaner-trash + manifest 整组恢复/清理（v0045）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "BE-SETTINGS-KEYS",
+      "name": "前端提交的设置键都在后端白名单内（防「未知的设置键」400）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "BE-SETTINGS-NORMALIZE",
+      "name": "每个默认设置键都有校验分支（validate_patch 不误报未知键）",
       "status": "PASS",
       "detail": ""
     },
@@ -1244,7 +1256,7 @@
     },
     {
       "id": "SPK-DIST",
-      "name": "构建产物存在（DuplicateCleaner-1.1.0-0054.spk）",
+      "name": "构建产物存在（DuplicateCleaner-1.1.0-0055.spk）",
       "status": "PASS",
       "detail": ""
     },
@@ -1256,7 +1268,7 @@
     },
     {
       "id": "SPK-VERSION",
-      "name": "SPK INFO.version 与当前源码 APP_VERSION（1.1.0-0054）一致",
+      "name": "SPK INFO.version 与当前源码 APP_VERSION（1.1.0-0055）一致",
       "status": "PASS",
       "detail": ""
     },

@@ -1269,6 +1269,33 @@ def run():
               and (data.get("settings") or {}).get("skip_symlinks") is True,
               "status=%s data=%s" % (resp.status, data))
 
+        # v0055 回归：v0054 漏加 download_subscribe_enabled 白名单，导致前端
+        # 整体提交 settings 时 400（未知的设置键）。这里验证能存、能回显。
+        resp = client.put_json("/api/settings",
+                               {"settings": {"download_subscribe_enabled": True}})
+        data = jd(resp)
+        check("SET-08", "PUT /api/settings 可保存订阅总开关并回显",
+              resp.status == 200
+              and (data.get("settings") or {}).get(
+                  "download_subscribe_enabled") is True,
+              "status=%s data=%s" % (resp.status, data))
+
+        resp = client.put_json("/api/settings",
+                               {"settings": {"download_subscribe_enabled": "yes"}})
+        code, _ = err_code(resp)
+        check("SET-09", "download_subscribe_enabled 非布尔值被拒绝",
+              resp.status == 400 and code == "INVALID_ARGUMENT",
+              "status=%s code=%s" % (resp.status, code))
+
+        # 前端保存设置时整体回传 GET 得到的全部键；原样回传必须被接受，
+        # 否则任何一次「保存设置」都会因某个键漏加白名单而整单失败。
+        resp = client.get("/api/settings")
+        payload = jd(resp).get("settings") or {}
+        resp = client.put_json("/api/settings", {"settings": payload})
+        check("SET-10", "GET 得到的完整设置可原样回传（保存设置不整单失败）",
+              resp.status == 200, "keys=%d status=%s body=%s"
+              % (len(payload), resp.status, resp.text()[:300]))
+
         # ---------------- 扫描请求安全校验 ----------------
         resp = post_scan(client, [os.path.dirname(fx["outside"])])
         code, _ = err_code(resp)

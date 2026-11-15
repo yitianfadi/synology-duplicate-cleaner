@@ -802,6 +802,63 @@ def check_backend():
 
 
 # ---------------------------------------------------------------------------
+# 设置键一致性（v0055 回归：v0054 漏加 download_subscribe_enabled 白名单）
+# ---------------------------------------------------------------------------
+def check_settings_keys():
+    u"""前端提交的键必须被后端白名单接受，且每个默认键都有校验分支。
+
+    v0054 曾把订阅总开关只加到前端与消费者、漏了后端 DEFAULT_SETTINGS，
+    结果前端整体提交 settings 时整单 400（未知的设置键）。这里用文本比对
+    把「前端提交键 ⊆ 后端白名单 ∪ clear 别名」和「默认键都有 _normalize_value
+    分支」两条钉死；运行期的等价断言在 tests/test_v0054_settings_keys.py。
+    """
+    settings_path = os.path.join(REPO, "src", "backend", "dupcleaner",
+                                 "settings.py")
+    settings_src = read(settings_path) if os.path.isfile(settings_path) else ""
+    block = re.search(r"DEFAULT_SETTINGS\s*=\s*\{(.*?)\n\}", settings_src, re.S)
+    backend_keys = set()
+    if block:
+        backend_keys = set(re.findall(r'^\s{4}"([a-z0-9_]+)":',
+                                      block.group(1), re.M))
+    alias_block = re.search(r"CLEAR_SECRET_ALIASES\s*=\s*\{(.*?)\n\}",
+                            settings_src, re.S)
+    aliases = set()
+    if alias_block:
+        aliases = set(re.findall(r'"([a-z0-9_]+)":', alias_block.group(1)))
+
+    web = os.path.join(REPO, "src", "web")
+    texts = []
+    app_path = os.path.join(web, "app.js")
+    if os.path.isfile(app_path):
+        texts.append(read(app_path))
+    js_dir = os.path.join(web, "js")
+    if os.path.isdir(js_dir):
+        for name in sorted(os.listdir(js_dir)):
+            if name.endswith(".js"):
+                texts.append(read(os.path.join(js_dir, name)))
+    sent = set()
+    for text in texts:
+        sent.update(re.findall(r"\bsettings\.([a-z0-9_]+)\s*=[^=]", text))
+    missing = sorted(key for key in sent
+                     if key not in backend_keys and key not in aliases)
+    check("BE-SETTINGS-KEYS",
+          "前端提交的设置键都在后端白名单内（防「未知的设置键」400）",
+          bool(backend_keys) and bool(sent) and not missing,
+          "backend=%d sent=%d aliases=%d missing=%s"
+          % (len(backend_keys), len(sent), len(aliases), missing))
+
+    body = re.search(r"def _normalize_value\(key, value\):(.*?)"
+                     r"\n    _err\(u\"未知的设置键", settings_src, re.S)
+    body_text = body.group(1) if body else ""
+    unhandled = sorted(key for key in backend_keys
+                       if ('"%s"' % key) not in body_text)
+    check("BE-SETTINGS-NORMALIZE",
+          "每个默认设置键都有校验分支（validate_patch 不误报未知键）",
+          bool(body_text) and not unhandled,
+          "unhandled=%s" % unhandled)
+
+
+# ---------------------------------------------------------------------------
 # 前端
 # ---------------------------------------------------------------------------
 def check_frontend():
@@ -2293,6 +2350,7 @@ def check_dist():
 # ---------------------------------------------------------------------------
 def main():
     check_backend()
+    check_settings_keys()
     check_frontend()
     scripts = check_spk_source()
     shell_syntax_check([os.path.join(REPO, "spk", "scripts", name)
