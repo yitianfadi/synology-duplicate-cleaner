@@ -1,9 +1,9 @@
 {
-  "generated_at": "2026-11-15T17:30:52+0800",
+  "generated_at": "2026-11-15T17:54:07+0800",
   "python": "3.12.9 | packaged by Anaconda, Inc. | (main, Feb  6 2025, 18:49:16) [MSC v.1929 64 bit (AMD64)]",
   "repo": "D:\\code\\zhouyi\\qunhui\\synology-duplicate-cleaner",
   "summary": {
-    "PASS": 221,
+    "PASS": 227,
     "FAIL": 0,
     "UNVERIFIED": 1
   },
@@ -11,11 +11,11 @@
     "fixture_files": 46,
     "python": "3.12.9",
     "birthtime_supported": true,
-    "backend_port": 5053,
+    "backend_port": 11400,
     "csrf_token_len": 43,
     "meta": {
       "ok": true,
-      "app_version": "1.1.0-0053",
+      "app_version": "1.1.0-0054",
       "dsm_version": "dev",
       "python_version": "3.12.9",
       "creation_time_supported": true,
@@ -603,7 +603,7 @@
       }
     },
     "subtitle_enumerate_count": 0,
-    "main_scan_id": "20261115-173009-f99c3b",
+    "main_scan_id": "20261115-175322-83bdf7",
     "main_scan_final": "completed",
     "main_stats": {
       "files_seen": 38,
@@ -617,7 +617,7 @@
       "selectable_duplicate_files": 15,
       "selectable_reclaimable_bytes": 4403200,
       "bytes_hashed": 8753152,
-      "bytes_per_sec": 430095482,
+      "bytes_per_sec": 428799453,
       "errors": 0,
       "skipped": {
         "symlink": 0,
@@ -693,13 +693,13 @@
     },
     "main_groups_total": 12,
     "recycle_plan": {
-      "plan_id": "plan-ff1763dd5399cdfe",
+      "plan_id": "plan-cae29863027dc09d",
       "count": 2,
       "bytes": 40960,
       "groups_affected": 1
     },
     "recycle_job": {
-      "job_id": "del-20261115-173009-1009bb",
+      "job_id": "del-20261115-175323-f98f3a",
       "status": "completed",
       "done": 2,
       "failed": 0,
@@ -1215,7 +1215,7 @@
       "id": "SKIP-04",
       "name": "符号链接跳过（当前环境无法创建 symlink）",
       "status": "UNVERIFIED",
-      "detail": "os.symlink failed: [WinError 1314] 客户端没有所需的特权。: 'C:\\\\Users\\\\zhouyi\\\\AppData\\\\Local\\\\Temp\\\\dupqa-4m3cl70q\\\\qa-share-a\\\\dup' -> 'C:\\\\Users\\\\zhouyi\\\\AppData\\\\Local\\\\Temp\\\\dupqa-4m3cl70q\\\\qa-share-a\\\\link_to_dup'"
+      "detail": "os.symlink failed: [WinError 1314] 客户端没有所需的特权。: 'C:\\\\Users\\\\zhouyi\\\\AppData\\\\Local\\\\Temp\\\\dupqa-9ty7lelk\\\\qa-share-a\\\\dup' -> 'C:\\\\Users\\\\zhouyi\\\\AppData\\\\Local\\\\Temp\\\\dupqa-9ty7lelk\\\\qa-share-a\\\\link_to_dup'"
     },
     {
       "id": "HARDLINK-01",
@@ -1994,6 +1994,42 @@
     {
       "id": "DL-12",
       "name": "任务置顶接口返回加分后的优先级",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "DL-13",
+      "name": "DASH 清单解析返回 dash 候选与清晰度摘要",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "DL-14",
+      "name": "添加订阅返回 201 与订阅 ID",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "DL-15",
+      "name": "立即检查订阅并入队新条目",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "DL-16",
+      "name": "订阅列表返回订阅与总开关状态",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "DL-17",
+      "name": "删除订阅返回成功并清空列表",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "DL-18",
+      "name": "删除后订阅列表不再包含该订阅",
       "status": "PASS",
       "detail": ""
     },

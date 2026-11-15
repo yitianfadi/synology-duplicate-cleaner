@@ -3047,6 +3047,71 @@ def run():
             check("DL-12", "任务置顶接口返回加分后的优先级",
                   resp.status == 200 and int(job.get("priority") or 0) >= 1,
                   "status=%s job=%s" % (resp.status, job))
+
+            # DL-13：DASH（.mpd）识别与规划（真实下载链路由单测覆盖，避免伪造媒体）
+            served["/dash/manifest.mpd"] = (
+                u'<?xml version="1.0"?>'
+                u'<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" '
+                u'mediaPresentationDuration="PT8S"><Period>'
+                u'<AdaptationSet contentType="video" mimeType="video/mp4">'
+                u'<SegmentTemplate media="%s/dash/v/seg-$Number$.m4s" '
+                u'initialization="%s/dash/v/init.mp4" startNumber="1" '
+                u'duration="4" timescale="1"/>'
+                u'<Representation id="v1" height="720" bandwidth="1000000"/>'
+                u'</AdaptationSet></Period></MPD>'
+                % (cdn_base, cdn_base)).encode("utf-8")
+            resp = client.post_json("/api/downloads/parse", {
+                "url": cdn_base + "/dash/manifest.mpd"})
+            data = jd(resp)
+            dash_cands = data.get("candidates") or []
+            check("DL-13", "DASH 清单解析返回 dash 候选与清晰度摘要",
+                  resp.status == 200 and dash_cands
+                  and dash_cands[0].get("kind") == "dash"
+                  and (data.get("playlist") or {}).get("kind") == "dash",
+                  "status=%s data=%s" % (resp.status, data))
+
+            # DL-14：订阅下载（添加 → 立即检查 → 列表 → 删除）
+            served["/media/ep2.mp4"] = b"EPISODE-" * 512
+            served["/sub/feed.xml"] = (
+                u'<?xml version="1.0"?><rss><channel><item>'
+                u'<enclosure url="%s/media/ep2.mp4"/></item></channel></rss>'
+                % cdn_base).encode("utf-8")
+            resp = client.post_json("/api/downloads/subscriptions", {
+                "url": cdn_base + "/sub/feed.xml",
+                "interval_sec": 300, "mode": "all"})
+            sub_item = jd(resp).get("item") or {}
+            sub_id = sub_item.get("sub_id")
+            check("DL-14", "添加订阅返回 201 与订阅 ID",
+                  resp.status == 201 and bool(sub_id),
+                  "status=%s item=%s" % (resp.status, sub_item))
+            resp = client.post_json(
+                "/api/downloads/subscriptions/%s/check" % quote(sub_id or "ds-x"),
+                {})
+            result = (jd(resp).get("result") or {}).get("result") or {}
+            check("DL-15", "立即检查订阅并入队新条目",
+                  resp.status == 200 and result.get("new", 0) >= 1
+                  and result.get("enqueued", 0) >= 1,
+                  "status=%s result=%s" % (resp.status, result))
+            resp = client.get("/api/downloads/subscriptions")
+            data = jd(resp)
+            ids = [item.get("sub_id") for item in data.get("items") or []]
+            check("DL-16", "订阅列表返回订阅与总开关状态",
+                  resp.status == 200 and sub_id in ids
+                  and isinstance(data.get("enabled"), bool),
+                  "status=%s ids=%s" % (resp.status, ids))
+            if sub_id:
+                resp = client.request(
+                    "DELETE",
+                    "/api/downloads/subscriptions/%s" % quote(sub_id))
+                check("DL-17", "删除订阅返回成功并清空列表",
+                      resp.status == 200,
+                      "status=%s" % resp.status)
+                resp = client.get("/api/downloads/subscriptions")
+                ids = [item.get("sub_id") for item in
+                       (jd(resp).get("items") or [])]
+                check("DL-18", "删除后订阅列表不再包含该订阅",
+                      sub_id not in ids, "ids=%s" % ids)
+
         finally:
             try:
                 cdn.shutdown()

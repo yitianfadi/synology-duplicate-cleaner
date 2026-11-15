@@ -1380,6 +1380,13 @@ def check_frontend():
         ("/api/downloads/groups", "下载批量组"),
         # v0052 播放网页解析
         ("/api/downloads/parse", "播放网页解析"),
+        # v0053 下载增强
+        ("/api/downloads/bulk", "下载批量操作"),
+        ("/api/downloads/export", "下载任务导出"),
+        ("/priority", "下载任务优先级"),
+        # v0054 DASH / 订阅下载
+        ("/api/downloads/subscriptions", "下载订阅"),
+        ("/subscriptions/", "下载订阅控制"),
     ]
     missing = [name for marker, name in endpoints if marker not in app]
     check("FE-ENDPOINTS", "前端覆盖契约全部 API 端点",
@@ -1521,6 +1528,50 @@ def check_frontend():
           and ("hashQuery" in app)
           and ("autoParsed" in app),
           "bookmarklet markers missing")
+    # ---- v0054 DASH / 订阅下载 / 连接复用（docs/DOWNLOAD_CONTRACT.md §16–§17）----
+    dash_path = os.path.join(backend, "dupcleaner", "dash.py")
+    dash_src = read(dash_path) if os.path.isfile(dash_path) else ""
+    subs_path = os.path.join(backend, "dupcleaner", "download_subs.py")
+    subs_src = read(subs_path) if os.path.isfile(subs_path) else ""
+    check("BE-DOWNLOAD-DASH",
+          "DASH 解析：SegmentTemplate/Timeline/List + DRM 拒绝 + 拼接封装",
+          bool(dash_src)
+          and ("SegmentTemplate" in dash_src)
+          and ("SegmentTimeline" in dash_src)
+          and ("SegmentList" in dash_src)
+          and ("ContentProtection" in dash_src)
+          and ("def _materialize_dash" in downloads_src)
+          and ("def _remux" in downloads_src)
+          and ("def _concat_files" in downloads_src),
+          "dash markers missing")
+    check("BE-DOWNLOAD-SUBS",
+          "订阅下载：RSS 解析 + 状态文件 + 轮询 + 去重",
+          bool(subs_src)
+          and ("def rss_items" in subs_src)
+          and ("DownloadSubscriptionService" in subs_src)
+          and ("download_subscriptions.json" in subs_src)
+          and ("def tick" in subs_src)
+          and ("MAX_SEEN" in subs_src)
+          and ("download_subs_service" in read(os.path.join(
+              backend, "dupcleaner", "services.py"))),
+          "subscription markers missing")
+    check("BE-DOWNLOAD-KEEPALIVE",
+          "连接复用（keep-alive 池）与分片并发自适应",
+          ("_PooledResponse" in downloads_src)
+          and ("def _open_pooled" in downloads_src)
+          and ("def _adaptive_concurrency" in downloads_src)
+          and ("_note_segment_duration" in downloads_src),
+          "keep-alive markers missing")
+    check("FE-DOWNLOAD-SUBS-UI",
+          "下载页订阅卡片（地址/间隔/策略/立即检查/暂停/删除）",
+          all(marker in html for marker in (
+              "downloadSubscribeUrl", "downloadSubscribeInterval",
+              "downloadSubscribeMode", "downloadSubscribeAddBtn",
+              "downloadSubscribeList", "downloadSubscribeStatus"))
+          and ("/api/downloads/subscriptions" in app)
+          and ("checkSubscription" in app)
+          and ("setDownloadSubscribeEnabled" in html),
+          "subscription UI markers missing")
 
     two_step = (("delete-plan" in app) and ("/api/scans/' + encodePath(state.scan.id) + '/delete" in app
                 or "/delete'" in app))
@@ -1594,7 +1645,15 @@ def check_frontend():
                     "download_allow_private", "download_keep_temp",
                     "download_min_free_gb", "download_verify_tolerance_sec",
                     "download_job_limit", "download_auto_scan",
-                    "download_auto_subtitle"]
+                    "download_auto_subtitle",
+                    # v0053 下载增强
+                    "download_skip_existing", "download_auto_retry",
+                    "download_auto_retry_max", "download_offpeak_enabled",
+                    "download_offpeak_start", "download_offpeak_end",
+                    "download_offpeak_rate_limit_kbps",
+                    "download_name_template",
+                    # v0054 订阅下载
+                    "download_subscribe_enabled"]
     missing_settings = [key for key in setting_keys if key not in app]
     check("FE-SETTINGS-KEYS", "设置页覆盖契约全部设置键",
           not missing_settings, "missing=%s" % missing_settings)

@@ -2465,6 +2465,10 @@ import {
     setVideoNumberValue(els.setDownloadVerifyTolerance,
       s.download_verify_tolerance_sec, 5, 0, 600);
     setVideoNumberValue(els.setDownloadJobLimit, s.download_job_limit, 500, 10, 5000);
+    if (els.setDownloadSubscribeEnabled) {
+      els.setDownloadSubscribeEnabled.checked =
+        s.download_subscribe_enabled === true;
+    }
     if (els.setDownloadAutoScan) {
       els.setDownloadAutoScan.checked = s.download_auto_scan === true;
     }
@@ -2588,6 +2592,8 @@ import {
     var jobLimit = readSubtitleInt(els.setDownloadJobLimit, 10, 5000,
       '已完成下载任务保留上限', errors, 'downloadJobLimit');
     if (jobLimit !== null) { settings.download_job_limit = jobLimit; }
+    settings.download_subscribe_enabled = !!(els.setDownloadSubscribeEnabled
+      && els.setDownloadSubscribeEnabled.checked);
     settings.download_auto_scan = !!(els.setDownloadAutoScan
       && els.setDownloadAutoScan.checked);
     settings.download_auto_subtitle = !!(els.setDownloadAutoSubtitle

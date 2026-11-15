@@ -1,7 +1,7 @@
 {
-  "generated_at": "2026-11-15T17:36:08+0800",
+  "generated_at": "2026-11-15T18:01:33+0800",
   "summary": {
-    "PASS": 199,
+    "PASS": 203,
     "FAIL": 0,
     "UNVERIFIED": 1
   },
@@ -28,7 +28,7 @@
       "id": "BE-FILE-COUNT",
       "name": "后端 Python 文件数",
       "status": "INFO",
-      "detail": "77"
+      "detail": "80"
     },
     {
       "id": "BE-SRC-HYGIENE",
@@ -52,7 +52,7 @@
       "id": "BE-UNITTEST-LOG",
       "name": "unittest 结果",
       "status": "INFO",
-      "detail": "Ran 732 tests in 147.374s"
+      "detail": "Ran 748 tests in 205.288s"
     },
     {
       "id": "BE-NO-AUTODELETE",
@@ -823,6 +823,30 @@
       "detail": ""
     },
     {
+      "id": "BE-DOWNLOAD-DASH",
+      "name": "DASH 解析：SegmentTemplate/Timeline/List + DRM 拒绝 + 拼接封装",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "BE-DOWNLOAD-SUBS",
+      "name": "订阅下载：RSS 解析 + 状态文件 + 轮询 + 去重",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "BE-DOWNLOAD-KEEPALIVE",
+      "name": "连接复用（keep-alive 池）与分片并发自适应",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "FE-DOWNLOAD-SUBS-UI",
+      "name": "下载页订阅卡片（地址/间隔/策略/立即检查/暂停/删除）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
       "id": "FE-DELETE-FLOW",
       "name": "删除流程先 delete-plan 再 delete（两步）",
       "status": "PASS",
@@ -1220,7 +1244,7 @@
     },
     {
       "id": "SPK-DIST",
-      "name": "构建产物 dist/DuplicateCleaner-1.1.0-0053.spk",
+      "name": "构建产物 dist/DuplicateCleaner-1.1.0-0054.spk",
       "status": "UNVERIFIED",
       "detail": "SPK 尚未构建（Lead 构建后重跑）"
     }

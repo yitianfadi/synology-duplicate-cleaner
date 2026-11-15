@@ -378,5 +378,7 @@ export var DEFAULT_SETTINGS = {
   download_offpeak_end: '08:00',
   download_offpeak_rate_limit_kbps: 0,
   download_name_template: '{title}',
+  // v0054 订阅下载总开关
+  download_subscribe_enabled: false,
 };
 export var SIZE_UNITS = { kb: 1024, mb: 1048576, gb: 1073741824 };

@@ -15,23 +15,23 @@
 
 ## 1. 当前基线
 
-最新一次全量验收集：1.1.0-0053（**源码级**，按用户要求未打包；`SPK-DIST` 为 UNVERIFIED，`SPK-SYNC` 等构建后补跑）。
+最新一次全量验收集：1.1.0-0054（**源码级**，按用户要求未打包；`SPK-DIST` 为 UNVERIFIED，`SPK-SYNC` 等构建后补跑）。
 
 | 套件 | 命令 | 结果 |
 |---|---|---|
-| 后端单元测试 | `cd src/backend && python -m unittest discover -s tests` | **732 OK（5 skipped）** |
-| 静态检查 | `python qa/static_checks.py` | **199 PASS / 0 FAIL / 1 UNVERIFIED**（UNVERIFIED = SPK-DIST 未构建） |
-| 端到端 | `python qa/e2e_test.py` | **221 PASS / 0 FAIL / 1 UNVERIFIED**（Windows symlink 历史项；含 DL-00…DL-12、RESTART-08） |
+| 后端单元测试 | `cd src/backend && python -m unittest discover -s tests` | **748 OK（5 skipped）** |
+| 静态检查 | `python qa/static_checks.py` | **203 PASS / 0 FAIL / 1 UNVERIFIED**（UNVERIFIED = SPK-DIST 未构建） |
+| 端到端 | `python qa/e2e_test.py` | **227 PASS / 0 FAIL / 1 UNVERIFIED**（Windows symlink 历史项；含 DL-00…DL-18、RESTART-08） |
 | 前端模块图 | `node qa/check_web_modules.mjs` | **25/25 PASS** |
 | 无头浏览器冒烟 | `python qa/web_smoke.py` | 8/8 PASS（最近一次 static 内联执行） |
-| 真实 Chromium 探针 | `.uiprobe/probe_v0043..v0050.mjs` | v0043–v0050 全通过；v0051–v0053 未加新探针 |
+| 真实 Chromium 探针 | `.uiprobe/probe_v0043..v0050.mjs` | v0043–v0050 全通过；v0051–v0054 未加新探针 |
 
 | 产物项 | 值 |
 |---|---|
-| 当前源码版本 | `1.1.0-0053`（未打包） |
+| 当前源码版本 | `1.1.0-0054`（未打包） |
 | dist 中的产物 | `dist/DuplicateCleaner-1.1.0-0051.spk` 39,168,000 B，SHA256 `c1103858…bce33d37f`（= INFO.checksum `80a42f24…`） |
-| SQLite schema | v9（v0051 新增 download_jobs / download_groups；v0052/v0053 无迁移） |
-| 版本同步 | 1.1.0-0053 已同步 8 处源码/文档；待打包后由 static 兜底校验 |
+| SQLite schema | v9（v0051 新增 download_jobs / download_groups；v0052–v0054 无迁移） |
+| 版本同步 | 1.1.0-0054 已同步 8 处源码/文档；待打包后由 static 兜底校验 |
 
 判定口径：
 
@@ -40,7 +40,7 @@
 - UNVERIFIED：当前环境无法构造（仅 Windows symlink 一项）。
 - 探针、冒烟、模块图不替代 e2e/static，仅作为浏览器层补充证据。
 
-### 1.1 基线变化（v0042 → v0053）
+### 1.1 基线变化（v0042 → v0054）
 
 | 指标 | v0042 | v0050 | v0051 | v0052 | v0053（未打包） |
 |---|---|---|---|---|---|
@@ -51,7 +51,7 @@
 | SPK 大小 | 39,014,400 B | 39,127,040 B | 39,168,000 B | 未打包 | 未打包 |
 | 浏览器探针 | 真机 1 组 | 本地 8 组（v0043–v0050） | 同左 | 同左 | 同左（模块图 + e2e 覆盖） |
 
-v0043 是分界点：schema 升到 v8、引入增量哈希缓存；v0044–v0050 均为增量能力；v0051 新增下载中心并升到 v9；v0052 新增播放网页解析；v0053 下载增强（均无 schema 变化）。
+v0043 是分界点：schema 升到 v8、引入增量哈希缓存；v0044–v0050 均为增量能力；v0051 新增下载中心并升到 v9；v0052/v0053/v0054 继续扩展下载（网页解析、下载增强、DASH/订阅），均无 schema 变化。
 
 ### 1.2 验收范围
 
@@ -299,6 +299,7 @@ REQ 编号沿用 v1.0 基线，状态按当前版本事实更新。
 | v0051 | 2026-11-15 | 下载中心（直链 / HLS → MP4） | 694（skip 5） | 207 | 214/0/1 | — | `c1103858…bce33d37f` |
 | v0052 | 2026-11-15 | 播放网页解析（未打包） | 713（skip 5） | —（未打包） | 217/0/1 | — | 未打包 |
 | v0053 | 2026-11-15 | 下载增强（去重/重试/分时限速/命名/批量/看板，未打包） | 732（skip 5） | 199/0/1 | 221/0/1 | — | 未打包 |
+| v0054 | 2026-11-15 | DASH 清单 / 订阅下载 / 连接复用（未打包） | 748（skip 5） | 203/0/1 | 227/0/1 | — | 未打包 |
 
 说明：
 
@@ -318,6 +319,7 @@ REQ 编号沿用 v1.0 基线，状态按当前版本事实更新。
 - v0051：新增下载中心（直链 Range 续传 / HLS 分片 + 本地化播放列表交给 FFmpeg 解密封装）；schema 升 v9；e2e 新增 DL-00…DL-05、RESTART-08。
 - v0052：新增播放网页解析（静态提取 + cURL 登录态暂存）；e2e 新增 DL-06…DL-08；按用户要求本次不打包。
 - v0053：下载增强（去重跳过、自动重试、分时限速、命名模板、优先级/批量/导出、空间看板、通知、解析缓存与 iframe、书签脚本）；e2e 新增 DL-09…DL-12；仍未打包。
+- v0054：DASH（.mpd）解析与合并、订阅下载（RSS/网页定时入队）、keep-alive 连接复用与分片并发自适应；e2e 新增 DL-13…DL-18；仍未打包。
 
 ### 6.2 原报告记录异常（保留说明，不再重复展开）
 
@@ -358,7 +360,7 @@ python build/build_spk.py --no-icons --out-dir $env:TEMP\qa-build1
 |---|---|---|
 | e2e 结果 | `qa/e2e_results.json` | 逐条 `id`/结论/说明 |
 | static 结果 | `qa/static_results.json` | 逐条 `id`/结论 |
-| SPK | `dist/DuplicateCleaner-1.1.0-0051.spk` | 39,168,000 B（当前源码为 0053，尚未打包） |
+| SPK | `dist/DuplicateCleaner-1.1.0-0051.spk` | 39,168,000 B（当前源码为 0054，尚未打包） |
 | 校验文件 | `dist/DuplicateCleaner-1.1.0-0051.spk.sha256` | 与产物 SHA256 一致 |
 | 探针脚本/截图 | `.uiprobe/probe_v0043..v0050.mjs`、`.uiprobe/*.png` | 真实 Chromium |
 | 契约 | `docs/*_CONTRACT.md` | 逐版本接口与行为 |

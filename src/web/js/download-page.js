@@ -167,6 +167,10 @@ function renderJobRow(job) {
 function renderJobs(snapshot) {
   var list = els.downloadJobsList;
   if (!list) { return; }
+  if (els.downloadExportLink) {
+    // v0053：导出 CSV（与当前筛选一致；无筛选时导全部）
+    els.downloadExportLink.setAttribute('href', '/api/downloads/export');
+  }
   clear(list);
   var active = (snapshot && snapshot.active) || [];
   var queued = (snapshot && snapshot.queued) || [];
@@ -651,10 +655,170 @@ function updatePageBadge() {
   }
 }
 
+// ---------------------------------------------------------------------
+// v0054：订阅下载
+// ---------------------------------------------------------------------
+function subError(message) {
+  if (!els.downloadSubscribeError) { return; }
+  setText(els.downloadSubscribeError, message || '');
+  setHidden(els.downloadSubscribeError, !message);
+}
+
+function intervalLabel(seconds) {
+  var value = Number(seconds) || 0;
+  if (value >= 86400) { return Math.round(value / 86400) + ' 天'; }
+  if (value >= 3600) { return Math.round(value / 3600) + ' 小时'; }
+  return Math.max(1, Math.round(value / 60)) + ' 分钟';
+}
+
+function subResultText(item) {
+  var result = item.last_result || {};
+  if (!item.last_check) { return '尚未检查'; }
+  var when = fmtDateTime(new Date(item.last_check * 1000).toISOString());
+  if (result.error) { return when + ' · 失败：' + result.error; }
+  return when + ' · 检查 ' + (result.checked || 0) + ' 条，新增 ' +
+    (result.new || 0) + '，入队 ' + (result.enqueued || 0);
+}
+
+function renderSubscriptions(res) {
+  res = res || {};
+  var items = res.items || [];
+  state.download.subs = items;
+  if (!els.downloadSubscribeList) { return; }
+  clear(els.downloadSubscribeList);
+  items.forEach(function (item) {
+    var actions = el('div', { className: 'download-row-actions' }, [
+      actionButton('立即检查', 'btn-ghost btn-sm', function () {
+        return checkSubscription(item.sub_id);
+      }),
+      actionButton(item.enabled === false ? '启用' : '暂停',
+        item.enabled === false ? 'btn-primary btn-sm' : 'btn-link btn-sm',
+        function () {
+          return toggleSubscription(item, item.enabled === false);
+        }),
+      actionButton('删除', 'btn-link btn-sm', function () {
+        return deleteSubscription(item.sub_id);
+      })
+    ]);
+    els.downloadSubscribeList.appendChild(el('div',
+      { className: 'download-row' }, [
+        el('div', { className: 'download-row-info' }, [
+          el('div', { className: 'download-row-title' }, [
+            el('span', {
+              className: 'badge ' + (item.enabled === false
+                ? 'badge-gray' : 'badge-green'),
+              text: item.enabled === false ? '已暂停' : '订阅中'
+            }),
+            el('span', {
+              className: 'download-row-name',
+              text: item.url || ''
+            })
+          ]),
+          el('div', {
+            className: 'muted download-row-meta',
+            text: (item.kind === 'rss' ? 'RSS/Atom' : '播放网页') + ' · 每 ' +
+              intervalLabel(item.interval_sec) + ' 检查 · ' +
+              (item.mode === 'all' ? '全部新条目' : '只下最高分候选')
+          }),
+          el('div', {
+            className: 'muted download-row-stage',
+            text: subResultText(item)
+          })
+        ]),
+        actions
+      ]));
+  });
+  setHidden(els.downloadSubscribeEmpty, items.length > 0);
+  setText(els.downloadSubscribeStatus,
+    '共 ' + items.length + ' 个订阅' +
+    (res.enabled ? ' · 自动轮询已开启' : ' · 自动轮询已关闭'));
+  setText(els.downloadSubscribeHint,
+    items.length >= (res.max_items || 50) ? '订阅数量已达上限' : '');
+}
+
+async function loadSubscriptions() {
+  try {
+    var res = await api('/api/downloads/subscriptions', { timeout: 15000 });
+    subError('');
+    renderSubscriptions(res);
+  } catch (err) {
+    subError(errorMessage(err, '加载订阅失败。'));
+  }
+}
+
+async function addSubscription() {
+  var url = els.downloadSubscribeUrl
+    ? String(els.downloadSubscribeUrl.value || '').trim() : '';
+  if (!url) {
+    subError('请填写订阅地址。');
+    return;
+  }
+  try {
+    await api('/api/downloads/subscriptions', {
+      method: 'POST',
+      body: {
+        url: url,
+        interval_sec: parseInt(els.downloadSubscribeInterval
+          ? els.downloadSubscribeInterval.value : '3600', 10) || 3600,
+        mode: els.downloadSubscribeMode
+          ? els.downloadSubscribeMode.value : 'best'
+      },
+      timeout: 20000
+    });
+    if (els.downloadSubscribeUrl) { els.downloadSubscribeUrl.value = ''; }
+    subError('');
+    toast('订阅已添加', 'success');
+    loadSubscriptions();
+  } catch (err) {
+    subError(errorMessage(err, '添加订阅失败。'));
+  }
+}
+
+async function checkSubscription(subId) {
+  try {
+    var res = await api('/api/downloads/subscriptions/' +
+      encodeURIComponent(subId) + '/check', {
+      method: 'POST', timeout: 120000
+    });
+    var result = (res && res.result && res.result.result) || {};
+    toast('检查完成：新增 ' + (result.new || 0) + '，入队 ' +
+      (result.enqueued || 0), 'success');
+  } catch (err) {
+    toast(errorMessage(err, '检查失败。'), 'error');
+  }
+  loadSubscriptions();
+  refreshDownloadQueue();
+}
+
+async function toggleSubscription(item, enabled) {
+  try {
+    await api('/api/downloads/subscriptions/' +
+      encodeURIComponent(item.sub_id), {
+      method: 'PATCH', body: { enabled: enabled }, timeout: 15000
+    });
+    toast(enabled ? '订阅已启用' : '订阅已暂停', 'success');
+  } catch (err) {
+    toast(errorMessage(err, '操作失败。'), 'error');
+  }
+  loadSubscriptions();
+}
+
+async function deleteSubscription(subId) {
+  try {
+    await api('/api/downloads/subscriptions/' +
+      encodeURIComponent(subId), { method: 'DELETE', timeout: 15000 });
+    toast('订阅已删除', 'success');
+  } catch (err) {
+    toast(errorMessage(err, '删除失败。'), 'error');
+  }
+  loadSubscriptions();
+}
+
 export function showDownloadPage() {
   updatePageBadge();
   buildBookmarklet();
   refreshDownloadQueue();
+  loadSubscriptions();
   startDownloadPolling();
   maybeAutoParse();
 }
@@ -733,6 +897,10 @@ export function initDownloadPage() {
   }
   if (els.downloadBookmarkletCopyBtn) {
     els.downloadBookmarkletCopyBtn.addEventListener('click', copyBookmarklet);
+  }
+  // v0054：订阅下载
+  if (els.downloadSubscribeAddBtn) {
+    els.downloadSubscribeAddBtn.addEventListener('click', addSubscription);
   }
   buildBookmarklet();
   updateSubmitHint();

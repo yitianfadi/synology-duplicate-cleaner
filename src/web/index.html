@@ -6,8 +6,8 @@
 <meta name="color-scheme" content="light">
 <meta name="referrer" content="same-origin">
 <title>重复文件清理与字幕 · Duplicate Cleaner &amp; Subtitles</title>
-<link rel="icon" href="./assets/favicon.svg?v=1.1.0-0053" type="image/svg+xml">
-<link rel="stylesheet" href="./styles.css?v=1.1.0-0053">
+<link rel="icon" href="./assets/favicon.svg?v=1.1.0-0054" type="image/svg+xml">
+<link rel="stylesheet" href="./styles.css?v=1.1.0-0054">
 </head>
 <body>
 <a class="skip-link" href="#main">跳到主要内容</a>
@@ -889,6 +889,43 @@
             <span class="muted" id="downloadApplyHint"></span>
           </div>
         </div>
+      </section>
+
+      <section class="card" aria-labelledby="downloadSubsHeading">
+        <div class="card-head">
+          <h2 id="downloadSubsHeading">订阅下载</h2>
+          <span class="muted" id="downloadSubscribeStatus"></span>
+        </div>
+        <p class="hint">给 RSS/Atom 源或播放网页设置检查间隔，发现新条目自动加入下载队列（已下载过的地址不会重复）。需要在「设置 → 下载」打开订阅总开关后才会自动轮询；「立即检查」不受总开关限制。</p>
+        <div class="form-grid">
+          <div class="field">
+            <label for="downloadSubscribeUrl">订阅地址（RSS/Atom 或播放网页）</label>
+            <input id="downloadSubscribeUrl" type="text" placeholder="https://example.com/feed.xml" autocomplete="off" spellcheck="false">
+          </div>
+          <div class="field">
+            <label for="downloadSubscribeInterval">检查间隔</label>
+            <select id="downloadSubscribeInterval">
+              <option value="3600">每小时</option>
+              <option value="21600">每 6 小时</option>
+              <option value="43200">每 12 小时</option>
+              <option value="86400">每天</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="downloadSubscribeMode">下载策略</label>
+            <select id="downloadSubscribeMode">
+              <option value="best">只下最高分候选（网页推荐）</option>
+              <option value="all">全部新候选（RSS 推荐）</option>
+            </select>
+          </div>
+        </div>
+        <p class="field-error" id="downloadSubscribeError" role="alert" hidden></p>
+        <div class="subtitle-submit-row">
+          <button type="button" class="btn btn-primary" id="downloadSubscribeAddBtn">添加订阅</button>
+          <span class="muted" id="downloadSubscribeHint"></span>
+        </div>
+        <div class="state-box state-empty" id="downloadSubscribeEmpty" hidden>还没有订阅。</div>
+        <div id="downloadSubscribeList" class="download-subscriptions"></div>
       </section>
 
       <section class="card" aria-labelledby="downloadInputHeading">
@@ -2008,6 +2045,10 @@
               <p class="field-error" id="setDownloadNameTemplateError" role="alert" hidden></p>
             </div>
             <div class="field field-wide">
+              <label class="check"><input id="setDownloadSubscribeEnabled" type="checkbox">启用订阅下载（定时检查 RSS/网页并自动入队）</label>
+              <p class="hint">关闭时不自动轮询，但仍可在下载页对单个订阅「立即检查」。</p>
+            </div>
+            <div class="field field-wide">
               <label class="check"><input id="setDownloadAutoScan" type="checkbox">下载完成后自动入队扫描该目录</label>
               <p class="hint">同一目录 10 分钟内只触发一次，避免批量下载时反复全量扫描。</p>
               <label class="check"><input id="setDownloadAutoSubtitle" type="checkbox">下载完成后自动提交字幕任务</label>
@@ -2154,6 +2195,6 @@
   <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.6" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M12 10.8v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="12" cy="7.6" r="1.05" fill="currentColor"/></symbol>
 </svg>
 
-<script type="module" src="./app.js?v=1.1.0-0053"></script>
+<script type="module" src="./app.js?v=1.1.0-0054"></script>
 </body>
 </html>

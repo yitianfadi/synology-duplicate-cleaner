@@ -1,7 +1,7 @@
 # 整体方案架构
 
 > 项目：**重复文件清理与字幕（Duplicate Cleaner & Subtitles）** · 群晖 DSM 7.x SPK 套件
-> 版本：1.1.0-0053
+> 版本：1.1.0-0054
 > 原则：**先扫描、出报告、人工确认、二次确认、可回收、全程审计**。任何情况下都不自动静默删除。
 
 ## 1. 目标与边界
@@ -649,4 +649,10 @@ Linux 的 `st_ctime` 是 **inode 状态变更时间**，不是创建时间，复
 - **命名模板**：`_render_name` 用 `{title}{site}{date}{height}{season}{episode}…` 渲染，`_split_season_episode` 识别 `S01E02`/「第二季第三集」。
 - **队列与导出**：`_next_queue_index_locked` 按（优先级、创建时间）取任务；`bulk_action` 按 scope 批量处理；`export_rows` 供 `/api/downloads/export`。
 - **通知**：`_finish_status` 在 done/failed 时调用 `notify(download_done|download_failed)`，复用通知队列，失败只记日志。
-- **解析增强**：同 URL 结果缓存 600s（`cached=true`）；跟随一层 iframe（最多 3 个）；书签脚本走 `#/download?parse=`，前端 `state.hashQuery` 自动解析。
+'- **解析增强**：同 URL 结果缓存 600s（`cached=true`）；跟随一层 iframe（最多 3 个）；书签脚本走 `#/download?parse=`，前端 `state.hashQuery` 自动解析。
+
+### 21.3 DASH 与订阅下载（v0054）
+
+- **DASH**：`dash.py` 把 MPD 解析成「每轨 init + 分片」；`_materialize_dash` 用现有 `_fetch_all` 拉取后按序字节拼接成 `video_track.mp4`/`audio_track.mp4`，`_remux` 用 FFmpeg `-c copy` 封装（失败回退 AAC）；`_looks_like_mpd` 按后缀/Content-Type/正文识别，`ContentProtection` 一律 `DRM_UNSUPPORTED`。
+- **订阅**：`download_subs.DownloadSubscriptionService` 独立线程每 30s tick；状态存 `<var>/download_subscriptions.json`；RSS 用标准库 XML 解析，网页复用 `parse_target`（`mode=best/all`）；入队走 `downloads.create`，`seen` 集合去重（上限 200）。
+- **连接复用/自适应**：`_HttpClient` 增加按 host 的 keep-alive 连接池（仅无代理分片下载；重定向自动回退 urllib）；`_note_segment_duration` 统计慢分片，`_adaptive_concurrency` 把并发减半，自动重试时也会降并发。'

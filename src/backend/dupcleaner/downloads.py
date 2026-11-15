@@ -26,6 +26,7 @@
 from __future__ import absolute_import
 
 import errno
+import http.client
 import ipaddress
 import json
 import logging
@@ -33,6 +34,7 @@ import os
 import re
 import shutil
 import socket
+import ssl
 import threading
 import time
 import urllib.error
@@ -41,7 +43,7 @@ import urllib.request
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from . import config, hls, pageparse
+from . import config, dash, hls, pageparse
 from .errors import ApiError, invalid, not_found, path_not_allowed
 from .fsutil import (check_path_safety, is_safe_dir_name, writable_dir)
 from .video_similarity import (FFmpegTool, VideoSkip, VideoStopped,
@@ -358,6 +360,46 @@ class _RateLimiter(object):
             time.sleep(min(delay, 5.0))
 
 
+class _PooledResponse(object):
+    """v0054：keep-alive 连接上的响应（读尽后把连接放回池里复用）。"""
+
+    def __init__(self, client, key, conn, response, url):
+        self._client = client
+        self._key = key
+        self._conn = conn
+        self._response = response
+        self._url = url
+        self._reusable = False
+        self._closed = False
+
+    @property
+    def status(self):
+        return getattr(self._response, "status", 200)
+
+    @property
+    def headers(self):
+        return self._response.headers
+
+    def geturl(self):
+        return self._url
+
+    def read(self, size=-1):
+        data = self._response.read(size)
+        if not data:
+            self._reusable = True
+        return data
+
+    def close(self):
+        if self._closed:
+            return
+        self._closed = True
+        if self._reusable and getattr(self._response, "isclosed", None) \
+                and self._response.isclosed():
+            self._client._release(self._key, self._conn)
+        else:
+            self._client._discard(self._key, self._conn)
+
+
 class _HttpClient(object):
     """每个任务一个 HTTP 客户端：统一 UA/Referer/Cookie/代理/限速/超时。"""
 
@@ -371,6 +413,101 @@ class _HttpClient(object):
         self.limiter = limiter
         self.allow_private = bool(allow_private)
         self._opener = self._build_opener()
+        # v0054：keep-alive 连接池（仅无代理的 http/https 分片下载使用）
+        self._pool = {}
+        self._pool_lock = threading.Lock()
+
+    def close(self):
+        with self._pool_lock:
+            connections = list(self._pool.values())
+            self._pool.clear()
+        for conn in connections:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+    # -- keep-alive -----------------------------------------------------
+    @staticmethod
+    def _pool_key(parsed):
+        port = parsed.port
+        if port is None:
+            port = 443 if parsed.scheme.lower() == "https" else 80
+        return (parsed.scheme.lower(), (parsed.hostname or "").lower(), port)
+
+    def _new_connection(self, parsed, key, timeout):
+        host, port = key[1], key[2]
+        if key[0] == "https":
+            context = ssl.create_default_context()
+            return http.client.HTTPSConnection(
+                host, port, timeout=timeout, context=context)
+        return http.client.HTTPConnection(host, port, timeout=timeout)
+
+    def _release(self, key, conn):
+        if conn is None or getattr(conn, "sock", None) is None:
+            return
+        with self._pool_lock:
+            existing = self._pool.get(key)
+            if existing is None:
+                self._pool[key] = conn
+                return
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+    def _discard(self, key, conn):
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+        with self._pool_lock:
+            if self._pool.get(key) is conn:
+                self._pool.pop(key, None)
+
+    def _open_pooled(self, url, headers, limit):
+        """返回 _PooledResponse；无法复用（重定向等）时返回 None 交给 urllib。"""
+        if self.proxy or not url.lower().startswith(("http://", "https://")):
+            return None
+        try:
+            parsed = urllib.parse.urlsplit(url)
+        except ValueError:
+            return None
+        key = self._pool_key(parsed)
+        with self._pool_lock:
+            conn = self._pool.pop(key, None)
+        fresh = conn is None
+        if fresh:
+            try:
+                conn = self._new_connection(parsed, key, limit)
+            except (OSError, http.client.HTTPException):
+                return None
+        path = parsed.path or "/"
+        if parsed.query:
+            path += "?" + parsed.query
+        send_headers = dict(headers)
+        send_headers["Connection"] = "keep-alive"
+        try:
+            conn.request("GET", path, headers=send_headers)
+            response = conn.getresponse()
+        except (http.client.HTTPException, OSError):
+            self._discard(key, conn)
+            return None
+        status = getattr(response, "status", 200)
+        if 300 <= status < 400:
+            try:
+                response.read()
+            except Exception:
+                pass
+            self._discard(key, conn)
+            return None
+        if status >= 400:
+            self._discard(key, conn)
+            raise DownloadError(
+                "HTTP_STATUS", u"服务器返回 HTTP %s" % status,
+                {"status": int(status), "url": _sanitize_error(url)})
+        return _PooledResponse(self, key, conn, response, url)
 
     def _build_opener(self):
         handlers = []
@@ -405,11 +542,15 @@ class _HttpClient(object):
                 headers["Range"] = "bytes=%d-%d" % (int(start), int(end))
         return headers
 
-    def open(self, url, byte_range=None, timeout=None):
+    def open(self, url, byte_range=None, timeout=None, reuse=False):
         assert_url_allowed(url, allow_private=self.allow_private)
+        limit = float(timeout or self.timeout)
+        if reuse:
+            pooled = self._open_pooled(url, self._headers(byte_range), limit)
+            if pooled is not None:
+                return pooled
         request = urllib.request.Request(
             url, headers=self._headers(byte_range), method="GET")
-        limit = float(timeout or self.timeout)
         try:
             return self._opener.open(request, timeout=limit)
         except urllib.error.HTTPError as exc:
@@ -909,6 +1050,13 @@ class DownloadService(object):
         finally:
             with self._lock:
                 self._running.pop(job.job_id, None)
+            client = getattr(job, "_client", None)
+            if client is not None:
+                try:
+                    client.close()
+                except Exception:
+                    pass
+                job._client = None
             self._persist(job, force=True)
 
     # v0053：网络类错误可自动重试（指数退避重排），确定性错误不重试。
@@ -940,6 +1088,8 @@ class DownloadService(object):
             job.error_code = code
             job.error_message = _sanitize_error(
                 message, job.options.get("cookie") or u"")
+            # v0054：重试说明网络/服务端不稳，降低分片并发再试
+            job._slow_hits = int(getattr(job, "_slow_hits", 0)) + 2
             if job.job_id not in self._queue:
                 self._queue.append(job.job_id)
         self._persist(job, force=True)
@@ -991,6 +1141,7 @@ class DownloadService(object):
         output_dir = self._prepare_output_dir(job)
         job.output_dir = output_dir
         client = self._client(job)
+        job._client = client
 
         kind, body, playlist, final_url = self._probe_source(job, client)
         job.kind = kind
@@ -1006,6 +1157,16 @@ class DownloadService(object):
                 job, client, playlist)
             self._step_end(job, "download")
             self._merge(job, local_list, audio_list)
+            self._verify(job)
+        elif kind == "dash":
+            job.step_end("resolve")
+            self._maybe_skip(job, self._base_path(
+                job, config.DOWNLOAD_OUTPUT_EXT))
+            self._step_start(job, "download")
+            video_path, audio_path = self._materialize_dash(
+                job, client, playlist)
+            self._step_end(job, "download")
+            self._remux(job, video_path, audio_path)
             self._verify(job)
         else:
             job.step_end("resolve")
@@ -1160,6 +1321,14 @@ class DownloadService(object):
                     body, _headers, final_url = client.read_text(final_url)
                 playlist = self._parse_playlist(job, client, body, final_url)
                 return "hls", u"", playlist, final_url
+            # v0054：DASH（.mpd）
+            if self._looks_like_mpd(head, final_url, content_type):
+                body = head.decode("utf-8", "replace")
+                if len(head) >= 65536:
+                    body, _headers, final_url = client.read_text(
+                        final_url, limit=config.DOWNLOAD_PAGE_MAX_BYTES)
+                playlist = self._parse_dash(job, body, final_url)
+                return "dash", u"", playlist, final_url
             # 直链：记录体积，之后单独开流下载（可续传）
             job.bytes_total = self._parse_total(total, response.headers)
             job.title = job.title or self._title_from(
@@ -1170,6 +1339,151 @@ class DownloadService(object):
                 response.close()
             except Exception:
                 pass
+
+    @staticmethod
+    def _looks_like_mpd(head, url, content_type):
+        if "dash+xml" in (content_type or ""):
+            return True
+        path = (urllib.parse.urlsplit(url or "").path or "").lower()
+        if path.endswith(".mpd"):
+            return True
+        sample = (head or b"")[:8192].lstrip()
+        return sample.startswith(b"<?xml") and b"<MPD" in (head or b"")[:8192]
+
+    def _parse_dash(self, job, body, url):
+        try:
+            plan = dash.parse(body, url)
+        except dash.DashError as exc:
+            raise DownloadError(exc.code, exc.message)
+        video = dash.pick_video(plan, int(job.options.get("max_height") or 0))
+        if video is not None:
+            job.height = int(video.get("height") or 0)
+            try:
+                job.variant = u"%dp" % job.height if job.height else u""
+            except (TypeError, ValueError):
+                job.variant = u""
+        job.encryption = u"未加密"
+        job.title = job.title or self._title_from(u"", url)
+        fetches = (dash.plan_fetches(plan, "v", "video")
+                   + dash.plan_fetches(plan, "a", "audio"))
+        job.segments_total = len([item for item in fetches
+                                  if item.get("kind") == "segment"])
+        plan["_fetches"] = fetches
+        return plan
+
+    def _materialize_dash(self, job, client, plan):
+        """v0054：下载 DASH 音视频轨 → 逐轨拼成 mp4（init + 分片）。"""
+        job.temp_dir = os.path.join(
+            job.output_dir, config.DOWNLOAD_TEMP_PREFIX + job.job_id)
+        try:
+            os.makedirs(job.temp_dir)
+        except OSError as exc:
+            if exc.errno != errno.EEXIST:
+                raise DownloadError("OUTPUT_DIR_INVALID",
+                                    u"无法创建临时目录: %s" % exc)
+        fetches = plan.get("_fetches") or []
+        if not fetches:
+            raise DownloadError("PLAYLIST_INVALID", u"DASH 清单没有可下载分片")
+        self._fetch_all(job, client, fetches, job.temp_dir)
+        outputs = []
+        for prefix, stream in (("v", "video"), ("a", "audio")):
+            names = dash.stream_files(plan, prefix, stream)
+            if not names:
+                continue
+            out_path = os.path.join(job.temp_dir, "%s_track.mp4" % stream)
+            self._concat_files(job, job.temp_dir, names, out_path)
+            outputs.append(out_path)
+        if not outputs:
+            raise DownloadError("PLAYLIST_INVALID", u"DASH 清单没有可合并的轨")
+        video_path = outputs[0]
+        audio_path = outputs[1] if len(outputs) > 1 else u""
+        return video_path, audio_path
+
+    def _concat_files(self, job, base_dir, names, out_path):
+        part = out_path + config.DOWNLOAD_PART_EXT
+        try:
+            with open(part, "wb") as target:
+                for name in names:
+                    source_path = os.path.join(base_dir, name)
+                    if not os.path.isfile(source_path):
+                        raise DownloadError(
+                            "SEGMENT_FAILED", u"缺少分片文件: %s" % name)
+                    with open(source_path, "rb") as source:
+                        while True:
+                            self._check_cancelled(job)
+                            block = source.read(1024 * 1024)
+                            if not block:
+                                break
+                            target.write(block)
+            os.replace(part, out_path)
+        except OSError as exc:
+            raise DownloadError("MERGE_FAILED", u"拼接 DASH 分片失败: %s" % exc)
+        return out_path
+
+    def _remux(self, job, video_path, audio_path=u""):
+        """v0054：把 DASH 轨封装成最终 MP4（只做 copy，失败回退音频 AAC）。"""
+        self._step_start(job, "merge")
+        tool = self._ffmpeg
+        if not tool.available():
+            raise DownloadError("FFMPEG_UNAVAILABLE",
+                                u"未找到 FFmpeg，无法合并视频")
+        final_path = self._final_path(job, config.DOWNLOAD_OUTPUT_EXT)
+        part = final_path + config.DOWNLOAD_PART_EXT
+        timeout = float(job.options.get("merge_timeout") or 3600)
+        base = ["-nostdin", "-hide_banner", "-loglevel", "error",
+                "-i", video_path]
+        map_args = []
+        if audio_path:
+            base += ["-i", audio_path]
+            map_args = ["-map", "0:v:0", "-map", "1:a:0?"]
+        attempts = [
+            base + map_args + ["-c", "copy", "-movflags", "+faststart",
+                               "-y", part],
+            base + map_args + ["-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
+                               "-movflags", "+faststart", "-y", part],
+        ]
+        last_error = u""
+        for index, args in enumerate(attempts):
+            try:
+                code, _stdout, stderr = tool.run(
+                    args, timeout=timeout,
+                    stop_check=lambda: job._cancel.is_set())
+            except VideoStopped:
+                raise _JobCancelled()
+            except VideoTimeout:
+                raise DownloadError("MERGE_FAILED",
+                                    u"封装超时（超过 %d 秒）" % int(timeout))
+            except VideoSkip as exc:
+                raise DownloadError("MERGE_FAILED",
+                                    u"无法执行 FFmpeg：%s"
+                                    % (exc.detail or exc.reason))
+            if code == 0 and os.path.isfile(part) \
+                    and os.path.getsize(part) > 0:
+                break
+            last_error = _sanitize_error(
+                (stderr or b"").decode("utf-8", "replace"),
+                job.options.get("cookie") or u"")
+            logger.warning(u"DASH 封装失败（第 %d 次）: %s", index + 1,
+                           last_error)
+            if job._cancel.is_set():
+                raise _JobCancelled()
+        else:
+            raise DownloadError("MERGE_FAILED",
+                                u"封装失败: %s" % (last_error or u"FFmpeg 错误"))
+        self._check_cancelled(job)
+        size = os.path.getsize(part)
+        if size <= 0:
+            raise DownloadError("MERGE_FAILED", u"封装产物为空")
+        job.step_end("merge")
+        try:
+            os.replace(part, final_path)
+        except OSError as exc:
+            raise DownloadError("OUTPUT_DIR_INVALID",
+                                u"重命名失败: %s" % exc)
+        job.output_name = os.path.basename(final_path)
+        job.output_path = final_path
+        job.output_size = size
+        job.progress = max(int(job.progress or 0), 95)
 
     @staticmethod
     def _parse_total(content_range, headers):
@@ -1299,7 +1613,11 @@ class DownloadService(object):
             todo.append(item)
         if not todo:
             return
-        concurrency = self._segment_concurrency(job)
+        concurrency = self._adaptive_concurrency(
+            job, self._segment_concurrency(job))
+        if concurrency < self._segment_concurrency(job):
+            logger.info(u"下载 %s 自适应降低分片并发 → %d",
+                        job.job_id, concurrency)
         pool = ThreadPoolExecutor(max_workers=concurrency)
         futures = []
         try:
@@ -1361,10 +1679,12 @@ class DownloadService(object):
             start, end = int(byte_range[0]), int(byte_range[1]) - 1
         elif os.path.isfile(target) and os.path.getsize(target) > 0:
             start = os.path.getsize(target)
+        started_at = time.monotonic()
         response = client.open(item["uri"],
                               byte_range=((start, end)
                                           if (byte_range or start)
-                                          else None))
+                                          else None),
+                              reuse=True)
         part = target + config.DOWNLOAD_PART_EXT
         mode = "wb"
         expected = end - start + 1 if byte_range else None
@@ -1414,6 +1734,29 @@ class DownloadService(object):
             os.replace(part, target)
         except OSError as exc:
             raise DownloadError("SEGMENT_FAILED", u"写入分片失败: %s" % exc)
+        # v0054：记录分片耗时，供自适应并发使用
+        self._note_segment_duration(job, time.monotonic() - started_at, size)
+
+    # -- v0054：自适应分片并发 ------------------------------------------
+    SLOW_SEGMENT_SEC = 8.0
+    FAST_SEGMENT_SEC = 2.0
+
+    def _note_segment_duration(self, job, elapsed, size):
+        with self._lock:
+            if elapsed >= self.SLOW_SEGMENT_SEC and size < 16 * 1024 * 1024:
+                job._slow_hits = int(getattr(job, "_slow_hits", 0)) + 1
+            elif elapsed <= self.FAST_SEGMENT_SEC:
+                job._fast_hits = int(getattr(job, "_fast_hits", 0)) + 1
+                if job._fast_hits >= 5 and getattr(job, "_slow_hits", 0) > 0:
+                    job._slow_hits -= 1
+                    job._fast_hits = 0
+
+    def _adaptive_concurrency(self, job, base):
+        """近期持续出现慢分片时把并发减半（最少 1）；恢复后自动回到基准。"""
+        slow = int(getattr(job, "_slow_hits", 0))
+        if slow >= 2:
+            return max(1, int(base) // 2)
+        return max(1, int(base))
 
     def _download_direct(self, job, client):
         ext = self._extension_for(job)
@@ -1802,12 +2145,26 @@ class DownloadService(object):
                 "valid": True,
             }]
         else:
-            candidates = pageparse.extract_candidates(body, final_url)
-            # v0053：跟随一层 iframe（最多 N 个）再提取
-            candidates = self._merge_iframe_candidates(
-                candidates, body, final_url, client, settings)
-            candidates = candidates[:config.DOWNLOAD_PARSE_CANDIDATE_LIMIT]
-            self._validate_candidates(candidates, client, settings)
+            # v0054：直接把 .mpd 地址填进解析框
+            if self._looks_like_mpd(body[:8192].encode("utf-8", "replace"),
+                                    final_url, u""):
+                playlist_summary = self._dash_summary(final_url, body)
+                candidates = [{
+                    "url": final_url,
+                    "kind": "dash",
+                    "ext": ".mpd",
+                    "source": "direct",
+                    "label": u"DASH 清单",
+                    "score": 190,
+                    "valid": True,
+                }]
+            else:
+                candidates = pageparse.extract_candidates(body, final_url)
+                # v0053：跟随一层 iframe（最多 N 个）再提取
+                candidates = self._merge_iframe_candidates(
+                    candidates, body, final_url, client, settings)
+                candidates = candidates[:config.DOWNLOAD_PARSE_CANDIDATE_LIMIT]
+                self._validate_candidates(candidates, client, settings)
 
         token = self._remember_parse_session(
             headers, final_url, settings)
@@ -1896,6 +2253,25 @@ class DownloadService(object):
         merged.sort(key=lambda item: (-int(item.get("score") or 0),
                                       int(item.get("order") or 0)))
         return merged
+
+    def _dash_summary(self, url, body):
+        try:
+            plan = dash.parse(body, url)
+        except dash.DashError as exc:
+            raise ApiError(exc.code, exc.message)
+        video = plan.get("video") or {}
+        audio = plan.get("audio") or {}
+        return {
+            "kind": "dash",
+            "height": int(video.get("height") or 0),
+            "duration": round(float(plan.get("duration") or 0.0), 1),
+            "segments": len(video.get("segments") or []) +
+                        len((video.get("init") and [1] or [])) +
+                        len(audio.get("segments") or []),
+            "tracks": [name for name, item in (("video", video),
+                                               ("audio", audio)) if item],
+            "encryption": u"未加密",
+        }
 
     def _playlist_summary(self, url, body):
         try:

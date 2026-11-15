@@ -18,6 +18,7 @@ from . import config, similarity, timeutil, video_similarity
 from .errors import ApiError, forbidden, invalid, not_found, auth_required
 from .settings import (CLEAR_SECRET_ALIASES, default_settings,
                        public_settings)
+from .download_subs import SubError
 from .subtitles import SubtitleError
 
 logger = logging.getLogger("dupcleaner.api")
@@ -350,6 +351,20 @@ class Api(object):
              self._download_bulk, False),
             ("GET", re.compile(r"^/api/downloads/export$"),
              self._download_export, False),
+            # v0054：下载订阅（RSS/网页定时检查）
+            ("GET", re.compile(r"^/api/downloads/subscriptions$"),
+             self._download_subs_list, False),
+            ("POST", re.compile(r"^/api/downloads/subscriptions$"),
+             self._download_subs_add, False),
+            ("POST", re.compile(
+                r"^/api/downloads/subscriptions/(?P<sub_id>[^/]+)/check$"),
+             self._download_subs_check, False),
+            ("PATCH", re.compile(
+                r"^/api/downloads/subscriptions/(?P<sub_id>[^/]+)$"),
+             self._download_subs_update, False),
+            ("DELETE", re.compile(
+                r"^/api/downloads/subscriptions/(?P<sub_id>[^/]+)$"),
+             self._download_subs_delete, False),
             ("GET", re.compile(r"^/api/downloads/groups$"),
              self._download_groups, False),
             ("GET", re.compile(r"^/api/downloads/groups/(?P<group_id>[^/]+)$"),
@@ -713,6 +728,52 @@ class Api(object):
         service = self._require_download_admin(session)
         body = _json_body(request)
         return json_response(service.parse_target(session.user, body))
+
+    def _download_subs_service(self):
+        service = getattr(self.services, "download_subs", None)
+        if service is None:
+            raise ApiError("DOWNLOAD_DISABLED", u"下载订阅不可用")
+        return service
+
+    def _download_subs_list(self, request, session, params):
+        self._require_download_admin(session)
+        return json_response(self._download_subs_service().status())
+
+    def _download_subs_add(self, request, session, params):
+        self._require_download_admin(session)
+        body = _json_body(request)
+        try:
+            item = self._download_subs_service().add(session.user, body)
+        except SubError as exc:
+            raise ApiError(exc.code, exc.message)
+        return json_response({"ok": True, "item": item}, status=201)
+
+    def _download_subs_check(self, request, session, params):
+        self._require_download_admin(session)
+        try:
+            result = self._download_subs_service().check_now(
+                params["sub_id"], force=True)
+        except SubError as exc:
+            raise ApiError(exc.code, exc.message)
+        return json_response({"ok": True, "result": result})
+
+    def _download_subs_update(self, request, session, params):
+        self._require_download_admin(session)
+        body = _json_body(request)
+        try:
+            item = self._download_subs_service().update(params["sub_id"],
+                                                        body)
+        except SubError as exc:
+            raise ApiError(exc.code, exc.message)
+        return json_response({"ok": True, "item": item})
+
+    def _download_subs_delete(self, request, session, params):
+        self._require_download_admin(session)
+        try:
+            result = self._download_subs_service().delete(params["sub_id"])
+        except SubError as exc:
+            raise ApiError(exc.code, exc.message)
+        return json_response(result)
 
     def _download_bulk(self, request, session, params):
         service = self._require_download_admin(session)

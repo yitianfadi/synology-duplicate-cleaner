@@ -302,3 +302,54 @@ DRM 解密、直播录制、内置浏览器/JS 渲染、BT/磁力、站点专用
 ### 15.9 测试
 
 `tests/test_v0053_download_extras.py`（19 例）：去重跳过（同体积/不同体积/关闭）、文件名模板与季集识别、分时限速判定（含跨零点）、自动重试成功/放弃/不可重试、优先级排序、批量暂停恢复、CSV 导出、空间看板、解析缓存与 iframe、完成/失败通知。
+## 16. DASH 清单（v0054）
+
+- `dash.py` 纯解析：MPD → 「初始化段 + 分片」计划；下载仍走 `_fetch_all`，然后逐轨 `init + 分片` 字节拼接成 `*_track.mp4`，最后 FFmpeg `-c copy` 封装（失败回退音频 AAC）。
+- 支持：单 Period、`SegmentTemplate`（`$Number$`/`$Number%05d$`/`$Time$`/`$RepresentationID$`/`$Bandwidth$`）、`SegmentTimeline`（`S@t/d/r`）、`SegmentList`（`Initialization` + `SegmentURL`）、`SegmentBase`（整文件）、四级 `BaseURL` 拼接、视频/音频各取一档（视频按高度→码率，受 `download_max_height` 约束）。
+- 拒绝：含 `ContentProtection` → `DRM_UNSUPPORTED`；非 MPD → `PLAYLIST_INVALID`。
+- 识别：`.mpd` 后缀、`Content-Type: */dash+xml`、或正文 `<?xml` 且前 8KB 含 `<MPD`；解析器也接受直接把 `.mpd` 地址填进「解析播放网页」。
+- 非目标：多 Period 拼接、字幕轨、DRM/加密 DASH。
+
+## 17. 订阅下载（v0054）
+
+### 17.1 模型与持久化
+
+`<var>/download_subscriptions.json`（不建表，schema 仍 v9）：
+
+```json
+{"subs": {"ds-xxxxxxxx": {
+  "sub_id": "ds-…", "url": "…", "kind": "rss|page", "mode": "best|all",
+  "interval_sec": 3600, "enabled": true, "user": "admin",
+  "options": {"output_dir": "…", "subdir_mode": "site_date"},
+  "seen": ["…"], "last_check": 0, "last_result": {}, "created_epoch": 0}}}
+```
+
+- 单次检查最多入队 `MAX_ENQUEUE=5`，每项最多记 `MAX_SEEN=200` 条已处理地址（超出丢最旧），订阅上限 `MAX_ITEMS=50`；
+- 间隔 300–86400 秒；总开关 `download_subscribe_enabled`（默认关）只影响自动轮询，手动「立即检查」不受限。
+
+### 17.2 条目来源
+
+- `rss`：标准库解析 RSS 2.0（`item/link`、`enclosure@url`、http(s) `guid`）与 Atom（`entry/link@href`、`id`），去重保序，最多 50 条；
+- `page`：复用 `DownloadService.parse_target`（静态解析 + cURL 无关），只取 `hls/dash/file` 候选；`mode=best` 只取最高分一条，`all` 取全部；解析得到的 `parse_session` 会随入队地址一起提交（Referer/Cookie 生效）。
+
+### 17.3 轮询
+
+- 服务内线程每 30 秒 tick 一次；只有 `enabled` 且距上次检查 ≥ `interval_sec` 的订阅才检查；
+- 抓取/解析失败不影响其他订阅，错误写入 `last_result.error`；
+- 套件重启后从状态文件恢复；`Services.shutdown()` 会先停订阅线程再停下载服务。
+
+### 17.4 API
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/api/downloads/subscriptions` | 列表 + 总开关状态 + 上限 |
+| POST | `/api/downloads/subscriptions` | 新增（201）：`{url, kind?, interval_sec?, mode?, options?}` |
+| POST | `/api/downloads/subscriptions/{sub_id}/check` | 立即检查（同步执行，返回 checked/new/enqueued/job_ids） |
+| PATCH | `/api/downloads/subscriptions/{sub_id}` | `{enabled?, interval_sec?, mode?}` |
+| DELETE | `/api/downloads/subscriptions/{sub_id}` | 删除 |
+
+Cookie 等敏感选项在返回时只给 `cookie_set`。
+
+### 17.5 测试
+
+`tests/test_v0054_dash_subs.py`（16 例）：DASH 模板/时间轴/列表/DRM/非法清单与真实下载链路；RSS/Atom 解析；订阅新增/更新/删除、RSS 只入队一次、网页 best 模式、总开关与间隔门控、Cookie 掩码。

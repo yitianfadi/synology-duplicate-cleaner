@@ -33,7 +33,9 @@ export var state = {
     // v0052：网页解析（候选地址 + 服务端暂存的登录态 token）
     parseCandidates: [], parseSession: '', parseBusy: false, parseSeq: 0,
     // v0053：空间看板
-    storage: null
+    storage: null,
+    // v0054：订阅列表
+    subs: []
   },
   // 当前扫描
   scan: { id: null, data: null, stats: null, timer: null, abort: null, polling: false, errors: 0, handled: false },
@@ -228,6 +230,10 @@ export var IDS = ('loginView loginForm loginUsername loginPassword loginOtp logi
   'downloadResumeAllBtn downloadRetryFailedBtn downloadExportLink ' +
   'downloadBookmarkletDetails downloadBookmarkletCode ' +
   'downloadBookmarkletCopyBtn downloadBookmarkletHint ' +
+  'downloadSubscribeStatus downloadSubscribeUrl downloadSubscribeInterval ' +
+  'downloadSubscribeMode downloadSubscribeAddBtn downloadSubscribeError ' +
+  'downloadSubscribeHint downloadSubscribeEmpty downloadSubscribeList ' +
+  'setDownloadSubscribeEnabled ' +
   'setDownloadSkipExisting setDownloadAutoRetry setDownloadAutoRetryMax ' +
   'setDownloadAutoRetryMaxError setDownloadOffpeakEnabled ' +
   'setDownloadOffpeakStart setDownloadOffpeakStartError ' +

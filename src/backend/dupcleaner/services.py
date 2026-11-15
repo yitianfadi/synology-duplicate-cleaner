@@ -12,6 +12,7 @@ from .auth import AuthManager
 from .browse import BrowseService
 from .deletion import DeletionManager
 from .downloads import DownloadService
+from .download_subs import DownloadSubscriptionService
 from .merge import MergeManager
 from .notifications import NotificationService
 from .permissions import PermissionInspector
@@ -42,7 +43,7 @@ class Services(object):
                  merge_manager=None, trash_manager=None,
                  notification_service=None, scheduler_service=None,
                  subtitle_watch_service=None, permission_inspector=None,
-                 download_service=None):
+                 download_service=None, download_subs_service=None):
         self.config = runtime_config
         self.store = store
         self.settings = settings_manager
@@ -62,6 +63,7 @@ class Services(object):
         self.subtitle_watch = subtitle_watch_service
         self.permissions = permission_inspector
         self.downloads = download_service
+        self.download_subs = download_subs_service
 
     def shutdown(self, timeout=5.0):
         # 先停升级 drain 监视，避免正常退出时又把扫描暂停。
@@ -96,6 +98,11 @@ class Services(object):
         try:
             if self.subtitle_watch is not None:
                 self.subtitle_watch.stop(timeout=timeout)
+        except Exception:
+            pass
+        try:
+            if self.download_subs is not None:
+                self.download_subs.stop(timeout=timeout)
         except Exception:
             pass
         try:
@@ -212,6 +219,10 @@ def build_services(runtime_config):
             scan_manager, subtitle_service, settings_manager),
         notifier=notification_service)
     download_service.start()
+    # v0054：下载订阅（RSS/网页定时检查 → 自动入队）
+    download_subs_service = DownloadSubscriptionService(
+        runtime_config, store, settings_manager.get, download_service)
+    download_subs_service.start()
     # 升级 drain 握手：preupgrade 写 <var>/upgrade.drain，后端暂停扫描后写 done。
     upgrade_monitor = UpgradeDrainMonitor(runtime_config.data_dir, scan_manager)
     upgrade_monitor.start()
@@ -221,4 +232,4 @@ def build_services(runtime_config):
                     upgrade_monitor, thumbnail_service, merge_manager,
                     trash_manager, notification_service, scheduler_service,
                     subtitle_watch_service, permission_inspector,
-                    download_service)
+                    download_service, download_subs_service)
