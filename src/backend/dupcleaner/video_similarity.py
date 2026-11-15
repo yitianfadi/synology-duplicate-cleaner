@@ -937,6 +937,13 @@ class FFmpegTool(object):
     def available(self):
         return bool(self.resolve())
 
+    def run(self, args, timeout, stop_check=None):
+        """执行一次 FFmpeg（v0051 下载中心用于合并/封装），返回 (code, out, err)。
+
+        注意：stdout 必须由调用方保证很小（合并不写 stdout），大输出请落文件。
+        """
+        return self._run(list(args), timeout, stop_check)
+
     def _run(self, args, timeout, stop_check=None):
         command = list(self.resolve() or []) + list(args)
         if not command:

@@ -1,9 +1,9 @@
 {
-  "generated_at": "2026-11-08T22:51:11+0800",
+  "generated_at": "2026-11-15T16:40:31+0800",
   "python": "3.12.9 | packaged by Anaconda, Inc. | (main, Feb  6 2025, 18:49:16) [MSC v.1929 64 bit (AMD64)]",
   "repo": "D:\\code\\zhouyi\\qunhui\\synology-duplicate-cleaner",
   "summary": {
-    "PASS": 207,
+    "PASS": 214,
     "FAIL": 0,
     "UNVERIFIED": 1
   },
@@ -11,11 +11,11 @@
     "fixture_files": 46,
     "python": "3.12.9",
     "birthtime_supported": true,
-    "backend_port": 3079,
+    "backend_port": 5748,
     "csrf_token_len": 43,
     "meta": {
       "ok": true,
-      "app_version": "1.1.0-0050",
+      "app_version": "1.1.0-0051",
       "dsm_version": "dev",
       "python_version": "3.12.9",
       "creation_time_supported": true,
@@ -179,9 +179,31 @@
         "scheduled_scan_rules": [],
         "scheduled_scan_roots": [],
         "scheduled_scan_max_load": 0.0,
+        "download_enabled": false,
+        "download_output_dir": "",
+        "download_subdir_mode": "none",
+        "download_subdir_template": "{site}/{date}",
+        "download_concurrency": 2,
+        "download_segment_concurrency": 4,
+        "download_retry": 3,
+        "download_timeout_sec": 30,
+        "download_rate_limit_kbps": 0,
+        "download_max_height": 0,
+        "download_user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+        "download_referer": "",
+        "download_cookie": "",
+        "download_proxy": "",
+        "download_allow_private": false,
+        "download_keep_temp": false,
+        "download_min_free_gb": 20,
+        "download_verify_tolerance_sec": 5,
+        "download_job_limit": 500,
+        "download_auto_scan": false,
+        "download_auto_subtitle": false,
         "subtitle_asr_api_key_set": false,
         "subtitle_llm_api_key_set": false,
-        "notify_telegram_bot_token_set": false
+        "notify_telegram_bot_token_set": false,
+        "download_cookie_set": false
       },
       "limits": {
         "max_files": 500000,
@@ -464,6 +486,22 @@
         },
         "trash_dir_name": "#duplicate-cleaner-trash"
       },
+      "download": {
+        "enabled": false,
+        "concurrency_max": 4,
+        "concurrency_default": 2,
+        "segment_concurrency_max": 16,
+        "subdir_modes": [
+          "none",
+          "site",
+          "date",
+          "site_date",
+          "custom"
+        ],
+        "batch_max_items": 200,
+        "job_limit_default": 500,
+        "output_ext": ".mp4"
+      },
       "notify": {
         "enabled": false,
         "channels": [
@@ -550,7 +588,7 @@
       }
     },
     "subtitle_enumerate_count": 0,
-    "main_scan_id": "20261108-225100-8eca74",
+    "main_scan_id": "20261115-164018-29d0e7",
     "main_scan_final": "completed",
     "main_stats": {
       "files_seen": 38,
@@ -564,7 +602,7 @@
       "selectable_duplicate_files": 15,
       "selectable_reclaimable_bytes": 4403200,
       "bytes_hashed": 8753152,
-      "bytes_per_sec": 417007955,
+      "bytes_per_sec": 386647925,
       "errors": 0,
       "skipped": {
         "symlink": 0,
@@ -640,13 +678,13 @@
     },
     "main_groups_total": 12,
     "recycle_plan": {
-      "plan_id": "plan-4270c7a5cc6ac763",
+      "plan_id": "plan-6d8efc9028771ac4",
       "count": 2,
       "bytes": 40960,
       "groups_affected": 1
     },
     "recycle_job": {
-      "job_id": "del-20261108-225100-620229",
+      "job_id": "del-20261115-164019-f75dbf",
       "status": "completed",
       "done": 2,
       "failed": 0,
@@ -1162,7 +1200,7 @@
       "id": "SKIP-04",
       "name": "符号链接跳过（当前环境无法创建 symlink）",
       "status": "UNVERIFIED",
-      "detail": "os.symlink failed: [WinError 1314] 客户端没有所需的特权。: 'C:\\\\Users\\\\zhouyi\\\\AppData\\\\Local\\\\Temp\\\\dupqa-vo3ogw6e\\\\qa-share-a\\\\dup' -> 'C:\\\\Users\\\\zhouyi\\\\AppData\\\\Local\\\\Temp\\\\dupqa-vo3ogw6e\\\\qa-share-a\\\\link_to_dup'"
+      "detail": "os.symlink failed: [WinError 1314] 客户端没有所需的特权。: 'C:\\\\Users\\\\zhouyi\\\\AppData\\\\Local\\\\Temp\\\\dupqa-tvgbz54u\\\\qa-share-a\\\\dup' -> 'C:\\\\Users\\\\zhouyi\\\\AppData\\\\Local\\\\Temp\\\\dupqa-tvgbz54u\\\\qa-share-a\\\\link_to_dup'"
     },
     {
       "id": "HARDLINK-01",
@@ -1867,6 +1905,42 @@
       "detail": ""
     },
     {
+      "id": "DL-00",
+      "name": "下载未启用时接口返回 403 DOWNLOAD_DISABLED",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "DL-01",
+      "name": "提交直链下载返回 202 + 任务与批量组",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "DL-02",
+      "name": "直链下载完成，产物落在共享目录且大小一致",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "DL-03",
+      "name": "队列快照返回 active/queued/paused/recent 与并发数",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "DL-04",
+      "name": "直播播放列表被拒绝并标 LIVE_UNSUPPORTED",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "DL-05",
+      "name": "内网地址在未放行时返回 403 URL_PRIVATE_ADDRESS",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
       "id": "RESTART-01",
       "name": "重启后扫描历史仍可列出（含主扫描）",
       "status": "PASS",
@@ -1905,6 +1979,12 @@
     {
       "id": "RESTART-07",
       "name": "重启后 /api/healthz 正常",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "RESTART-08",
+      "name": "重启后下载任务与产物仍可读（schema v9 持久化）",
       "status": "PASS",
       "detail": ""
     }

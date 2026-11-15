@@ -162,11 +162,13 @@ const EXPECTED = {
     'isModalOpen', 'getActiveModal', 'setModalDismissible'],
   'subtitle-probe.js': ['normalizeProbeKind', 'readProbePayload', 'fetchModelList', 'testProvider',
     'normalizeModelList', 'formatModelListHint', 'formatProbeResult', 'formatProbeError'],
-  'subtitle-page.js': ['initSubtitlePage', 'showSubtitlePage', 'stopSubtitlePagePolling']
+  'subtitle-page.js': ['initSubtitlePage', 'showSubtitlePage', 'stopSubtitlePagePolling'],
+  'download-page.js': ['initDownloadPage', 'showDownloadPage', 'hideDownloadPage']
 };
 
 const MODULE_ORDER = ['constants.js', 'state.js', 'format.js', 'util.js', 'dom.js',
-  'api.js', 'toast.js', 'modal.js', 'subtitle-probe.js', 'subtitle-page.js'];
+  'api.js', 'toast.js', 'modal.js', 'subtitle-probe.js', 'subtitle-page.js',
+  'download-page.js'];
 
 const results = [];
 
@@ -356,6 +358,41 @@ async function main() {
         JSON.stringify(capturedRequests.map(function (item) {
           return { url: item.url, method: item.init.method };
         })));
+
+      // ---- download-page.js：v0051 下载页 ----
+      const downloadMod = await importFile(path.join(JS_DIR, 'download-page.js'));
+      const originalFetch2 = globalThis.fetch;
+      let dlInitOk = true;
+      let dlInitError = '';
+      try {
+        globalThis.fetch = async function () {
+          return {
+            ok: true, status: 200,
+            headers: { get: function () { return 'application/json'; } },
+            json: async function () {
+              return { ok: true, active: [], queued: [], paused: [],
+                recent: [], counts: { running: 0, queued: 0 }, concurrency: 2 };
+            }
+          };
+        };
+        downloadMod.initDownloadPage();
+        downloadMod.showDownloadPage();
+        downloadMod.hideDownloadPage();
+      } catch (err) {
+        dlInitOk = false;
+        dlInitError = String(err && err.message ? err.message : err);
+      } finally {
+        globalThis.fetch = originalFetch2;
+      }
+      record('WEB-MOD-DOWNLOAD-PAGE', '下载页初始化无异常且 VIEWS/VIEW_HEADINGS 含 download',
+        dlInitOk && constantsMod.VIEWS.indexOf('download') !== -1
+        && constantsMod.VIEW_HEADINGS.download === 'downloadHeading', dlInitError);
+      record('WEB-MOD-DOWNLOAD-DEFAULTS',
+        '下载默认设置与后端契约一致（enabled=false / 并发 2 / 分片 4）',
+        constantsMod.DEFAULT_SETTINGS.download_enabled === false
+        && constantsMod.DEFAULT_SETTINGS.download_concurrency === 2
+        && constantsMod.DEFAULT_SETTINGS.download_segment_concurrency === 4
+        && constantsMod.DEFAULT_SETTINGS.download_subdir_mode === 'none');
   }
 
   const failed = results.filter(function (item) { return item.status !== 'PASS'; });

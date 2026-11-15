@@ -7,9 +7,9 @@ import os
 import re
 
 APP_NAME = "DuplicateCleaner"
-APP_VERSION = "1.1.0-0050"
+APP_VERSION = "1.1.0-0051"
 DISPLAY_NAME = "重复文件清理与字幕"
-SPK_VERSION = "1.1.0-0050"
+SPK_VERSION = "1.1.0-0051"
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8787
@@ -397,6 +397,61 @@ SUBTITLE_DEFAULT_AUDIO_SOURCE = "nas"
 # server 模式单段上传上限（ASR 服务 800MB 限制留余量）；超限继续对半切。
 SUBTITLE_SERVER_UPLOAD_MAX_MB = 780
 
+# ---------------------------------------------------------------------------
+# 下载中心（v0051，docs/DOWNLOAD_CONTRACT.md）
+# ---------------------------------------------------------------------------
+# 任务级并发（同时下载几个视频）：默认 2、上限 4。NAS 磁盘 IO 已被字幕/索引
+# 占用，再高只会互相拖慢（真机实测 dm-cache 已接近饱和）。
+DOWNLOAD_CONCURRENCY_MAX = 4
+DOWNLOAD_DEFAULT_CONCURRENCY = 2
+# 单任务内并发拉取分片数（HLS）：默认 4、上限 16。
+DOWNLOAD_SEGMENT_CONCURRENCY_MAX = 16
+DOWNLOAD_DEFAULT_SEGMENT_CONCURRENCY = 4
+# 分片/直链请求失败重试次数与指数退避（基础 1s，上限 30s）。
+DOWNLOAD_RETRY_MAX = 10
+DOWNLOAD_DEFAULT_RETRY = 3
+DOWNLOAD_RETRY_BACKOFF_SEC = 1.0
+DOWNLOAD_RETRY_BACKOFF_MAX_SEC = 30.0
+# 单次 HTTP 请求超时（连接 + 读取），秒。
+DOWNLOAD_TIMEOUT_MIN_SEC = 5
+DOWNLOAD_TIMEOUT_MAX_SEC = 300
+DOWNLOAD_DEFAULT_TIMEOUT_SEC = 30
+# 全局限速（KB/s，0 = 不限）；按运行中的任务均分，避免单个任务吃满带宽。
+DOWNLOAD_RATE_LIMIT_MAX_KBPS = 1048576
+# 任务数量上限（排队 + 执行 + 暂停；已完成任务单独按 job_limit 清理）。
+DOWNLOAD_JOB_LIMIT_MIN = 10
+DOWNLOAD_JOB_LIMIT_MAX = 5000
+DOWNLOAD_JOB_LIMIT_DEFAULT = 500
+# 落盘前要求的最小剩余空间（GB）；不足直接拒绝，避免写满卷。
+DOWNLOAD_MIN_FREE_GB_MAX = 102400
+DOWNLOAD_MIN_FREE_GB_DEFAULT = 20
+# 单次提交 URL 条数上限（批量）。
+DOWNLOAD_BATCH_MAX_ITEMS = 200
+# 产物最小体积：小于此值视为失败（0 字节/错误页不落盘成"视频"）。
+DOWNLOAD_MIN_FILE_BYTES = 1024
+# 临时后缀：直链分片/合并产物先写 *.dcpart，完成后 os.replace 改名（跨卷不搬移）。
+DOWNLOAD_PART_EXT = ".dcpart"
+DOWNLOAD_OUTPUT_EXT = ".mp4"
+# 合并后用 ffprobe（这里的 ffmpeg -i 探测）校验时长；偏差超过容差只告警。
+DOWNLOAD_VERIFY_TOLERANCE_DEFAULT = 5
+# 输出子目录策略：none=平铺；site/date/site_date 固定组合；custom=用户模板。
+DOWNLOAD_SUBDIR_MODES = ("none", "site", "date", "site_date", "custom")
+DOWNLOAD_SUBDIR_DEFAULT = "none"
+DOWNLOAD_SUBDIR_TEMPLATE_MAX = 200
+DOWNLOAD_SUBDIR_TEMPLATE_DEFAULT = "{site}/{date}"
+# 空 UA 常被直接 403；给一个浏览器 UA 兜底（可被设置覆盖）。
+DOWNLOAD_DEFAULT_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36")
+# 只允许 http/https（file:// / ftp:// / data: 一律拒绝）。
+DOWNLOAD_SCHEMES = ("http", "https")
+# 进度落库的最小间隔（秒）：不按分片写 SQLite，避免写放大。
+DOWNLOAD_PROGRESS_FLUSH_SEC = 2.0
+# 分片下载完成后，合并前的临时目录名前缀（位于输出目录内，保证同卷 rename）。
+DOWNLOAD_TEMP_PREFIX = ".dc-download-"
+# 任务详情里保留的分片明细条数上限（大播放列表只留尾部，避免 JSON 膨胀）。
+DOWNLOAD_SEGMENT_DETAIL_LIMIT = 500
+
 # 系统 / 隐藏目录名：任何一层路径出现都必须拒绝（回收站目标除外）。
 SYSTEM_DIR_NAMES = frozenset([
     "@eaDir", "@tmp", "@appstore", "@docker", "@synologydrive", "@database",
@@ -437,6 +492,9 @@ PLAN_ID_RE = re.compile(r"^plan-[A-Za-z0-9._-]{6,80}$")
 JOB_ID_RE = re.compile(r"^del-[A-Za-z0-9._-]{6,80}$")
 SUBTITLE_BATCH_ID_RE = re.compile(r"^bat-[A-Za-z0-9._-]{6,80}$")
 SUBTITLE_BATCH_GROUP_ID_RE = re.compile(r"^grp-[A-Za-z0-9._-]{6,80}$")
+# v0051 下载中心任务 / 批量组 ID
+DOWNLOAD_JOB_ID_RE = re.compile(r"^dl-[A-Za-z0-9._-]{6,80}$")
+DOWNLOAD_GROUP_ID_RE = re.compile(r"^dg-[A-Za-z0-9._-]{6,80}$")
 
 
 def secure_permissions(path, mode=SECURE_FILE_MODE):

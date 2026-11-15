@@ -1,7 +1,7 @@
 # 整体方案架构
 
 > 项目：**重复文件清理与字幕（Duplicate Cleaner & Subtitles）** · 群晖 DSM 7.x SPK 套件
-> 版本：1.1.0-0050
+> 版本：1.1.0-0051
 > 原则：**先扫描、出报告、人工确认、二次确认、可回收、全程审计**。任何情况下都不自动静默删除。
 
 ## 1. 目标与边界
@@ -621,3 +621,15 @@ Linux 的 `st_ctime` 是 **inode 状态变更时间**，不是创建时间，复
 
 
 
+
+## 21. 下载中心（v0051）
+
+- **模块**：`hls.py`（纯函数：播放列表解析、变体选择、本地化重写）、`downloads.py`（服务：队列/并发/续传/合并/落盘/清理）、`download-page.js`（页面）；`services.py` 装配并在 `Services.shutdown()` 里 `downloads.shutdown()`。
+- **调度**：单调度线程每 0.3s 按 `download_concurrency` 从 FIFO 队列取任务起工作线程；并发数每次循环从设置读取，保存即生效（与字幕 v0037 同思路，但不需要重建 worker）。
+- **两种引擎**：直链走 `Range` 续传；HLS 先 `hls.parse`，主列表按 `download_max_height` 选变体，`hls.plan_local_files` 生成下载计划，`ThreadPoolExecutor(segment_concurrency)` 拉分片（存在即跳过 = 断点续传），`hls.build_local_playlist` 写本地 m3u8，再交给 `FFmpegTool.run(-c copy)`。
+- **为什么用本地化播放列表**：后端只允许标准库，Python 无 AES；纯 Python CBC 在 NAS 上只有几 MB/s。把分片与 key 落地、让 FFmpeg 用原生 AES 解密 + 无损封装，既守约束又快，还能覆盖 fMP4/`EXT-X-MAP`/字节范围/密钥轮换。
+- **落盘**：临时目录放在输出目录内部（`.dc-download-<job_id>`），分片与产物先 `*.dcpart` 再 `os.replace`，因此同卷 rename、不跨卷搬运；完成删临时目录，失败保留以便重试。
+- **持久化**：SQLite schema v9 只存任务汇总（`payload_json` 文档式），分片进度以磁盘状态为准，避免每个分片写库；进度落库节流 2s。
+- **IO 保护**：任务级并发 1–4（默认 2）、分片并发 1–16（默认 4）、全局限速按运行任务均分、剩余空间闸门；NAS 上字幕/索引与下载同时跑时建议 1–2 任务。
+- **联动**：任务完成回调在 `services._make_download_complete` 里实现自动扫描（同目录 600s 去抖）与自动字幕（`create_batch`），全部 best-effort。
+- **安全**：`assert_url_allowed` 做协议/长度/凭据/内网地址校验（`download_allow_private` 可放开）；输出目录经 `check_path_safety` + `ShareService.share_root`；Cookie 是密钥键，日志与任务详情都不回显。

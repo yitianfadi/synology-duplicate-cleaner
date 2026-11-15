@@ -24,6 +24,8 @@ export var state = {
   video: { supported: true, available: true, extensions: DEFAULT_VIDEO_EXTENSIONS.slice(), ffmpegPath: '', ffmpegVersion: '', hwaccels: [], gpuHint: '', cache: '' },
   subtitle: { supported: false, enabled: false, asrKeySet: false, llmKeySet: false, asrLanguage: 'auto', translateEnabled: false, targetLang: 'zh' },
   subtitleJobs: { list: [], timer: null, loading: false, lastError: '', modal: null, snapshot: null },
+  // v0051：下载中心（列表/队列快照/轮询）
+  download: { jobs: [], snapshot: null, timer: null, loading: false, loaded: false, lastError: '', submitting: false },
   // 当前扫描
   scan: { id: null, data: null, stats: null, timer: null, abort: null, polling: false, errors: 0, handled: false },
   // 结果
@@ -47,6 +49,8 @@ export var state = {
   openSubtitleDirPicker: null,
   // v0039：字幕页批次总览里的“去任务中心”入口（由 app.js 注入）
   openSubtitleJobs: null,
+  // v0051：下载页目录选择器（签名 openDownloadDirPicker({initial, onConfirm})）
+  openDownloadDirPicker: null,
   preview: { urls: [], abort: null },
   historyCache: null,
   // 任务中心标签页：history / subtitles / deletions / logs（v0038：操作日志并入）
@@ -185,4 +189,24 @@ export var IDS = ('loginView loginForm loginUsername loginPassword loginOtp logi
   'taskTabTrash taskPanelTrash trashList trashLoading trashError trashEmpty ' +
   'trashRefreshBtn trashRecycleMode trashMergeList trashMergeLoading ' +
   'trashMergeEmpty trashMergeCount ' +
+  'view-download downloadHeading downloadPageStatusBadge downloadUrls ' +
+  'downloadDirPath downloadDirPickBtn downloadMaxHeight downloadSubdirMode ' +
+  'downloadOverwrite downloadKeepTemp downloadSubmitBtn downloadRefreshBtn ' +
+  'downloadSubmitHint downloadSubmitError downloadQueueHint downloadEmpty ' +
+  'downloadJobsList downloadRecentEmpty downloadListError ' +
+  'downloadConcurrencyHint downloadAdvancedDetails ' +
+  'settingsDownloadDetails settingsDownloadSummary downloadStatusBadgeSettings ' +
+  'setDownloadEnabled setDownloadOutputDir setDownloadOutputDirError ' +
+  'setDownloadDirPickBtn setDownloadSubdirMode setDownloadSubdirTemplate ' +
+  'setDownloadSubdirTemplateError setDownloadConcurrency ' +
+  'setDownloadConcurrencyError setDownloadSegmentConcurrency ' +
+  'setDownloadSegmentConcurrencyError setDownloadRetry setDownloadRetryError ' +
+  'setDownloadTimeout setDownloadTimeoutError setDownloadRateLimit ' +
+  'setDownloadRateLimitError setDownloadMaxHeight setDownloadUserAgent ' +
+  'setDownloadReferer setDownloadRefererError setDownloadCookie ' +
+  'setDownloadCookieError setDownloadCookieSetBadge setDownloadClearCookie ' +
+  'setDownloadProxy setDownloadProxyError setDownloadAllowPrivate ' +
+  'setDownloadKeepTemp setDownloadMinFreeGb setDownloadMinFreeGbError ' +
+  'setDownloadVerifyTolerance setDownloadJobLimit setDownloadJobLimitError ' +
+  'setDownloadAutoScan setDownloadAutoSubtitle ' +
   'footerMeta toastRoot modalRoot').split(' ');

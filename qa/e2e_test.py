@@ -2818,6 +2818,126 @@ def run():
               "status=%s type=%s" % (resp.status,
                                      resp.header("content-type")))
 
+        # ---------------- v0051：下载中心（直链 / 直播拒绝 / SSRF） ----------------
+        download_dir = os.path.join(roots[0], "downloads")
+        os.makedirs(download_dir, exist_ok=True)
+        resp = client.get("/api/downloads")
+        code, _ = err_code(resp)
+        check("DL-00", "下载未启用时接口返回 403 DOWNLOAD_DISABLED",
+              resp.status == 403 and code == "DOWNLOAD_DISABLED",
+              "status=%s code=%s" % (resp.status, code))
+
+        client.put_json("/api/settings", {"settings": {
+            "download_enabled": True,
+            "download_output_dir": download_dir,
+            "download_allow_private": True,
+            "download_concurrency": 1,
+            "download_segment_concurrency": 2,
+        }})
+        payload_bytes = b"DOWNLOADER-PAYLOAD-" * 512
+        served = {"/media/movie.bin": payload_bytes}
+        served["/live/index.m3u8"] = (
+            b"#EXTM3U\n#EXT-X-TARGETDURATION:4\n#EXTINF:4.0,\nseg0.ts\n")
+
+        class _CdnHandler(http.server.BaseHTTPRequestHandler):
+            protocol_version = "HTTP/1.1"
+
+            def log_message(self, *args):
+                pass
+
+            def do_GET(self):
+                body = served.get(self.path.split("?")[0])
+                if body is None:
+                    self.send_response(404)
+                    self.send_header("Content-Length", "0")
+                    self.end_headers()
+                    return
+                self.send_response(200)
+                self.send_header("Content-Type", "application/octet-stream")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                try:
+                    self.wfile.write(body)
+                except OSError:
+                    pass
+
+        cdn = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _CdnHandler)
+        cdn_thread = threading.Thread(
+            target=cdn.serve_forever, kwargs={"poll_interval": 0.02},
+            daemon=True)
+        cdn_thread.start()
+        cdn_base = "http://127.0.0.1:%d" % cdn.server_address[1]
+        dl_id = None
+        try:
+            resp = client.post_json("/api/downloads", {
+                "urls": [cdn_base + "/media/movie.bin"],
+                "options": {"title": "qa-clip"},
+            })
+            data = jd(resp)
+            job = (data.get("jobs") or [{}])[0]
+            dl_id = job.get("job_id")
+            check("DL-01", "提交直链下载返回 202 + 任务与批量组",
+                  resp.status == 202 and bool(dl_id)
+                  and bool((data.get("group") or {}).get("group_id")),
+                  "status=%s data=%s" % (resp.status, data))
+            detail = {}
+            deadline = time.time() + 30
+            status = None
+            while time.time() < deadline:
+                r2 = client.get("/api/downloads/%s" % quote(dl_id or ""))
+                detail = (jd(r2).get("job") or {})
+                status = detail.get("status")
+                if status in ("done", "failed", "cancelled"):
+                    break
+                time.sleep(0.2)
+            out_path = detail.get("output_path") or ""
+            check("DL-02", "直链下载完成，产物落在共享目录且大小一致",
+                  status == "done" and os.path.isfile(out_path)
+                  and os.path.getsize(out_path) == len(payload_bytes),
+                  "status=%s path=%s error=%s"
+                  % (status, out_path, detail.get("error_message")))
+            resp = client.get("/api/downloads/queue")
+            data = jd(resp)
+            check("DL-03", "队列快照返回 active/queued/paused/recent 与并发数",
+                  resp.status == 200
+                  and all(isinstance(data.get(key), list)
+                          for key in ("active", "queued", "paused", "recent"))
+                  and isinstance(data.get("concurrency"), int),
+                  "status=%s keys=%s" % (resp.status, sorted(data)))
+
+            resp = client.post_json("/api/downloads", {
+                "urls": [cdn_base + "/live/index.m3u8"]})
+            data = jd(resp)
+            live_id = ((data.get("jobs") or [{}])[0]).get("job_id")
+            live_detail = {}
+            deadline = time.time() + 30
+            while time.time() < deadline and live_id:
+                r3 = client.get("/api/downloads/%s" % quote(live_id))
+                live_detail = (jd(r3).get("job") or {})
+                if live_detail.get("status") in ("failed", "done", "cancelled"):
+                    break
+                time.sleep(0.2)
+            check("DL-04", "直播播放列表被拒绝并标 LIVE_UNSUPPORTED",
+                  live_detail.get("status") == "failed"
+                  and live_detail.get("error_code") == "LIVE_UNSUPPORTED",
+                  "status=%s code=%s" % (live_detail.get("status"),
+                                         live_detail.get("error_code")))
+        finally:
+            try:
+                cdn.shutdown()
+            finally:
+                cdn.server_close()
+                cdn_thread.join(timeout=5)
+
+        client.put_json("/api/settings",
+                        {"settings": {"download_allow_private": False}})
+        resp = client.post_json("/api/downloads", {
+            "urls": ["http://127.0.0.1:9/blocked.bin"]})
+        code, _ = err_code(resp)
+        check("DL-05", "内网地址在未放行时返回 403 URL_PRIVATE_ADDRESS",
+              resp.status == 403 and code == "URL_PRIVATE_ADDRESS",
+              "status=%s code=%s" % (resp.status, code))
+
         # ---------------- 重启持久化 ----------------
         client.put_json("/api/settings", {"settings": {"concurrency": 3}})
         backend.stop()
@@ -2863,6 +2983,14 @@ def run():
         resp = client.get("/api/healthz", csrf=False)
         check("RESTART-07", "重启后 /api/healthz 正常", resp.status == 200,
               "status=%s" % resp.status)
+
+        resp = client.get("/api/downloads/%s" % quote(dl_id or "dl-missing"))
+        data = jd(resp)
+        job = data.get("job") or {}
+        check("RESTART-08", "重启后下载任务与产物仍可读（schema v9 持久化）",
+              resp.status == 200 and job.get("status") == "done"
+              and os.path.isfile(job.get("output_path") or ""),
+              "status=%s job=%s" % (resp.status, job.get("status")))
 
     finally:
         if backend is not None:

@@ -15,25 +15,25 @@
 
 ## 1. 当前基线
 
-最新一次全量验收为 1.1.0-0050：
+最新一次全量验收为 1.1.0-0051：
 
 | 套件 | 命令 | 结果 |
 |---|---|---|
-| 后端单元测试 | `cd src/backend && python -m unittest discover -s tests` | **666 OK（5 skipped）** |
-| 静态检查 | `python qa/static_checks.py` | **197 PASS / 0 FAIL / 0 UNVERIFIED** |
-| 端到端 | `python qa/e2e_test.py` | **207 PASS / 0 FAIL / 1 UNVERIFIED**（Windows symlink 历史项） |
-| 前端模块图 | `node qa/check_web_modules.mjs` | **22/22 PASS** |
-| 无头浏览器冒烟 | `python qa/web_smoke.py` | **8/8 PASS** |
+| 后端单元测试 | `cd src/backend && python -m unittest discover -s tests` | **694 OK（5 skipped）** |
+| 静态检查 | `python qa/static_checks.py` | **207 PASS / 0 FAIL / 0 UNVERIFIED** |
+| 端到端 | `python qa/e2e_test.py` | **214 PASS / 0 FAIL / 1 UNVERIFIED**（Windows symlink 历史项；含 DL-00…DL-05、RESTART-08） |
+| 前端模块图 | `node qa/check_web_modules.mjs` | **25/25 PASS** |
+| 无头浏览器冒烟 | `python qa/web_smoke.py` | **8/8 PASS**（static 内联执行） |
 | 真实 Chromium 探针 | `.uiprobe/probe_v0043..v0050.mjs` | v0043–v0050 **全通过**（10/10、8/8、13/13、8/8、7/7、6/6、11/11、8/8） |
 
 | 产物项 | 值 |
 |---|---|
-| 文件 | `dist/DuplicateCleaner-1.1.0-0050.spk` |
-| 大小 | 39,127,040 B |
-| SHA256 | `3c7b8a68bf7e426398cff2a47626e5702e2f0b7590395b2aeb1b836a8a4c3c94` |
-| package.tgz MD5 | `0e1e6943421d95c0eab78cf1f26e7fa0`（= INFO.checksum） |
-| SQLite schema | v8（v0043 起为 v8，后续版本无迁移） |
-| 版本同步 | 1.1.0-0050 同步 8 处 |
+| 文件 | `dist/DuplicateCleaner-1.1.0-0051.spk` |
+| 大小 | 39,168,000 B |
+| SHA256 | `c1103858798fb436e92445d7091e1d3e6257ef4935b3840511eedc6bce33d37f` |
+| package.tgz MD5 | `80a42f2415d329f3d76cf8083b591680`（= INFO.checksum） |
+| SQLite schema | v9（v0051 新增 download_jobs / download_groups；打开 v8 库自动迁移） |
+| 版本同步 | 1.1.0-0051 同步 8 处 |
 
 判定口径：
 
@@ -42,18 +42,18 @@
 - UNVERIFIED：当前环境无法构造（仅 Windows symlink 一项）。
 - 探针、冒烟、模块图不替代 e2e/static，仅作为浏览器层补充证据。
 
-### 1.1 基线变化（v0042 → v0050）
+### 1.1 基线变化（v0042 → v0051）
 
-| 指标 | v0042 | v0050 |
-|---|---|---|
-| unittest | 459（skip 6） | 666（skip 5） |
-| static | 169 PASS | 197 PASS |
-| e2e | 157 PASS / 1 UNVERIFIED | 207 PASS / 1 UNVERIFIED |
-| SQLite schema | v7 | v8 |
-| SPK 大小 | 39,014,400 B | 39,127,040 B |
-| 浏览器探针 | 真机 1 组（无计数） | 本地 8 组（v0043–v0050） |
+| 指标 | v0042 | v0050 | v0051 |
+|---|---|---|---|
+| unittest | 459（skip 6） | 666（skip 5） | 694（skip 5） |
+| static | 169 PASS | 197 PASS | 207 PASS |
+| e2e | 157 PASS / 1 UNVERIFIED | 207 PASS / 1 UNVERIFIED | 214 PASS / 1 UNVERIFIED |
+| SQLite schema | v7 | v8 | v9 |
+| SPK 大小 | 39,014,400 B | 39,127,040 B | 39,168,000 B |
+| 浏览器探针 | 真机 1 组（无计数） | 本地 8 组（v0043–v0050） | 同左（下载页未加新探针，由 web_smoke/模块图覆盖） |
 
-v0043 是分界点：schema 升到 v8、引入增量哈希缓存；v0044–v0050 均为增量能力，无新迁移。
+v0043 是分界点：schema 升到 v8、引入增量哈希缓存；v0044–v0050 均为增量能力；v0051 新增下载中心并升到 v9。
 
 ### 1.2 验收范围
 
@@ -298,6 +298,7 @@ REQ 编号沿用 v1.0 基线，状态按当前版本事实更新。
 | v0048 | 2026-11-08 | 字幕 ASR 优化 + 目录监控 | 642（skip 5） | 193 | 199/0/1 | 6/6 | `aa13edb4…5caae491` |
 | v0049 | 2026-11-08 | 任务检索/权限体检/日志 | 659（skip 5） | 195 | 204/0/1 | 11/11 | `000cd592…3e2aab54` |
 | v0050 | 2026-11-08 | 批次取消/删除/明细增强 | 666（skip 5） | 197 | 207/0/1 | 8/8 | `3c7b8a68…8a4c3c94` |
+| v0051 | 2026-11-15 | 下载中心（直链 / HLS → MP4） | 694（skip 5） | 207 | 214/0/1 | — | `c1103858…bce33d37f` |
 
 说明：
 
@@ -314,6 +315,7 @@ REQ 编号沿用 v1.0 基线，状态按当前版本事实更新。
 - v0045：合并默认关闭；删除去向新增套件独立回收站（默认仍为共享回收站）。
 - v0048：字幕进入“可运营”阶段（失败分类、重试、监控、优先级、ETA）。
 - v0050：批量取消改两阶段，几千任务不再触发前端 20s 超时。
+- v0051：新增下载中心（直链 Range 续传 / HLS 分片 + 本地化播放列表交给 FFmpeg 解密封装）；schema 升 v9；e2e 新增 DL-00…DL-05、RESTART-08。
 
 ### 6.2 原报告记录异常（保留说明，不再重复展开）
 
@@ -341,8 +343,8 @@ node qa/check_web_modules.mjs
 python qa/web_smoke.py
 
 # 产物校验
-Get-FileHash dist\DuplicateCleaner-1.1.0-0050.spk -Algorithm SHA256
-Get-Content dist\DuplicateCleaner-1.1.0-0050.spk.sha256
+Get-FileHash dist\DuplicateCleaner-1.1.0-0051.spk -Algorithm SHA256
+Get-Content dist\DuplicateCleaner-1.1.0-0051.spk.sha256
 
 # 构建可复现性（独立输出目录，不影响 dist）
 python build/build_spk.py --no-icons --out-dir $env:TEMP\qa-build1
@@ -354,8 +356,8 @@ python build/build_spk.py --no-icons --out-dir $env:TEMP\qa-build1
 |---|---|---|
 | e2e 结果 | `qa/e2e_results.json` | 逐条 `id`/结论/说明 |
 | static 结果 | `qa/static_results.json` | 逐条 `id`/结论 |
-| SPK | `dist/DuplicateCleaner-1.1.0-0050.spk` | 39,127,040 B |
-| 校验文件 | `dist/DuplicateCleaner-1.1.0-0050.spk.sha256` | 与产物 SHA256 一致 |
+| SPK | `dist/DuplicateCleaner-1.1.0-0051.spk` | 39,168,000 B |
+| 校验文件 | `dist/DuplicateCleaner-1.1.0-0051.spk.sha256` | 与产物 SHA256 一致 |
 | 探针脚本/截图 | `.uiprobe/probe_v0043..v0050.mjs`、`.uiprobe/*.png` | 真实 Chromium |
 | 契约 | `docs/*_CONTRACT.md` | 逐版本接口与行为 |
 
@@ -380,7 +382,7 @@ python build/build_spk.py --no-icons --out-dir $env:TEMP\qa-build1
 | 目标运行时 | DSM 7.4.1 / x86_64 / Python 3.8.15（v0042 真机记录） |
 | 浏览器 | Chromium（Playwright + CDP），无 Firefox/Safari 覆盖 |
 | 媒体工具 | 套件内置 FFmpeg：抽帧缩略图、抽取/流复制音轨 |
-| 数据库 | SQLite，schema v8，无外部服务依赖 |
+| 数据库 | SQLite，schema v9，无外部服务依赖 |
 | 网络 | 本地回环即可；通知类用例用本地 Webhook 接收器，不出网 |
 
 ### 7.6 复跑注意事项

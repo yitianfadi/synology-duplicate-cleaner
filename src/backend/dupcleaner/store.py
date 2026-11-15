@@ -2053,6 +2053,130 @@ class Store(object):
                 "DELETE FROM subtitle_jobs WHERE job_id=?", (job_id,))
 
     # ------------------------------------------------------------------
+    # 下载中心（schema v9 / docs/DOWNLOAD_CONTRACT.md §5）
+    # ------------------------------------------------------------------
+    # 只保存任务汇总与状态；分片级进度留在任务目录 manifest.json，
+    # 避免每个分片写一次 SQLite（NAS 上写放大很明显）。
+    def save_download_job(self, job_id, record):
+        job_id = self._check_generic_job_id(job_id)
+        if not isinstance(record, dict):
+            return False
+        try:
+            created = float(record.get("created_epoch") or time.time())
+        except (TypeError, ValueError):
+            created = time.time()
+        try:
+            updated = float(record.get("updated_epoch") or created)
+        except (TypeError, ValueError):
+            updated = created
+        self.db.execute(
+            "INSERT OR REPLACE INTO download_jobs"
+            "(job_id, group_id, status, payload_json, created_epoch,"
+            " updated_epoch) VALUES(?, ?, ?, ?, ?, ?)",
+            (job_id, record.get("group_id"), record.get("status"),
+             json.dumps(record, ensure_ascii=False), created, updated))
+        return True
+
+    def load_download_job(self, job_id):
+        job_id = self._check_generic_job_id(job_id)
+        row = self.db.query_one(
+            "SELECT payload_json FROM download_jobs WHERE job_id=?",
+            (job_id,))
+        if row is None:
+            return None
+        record = self._loads(row["payload_json"], None)
+        if not isinstance(record, dict):
+            return None
+        record.setdefault("job_id", job_id)
+        return record
+
+    def load_download_jobs(self, limit=500, group_id=None):
+        args = []
+        sql = ("SELECT job_id, payload_json FROM download_jobs")
+        if group_id:
+            sql += " WHERE group_id=?"
+            args.append(group_id)
+        sql += " ORDER BY created_epoch DESC, job_id DESC LIMIT ?"
+        args.append(max(1, int(limit or 500)))
+        rows = self.db.query(sql, tuple(args))
+        result = []
+        for row in rows:
+            record = self._loads(row["payload_json"], None)
+            if not isinstance(record, dict):
+                continue
+            record.setdefault("job_id", row["job_id"])
+            result.append(record)
+        return result
+
+    def count_download_jobs(self, statuses=None):
+        sql = "SELECT COUNT(*) AS n FROM download_jobs"
+        args = ()
+        if statuses:
+            placeholders = ",".join("?" for _ in statuses)
+            sql += " WHERE status IN (%s)" % placeholders
+            args = tuple(statuses)
+        row = self.db.query_one(sql, args)
+        try:
+            return int(row["n"]) if row else 0
+        except (TypeError, ValueError, KeyError):
+            return 0
+
+    def delete_download_job(self, job_id):
+        job_id = self._check_generic_job_id(job_id)
+        self.db.execute("DELETE FROM download_jobs WHERE job_id=?", (job_id,))
+
+    def save_download_group(self, group_id, record):
+        group_id = self._check_generic_job_id(group_id)
+        if not isinstance(record, dict):
+            return False
+        try:
+            created = float(record.get("created_epoch") or time.time())
+        except (TypeError, ValueError):
+            created = time.time()
+        try:
+            updated = float(record.get("updated_epoch") or created)
+        except (TypeError, ValueError):
+            updated = created
+        self.db.execute(
+            "INSERT OR REPLACE INTO download_groups"
+            "(group_id, payload_json, created_epoch, updated_epoch)"
+            " VALUES(?, ?, ?, ?)",
+            (group_id, json.dumps(record, ensure_ascii=False), created, updated))
+        return True
+
+    def load_download_group(self, group_id):
+        group_id = self._check_generic_job_id(group_id)
+        row = self.db.query_one(
+            "SELECT payload_json FROM download_groups WHERE group_id=?",
+            (group_id,))
+        if row is None:
+            return None
+        record = self._loads(row["payload_json"], None)
+        if not isinstance(record, dict):
+            return None
+        record.setdefault("group_id", group_id)
+        return record
+
+    def delete_download_group(self, group_id):
+        group_id = self._check_generic_job_id(group_id)
+        self.db.execute("DELETE FROM download_groups WHERE group_id=?",
+                        (group_id,))
+
+    def load_download_groups(self, limit=50):
+        rows = self.db.query(
+            "SELECT group_id, payload_json FROM download_groups"
+            " ORDER BY created_epoch DESC, group_id DESC LIMIT ?",
+            (max(1, int(limit or 50)),))
+        result = []
+        for row in rows:
+            record = self._loads(row["payload_json"], None)
+            if not isinstance(record, dict):
+                continue
+            record.setdefault("group_id", row["group_id"])
+            result.append(record)
+        return result
+
+    # ------------------------------------------------------------------
     # 字幕批次（schema v6 / docs/SUBTITLE_BATCH_CONTRACT.md §7.3）
     # ------------------------------------------------------------------
     @staticmethod

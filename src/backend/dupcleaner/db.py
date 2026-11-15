@@ -36,7 +36,9 @@ DB_FILENAME = "dupcleaner.sqlite3"
 # + 触发器同步，trigram 不可用时自动回退 LIKE 子串搜索。
 # v6（v0028 目录批量字幕）：新增 subtitle_batches 批次表
 # （docs/SUBTITLE_BATCH_CONTRACT.md §7.3）。
-CURRENT_SCHEMA_VERSION = 8
+# v9（v0051 下载中心）：新增 download_jobs / download_groups
+# （docs/DOWNLOAD_CONTRACT.md §5）。
+CURRENT_SCHEMA_VERSION = 9
 FTS_TABLE = "scan_files_fts"
 FTS_TRIGGER_NAMES = (
     "scan_files_fts_ai",
@@ -264,6 +266,37 @@ _SCHEMA_STATEMENTS = (
     CREATE INDEX IF NOT EXISTS idx_media_probe_cache_used
         ON media_probe_cache(last_used)
     """,
+    # --- v9（v0051 下载中心）：任务 + 批量组（payload_json 文档式，与字幕同构）---
+    """
+    CREATE TABLE IF NOT EXISTS download_jobs (
+        job_id TEXT PRIMARY KEY,
+        group_id TEXT,
+        status TEXT,
+        payload_json TEXT NOT NULL,
+        created_epoch REAL NOT NULL,
+        updated_epoch REAL NOT NULL
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_download_jobs_created
+        ON download_jobs(created_epoch)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_download_jobs_status
+        ON download_jobs(status, created_epoch)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_download_jobs_group
+        ON download_jobs(group_id, created_epoch)
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS download_groups (
+        group_id TEXT PRIMARY KEY,
+        payload_json TEXT NOT NULL,
+        created_epoch REAL NOT NULL,
+        updated_epoch REAL NOT NULL
+    )
+    """,
 )
 
 # v4：plan C 字幕 ASR 分片缓存表（v3 升级时只建表；chunk 行由任务运行时写入）。
@@ -367,6 +400,40 @@ _V8_MIGRATION_STATEMENTS = (
     """
     CREATE INDEX IF NOT EXISTS idx_media_probe_cache_used
         ON media_probe_cache(last_used)
+    """,
+)
+# v9（v0051 下载中心）：download_jobs / download_groups（幂等；行由下载任务运行时写入）。
+# 只存汇总与状态，分片级进度以任务临时目录里的文件是否存在为准，避免写放大。
+_V9_MIGRATION_STATEMENTS = (
+    """
+    CREATE TABLE IF NOT EXISTS download_jobs (
+        job_id TEXT PRIMARY KEY,
+        group_id TEXT,
+        status TEXT,
+        payload_json TEXT NOT NULL,
+        created_epoch REAL NOT NULL,
+        updated_epoch REAL NOT NULL
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_download_jobs_created
+        ON download_jobs(created_epoch)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_download_jobs_status
+        ON download_jobs(status, created_epoch)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_download_jobs_group
+        ON download_jobs(group_id, created_epoch)
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS download_groups (
+        group_id TEXT PRIMARY KEY,
+        payload_json TEXT NOT NULL,
+        created_epoch REAL NOT NULL,
+        updated_epoch REAL NOT NULL
+    )
     """,
 )
 
@@ -731,6 +798,8 @@ class Database(object):
                 self._migrate_v7()
             elif next_version == 8:
                 self._migrate_v8()
+            elif next_version == 9:
+                self._migrate_v9()
             version = next_version
             self._conn.execute(
                 "INSERT OR REPLACE INTO schema_meta(key, value) "
@@ -843,6 +912,14 @@ class Database(object):
                              % (column, declaration))
         logger.info(u"SQLite schema 迁移到 v8 完成：已创建 hash_cache /"
                     u" media_probe_cache 表并补齐 scan_groups 增量列")
+
+    def _migrate_v9(self):
+        """v8→v9（v0051）：只新建 download_jobs / download_groups（幂等）。"""
+        conn = self._conn
+        for statement in _V9_MIGRATION_STATEMENTS:
+            conn.execute(statement)
+        logger.info(u"SQLite schema 迁移到 v9 完成：已创建 download_jobs /"
+                    u" download_groups 表")
 
     def _backfill_scan_group_columns(self):
         """按 rowid 分批回填 scan_groups 索引列与 scan_files（不整表载入）。"""

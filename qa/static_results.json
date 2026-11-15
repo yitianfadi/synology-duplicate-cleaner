@@ -1,7 +1,7 @@
 {
-  "generated_at": "2026-11-10T21:26:10+0800",
+  "generated_at": "2026-11-15T16:40:16+0800",
   "summary": {
-    "PASS": 197,
+    "PASS": 207,
     "FAIL": 0,
     "UNVERIFIED": 0
   },
@@ -28,7 +28,7 @@
       "id": "BE-FILE-COUNT",
       "name": "后端 Python 文件数",
       "status": "INFO",
-      "detail": "71"
+      "detail": "74"
     },
     {
       "id": "BE-SRC-HYGIENE",
@@ -52,7 +52,7 @@
       "id": "BE-UNITTEST-LOG",
       "name": "unittest 结果",
       "status": "INFO",
-      "detail": "Ran 666 tests in 134.936s"
+      "detail": "Ran 694 tests in 138.288s"
     },
     {
       "id": "BE-NO-AUTODELETE",
@@ -392,7 +392,7 @@
     },
     {
       "id": "FE-MODULE-FILES",
-      "name": "前端 ES modules 十个模块文件齐全（js/*.js）",
+      "name": "前端 ES modules 模块文件齐全（js/*.js）",
       "status": "PASS",
       "detail": ""
     },
@@ -693,6 +693,66 @@
     {
       "id": "FE-ENDPOINTS",
       "name": "前端覆盖契约全部 API 端点",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "BE-DOWNLOAD-MODULES",
+      "name": "下载中心模块存在（downloads.py / hls.py）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "BE-DOWNLOAD-SSRF",
+      "name": "下载拒绝内网/回环地址，可用 download_allow_private 放开",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "BE-DOWNLOAD-NO-DRM",
+      "name": "HLS 明确拒绝 DRM/SAMPLE-AES 与直播列表",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "BE-DOWNLOAD-LOCALIZE",
+      "name": "AES-128 走本地化播放列表 + FFmpeg 原生解密（不做纯 Python AES）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "BE-DOWNLOAD-SECRET",
+      "name": "download_cookie 属于密钥键（GET/日志不回传）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "BE-DOWNLOAD-CLEANUP",
+      "name": "临时目录在输出目录内、以 .dc-download- 前缀清理",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "BE-DOWNLOAD-SCHEMA",
+      "name": "schema v9 新增下载任务/批量组表",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "FE-DOWNLOAD-UI",
+      "name": "下载页含地址输入/目录选择/提交按钮/任务列表",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "FE-DOWNLOAD-PROGRESS",
+      "name": "下载进度条走 node.style（不使用 el(..., {style})）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "FE-DOWNLOAD-NAV",
+      "name": "主导航含下载入口，VIEWS/VIEW_HEADINGS 已注册",
       "status": "PASS",
       "detail": ""
     },
@@ -1094,7 +1154,7 @@
     },
     {
       "id": "SPK-DIST",
-      "name": "构建产物存在（DuplicateCleaner-1.1.0-0050.spk）",
+      "name": "构建产物存在（DuplicateCleaner-1.1.0-0051.spk）",
       "status": "PASS",
       "detail": ""
     },
@@ -1106,7 +1166,7 @@
     },
     {
       "id": "SPK-VERSION",
-      "name": "SPK INFO.version 与当前源码 APP_VERSION（1.1.0-0050）一致",
+      "name": "SPK INFO.version 与当前源码 APP_VERSION（1.1.0-0051）一致",
       "status": "PASS",
       "detail": ""
     },

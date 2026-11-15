@@ -2562,3 +2562,20 @@ input[type="checkbox"]:disabled { cursor: not-allowed; }
   margin: 6px 0 8px;
 }
 .load-more-sentinel { height: 1px; width: 100%; }
+
+/* v0051：下载中心（任务行 / 队列） */
+.download-jobs-list { display: flex; flex-direction: column; gap: 10px; }
+.download-row { display: flex; gap: 14px; align-items: flex-start; justify-content: space-between; padding: 12px 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--card); }
+.download-row-info { min-width: 0; flex: 1 1 auto; display: flex; flex-direction: column; gap: 6px; }
+.download-row-title { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.download-row-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.download-row-stage { font-size: 13px; }
+.download-row-meta { font-size: 12px; color: var(--muted); }
+.download-row-error { margin: 0; font-size: 12px; }
+.download-row-path { font-size: 12px; word-break: break-all; }
+.download-row-actions { display: flex; gap: 6px; flex-wrap: wrap; flex: 0 0 auto; }
+.download-row .progress-bar { max-width: 420px; }
+@media (max-width: 720px) {
+  .download-row { flex-direction: column; }
+  .download-row-actions { width: 100%; }
+}

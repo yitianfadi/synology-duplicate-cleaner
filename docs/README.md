@@ -6,7 +6,7 @@
 
 | 我想…… | 先读 | 再查 |
 |---|---|---|
-| 了解功能、安装、跑起来 | [README](../README.md) | [发布说明](RELEASE_NOTES_v1.1.0-0050.md) |
+| 了解功能、安装、跑起来 | [README](../README.md) | [发布说明](RELEASE_NOTES_v1.1.0-0051.md) |
 | 部署 / 升级 / 排错 | [SPK_PACKAGING.md](SPK_PACKAGING.md) | [ARCHITECTURE.md](ARCHITECTURE.md) §9、`<var>/log/start.log` |
 | 看懂整体设计与数据流 | [ARCHITECTURE.md](ARCHITECTURE.md) §1–10 | [STORAGE_CONTRACT.md](STORAGE_CONTRACT.md) |
 | 看懂页面与交互 | [UI_PROTOTYPE.md](UI_PROTOTYPE.md) | [CONTRACT.md](CONTRACT.md) §10 |
@@ -14,10 +14,11 @@
 | 改扫描、判重、保留、删除 | [CONTRACT.md](CONTRACT.md) §4–§7 | [增量扫描](INCREMENTAL_SCAN_CONTRACT.md)、[存储](STORAGE_CONTRACT.md)、[断点](RESUME_CONTRACT.md) |
 | 改相似度 / 视频识别 | [SIMILARITY_CONTRACT.md](SIMILARITY_CONTRACT.md)、[VIDEO_CONTRACT.md](VIDEO_CONTRACT.md) | [相似视频 v2](VIDEO_MATCHING_V2_CONTRACT.md) |
 | 改字幕（ASR / 翻译 / 批次） | [SUBTITLE_CONTRACT.md](SUBTITLE_CONTRACT.md) | [批量字幕](SUBTITLE_BATCH_CONTRACT.md)、[ASR v2](SUBTITLE_ASR_V2_CONTRACT.md) |
+| 改下载（m3u8 / 直链 → MP4） | [DOWNLOAD_CONTRACT.md](DOWNLOAD_CONTRACT.md) | [ARCHITECTURE.md](ARCHITECTURE.md) §21 |
 | 改任务中心 / 权限 / 日志 | [TASK_CENTER_V2_CONTRACT.md](TASK_CENTER_V2_CONTRACT.md) | [CONTRACT.md](CONTRACT.md) §6 |
 | 了解 v2 需求为什么这样做 | [REQUIREMENTS_V2_ASSESSMENT.md](REQUIREMENTS_V2_ASSESSMENT.md) | 各特性契约 |
 | 看验收结论与证据 | [qa/REPORT.md](../qa/REPORT.md) | [qa/TRACEABILITY.md](../qa/TRACEABILITY.md)、`qa/*_results.json` |
-| 看历史版本改了什么 | `git log` / GitHub Releases | [ARCHITECTURE.md](ARCHITECTURE.md) §11–20（演进附录） |
+| 看历史版本改了什么 | `git log` / GitHub Releases | [ARCHITECTURE.md](ARCHITECTURE.md) §11–21（演进附录） |
 
 ## 2. 文档清单
 
@@ -60,19 +61,21 @@
 | [SUBTITLE_BATCH_CONTRACT.md](SUBTITLE_BATCH_CONTRACT.md) | 目录批量字幕、批次组、补翻译、预览/进度、取消与删除（v0032–v0050） | 现行 + 版本增量 |
 | [SUBTITLE_ASR_V2_CONTRACT.md](SUBTITLE_ASR_V2_CONTRACT.md) | 失败分类/自动重试/失败清单、负载与优先级、音轨选择、目录监控（v0048） | 版本增量 |
 
-### 2.5 任务中心与运维（v0049–v0050）
+### 2.5 任务中心、下载与运维（v0049–v0051）
 
 | 文档 | 内容 | 状态 |
 |---|---|---|
 | [TASK_CENTER_V2_CONTRACT.md](TASK_CENTER_V2_CONTRACT.md) | 任务检索筛选、批量操作、权限只读体检、日志检索与导出（v0049） | 版本增量 |
 | [SUBTITLE_BATCH_CONTRACT.md](SUBTITLE_BATCH_CONTRACT.md) §23 + [ARCHITECTURE.md](ARCHITECTURE.md) §20 | 批次组异步取消、取消剩余、强制删除、明细自动加载、已取消页签（v0050） | 版本增量 |
+| [DOWNLOAD_CONTRACT.md](DOWNLOAD_CONTRACT.md) + [ARCHITECTURE.md](ARCHITECTURE.md) §21 | 直链/HLS 下载、AES-128 本地化解密、合并 MP4、批量组、队列与并发、设置键（v0051） | 版本增量 |
 
 ### 2.6 交付、验收与历史
 
 | 文档 | 内容 | 状态 |
 |---|---|---|
 | [REQUIREMENTS_V2_ASSESSMENT.md](REQUIREMENTS_V2_ASSESSMENT.md) | v2 需求 → 版本交付映射、关键取舍、明确不做、默认值、真机清单 | 现行（结论） |
-| [RELEASE_NOTES_v1.1.0-0050.md](RELEASE_NOTES_v1.1.0-0050.md) | 本次发布（v0043–v0050 累计）、兼容性、校验、安装与回退 | 现行 |
+| [RELEASE_NOTES_v1.1.0-0051.md](RELEASE_NOTES_v1.1.0-0051.md) | 本次发布（v0051 下载中心）、兼容性、校验、安装与回退 | 现行 |
+| [RELEASE_NOTES_v1.1.0-0050.md](RELEASE_NOTES_v1.1.0-0050.md) | 上一版发布说明（v0043–v0050 累计） | 历史 |
 | [qa/REPORT.md](../qa/REPORT.md) | 当前 QA 基线、验收方法、需求追溯、偏差与残余风险、版本验收记录 | 现行 |
 | [qa/TRACEABILITY.md](../qa/TRACEABILITY.md) | REQ-01…REQ-32 的验收口径与证据位（逐条） | 现行 |
 
@@ -90,3 +93,4 @@
 | 日期 | 变更 |
 |---|---|
 | 2026-11-10 | 建立本文档索引；压缩 `qa/REPORT.md` 与 `REQUIREMENTS_V2_ASSESSMENT.md`；重写会话交接 `SESSION_SUMMARY.md`；合并 README 功能/限制条目；归档并删除只对 `1.1.0-0003` 有效的旧 `qa/SIMILARITY_REPORT.md` |
+| 2026-11-15 | 新增下载中心：`DOWNLOAD_CONTRACT.md` + `ARCHITECTURE.md` §21 + `CONTRACT.md` §12；发布说明 0051；索引状态列更新（v0051） |

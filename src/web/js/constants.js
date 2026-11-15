@@ -8,8 +8,8 @@ export var POLL_MS = 800;                 // 扫描 / 删除任务轮询间隔�
 export var GROUPS_LIMIT = 50;             // 结果分页大小
 export var TERMINAL_STATUS = ['completed', 'failed', 'stopped', 'interrupted'];
 export var ACTIVE_STATUS = ['queued', 'running', 'paused', 'stopping'];
-export var VIEWS = ['scan', 'subtitles', 'history', 'settings'];
-export var VIEW_HEADINGS = { scan: 'scanHeading', subtitles: 'subtitlesHeading', history: 'historyHeading', settings: 'settingsHeading' };
+export var VIEWS = ['scan', 'subtitles', 'download', 'history', 'settings'];
+export var VIEW_HEADINGS = { scan: 'scanHeading', subtitles: 'subtitlesHeading', download: 'downloadHeading', history: 'historyHeading', settings: 'settingsHeading' };
 // v0038：旧书签 #/logs 兼容 → 任务中心「操作日志」标签页
 export var LEGACY_VIEW_ALIASES = { logs: 'history' };
 
@@ -347,5 +347,27 @@ export var DEFAULT_SETTINGS = {
   scheduled_scan_rules: [],
   scheduled_scan_roots: [],
   scheduled_scan_max_load: 0,
+  // v0051 下载中心默认值（与后端 settings.DEFAULT_SETTINGS 对齐）
+  download_enabled: false,
+  download_output_dir: '',
+  download_subdir_mode: 'none',
+  download_subdir_template: '{site}/{date}',
+  download_concurrency: 2,
+  download_segment_concurrency: 4,
+  download_retry: 3,
+  download_timeout_sec: 30,
+  download_rate_limit_kbps: 0,
+  download_max_height: 0,
+  download_user_agent: '',
+  download_referer: '',
+  download_cookie: '',
+  download_proxy: '',
+  download_allow_private: false,
+  download_keep_temp: false,
+  download_min_free_gb: 20,
+  download_verify_tolerance_sec: 5,
+  download_job_limit: 500,
+  download_auto_scan: false,
+  download_auto_subtitle: false,
 };
 export var SIZE_UNITS = { kb: 1024, mb: 1048576, gb: 1073741824 };

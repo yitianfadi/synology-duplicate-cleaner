@@ -150,11 +150,42 @@ DEFAULT_SETTINGS = {
     "scheduled_scan_rules": [],
     "scheduled_scan_roots": [],
     "scheduled_scan_max_load": 0.0,
+    # --- v0051 下载中心（docs/DOWNLOAD_CONTRACT.md §6）---
+    # 默认关闭；开启后下载页可用。输出目录为空时，下载页必须显式选目录。
+    "download_enabled": False,
+    "download_output_dir": "",
+    # 输出子目录策略：none（平铺）/ site（按站点）/ date（按日期）/
+    # site_date（站点+日期）/ custom（自定义模板，见 download_subdir_template）。
+    "download_subdir_mode": config.DOWNLOAD_SUBDIR_DEFAULT,
+    "download_subdir_template": config.DOWNLOAD_SUBDIR_TEMPLATE_DEFAULT,
+    # 任务级并发（同时下载几个视频）与单任务分片并发。
+    "download_concurrency": config.DOWNLOAD_DEFAULT_CONCURRENCY,
+    "download_segment_concurrency": config.DOWNLOAD_DEFAULT_SEGMENT_CONCURRENCY,
+    "download_retry": config.DOWNLOAD_DEFAULT_RETRY,
+    "download_timeout_sec": config.DOWNLOAD_DEFAULT_TIMEOUT_SEC,
+    # 全局限速（KB/s，0=不限），按运行中任务均分。
+    "download_rate_limit_kbps": 0,
+    # 清晰度上限（0=不限；如 1080 表示 master 播放列表最多取 1080p）。
+    "download_max_height": 0,
+    # 防盗链/登录态：为空则用默认 UA、不带 Referer/Cookie。
+    "download_user_agent": config.DOWNLOAD_DEFAULT_USER_AGENT,
+    "download_referer": "",
+    "download_cookie": "",
+    "download_proxy": "",
+    # 是否允许访问内网/回环地址（SSRF 防护默认关闭；下载 NAS 所在局域网源时才开）。
+    "download_allow_private": False,
+    "download_keep_temp": False,
+    "download_min_free_gb": config.DOWNLOAD_MIN_FREE_GB_DEFAULT,
+    "download_verify_tolerance_sec": config.DOWNLOAD_VERIFY_TOLERANCE_DEFAULT,
+    "download_job_limit": config.DOWNLOAD_JOB_LIMIT_DEFAULT,
+    # 下载完成后可选动作：自动入队扫描判重 / 自动提交字幕任务。
+    "download_auto_scan": False,
+    "download_auto_subtitle": False,
 }
 
 # 密钥键：GET/日志/审计/扫描结果中绝不允许出现明文
 SECRET_SETTING_KEYS = ("subtitle_asr_api_key", "subtitle_llm_api_key",
-                       "notify_telegram_bot_token")
+                       "notify_telegram_bot_token", "download_cookie")
 # 清空密钥的控制标记（PUT 时允许从 settings 或顶层同时传入）
 CLEAR_SECRET_ALIASES = {
     "subtitle_clear_asr_api_key": "subtitle_asr_api_key",
@@ -164,6 +195,8 @@ CLEAR_SECRET_ALIASES = {
     "subtitle_llm_api_key_clear": "subtitle_llm_api_key",
     "clear_llm_api_key": "subtitle_llm_api_key",
     "notify_clear_telegram_bot_token": "notify_telegram_bot_token",
+    "download_clear_cookie": "download_cookie",
+    "clear_download_cookie": "download_cookie",
     "notify_telegram_bot_token_clear": "notify_telegram_bot_token",
     "clear_telegram_bot_token": "notify_telegram_bot_token",
 }
@@ -321,6 +354,36 @@ def _check_path_list(key, value, max_items=200, max_len=1024):
                  {"key": key, "index": index, "value": text})
         out.append(text)
     return out
+
+
+_DOWNLOAD_TEMPLATE_TOKENS = ("site", "date", "yyyy", "mm", "dd",
+                             "hour", "min", "title")
+
+
+def _check_subdir_template(key, value):
+    """输出子目录模板（v0051）：`{site}/{date}` 这类相对模板，禁止绝对路径/..。"""
+    text = _check_str(key, value,
+                      max_len=config.DOWNLOAD_SUBDIR_TEMPLATE_MAX).strip()
+    if not text:
+        return ""
+    if "\r" in text or "\n" in text:
+        _err(u"设置 %s 不能包含换行" % key, {"key": key})
+    normalized = text.replace("\\", "/")
+    if normalized.startswith("/") or re.match(r"^[A-Za-z]:", normalized):
+        _err(u"设置 %s 必须是相对模板，不能是绝对路径" % key, {"key": key})
+    parts = [part for part in normalized.split("/") if part not in ("", ".")]
+    if any(part == ".." for part in parts):
+        _err(u"设置 %s 不能包含 .." % key, {"key": key})
+    for token in re.findall(r"\{([^{}]*)\}", normalized):
+        if token not in _DOWNLOAD_TEMPLATE_TOKENS:
+            _err(u"设置 %s 含未知占位符 {%s}（可用：%s）"
+                 % (key, token, ", ".join("{%s}" % t
+                                          for t in _DOWNLOAD_TEMPLATE_TOKENS)),
+                 {"key": key})
+    stripped = re.sub(r"\{[^{}]*\}", "", normalized)
+    if "{" in stripped or "}" in stripped:
+        _err(u"设置 %s 的占位符未闭合" % key, {"key": key})
+    return normalized
 
 
 def _split_keep_rule(item):
@@ -696,6 +759,75 @@ def _normalize_value(key, value):
         return _check_path_list(key, value)
     if key == "scheduled_scan_max_load":
         return _check_float(key, value, 0.0, 256.0)
+    # --- v0051 下载中心（docs/DOWNLOAD_CONTRACT.md §6）---
+    if key in ("download_enabled", "download_allow_private",
+               "download_keep_temp", "download_auto_scan",
+               "download_auto_subtitle"):
+        return _check_bool(key, value)
+    if key == "download_output_dir":
+        text = _check_str(key, value, max_len=1024).strip()
+        if not text:
+            return ""
+        if not os.path.isabs(text):
+            _err(u"download_output_dir 必须是绝对路径", {"key": key})
+        return os.path.normpath(text)
+    if key == "download_subdir_mode":
+        if value not in config.DOWNLOAD_SUBDIR_MODES:
+            _err(u"download_subdir_mode 只能是 %s"
+                 % "/".join(config.DOWNLOAD_SUBDIR_MODES), {"key": key})
+        return value
+    if key == "download_subdir_template":
+        return _check_subdir_template(key, value)
+    if key == "download_concurrency":
+        return _check_int(key, value, 1, config.DOWNLOAD_CONCURRENCY_MAX)
+    if key == "download_segment_concurrency":
+        return _check_int(key, value, 1, config.DOWNLOAD_SEGMENT_CONCURRENCY_MAX)
+    if key == "download_retry":
+        return _check_int(key, value, 0, config.DOWNLOAD_RETRY_MAX)
+    if key == "download_timeout_sec":
+        return _check_int(key, value, config.DOWNLOAD_TIMEOUT_MIN_SEC,
+                          config.DOWNLOAD_TIMEOUT_MAX_SEC)
+    if key == "download_rate_limit_kbps":
+        return _check_int(key, value, 0, config.DOWNLOAD_RATE_LIMIT_MAX_KBPS)
+    if key == "download_max_height":
+        return _check_int(key, value, 0, 4320)
+    if key == "download_user_agent":
+        return _check_str(key, value, max_len=512).strip()
+    if key == "download_referer":
+        text = _check_str(key, value, max_len=2048).strip()
+        if not text:
+            return ""
+        parsed = urllib.parse.urlsplit(text)
+        if parsed.scheme not in ("http", "https") or not parsed.netloc:
+            _err(u"download_referer 必须是 http(s) URL", {"key": key})
+        if parsed.username or parsed.password or "@" in parsed.netloc:
+            _err(u"download_referer 不能包含账号密码", {"key": key})
+        return text
+    if key == "download_cookie":
+        text = _check_str(key, value, max_len=8192).strip()
+        if "\r" in text or "\n" in text:
+            _err(u"download_cookie 不能包含换行", {"key": key})
+        return text
+    if key == "download_proxy":
+        text = _check_str(key, value, max_len=512).strip()
+        if not text:
+            return ""
+        parsed = urllib.parse.urlsplit(text)
+        if parsed.scheme not in ("http", "https", "socks5", "socks5h"):
+            _err(u"download_proxy 只支持 http/https/socks5", {"key": key})
+        if not parsed.hostname:
+            _err(u"download_proxy 缺少主机名", {"key": key})
+        # 代理口令同样不能进 URL/日志：要求用无认证代理或系统级凭据。
+        if parsed.username or parsed.password:
+            _err(u"download_proxy 不支持内嵌账号密码", {"key": key})
+        return text
+    if key == "download_min_free_gb":
+        return _check_int(key, value, 0, config.DOWNLOAD_MIN_FREE_GB_MAX)
+    if key == "download_verify_tolerance_sec":
+        return _check_int(key, value, 0, 600)
+    if key == "download_job_limit":
+        return _check_int(key, value, config.DOWNLOAD_JOB_LIMIT_MIN,
+                          config.DOWNLOAD_JOB_LIMIT_MAX)
     if key == "skip_symlinks":
         # 无论前端传什么，符号链接一律跳过（安全强制）
         if not isinstance(value, bool):

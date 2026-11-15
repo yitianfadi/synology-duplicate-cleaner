@@ -244,7 +244,7 @@ def check_backend():
                        "select", "queue", "math", "decimal", "calendar", "codecs",
                        "heapq", "mimetypes", "tests", "stringprep", "encodings",
                        "zipfile", "zlib", "html", "PIL", "logging.handlers", "sqlite3",
-                       "xml", "builtins", "fnmatch", "array")
+                       "xml", "builtins", "fnmatch", "array", "ipaddress")
     for path in py_files:
         rel = os.path.relpath(path, REPO)
         src = read(path)
@@ -548,7 +548,7 @@ def check_backend():
     check("BE-INC-HASH-CACHE",
           "增量扫描：跨扫描哈希缓存（hash_cache 表 + store 读写 + 扫描器复用未变文件）",
           "hash_cache" in db_src
-          and "CURRENT_SCHEMA_VERSION = 8" in db_src
+          and "CURRENT_SCHEMA_VERSION = 9" in db_src
           and "def hash_cache_get" in store_src
           and "def hash_cache_put_many" in store_src
           and "def _load_hash_cache" in scanner_src
@@ -806,6 +806,7 @@ def check_backend():
 # ---------------------------------------------------------------------------
 def check_frontend():
     web = os.path.join(REPO, "src", "web")
+    backend = os.path.join(REPO, "src", "backend")
     index_path = os.path.join(web, "index.html")
     app_path = os.path.join(web, "app.js")
     html = read(index_path) if os.path.isfile(index_path) else ""
@@ -820,11 +821,12 @@ def check_frontend():
     js_dir = os.path.join(web, "js")
     module_names = ["constants.js", "state.js", "dom.js", "format.js",
                     "util.js", "api.js", "toast.js", "modal.js",
-                    "subtitle-probe.js", "subtitle-page.js"]
+                    "subtitle-probe.js", "subtitle-page.js",
+                    "download-page.js"]
     module_paths = [os.path.join(js_dir, name) for name in module_names]
     missing_modules = [name for name in module_names
                        if not os.path.isfile(os.path.join(js_dir, name))]
-    check("FE-MODULE-FILES", "前端 ES modules 十个模块文件齐全（js/*.js）",
+    check("FE-MODULE-FILES", "前端 ES modules 模块文件齐全（js/*.js）",
           not missing_modules, "missing=%s" % missing_modules)
     check("FE-MODULE-ENTRY", "index.html 以 type=module 加载 app.js 并保留 ?v= 版本参数",
           bool(re.search(r'<script\s+type="module"\s+src="\./app\.js\?v=[^"]+"', html)),
@@ -1372,10 +1374,68 @@ def check_frontend():
         ("/api/permissions/report", "权限体检"),
         ("/api/logs/search", "日志检索"),
         ("/api/logs/export", "日志导出"),
+        # v0051 下载中心
+        ("/api/downloads", "下载任务"),
+        ("/api/downloads/queue", "下载队列视图"),
+        ("/api/downloads/groups", "下载批量组"),
     ]
     missing = [name for marker, name in endpoints if marker not in app]
     check("FE-ENDPOINTS", "前端覆盖契约全部 API 端点",
           not missing, "missing=%s" % missing)
+
+    # ---- v0051 下载中心（docs/DOWNLOAD_CONTRACT.md）----
+    downloads_src = read(os.path.join(backend, "dupcleaner", "downloads.py"))
+    hls_src = read(os.path.join(backend, "dupcleaner", "hls.py"))
+    download_settings_src = read(os.path.join(backend, "dupcleaner",
+                                             "settings.py"))
+    check("BE-DOWNLOAD-MODULES", "下载中心模块存在（downloads.py / hls.py）",
+          bool(downloads_src) and bool(hls_src), "missing module file")
+    check("BE-DOWNLOAD-SSRF", "下载拒绝内网/回环地址，可用 download_allow_private 放开",
+          ("_looks_private" in downloads_src)
+          and ("URL_PRIVATE_ADDRESS" in downloads_src)
+          and ("download_allow_private" in downloads_src),
+          "ssrf guard markers missing")
+    check("BE-DOWNLOAD-NO-DRM", "HLS 明确拒绝 DRM/SAMPLE-AES 与直播列表",
+          ("DRM_UNSUPPORTED" in hls_src) and ("LIVE_UNSUPPORTED" in hls_src)
+          and ("SAMPLE-AES" in hls_src),
+          "drm/live guard markers missing")
+    check("BE-DOWNLOAD-LOCALIZE",
+          "AES-128 走本地化播放列表 + FFmpeg 原生解密（不做纯 Python AES）",
+          ("build_local_playlist" in hls_src)
+          and ("-allowed_extensions" in downloads_src)
+          and ("def _aes" not in downloads_src),
+          "localized playlist markers missing")
+    check("BE-DOWNLOAD-SECRET", "download_cookie 属于密钥键（GET/日志不回传）",
+          ('"download_cookie"' in download_settings_src)
+          and ("SECRET_SETTING_KEYS" in download_settings_src),
+          "cookie secret marker missing")
+    check("BE-DOWNLOAD-CLEANUP",
+          "临时目录在输出目录内、以 .dc-download- 前缀清理",
+          ("DOWNLOAD_TEMP_PREFIX" in downloads_src)
+          and ("rmtree" in downloads_src)
+          and ("os.replace" in downloads_src),
+          "cleanup markers missing")
+    check("BE-DOWNLOAD-SCHEMA", "schema v9 新增下载任务/批量组表",
+          ("CURRENT_SCHEMA_VERSION = 9" in read(
+              os.path.join(backend, "dupcleaner", "db.py")))
+          and ("download_jobs" in read(os.path.join(backend, "dupcleaner", "db.py")))
+          and ("download_groups" in read(os.path.join(backend, "dupcleaner", "db.py"))),
+          "schema v9 markers missing")
+    check("FE-DOWNLOAD-UI",
+          "下载页含地址输入/目录选择/提交按钮/任务列表",
+          all(marker in html for marker in (
+              "view-download", "downloadUrls", "downloadDirPickBtn",
+              "downloadSubmitBtn", "downloadJobsList")),
+          "download page markers missing")
+    check("FE-DOWNLOAD-PROGRESS",
+          "下载进度条走 node.style（不使用 el(..., {style})）",
+          ("fill.style.width" in app) and ("progress-fill" in app),
+          "progress bar marker missing")
+    check("FE-DOWNLOAD-NAV", "主导航含下载入口，VIEWS/VIEW_HEADINGS 已注册",
+          ('data-nav="download"' in html)
+          and ("downloadHeading" in app)
+          and ("showDownloadPage" in app),
+          "download navigation markers missing")
 
     two_step = (("delete-plan" in app) and ("/api/scans/' + encodePath(state.scan.id) + '/delete" in app
                 or "/delete'" in app))
@@ -1437,7 +1497,19 @@ def check_frontend():
                     # v0033 VTT 可选生成
                     "subtitle_write_vtt",
                     # v0036 译文输出组合
-                    "subtitle_translate_outputs"]
+                    "subtitle_translate_outputs",
+                    # v0051 下载中心（docs/DOWNLOAD_CONTRACT.md §6）
+                    "download_enabled", "download_output_dir",
+                    "download_subdir_mode", "download_subdir_template",
+                    "download_concurrency", "download_segment_concurrency",
+                    "download_retry", "download_timeout_sec",
+                    "download_rate_limit_kbps", "download_max_height",
+                    "download_user_agent", "download_referer",
+                    "download_cookie", "download_proxy",
+                    "download_allow_private", "download_keep_temp",
+                    "download_min_free_gb", "download_verify_tolerance_sec",
+                    "download_job_limit", "download_auto_scan",
+                    "download_auto_subtitle"]
     missing_settings = [key for key in setting_keys if key not in app]
     check("FE-SETTINGS-KEYS", "设置页覆盖契约全部设置键",
           not missing_settings, "missing=%s" % missing_settings)

@@ -334,6 +334,32 @@ class Api(object):
                 r"^/api/subtitles/batches/(?P<batch_id>[^/]+)/"
                 r"(?P<action>pause|resume|cancel|retry)$"),
              self._subtitle_batch_control, False),
+            # v0051 下载中心（管理员 + CSRF；docs/DOWNLOAD_CONTRACT.md §3）
+            # 注意：固定子路径（queue/groups）必须排在 {job_id} 通用路由之前。
+            ("GET", re.compile(r"^/api/downloads$"),
+             self._download_list, False),
+            ("POST", re.compile(r"^/api/downloads$"),
+             self._download_create, False),
+            ("GET", re.compile(r"^/api/downloads/queue$"),
+             self._download_queue, False),
+            ("GET", re.compile(r"^/api/downloads/groups$"),
+             self._download_groups, False),
+            ("GET", re.compile(r"^/api/downloads/groups/(?P<group_id>[^/]+)$"),
+             self._download_group, False),
+            ("POST", re.compile(
+                r"^/api/downloads/groups/(?P<group_id>[^/]+)/"
+                r"(?P<action>pause|resume|cancel|retry)$"),
+             self._download_group_control, False),
+            ("GET", re.compile(r"^/api/downloads/(?P<job_id>[^/]+)/file$"),
+             self._download_file, False),
+            ("GET", re.compile(r"^/api/downloads/(?P<job_id>[^/]+)$"),
+             self._download_get, False),
+            ("POST", re.compile(
+                r"^/api/downloads/(?P<job_id>[^/]+)/"
+                r"(?P<action>pause|resume|cancel|retry)$"),
+             self._download_control, False),
+            ("DELETE", re.compile(r"^/api/downloads/(?P<job_id>[^/]+)$"),
+             self._download_delete, False),
         ]
 
     # ------------------------------------------------------------------
@@ -495,6 +521,20 @@ class Api(object):
                 "labels": dict(config.RECYCLE_MODE_LABELS),
                 "trash_dir_name": config.TRASH_DIR_NAME,
             },
+            # v0051：下载中心能力（docs/DOWNLOAD_CONTRACT.md §3）
+            "download": {
+                "enabled": bool(
+                    self.services.settings.get().get("download_enabled")),
+                "concurrency_max": config.DOWNLOAD_CONCURRENCY_MAX,
+                "concurrency_default":
+                    config.DOWNLOAD_DEFAULT_CONCURRENCY,
+                "segment_concurrency_max":
+                    config.DOWNLOAD_SEGMENT_CONCURRENCY_MAX,
+                "subdir_modes": list(config.DOWNLOAD_SUBDIR_MODES),
+                "batch_max_items": config.DOWNLOAD_BATCH_MAX_ITEMS,
+                "job_limit_default": config.DOWNLOAD_JOB_LIMIT_DEFAULT,
+                "output_ext": config.DOWNLOAD_OUTPUT_EXT,
+            },
             # v0046：通知 / 计划扫描能力
             "notify": {
                 "enabled": bool(self.services.settings.get().get("notify_enabled")),
@@ -625,6 +665,98 @@ class Api(object):
     # ------------------------------------------------------------------
     # 诊断 / 存储维护 / 删除任务历史（v0021 P0；仅管理员）
     # ------------------------------------------------------------------
+    # ------------------------------------------------------------------
+    # v0051 下载中心（docs/DOWNLOAD_CONTRACT.md）
+    # ------------------------------------------------------------------
+    def _download_service(self):
+        service = getattr(self.services, "downloads", None)
+        if service is None:
+            raise ApiError("DOWNLOAD_DISABLED", u"下载功能不可用")
+        return service
+
+    def _require_download_admin(self, session):
+        self._require_admin(session, u"仅管理员可以使用下载中心")
+        settings = self.services.settings.get()
+        if not settings.get("download_enabled"):
+            raise ApiError("DOWNLOAD_DISABLED",
+                           u"下载功能未启用，请先在设置中开启")
+        return self._download_service()
+
+    def _download_list(self, request, session, params):
+        service = self._require_download_admin(session)
+        return json_response(service.list_page(
+            status=request.query_last("status"),
+            group_id=request.query_last("group_id") or None,
+            offset=_query_int(request, "offset", 0),
+            limit=_query_int(request, "limit", 50),
+            q=request.query_last("q")))
+
+    def _download_create(self, request, session, params):
+        service = self._require_download_admin(session)
+        body = _json_body(request)
+        return json_response(service.create(session.user, body), status=202)
+
+    def _download_queue(self, request, session, params):
+        service = self._require_download_admin(session)
+        return json_response(service.queue_snapshot(
+            active_limit=_query_int(request, "active_limit", 20),
+            queued_limit=_query_int(request, "queued_limit", 50),
+            recent_limit=_query_int(request, "recent_limit", 20)))
+
+    def _download_get(self, request, session, params):
+        service = self._require_download_admin(session)
+        return json_response({"ok": True,
+                              "job": service.get_view(params["job_id"])})
+
+    def _download_control(self, request, session, params):
+        service = self._require_download_admin(session)
+        job_id = params["job_id"]
+        action = params["action"]
+        if action == "pause":
+            view = service.pause(job_id)
+        elif action == "resume":
+            view = service.resume(job_id)
+        elif action == "cancel":
+            view = service.cancel(job_id)
+        else:
+            view = service.retry(job_id)
+        return json_response({"ok": True, "action": action, "job": view})
+
+    def _download_delete(self, request, session, params):
+        service = self._require_download_admin(session)
+        delete_files = _query_bool(request, "delete_files", False)
+        return json_response(service.delete(params["job_id"],
+                                            delete_files=delete_files))
+
+    def _download_file(self, request, session, params):
+        service = self._require_download_admin(session)
+        job, path = service.file_path(params["job_id"])
+        name = job.output_name or os.path.basename(path)
+        return Response(
+            status=200,
+            content_type="application/octet-stream",
+            file_path=path,
+            file_size=os.path.getsize(path),
+            headers={
+                "Content-Disposition": 'attachment; filename="%s"' % name,
+                "Cache-Control": "no-store",
+            },
+        )
+
+    def _download_groups(self, request, session, params):
+        service = self._require_download_admin(session)
+        return json_response(service.list_groups(
+            limit=_query_int(request, "limit", 50)))
+
+    def _download_group(self, request, session, params):
+        service = self._require_download_admin(session)
+        return json_response(service.get_group(params["group_id"]))
+
+    def _download_group_control(self, request, session, params):
+        service = self._require_download_admin(session)
+        return json_response(service.group_control(params["group_id"],
+                                                   params["action"]))
+
     def _require_admin(self, session, message=u"仅管理员可以执行该操作"):
         if session is None or not getattr(session, "is_admin", False):
             raise forbidden(message)
