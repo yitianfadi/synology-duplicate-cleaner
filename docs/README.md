@@ -74,7 +74,7 @@
 | 文档 | 内容 | 状态 |
 |---|---|---|
 | [REQUIREMENTS_V2_ASSESSMENT.md](REQUIREMENTS_V2_ASSESSMENT.md) | v2 需求 → 版本交付映射、关键取舍、明确不做、默认值、真机清单 | 现行（结论） |
-| [RELEASE_NOTES_v1.1.0-0054.md](RELEASE_NOTES_v1.1.0-0054.md) | 未发布增量（v0051 下载中心 + v0052 网页解析 + v0053 下载增强 + v0054 DASH/订阅）、兼容性、打包与回退 | 现行（未打包） |
+| [RELEASE_NOTES_v1.1.0-0054.md](RELEASE_NOTES_v1.1.0-0054.md) | 未发布增量（v0051 下载中心 + v0052 网页解析 + v0053 下载增强 + v0054 DASH/订阅）、兼容性、校验值、打包与回退 | 现行（已打包） |
 | [RELEASE_NOTES_v1.1.0-0053.md](RELEASE_NOTES_v1.1.0-0053.md) | 上一版未发布增量说明（v0051–v0053） | 历史 |
 | [RELEASE_NOTES_v1.1.0-0050.md](RELEASE_NOTES_v1.1.0-0050.md) | 上一版正式发布说明（v0043–v0050 累计） | 历史 |
 | [qa/REPORT.md](../qa/REPORT.md) | 当前 QA 基线、验收方法、需求追溯、偏差与残余风险、版本验收记录 | 现行 |

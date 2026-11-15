@@ -1,7 +1,7 @@
 # 发布说明 1.1.0-0054（DASH + 订阅下载 + 连接复用）
 
-> **状态：未打包、未发布。** 按用户要求不生成 SPK；`dist/` 仍是 `1.1.0-0051` 的产物。
-> 出包时执行 `python build/build_spk.py`，再跑 `python qa/static_checks.py` 让 `SPK-DIST`/`SPK-SYNC` 归位。
+> **状态：已打包（未发布）。** 产物 `dist/DuplicateCleaner-1.1.0-0054.spk`，未推送代码、未发 GitHub Release、未装 NAS。
+> 构建命令：`python build/build_spk.py`；静态检查 `python qa/static_checks.py`（含 SPK 结构与源码同步校验）。
 
 - 版本：`1.1.0-0054`
 - 日期：2026-11-15

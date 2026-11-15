@@ -1,9 +1,9 @@
 {
-  "generated_at": "2026-11-15T18:01:33+0800",
+  "generated_at": "2026-11-15T18:15:53+0800",
   "summary": {
-    "PASS": 203,
+    "PASS": 222,
     "FAIL": 0,
-    "UNVERIFIED": 1
+    "UNVERIFIED": 0
   },
   "results": [
     {
@@ -52,7 +52,7 @@
       "id": "BE-UNITTEST-LOG",
       "name": "unittest 结果",
       "status": "INFO",
-      "detail": "Ran 748 tests in 205.288s"
+      "detail": "Ran 748 tests in 205.851s"
     },
     {
       "id": "BE-NO-AUTODELETE",
@@ -1244,9 +1244,117 @@
     },
     {
       "id": "SPK-DIST",
-      "name": "构建产物 dist/DuplicateCleaner-1.1.0-0054.spk",
-      "status": "UNVERIFIED",
-      "detail": "SPK 尚未构建（Lead 构建后重跑）"
+      "name": "构建产物存在（DuplicateCleaner-1.1.0-0054.spk）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SPK-TAR-OUTER",
+      "name": "SPK 外层 tar 结构完整",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SPK-VERSION",
+      "name": "SPK INFO.version 与当前源码 APP_VERSION（1.1.0-0054）一致",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SPK-CHECKSUM",
+      "name": "INFO.checksum 与 package.tgz MD5 一致",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SPK-DIST-PRIVILEGE",
+      "name": "产物 conf/privilege 为 run-as=package + duplicatecleaner（无 root）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SPK-SCRIPT-MODE",
+      "name": "SPK 内 scripts 全部为可执行（755）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SPK-SHA256",
+      "name": ".spk.sha256 与实际 SHA256 一致",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SPK-PKG-STRUCT",
+      "name": "package.tgz 含 app/web/ui/port_conf/VERSION",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SPK-PKG-CLEAN",
+      "name": "package.tgz 不含 tests/__pycache__/pyc/调试/测试输出文件",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SPK-PKG-WHITELIST",
+      "name": "package.tgz 内容符合白名单（app 仅 .py，无临时/输出文件）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SPK-PKG-UI-PLACEHOLDER",
+      "name": "打包后 ui/index.html 占位符已被替换",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SPK-PKG-RISK",
+      "name": "打包后 web/index.html 仍含精确风险提示",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SPK-PKG-ACL",
+      "name": "打包后 UI 含系统内部用户 duplicatecleaner 的读/写 ACL 提示",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SPK-PKG-WEB",
+      "name": "package.tgz 含完整前端文件",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SPK-SYNC",
+      "name": "SPK 产物与当前源码一致（构建后未再修改源码）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SPK-DEV-ENV",
+      "name": "打包内容中不含 DUP_CLEANER_DEV=1 生产开启",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SPK-APP-MODE",
+      "name": "package.tgz 内 app/app.py 可执行",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SPK-SH-SYNTAX",
+      "name": "shell 脚本 bash -n 语法检查通过",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SPK-SH-LF",
+      "name": "SPK 脚本为 LF 换行（DSM shell 兼容）",
+      "status": "PASS",
+      "detail": ""
     }
   ]
 }
