@@ -2,7 +2,7 @@
    重复文件清理 · DuplicateCleaner —— 目录批量字幕页（ES module，v0032）
    --------------------------------------------------------------------------
    与查重解耦的独立入口：选择目录 → 枚举视频 → 勾选 → 批量生成/翻译字幕。
-   字幕写回视频同目录（只写 .srt）；写回失败仍可在任务中心下载。
+   字幕写回视频同目录（只写 .srt）；写回失败仍可在「任务」标签页下载。
    v0032：一次提交最多 20000 个视频，后端自动按每批 500 个拆成「批次组」顺序执行；
           前端从单批次页改为批次组页（提交 / 进度 / 暂停 / 继续 / 取消 / 重试 / 分页任务行）。
    规范：ES2019、无第三方依赖、不使用 innerHTML、只做安全文本渲染。
@@ -596,7 +596,7 @@ async function submitGroup() {
     page.selected = new Set();
     renderVideos();
     if (!page.group || !page.group.group_id) {
-      toast('提交已受理，但后端未返回批次组信息，请到任务中心查看。', 'info', 7000);
+      toast('提交已受理，但后端未返回批次组信息，请到「任务」标签页查看。', 'info', 7000);
       return;
     }
     saveLastGroupId(page.group.group_id);
@@ -1161,12 +1161,12 @@ function renderGroupActions() {
     box.appendChild(translateBtn);
   }
   var link = el('button', {
-    className: 'btn btn-link btn-sm', attrs: { type: 'button' }, text: '在任务中心查看'
+    className: 'btn btn-link btn-sm', attrs: { type: 'button' }, text: '查看任务列表'
   });
   link.addEventListener('click', function () {
-    // 任务中心默认标签是“扫描历史”，这里显式切到“字幕任务”
-    state.taskTab = 'subtitles';
-    window.location.hash = '#/history';
+    // v0057：字幕任务已并入字幕页「任务」标签，直接切过去
+    if (typeof state.openSubtitleJobs === 'function') { state.openSubtitleJobs(); }
+    else { window.location.hash = '#/subtitles?tab=jobs'; }
   });
   box.appendChild(link);
 }
@@ -1382,7 +1382,7 @@ function renderGroupOverview() {
     }));
     var goBtn = el('button', {
       className: 'btn btn-ghost btn-sm', attrs: { type: 'button' },
-      text: '去任务中心查看'
+      text: '去任务列表查看'
     });
     goBtn.addEventListener('click', function () {
       if (typeof state.openSubtitleJobs === 'function') { state.openSubtitleJobs(); }
@@ -1829,7 +1829,7 @@ async function translateJob(job, button) {
     if (result && result.created === false) {
       toast('该任务已在翻译队列中，无需重复提交。', 'info', 6000);
     } else {
-      toast('已创建翻译任务，可在任务中心查看进度。', 'success', 6000);
+      toast('已创建翻译任务，可在「任务」标签页查看进度。', 'success', 6000);
     }
     if (result && result.group && page.group && result.group.group_id === page.group.group_id) {
       page.group = result.group;

@@ -1070,7 +1070,7 @@ class DeletionManager(object):
                 result_dict = dict(base)
                 result_dict.update({
                     "status": STATUS_RECYCLED, "reason": "",
-                    "message": u"已移动到套件回收站（可在任务中心整组恢复）",
+                    "message": u"已移动到套件回收站（可在「扫描 → 删除与回收站」整组恢复）",
                     "recycle_path": destination,
                     "trash_mode": "package"})
                 self._audit_file_result(job, result_dict)

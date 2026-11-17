@@ -6,8 +6,8 @@
 <meta name="color-scheme" content="light">
 <meta name="referrer" content="same-origin">
 <title>重复文件清理与字幕 · Duplicate Cleaner &amp; Subtitles</title>
-<link rel="icon" href="./assets/favicon.svg?v=1.1.0-0056" type="image/svg+xml">
-<link rel="stylesheet" href="./styles.css?v=1.1.0-0056">
+<link rel="icon" href="./assets/favicon.svg?v=1.1.0-0057" type="image/svg+xml">
+<link rel="stylesheet" href="./styles.css?v=1.1.0-0057">
 </head>
 <body>
 <a class="skip-link" href="#main">跳到主要内容</a>
@@ -76,7 +76,6 @@
         <button type="button" class="nav-item" data-nav="subtitles">字幕</button>
         <button type="button" class="nav-item" data-nav="download">下载</button>
         <button type="button" class="nav-item" data-nav="convert">转换</button>
-        <button type="button" class="nav-item" data-nav="history">任务中心</button>
       </nav>
       <div class="topbar-right">
         <span class="env-badge" id="envBadge" hidden></span>
@@ -100,11 +99,19 @@
       <div class="page-head">
         <div>
           <h1 id="scanHeading">扫描重复文件</h1>
-          <p class="page-desc">选择扫描范围与选项，扫描完成后按组核对结果，再进行可回退的删除操作。</p>
+          <p class="page-desc">选择扫描范围与选项，扫描完成后按组核对结果，再进行可回退的删除操作。历史扫描与删除/回收站记录在同页标签里。</p>
           <p class="permission-hint" role="note"><strong>权限提示：</strong>套件以 DSM 系统内部用户 <code>duplicatecleaner</code> 运行。首次使用请在“控制面板 → 共享文件夹 → 编辑 → 权限 → 系统内部用户”中为该用户授予目标共享文件夹的“读取/写入”权限；仅扫描可只给读取，删除副本需要写入（含回收站）。未授权时目录会提示权限不足。</p>
         </div>
       </div>
 
+
+      <div class="task-tabs" role="tablist" aria-label="扫描页分类" data-tabbar="scan">
+      <button type="button" class="task-tab is-active" role="tab" id="tabScanMain" data-tab-group="scan" data-tab="scan" aria-selected="true" aria-controls="tabPanelScan" tabindex="0">扫描</button>
+      <button type="button" class="task-tab" role="tab" id="tabScanHistory" data-tab-group="scan" data-tab="history" aria-selected="false" aria-controls="tabPanelHistory" tabindex="-1">历史</button>
+      <button type="button" class="task-tab" role="tab" id="tabScanDeletion" data-tab-group="scan" data-tab="deletion" aria-selected="false" aria-controls="tabPanelDeletion" tabindex="-1">删除与回收站</button>
+      </div>
+
+      <div class="task-panel" id="tabPanelScan" role="tabpanel" aria-labelledby="tabScanMain" data-tab-group="scan" data-tab-panel="scan" tabindex="0">
       <div class="scan-mode-bar card" role="group" aria-label="扫描模式">
         <div class="scan-mode-main">
           <div class="mode-segmented" role="radiogroup" aria-label="扫描模式选择">
@@ -636,18 +643,97 @@
           </div>
         </div>
       </section>
+      </div>
+
+      <div class="task-panel" id="tabPanelHistory" role="tabpanel" aria-labelledby="tabScanHistory" data-tab-group="scan" data-tab-panel="history" tabindex="0" hidden>
+        <div class="tab-panel-head">
+          <p class="hint">完成一次扫描后会显示在这里；点“打开结果”回到那次扫描的结果页。任务不会因为切换标签而中断。</p>
+          <button type="button" class="btn btn-ghost btn-sm" id="historyRefreshBtn">
+            <svg class="icon" aria-hidden="true"><use href="#i-refresh"></use></svg>刷新
+          </button>
+        </div>
+        <div class="state-box" id="historyLoading" hidden><span class="spinner" aria-hidden="true"></span>正在加载历史记录…</div>
+        <div class="state-box state-error" id="historyError" role="alert" hidden></div>
+        <div class="state-box state-empty" id="historyEmpty" hidden>暂无扫描历史。完成一次扫描后会显示在这里。</div>
+        <div id="historyList" class="history-list"></div>
+      </div>
+
+      <div class="task-panel" id="tabPanelDeletion" role="tabpanel" aria-labelledby="tabScanDeletion" data-tab-group="scan" data-tab-panel="deletion" tabindex="0" hidden>
+        <section class="card deletion-jobs-panel" id="deletionJobsPanel" aria-labelledby="deletionJobsHeading">
+          <div class="card-head">
+            <h2 id="deletionJobsHeading">删除任务</h2>
+            <span class="muted" id="deletionJobsStatus"></span>
+            <button type="button" class="btn btn-ghost btn-sm" id="deletionJobsRefreshBtn">
+              <svg class="icon" aria-hidden="true"><use href="#i-refresh"></use></svg>刷新任务
+            </button>
+          </div>
+          <div class="state-box" id="deletionJobsLoading" hidden><span class="spinner" aria-hidden="true"></span>正在加载删除任务…</div>
+          <div class="state-box state-error" id="deletionJobsError" role="alert" hidden></div>
+          <div class="state-box state-empty" id="deletionJobsEmpty" hidden>暂无删除任务。在删除向导中确认执行后会显示在这里。</div>
+          <div class="table-wrap" id="deletionJobsTableWrap" hidden>
+            <table class="data-table" id="deletionJobsTable">
+              <caption class="visually-hidden">最近的删除任务</caption>
+              <thead>
+                <tr>
+                  <th scope="col">开始时间</th>
+                  <th scope="col">扫描任务</th>
+                  <th scope="col">状态</th>
+                  <th scope="col">文件数</th>
+                  <th scope="col">已删除</th>
+                  <th scope="col">失败</th>
+                  <th scope="col">已处理空间</th>
+                  <th scope="col">操作</th>
+                </tr>
+              </thead>
+              <tbody id="deletionJobsList"></tbody>
+            </table>
+          </div>
+          <p class="hint">仅显示删除任务摘要，不包含文件内容；点击“打开扫描”可查看对应扫描结果。</p>
+        </section>
+
+        <section class="card" aria-labelledby="trashHeading">
+          <div class="card-head">
+            <h2 id="trashHeading">套件回收站</h2>
+            <span class="muted" id="trashRecycleMode"></span>
+            <button type="button" class="btn btn-ghost btn-sm" id="trashRefreshBtn">
+              <svg class="icon" aria-hidden="true"><use href="#i-refresh"></use></svg>刷新
+            </button>
+          </div>
+          <p class="hint">删除时选择“套件独立回收站”的文件会移动到共享文件夹根下的 <code>#duplicate-cleaner-trash/</code>，可按删除批次整组恢复或清理；清理不可恢复，需要输入“永久删除”。当前删除去向可在设置页修改。</p>
+          <div class="state-box" id="trashLoading" hidden><span class="spinner" aria-hidden="true"></span>正在加载回收站…</div>
+          <div class="state-box state-error" id="trashError" role="alert" hidden></div>
+          <div class="state-box state-empty" id="trashEmpty" hidden>暂无套件回收站记录。</div>
+          <div id="trashList" class="trash-list"></div>
+        </section>
+        <section class="card" aria-labelledby="mergeHistoryHeading">
+          <div class="card-head">
+            <h2 id="mergeHistoryHeading">硬链接合并记录</h2>
+            <span class="muted" id="trashMergeCount"></span>
+          </div>
+          <p class="hint">合并后这些路径共享同一份内容（任一处修改会影响全部）；可“恢复为独立副本”（Btrfs FICLONE 秒级复制，其它文件系统回退普通复制）。</p>
+          <div class="state-box" id="trashMergeLoading" hidden><span class="spinner" aria-hidden="true"></span>正在加载合并记录…</div>
+          <div class="state-box state-empty" id="trashMergeEmpty" hidden>暂无硬链接合并记录。</div>
+          <div id="trashMergeList" class="trash-list"></div>
+        </section>
+      </div>
     </section>
 
-    <!-- ========== 目录批量字幕（v0028） ========== -->
     <section id="view-subtitles" class="view" data-view="subtitles" aria-labelledby="subtitlesHeading" hidden>
       <div class="page-head">
         <div>
           <h1 id="subtitlesHeading">字幕</h1>
-          <p class="page-desc">选择目录，为该目录下的视频批量生成或翻译字幕。字幕以 .srt 写入视频同目录；写入失败时仍可在任务中心下载。与查重扫描互不影响。</p>
+          <p class="page-desc">选择目录，为该目录下的视频批量生成或翻译字幕。字幕以 .srt 写入视频同目录；写入失败时可在「任务」标签页下载。与查重扫描互不影响。</p>
         </div>
         <span class="badge badge-gray subtitle-status-badge" id="subtitlePageStatusBadge">检测中…</span>
       </div>
 
+
+      <div class="task-tabs" role="tablist" aria-label="字幕页分类" data-tabbar="subtitles">
+      <button type="button" class="task-tab is-active" role="tab" id="tabSubtitleSubmit" data-tab-group="subtitles" data-tab="submit" aria-selected="true" aria-controls="tabPanelSubtitleSubmit" tabindex="0">提交</button>
+      <button type="button" class="task-tab" role="tab" id="tabSubtitleJobs" data-tab-group="subtitles" data-tab="jobs" aria-selected="false" aria-controls="tabPanelSubtitleJobs" tabindex="-1">任务</button>
+      </div>
+
+      <div class="task-panel" id="tabPanelSubtitleSubmit" role="tabpanel" aria-labelledby="tabSubtitleSubmit" data-tab-group="subtitles" data-tab-panel="submit" tabindex="0">
       <section class="card" aria-labelledby="subtitleDirHeading">
         <div class="card-head">
           <h2 id="subtitleDirHeading">选择目录</h2>
@@ -768,7 +854,7 @@
         <p class="hint subtitle-submit-hint" id="subtitleSubmitReason" role="status"></p>
         <div class="subtitle-submit-row">
           <button type="button" class="btn btn-primary" id="subtitleSubmitBtn" disabled>提交批量字幕任务</button>
-          <span class="muted">字幕写入视频同目录（只写 .srt），已有文件不覆盖；写回失败时可在任务中心下载。</span>
+          <span class="muted">字幕写入视频同目录（只写 .srt），已有文件不覆盖；写回失败时可在「任务」标签页下载。</span>
         </div>
       </section>
 
@@ -830,10 +916,100 @@
         </div>
         <div class="subtitle-batch-actions" id="subtitleGroupActions"></div>
       </section>
+      </div>
+
+      <div class="task-panel" id="tabPanelSubtitleJobs" role="tabpanel" aria-labelledby="tabSubtitleJobs" data-tab-group="subtitles" data-tab-panel="jobs" tabindex="0" hidden>
+        <section class="card subtitle-jobs-panel" id="subtitleJobsPanel" aria-labelledby="subtitleJobsHeading">
+          <div class="card-head">
+            <h2 id="subtitleJobsHeading">字幕任务</h2>
+            <span class="muted" id="subtitleJobsStatus"></span>
+            <button type="button" class="btn btn-ghost btn-sm" id="subtitleJobsRefreshBtn">
+              <svg class="icon" aria-hidden="true"><use href="#i-refresh"></use></svg>刷新任务
+            </button>
+          </div>
+          <div class="form-grid subtitle-filter-bar" id="subtitleFilterBar">
+            <div class="field">
+              <label for="subtitleJobSearch">检索（路径/任务ID/关键字）</label>
+              <input id="subtitleJobSearch" type="text" placeholder="movie 或 sub-2026..." autocomplete="off" spellcheck="false">
+            </div>
+            <div class="field">
+              <label for="subtitleJobStatusFilter">状态</label>
+              <select id="subtitleJobStatusFilter">
+                <option value="">全部状态</option>
+                <option value="active">进行中</option>
+                <option value="queued">排队中</option>
+                <option value="running">识别中</option>
+                <option value="translating">翻译中</option>
+                <option value="paused">已暂停</option>
+                <option value="done">已完成</option>
+                <option value="failed">失败</option>
+                <option value="cancelled">已取消</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="subtitleJobSuffix">文件后缀</label>
+              <input id="subtitleJobSuffix" type="text" placeholder=".mkv" autocomplete="off" spellcheck="false">
+            </div>
+            <div class="field">
+              <label for="subtitleJobDir">目录包含</label>
+              <input id="subtitleJobDir" type="text" placeholder="/volume1/media" autocomplete="off" spellcheck="false">
+            </div>
+            <div class="field">
+              <label for="subtitleJobCategory">失败分类</label>
+              <select id="subtitleJobCategory">
+                <option value="">全部分类</option>
+              </select>
+            </div>
+            <div class="field field-wide">
+              <div class="settings-actions-row">
+                <button type="button" class="btn btn-primary btn-sm" id="subtitleJobFilterBtn">筛选</button>
+                <button type="button" class="btn btn-ghost btn-sm" id="subtitleJobFilterResetBtn">重置</button>
+                <label class="check"><input id="subtitleSelectAll" type="checkbox">全选当前列表</label>
+                <span class="muted" id="subtitleBulkCount">已选 0 个</span>
+                <button type="button" class="btn btn-ghost btn-sm" id="subtitleBulkCancelBtn">批量取消</button>
+                <button type="button" class="btn btn-ghost btn-sm" id="subtitleBulkRetryBtn">批量重试</button>
+                <button type="button" class="btn btn-ghost btn-sm" id="subtitleBulkPriorityBtn">批量置顶</button>
+              </div>
+            </div>
+          </div>
+          <div class="state-box" id="subtitleJobsLoading" hidden><span class="spinner" aria-hidden="true"></span>正在加载字幕任务…</div>
+          <div class="state-box state-error" id="subtitleJobsError" role="alert" hidden></div>
+          <div class="state-box state-empty" id="subtitleJobsEmpty" hidden>暂无字幕任务。可在视频结果行点击“生成字幕”，或到「字幕」页批量提交。</div>
+          <div id="subtitleJobsList" class="subtitle-jobs-list"></div>
+          <p class="hint">任务进行中或队列中有任务时会自动刷新；「即将执行」按真实队列顺序显示；切换到其他标签后停止轮询，避免后台请求。</p>
+        </section>
+        <section class="card subtitle-failures-panel" id="subtitleFailuresPanel" aria-labelledby="subtitleFailuresHeading">
+          <div class="card-head">
+            <h2 id="subtitleFailuresHeading">失败任务（分类 / 导出 / 批量重试）</h2>
+            <span class="muted" id="subtitleFailuresCount"></span>
+            <button type="button" class="btn btn-ghost btn-sm" id="subtitleFailuresRefreshBtn">
+              <svg class="icon" aria-hidden="true"><use href="#i-refresh"></use></svg>刷新
+            </button>
+          </div>
+          <div class="form-grid">
+            <div class="field">
+              <label for="subtitleFailureFilter">失败分类</label>
+              <select id="subtitleFailureFilter">
+                <option value="">全部失败</option>
+              </select>
+            </div>
+            <div class="field">
+              <label class="check"><input id="subtitleFailureIncludeSkipped" type="checkbox">包含“无语音已跳过”</label>
+            </div>
+          </div>
+          <div class="settings-actions-row">
+            <a class="btn btn-ghost btn-sm" id="subtitleFailuresExportBtn" href="/api/subtitles/failures/export" download>导出失败清单 CSV</a>
+            <button type="button" class="btn btn-primary btn-sm" id="subtitleFailuresRetryBtn">批量重试（可恢复错误）</button>
+            <button type="button" class="btn btn-ghost btn-sm" id="subtitleFailuresRetryForceBtn">强制重试全部</button>
+            <span class="muted" id="subtitleFailuresHint"></span>
+          </div>
+          <div class="state-box" id="subtitleFailuresLoading" hidden><span class="spinner" aria-hidden="true"></span>正在加载失败任务…</div>
+          <div class="state-box state-empty" id="subtitleFailuresEmpty" hidden>暂无失败任务。</div>
+          <div id="subtitleFailuresList" class="subtitle-failures-list"></div>
+        </section>
+      </div>
     </section>
 
-    <!-- ========== 任务中心（扫描历史 / 字幕任务 / 删除任务 / 存储诊断） ========== -->
-    <!-- ========== 下载页（v0051） ========== -->
     <section id="view-download" class="view" data-view="download" aria-labelledby="downloadHeading" hidden>
       <div class="page-head">
         <div>
@@ -1182,275 +1358,6 @@
       </section>
     </section>
 
-    <section id="view-history" class="view" data-view="history" aria-labelledby="historyHeading" hidden>
-      <div class="page-head">
-        <div>
-          <h1 id="historyHeading">任务中心</h1>
-          <p class="page-desc">扫描历史、字幕任务、删除任务与操作日志集中在这里，用标签页切换即可。正在进行的任务不会因为切换标签而中断。</p>
-        </div>
-        <button type="button" class="btn btn-ghost btn-sm" id="historyRefreshBtn">
-          <svg class="icon" aria-hidden="true"><use href="#i-refresh"></use></svg>刷新当前页
-        </button>
-      </div>
-
-      <div class="task-tabs" role="tablist" aria-label="任务中心分类">
-        <button type="button" class="task-tab is-active" role="tab" id="taskTabHistory" data-task-tab="history" aria-selected="true" aria-controls="taskPanelHistory" tabindex="0">扫描历史</button>
-        <button type="button" class="task-tab" role="tab" id="taskTabSubtitles" data-task-tab="subtitles" aria-selected="false" aria-controls="taskPanelSubtitles" tabindex="-1">字幕任务</button>
-        <button type="button" class="task-tab" role="tab" id="taskTabDeletions" data-task-tab="deletions" aria-selected="false" aria-controls="taskPanelDeletions" tabindex="-1">删除任务</button>
-        <button type="button" class="task-tab" role="tab" id="taskTabTrash" data-task-tab="trash" aria-selected="false" aria-controls="taskPanelTrash" tabindex="-1">回收站与合并</button>
-        <button type="button" class="task-tab" role="tab" id="taskTabLogs" data-task-tab="logs" aria-selected="false" aria-controls="taskPanelLogs" tabindex="-1">操作日志</button>
-      </div>
-
-      <div class="task-panel" id="taskPanelHistory" role="tabpanel" aria-labelledby="taskTabHistory" data-task-panel="history" tabindex="0">
-        <div class="state-box" id="historyLoading" hidden><span class="spinner" aria-hidden="true"></span>正在加载历史记录…</div>
-        <div class="state-box state-error" id="historyError" role="alert" hidden></div>
-        <div class="state-box state-empty" id="historyEmpty" hidden>暂无扫描历史。完成一次扫描后会显示在这里。</div>
-        <div id="historyList" class="history-list"></div>
-      </div>
-
-      <div class="task-panel" id="taskPanelSubtitles" role="tabpanel" aria-labelledby="taskTabSubtitles" data-task-panel="subtitles" tabindex="0" hidden>
-        <section class="card subtitle-jobs-panel" id="subtitleJobsPanel" aria-labelledby="subtitleJobsHeading">
-          <div class="card-head">
-            <h2 id="subtitleJobsHeading">字幕任务</h2>
-            <span class="muted" id="subtitleJobsStatus"></span>
-            <button type="button" class="btn btn-ghost btn-sm" id="subtitleJobsRefreshBtn">
-              <svg class="icon" aria-hidden="true"><use href="#i-refresh"></use></svg>刷新任务
-            </button>
-          </div>
-          <div class="form-grid subtitle-filter-bar" id="subtitleFilterBar">
-            <div class="field">
-              <label for="subtitleJobSearch">检索（路径/任务ID/关键字）</label>
-              <input id="subtitleJobSearch" type="text" placeholder="movie 或 sub-2026..." autocomplete="off" spellcheck="false">
-            </div>
-            <div class="field">
-              <label for="subtitleJobStatusFilter">状态</label>
-              <select id="subtitleJobStatusFilter">
-                <option value="">全部状态</option>
-                <option value="active">进行中</option>
-                <option value="queued">排队中</option>
-                <option value="running">识别中</option>
-                <option value="translating">翻译中</option>
-                <option value="paused">已暂停</option>
-                <option value="done">已完成</option>
-                <option value="failed">失败</option>
-                <option value="cancelled">已取消</option>
-              </select>
-            </div>
-            <div class="field">
-              <label for="subtitleJobSuffix">文件后缀</label>
-              <input id="subtitleJobSuffix" type="text" placeholder=".mkv" autocomplete="off" spellcheck="false">
-            </div>
-            <div class="field">
-              <label for="subtitleJobDir">目录包含</label>
-              <input id="subtitleJobDir" type="text" placeholder="/volume1/media" autocomplete="off" spellcheck="false">
-            </div>
-            <div class="field">
-              <label for="subtitleJobCategory">失败分类</label>
-              <select id="subtitleJobCategory">
-                <option value="">全部分类</option>
-              </select>
-            </div>
-            <div class="field field-wide">
-              <div class="settings-actions-row">
-                <button type="button" class="btn btn-primary btn-sm" id="subtitleJobFilterBtn">筛选</button>
-                <button type="button" class="btn btn-ghost btn-sm" id="subtitleJobFilterResetBtn">重置</button>
-                <label class="check"><input id="subtitleSelectAll" type="checkbox">全选当前列表</label>
-                <span class="muted" id="subtitleBulkCount">已选 0 个</span>
-                <button type="button" class="btn btn-ghost btn-sm" id="subtitleBulkCancelBtn">批量取消</button>
-                <button type="button" class="btn btn-ghost btn-sm" id="subtitleBulkRetryBtn">批量重试</button>
-                <button type="button" class="btn btn-ghost btn-sm" id="subtitleBulkPriorityBtn">批量置顶</button>
-              </div>
-            </div>
-          </div>
-          <div class="state-box" id="subtitleJobsLoading" hidden><span class="spinner" aria-hidden="true"></span>正在加载字幕任务…</div>
-          <div class="state-box state-error" id="subtitleJobsError" role="alert" hidden></div>
-          <div class="state-box state-empty" id="subtitleJobsEmpty" hidden>暂无字幕任务。可在视频结果行点击“生成字幕”，或到「字幕」页批量提交。</div>
-          <div id="subtitleJobsList" class="subtitle-jobs-list"></div>
-          <p class="hint">任务进行中或队列中有任务时会自动刷新；「即将执行」按真实队列顺序显示；切换到其他标签后停止轮询，避免后台请求。</p>
-        </section>
-        <section class="card subtitle-failures-panel" id="subtitleFailuresPanel" aria-labelledby="subtitleFailuresHeading">
-          <div class="card-head">
-            <h2 id="subtitleFailuresHeading">失败任务（分类 / 导出 / 批量重试）</h2>
-            <span class="muted" id="subtitleFailuresCount"></span>
-            <button type="button" class="btn btn-ghost btn-sm" id="subtitleFailuresRefreshBtn">
-              <svg class="icon" aria-hidden="true"><use href="#i-refresh"></use></svg>刷新
-            </button>
-          </div>
-          <div class="form-grid">
-            <div class="field">
-              <label for="subtitleFailureFilter">失败分类</label>
-              <select id="subtitleFailureFilter">
-                <option value="">全部失败</option>
-              </select>
-            </div>
-            <div class="field">
-              <label class="check"><input id="subtitleFailureIncludeSkipped" type="checkbox">包含“无语音已跳过”</label>
-            </div>
-          </div>
-          <div class="settings-actions-row">
-            <a class="btn btn-ghost btn-sm" id="subtitleFailuresExportBtn" href="/api/subtitles/failures/export" download>导出失败清单 CSV</a>
-            <button type="button" class="btn btn-primary btn-sm" id="subtitleFailuresRetryBtn">批量重试（可恢复错误）</button>
-            <button type="button" class="btn btn-ghost btn-sm" id="subtitleFailuresRetryForceBtn">强制重试全部</button>
-            <span class="muted" id="subtitleFailuresHint"></span>
-          </div>
-          <div class="state-box" id="subtitleFailuresLoading" hidden><span class="spinner" aria-hidden="true"></span>正在加载失败任务…</div>
-          <div class="state-box state-empty" id="subtitleFailuresEmpty" hidden>暂无失败任务。</div>
-          <div id="subtitleFailuresList" class="subtitle-failures-list"></div>
-        </section>
-      </div>
-
-      <div class="task-panel" id="taskPanelDeletions" role="tabpanel" aria-labelledby="taskTabDeletions" data-task-panel="deletions" tabindex="0" hidden>
-        <section class="card deletion-jobs-panel" id="deletionJobsPanel" aria-labelledby="deletionJobsHeading">
-          <div class="card-head">
-            <h2 id="deletionJobsHeading">删除任务</h2>
-            <span class="muted" id="deletionJobsStatus"></span>
-            <button type="button" class="btn btn-ghost btn-sm" id="deletionJobsRefreshBtn">
-              <svg class="icon" aria-hidden="true"><use href="#i-refresh"></use></svg>刷新任务
-            </button>
-          </div>
-          <div class="state-box" id="deletionJobsLoading" hidden><span class="spinner" aria-hidden="true"></span>正在加载删除任务…</div>
-          <div class="state-box state-error" id="deletionJobsError" role="alert" hidden></div>
-          <div class="state-box state-empty" id="deletionJobsEmpty" hidden>暂无删除任务。在删除向导中确认执行后会显示在这里。</div>
-          <div class="table-wrap" id="deletionJobsTableWrap" hidden>
-            <table class="data-table" id="deletionJobsTable">
-              <caption class="visually-hidden">最近的删除任务</caption>
-              <thead>
-                <tr>
-                  <th scope="col">开始时间</th>
-                  <th scope="col">扫描任务</th>
-                  <th scope="col">状态</th>
-                  <th scope="col">文件数</th>
-                  <th scope="col">已删除</th>
-                  <th scope="col">失败</th>
-                  <th scope="col">已处理空间</th>
-                  <th scope="col">操作</th>
-                </tr>
-              </thead>
-              <tbody id="deletionJobsList"></tbody>
-            </table>
-          </div>
-          <p class="hint">仅显示删除任务摘要，不包含文件内容；点击“打开扫描”可查看对应扫描结果。</p>
-        </section>
-      </div>
-
-      <div class="task-panel" id="taskPanelTrash" role="tabpanel" aria-labelledby="taskTabTrash" data-task-panel="trash" tabindex="0" hidden>
-        <section class="card" aria-labelledby="trashHeading">
-          <div class="card-head">
-            <h2 id="trashHeading">套件回收站</h2>
-            <span class="muted" id="trashRecycleMode"></span>
-            <button type="button" class="btn btn-ghost btn-sm" id="trashRefreshBtn">
-              <svg class="icon" aria-hidden="true"><use href="#i-refresh"></use></svg>刷新
-            </button>
-          </div>
-          <p class="hint">删除时选择“套件独立回收站”的文件会移动到共享文件夹根下的 <code>#duplicate-cleaner-trash/</code>，可按删除批次整组恢复或清理；清理不可恢复，需要输入“永久删除”。当前删除去向可在设置页修改。</p>
-          <div class="state-box" id="trashLoading" hidden><span class="spinner" aria-hidden="true"></span>正在加载回收站…</div>
-          <div class="state-box state-error" id="trashError" role="alert" hidden></div>
-          <div class="state-box state-empty" id="trashEmpty" hidden>暂无套件回收站记录。</div>
-          <div id="trashList" class="trash-list"></div>
-        </section>
-        <section class="card" aria-labelledby="mergeHistoryHeading">
-          <div class="card-head">
-            <h2 id="mergeHistoryHeading">硬链接合并记录</h2>
-            <span class="muted" id="trashMergeCount"></span>
-          </div>
-          <p class="hint">合并后这些路径共享同一份内容（任一处修改会影响全部）；可“恢复为独立副本”（Btrfs FICLONE 秒级复制，其它文件系统回退普通复制）。</p>
-          <div class="state-box" id="trashMergeLoading" hidden><span class="spinner" aria-hidden="true"></span>正在加载合并记录…</div>
-          <div class="state-box state-empty" id="trashMergeEmpty" hidden>暂无硬链接合并记录。</div>
-          <div id="trashMergeList" class="trash-list"></div>
-        </section>
-      </div>
-
-      <div class="task-panel" id="taskPanelLogs" role="tabpanel" aria-labelledby="taskTabLogs" data-task-panel="logs" tabindex="0" hidden>
-        <div class="logs-head">
-          <div>
-            <h2 id="logsHeading">操作日志</h2>
-            <p class="page-desc">审计事件与扫描/删除日志文件都持久化保存在数据目录中，便于事后追溯。可勾选删除单条，或只保留最近 N 天。</p>
-          </div>
-          <div class="logs-actions">
-            <label class="inline-label" for="logLimitSelect">条数</label>
-            <select id="logLimitSelect" class="select-compact">
-              <option value="50">50</option>
-              <option value="100">100</option>
-              <option value="200">200</option>
-            </select>
-            <label class="inline-label" for="logsKeepDays">保留最近</label>
-            <select id="logsKeepDays" class="select-compact">
-              <option value="7">7 天</option>
-              <option value="30" selected>30 天</option>
-              <option value="90">90 天</option>
-              <option value="180">180 天</option>
-              <option value="365">365 天</option>
-            </select>
-            <button type="button" class="btn btn-ghost btn-sm" id="auditPruneBtn">
-              <svg class="icon" aria-hidden="true"><use href="#i-trash"></use></svg>清理审计
-            </button>
-            <button type="button" class="btn btn-ghost btn-sm" id="logFilesPruneBtn">
-              <svg class="icon" aria-hidden="true"><use href="#i-trash"></use></svg>清理日志文件
-            </button>
-            <button type="button" class="btn btn-ghost btn-sm" id="logsRefreshBtn">
-              <svg class="icon" aria-hidden="true"><use href="#i-refresh"></use></svg>刷新
-            </button>
-          </div>
-        </div>
-        <p class="hint">删除不可恢复：勾选可删除单条审计事件；「清理审计 / 清理日志文件」按上面选择的“保留最近 N 天”删除更早记录。</p>
-        <section class="card logs-search-panel" id="logSearchPanel" aria-labelledby="logSearchHeading">
-          <div class="card-head">
-            <h2 id="logSearchHeading">日志检索（按任务 ID / 关键字）</h2>
-            <span class="muted" id="logSearchStatus"></span>
-          </div>
-          <div class="form-grid">
-            <div class="field">
-              <label for="logSearchQuery">关键字</label>
-              <input id="logSearchQuery" type="text" placeholder="PERMISSION / timeout / 任务ID" autocomplete="off" spellcheck="false">
-            </div>
-            <div class="field">
-              <label for="logSearchJobId">任务 ID（扫描/删除/合并/字幕）</label>
-              <input id="logSearchJobId" type="text" placeholder="20261108-... 或 sub-/del-/mrg-" autocomplete="off" spellcheck="false">
-            </div>
-            <div class="field field-wide">
-              <div class="settings-actions-row">
-                <button type="button" class="btn btn-primary btn-sm" id="logSearchBtn">搜索</button>
-                <button type="button" class="btn btn-ghost btn-sm" id="logSearchClearBtn">清空</button>
-                <a class="btn btn-ghost btn-sm" id="logSearchExportBtn" href="/api/logs/export" download>导出可读日志</a>
-              </div>
-            </div>
-          </div>
-          <div class="state-box" id="logSearchLoading" hidden><span class="spinner" aria-hidden="true"></span>正在检索日志…</div>
-          <div class="state-box state-empty" id="logSearchEmpty" hidden>没有匹配的日志。</div>
-          <div id="logSearchResults" class="log-search-results"></div>
-        </section>
-        <div class="state-box" id="logsLoading" hidden><span class="spinner" aria-hidden="true"></span>正在加载日志…</div>
-        <div class="state-box state-error" id="logsError" role="alert" hidden></div>
-        <div class="two-col">
-          <section class="card" aria-labelledby="auditHeading">
-            <div class="card-head">
-              <h2 id="auditHeading">审计事件</h2>
-              <span class="muted" id="auditCount"></span>
-              <button type="button" class="btn btn-ghost btn-sm" id="auditDeleteSelectedBtn" disabled>
-                <svg class="icon" aria-hidden="true"><use href="#i-trash"></use></svg>删除选中
-              </button>
-            </div>
-            <div class="state-box state-empty" id="auditEmpty" hidden>暂无审计事件。</div>
-            <div class="table-wrap">
-              <table class="data-table" id="auditTable">
-                <caption class="visually-hidden">最近的审计事件</caption>
-                <thead><tr><th scope="col" class="col-check"><input type="checkbox" id="auditSelectAll" aria-label="全选审计事件"></th><th scope="col">时间</th><th scope="col">操作</th><th scope="col">用户</th><th scope="col">详情</th></tr></thead>
-                <tbody id="auditList"></tbody>
-              </table>
-            </div>
-          </section>
-          <section class="card" aria-labelledby="logFilesHeading">
-            <div class="card-head"><h2 id="logFilesHeading">日志文件</h2><span class="muted" id="logFilesCount"></span></div>
-            <div class="state-box state-empty" id="logFilesEmpty" hidden>暂无日志文件。</div>
-            <ul class="log-file-list" id="logFilesList"></ul>
-            <p class="hint">下载链接需要登录会话，文件仅保存在 NAS 本地；单个文件可点击右侧删除。</p>
-          </section>
-        </div>
-      </div>
-
-    </section>
-
-    <!-- ========== 设置 ========== -->
     <section id="view-settings" class="view" data-view="settings" aria-labelledby="settingsHeading" hidden>
       <div class="page-head">
         <div>
@@ -1459,6 +1366,13 @@
           <p class="settings-overview" id="settingsOverview" aria-live="polite"></p>
         </div>
       </div>
+
+      <div class="task-tabs" role="tablist" aria-label="设置页分类" data-tabbar="settings">
+      <button type="button" class="task-tab is-active" role="tab" id="tabSettingsGeneral" data-tab-group="settings" data-tab="general" aria-selected="true" aria-controls="tabPanelSettingsGeneral" tabindex="0">常规</button>
+      <button type="button" class="task-tab" role="tab" id="tabSettingsLogs" data-tab-group="settings" data-tab="logs" aria-selected="false" aria-controls="tabPanelSettingsLogs" tabindex="-1">操作日志</button>
+      </div>
+
+      <div class="task-panel" id="tabPanelSettingsGeneral" role="tabpanel" aria-labelledby="tabSettingsGeneral" data-tab-group="settings" data-tab-panel="general" tabindex="0">
       <div class="state-box" id="settingsLoading" hidden><span class="spinner" aria-hidden="true"></span>正在加载设置…</div>
       <div class="state-box state-error" id="settingsLoadError" role="alert" hidden></div>
       <form id="settingsForm" class="card settings-card" novalidate>
@@ -1597,7 +1511,7 @@
               <option value="share">共享文件夹回收站（#recycle，DSM 回收站可见）</option>
               <option value="package">套件独立回收站（可按删除批次整组恢复）</option>
             </select>
-            <p class="hint">套件独立回收站会移动到共享文件夹根下的 <code>#duplicate-cleaner-trash/</code>（同卷 rename，不复制数据），可在「任务中心 → 回收站与合并」里恢复或清理。已有文件的去向在生成删除计划时确定。</p>
+            <p class="hint">套件独立回收站会移动到共享文件夹根下的 <code>#duplicate-cleaner-trash/</code>（同卷 rename，不复制数据），可在「扫描 → 删除与回收站」里恢复或清理。已有文件的去向在生成删除计划时确定。</p>
             <label class="check"><input id="setMergeEnabled" type="checkbox">启用硬链接合并（不可逆，默认关闭）</label>
             <p class="hint">合并把重复组的非保留项替换成指向保留项的硬链接，只省空间不删路径；合并后任一路径的内容修改会影响全部路径。只对精准重复组生效，需逐组确认，可在「回收站与合并」里恢复为独立副本。</p>
           </div>
@@ -2453,7 +2367,97 @@
           <button type="button" class="btn btn-link" id="resetSettingsBtn">恢复默认值</button>
         </div>
       </form>
+      </div>
+
+      <div class="task-panel" id="tabPanelSettingsLogs" role="tabpanel" aria-labelledby="tabSettingsLogs" data-tab-group="settings" data-tab-panel="logs" tabindex="0" hidden>
+        <div class="logs-head">
+          <div>
+            <h2 id="logsHeading">操作日志</h2>
+            <p class="page-desc">审计事件与扫描/删除日志文件都持久化保存在数据目录中，便于事后追溯。可勾选删除单条，或只保留最近 N 天。</p>
+          </div>
+          <div class="logs-actions">
+            <label class="inline-label" for="logLimitSelect">条数</label>
+            <select id="logLimitSelect" class="select-compact">
+              <option value="50">50</option>
+              <option value="100">100</option>
+              <option value="200">200</option>
+            </select>
+            <label class="inline-label" for="logsKeepDays">保留最近</label>
+            <select id="logsKeepDays" class="select-compact">
+              <option value="7">7 天</option>
+              <option value="30" selected>30 天</option>
+              <option value="90">90 天</option>
+              <option value="180">180 天</option>
+              <option value="365">365 天</option>
+            </select>
+            <button type="button" class="btn btn-ghost btn-sm" id="auditPruneBtn">
+              <svg class="icon" aria-hidden="true"><use href="#i-trash"></use></svg>清理审计
+            </button>
+            <button type="button" class="btn btn-ghost btn-sm" id="logFilesPruneBtn">
+              <svg class="icon" aria-hidden="true"><use href="#i-trash"></use></svg>清理日志文件
+            </button>
+            <button type="button" class="btn btn-ghost btn-sm" id="logsRefreshBtn">
+              <svg class="icon" aria-hidden="true"><use href="#i-refresh"></use></svg>刷新
+            </button>
+          </div>
+        </div>
+        <p class="hint">删除不可恢复：勾选可删除单条审计事件；「清理审计 / 清理日志文件」按上面选择的“保留最近 N 天”删除更早记录。</p>
+        <section class="card logs-search-panel" id="logSearchPanel" aria-labelledby="logSearchHeading">
+          <div class="card-head">
+            <h2 id="logSearchHeading">日志检索（按任务 ID / 关键字）</h2>
+            <span class="muted" id="logSearchStatus"></span>
+          </div>
+          <div class="form-grid">
+            <div class="field">
+              <label for="logSearchQuery">关键字</label>
+              <input id="logSearchQuery" type="text" placeholder="PERMISSION / timeout / 任务ID" autocomplete="off" spellcheck="false">
+            </div>
+            <div class="field">
+              <label for="logSearchJobId">任务 ID（扫描/删除/合并/字幕）</label>
+              <input id="logSearchJobId" type="text" placeholder="20261108-... 或 sub-/del-/mrg-" autocomplete="off" spellcheck="false">
+            </div>
+            <div class="field field-wide">
+              <div class="settings-actions-row">
+                <button type="button" class="btn btn-primary btn-sm" id="logSearchBtn">搜索</button>
+                <button type="button" class="btn btn-ghost btn-sm" id="logSearchClearBtn">清空</button>
+                <a class="btn btn-ghost btn-sm" id="logSearchExportBtn" href="/api/logs/export" download>导出可读日志</a>
+              </div>
+            </div>
+          </div>
+          <div class="state-box" id="logSearchLoading" hidden><span class="spinner" aria-hidden="true"></span>正在检索日志…</div>
+          <div class="state-box state-empty" id="logSearchEmpty" hidden>没有匹配的日志。</div>
+          <div id="logSearchResults" class="log-search-results"></div>
+        </section>
+        <div class="state-box" id="logsLoading" hidden><span class="spinner" aria-hidden="true"></span>正在加载日志…</div>
+        <div class="state-box state-error" id="logsError" role="alert" hidden></div>
+        <div class="two-col">
+          <section class="card" aria-labelledby="auditHeading">
+            <div class="card-head">
+              <h2 id="auditHeading">审计事件</h2>
+              <span class="muted" id="auditCount"></span>
+              <button type="button" class="btn btn-ghost btn-sm" id="auditDeleteSelectedBtn" disabled>
+                <svg class="icon" aria-hidden="true"><use href="#i-trash"></use></svg>删除选中
+              </button>
+            </div>
+            <div class="state-box state-empty" id="auditEmpty" hidden>暂无审计事件。</div>
+            <div class="table-wrap">
+              <table class="data-table" id="auditTable">
+                <caption class="visually-hidden">最近的审计事件</caption>
+                <thead><tr><th scope="col" class="col-check"><input type="checkbox" id="auditSelectAll" aria-label="全选审计事件"></th><th scope="col">时间</th><th scope="col">操作</th><th scope="col">用户</th><th scope="col">详情</th></tr></thead>
+                <tbody id="auditList"></tbody>
+              </table>
+            </div>
+          </section>
+          <section class="card" aria-labelledby="logFilesHeading">
+            <div class="card-head"><h2 id="logFilesHeading">日志文件</h2><span class="muted" id="logFilesCount"></span></div>
+            <div class="state-box state-empty" id="logFilesEmpty" hidden>暂无日志文件。</div>
+            <ul class="log-file-list" id="logFilesList"></ul>
+            <p class="hint">下载链接需要登录会话，文件仅保存在 NAS 本地；单个文件可点击右侧删除。</p>
+          </section>
+        </div>
+      </div>
     </section>
+
 
     <footer class="app-footer">
       <span>重复文件清理与字幕 · Duplicate Cleaner &amp; Subtitles</span>
@@ -2496,6 +2500,6 @@
   <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.6" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M12 10.8v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="12" cy="7.6" r="1.05" fill="currentColor"/></symbol>
 </svg>
 
-<script type="module" src="./app.js?v=1.1.0-0056"></script>
+<script type="module" src="./app.js?v=1.1.0-0057"></script>
 </body>
 </html>

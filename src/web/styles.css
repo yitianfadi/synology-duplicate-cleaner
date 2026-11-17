@@ -2021,6 +2021,15 @@ input[type="checkbox"]:disabled { cursor: not-allowed; }
 .task-panel { padding-top: 16px; }
 .task-panel[hidden] { display: none !important; }
 .task-panel:focus { outline: none; }
+/* v0057：视图内嵌标签页的面板标题行（扫描→历史） */
+.tab-panel-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 2px 0 10px;
+}
+.tab-panel-head .hint { margin: 0; }
 
 .deletion-jobs-panel .card-head,
 .storage-diagnostics-panel .card-head {

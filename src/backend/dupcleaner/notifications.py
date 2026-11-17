@@ -350,7 +350,7 @@ class NotificationService(object):
             elif failed >= int(settings.get("notify_fail_threshold") or 0) > 0:
                 event = "failure_burst"
                 title = u"删除任务出现大量失败"
-                message = u"删除任务 %s 失败 %s 个文件，请到任务中心查看明细。" % (
+                message = u"删除任务 %s 失败 %s 个文件，请到「扫描 → 删除与回收站」查看明细。" % (
                     (snapshot or {}).get("job_id"), failed)
                 level = "error"
                 detail = {"job_id": (snapshot or {}).get("job_id"),
@@ -375,7 +375,7 @@ class NotificationService(object):
                 return self.notify(
                     "failure_burst",
                     u"字幕批次出现大量失败",
-                    u"批次组 %s 共 %s 个任务，失败 %s 个，请到任务中心查看失败原因。"
+                    u"批次组 %s 共 %s 个任务，失败 %s 个，请到「字幕 → 任务」查看失败原因。"
                     % (group_id, total, failed),
                     "error",
                     {"group_id": group_id, "failed": failed, "total": total})

@@ -134,7 +134,7 @@ DEFAULT_SETTINGS = {
     # 硬链接合并默认关闭（不可逆操作；开启后仍需逐组确认 + confirm=MERGE）。
     "merge_enabled": config.MERGE_ENABLED_DEFAULT,
     # 删除后的去向：share=共享文件夹 #recycle（默认，DSM 回收站可见）；
-    # package=套件独立回收站（同卷 rename，可在任务中心整组恢复/清理）。
+    # package=套件独立回收站（同卷 rename，可在「扫描 → 删除与回收站」整组恢复/清理）。
     "delete_recycle_mode": config.RECYCLE_MODE_DEFAULT,
     # --- v0046 通知系统 / 计划扫描（docs/NOTIFICATION_SCHEDULE_CONTRACT.md）---
     "notify_enabled": False,

@@ -878,6 +878,9 @@ def check_frontend():
     js_dir = os.path.join(web, "js")
     module_names = ["constants.js", "state.js", "dom.js", "format.js",
                     "util.js", "api.js", "toast.js", "modal.js",
+                    "labels.js", "scan-history.js", "deletion-jobs.js",
+                    "trash-page.js", "logs-page.js",
+                    "subtitle-shared.js", "subtitle-jobs.js",
                     "subtitle-probe.js", "subtitle-page.js",
                     "download-page.js", "convert-page.js"]
     module_paths = [os.path.join(js_dir, name) for name in module_names]
@@ -967,9 +970,9 @@ def check_frontend():
                and "startPolling" in app
                and "page.group" in app
                and "stopSubtitlePagePolling" in app
-               and "state.taskTab = 'subtitles'" in app)
+               and "setView('subtitles', { tab: 'jobs' })" in app)
     check("FE-SUBTITLE-POLL-RESUME",
-          "切换视图后批次组轮询可恢复、跳转任务中心直达字幕任务、记住上次目录",
+          "切换视图后批次组轮询可恢复、跳转字幕页「任务」标签直达任务列表、记住上次目录",
           poll_ok, "subtitle batch polling/jump/memory wiring missing")
     group_ok = (
         all(marker in app for marker in (
@@ -1036,14 +1039,14 @@ def check_frontend():
           logs_delete_ui_ok, "logs delete UI markers missing")
     nav_v0038_ok = (
         'id="navSettingsBtn"' in html
-        and 'id="taskTabLogs"' in html
-        and 'id="taskPanelLogs"' in html
+        and 'id="tabSettingsLogs"' in html
+        and 'id="tabPanelSettingsLogs"' in html
         and 'id="settingsDiagnosticsGroup"' in html
         and 'id="storagePanel"' in html
         and "taskTabStorage" not in html
         and "view-logs" not in html)
     check("FE-NAV-V0038",
-          "菜单调整：扫描/字幕/任务中心 + 右上角设置，操作日志并入任务中心，存储诊断移入设置（v0038）",
+          "菜单：扫描/字幕/下载/转换 + 右上角设置，操作日志并入设置页「操作日志」标签，存储诊断移入设置（v0038/v0057）",
           nav_v0038_ok, "v0038 navigation markers missing")
     subtitle_page_src = read(os.path.join(js_dir, "subtitle-page.js"))
     queue_ui_ok = (
@@ -1265,8 +1268,8 @@ def check_frontend():
           and "group-merge-btn" in read(os.path.join(web, "styles.css")),
           "merge ui markers missing")
     check("FE-TRASH-UI",
-          "任务中心「回收站与合并」：套件回收站整组恢复/清理 + 合并记录（v0045）",
-          "taskTabTrash" in html and "taskPanelTrash" in html
+          "扫描页「删除与回收站」标签：套件回收站整组恢复/清理 + 合并记录（v0045/v0057）",
+          "tabScanDeletion" in html and "tabPanelDeletion" in html
           and "trashList" in html and "trashMergeList" in html
           and "setDeleteRecycleMode" in html
           and "function loadTrashPanel" in app
@@ -1832,18 +1835,45 @@ def check_frontend():
           safe_dom >= 8 and inner_html == 0,
           "textContent=%d createTextNode=%d innerHTML=%d"
           % (app.count("textContent"), app.count("createTextNode"), inner_html))
-    check("FE-CHINESE", "前端存在中文界面文案（抽查扫描/任务中心/日志/设置）",
+    check("FE-CHINESE", "前端存在中文界面文案（抽查扫描/历史/日志/设置）",
           all(text in app or text in html for text in
-              (u"扫描", u"任务中心", u"操作日志", u"设置")),
+              (u"扫描", u"历史", u"操作日志", u"设置")),
           "Chinese nav text missing")
 
-    nav = [u"扫描", u"字幕", u"任务中心"]
-    check("FE-NAV", "顶部导航为 扫描/字幕/任务中心 + 右上角设置入口（v0038）",
+    nav = [u"扫描", u"字幕", u"下载", u"转换"]
+    check("FE-NAV", "顶部导航为 扫描/字幕/下载/转换 + 右上角设置入口（v0038/v0057）",
           all(text in html for text in nav)
           and 'id="navSettingsBtn"' in html
-          and 'id="taskTabLogs"' in html
+          and 'id="tabSettingsLogs"' in html
           and u"操作日志" in html,
           "nav text missing in index.html")
+
+    tab_groups = {
+        "scan": ("tabPanelScan", "tabPanelHistory", "tabPanelDeletion"),
+        "subtitles": ("tabPanelSubtitleSubmit", "tabPanelSubtitleJobs"),
+        "settings": ("tabPanelSettingsGeneral", "tabPanelSettingsLogs"),
+    }
+    tabs_detail = []
+    for view_name, panels in tab_groups.items():
+        if 'data-tabbar="%s"' % view_name not in html:
+            tabs_detail.append("missing tabbar " + view_name)
+        for panel in panels:
+            if 'id="%s"' % panel not in html:
+                tabs_detail.append("missing panel " + panel)
+            if 'data-tab-panel="' not in html:
+                tabs_detail.append("panel attr missing")
+    tabs_ok = (
+        not tabs_detail
+        and "VIEW_TABS" in app and "VIEW_DEFAULT_TABS" in app
+        and "function setTab" in app and "function loadTab" in app
+        and "function bindTabs" in app
+        and "?tab=" in app
+        and 'data-nav="history"' not in html
+        and 'id="view-history"' not in html
+        and u"任务中心" not in html)
+    check("FE-TABS-V0057",
+          "任务中心退役：扫描页内嵌「历史 / 删除与回收站」、字幕页「任务」、设置页「操作日志」，支持 #/view?tab=x 深链",
+          tabs_ok, "; ".join(tabs_detail) or "tab wiring markers missing")
 
     folder_picker = (u"文件夹" in app or u"选择文件夹" in app) and "/api/browse" in app
     check("FE-FOLDER-PICKER", "文件夹选择器调用 /api/browse 并支持多选/排除",

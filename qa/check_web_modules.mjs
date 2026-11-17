@@ -164,11 +164,24 @@ const EXPECTED = {
     'normalizeModelList', 'formatModelListHint', 'formatProbeResult', 'formatProbeError'],
   'subtitle-page.js': ['initSubtitlePage', 'showSubtitlePage', 'stopSubtitlePagePolling'],
   'download-page.js': ['initDownloadPage', 'showDownloadPage', 'hideDownloadPage'],
-  'convert-page.js': ['initConvertPage', 'showConvertPage', 'hideConvertPage']
+  'convert-page.js': ['initConvertPage', 'showConvertPage', 'hideConvertPage'],
+  // v0057：从 app.js 拆出的面板模块
+  'labels.js': ['detectScanMode', 'reasonLabel'],
+  'scan-history.js': ['loadHistory', 'initScanHistory'],
+  'deletion-jobs.js': ['loadDeletionJobs', 'initDeletionJobs'],
+  'trash-page.js': ['loadTrashPanel', 'loadMergeHistory', 'initTrashPage'],
+  'logs-page.js': ['loadLogs', 'bindLogsEvents'],
+  'subtitle-shared.js': ['subtitleCapability', 'subtitleJobStatusLabel',
+    'subtitleStageLabel', 'isTerminalSubtitleStatus', 'renderSubtitleOutputs',
+    'buildSubtitleLanguageSelect', 'firstFiniteNumber'],
+  'subtitle-jobs.js': ['loadSubtitleJobs', 'loadSubtitleFailures', 'renderSubtitleJobs',
+    'subtitleBulkAction', 'subtitleFailuresRetry', 'initSubtitleJobs']
 };
 
 const MODULE_ORDER = ['constants.js', 'state.js', 'format.js', 'util.js', 'dom.js',
-  'api.js', 'toast.js', 'modal.js', 'subtitle-probe.js', 'subtitle-page.js',
+  'api.js', 'toast.js', 'modal.js', 'labels.js', 'scan-history.js', 'deletion-jobs.js',
+  'trash-page.js', 'logs-page.js', 'subtitle-shared.js', 'subtitle-jobs.js',
+  'subtitle-probe.js', 'subtitle-page.js',
   'download-page.js', 'convert-page.js'];
 
 const results = [];

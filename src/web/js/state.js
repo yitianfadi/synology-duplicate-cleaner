@@ -64,16 +64,18 @@ export var state = {
   // app.js 注入的目录选择器（供独立模块如字幕页复用同一个扫描范围选择器）
   // 签名：openSubtitleDirPicker({initial, onConfirm})
   openSubtitleDirPicker: null,
-  // v0039：字幕页批次总览里的“去任务中心”入口（由 app.js 注入）
+  // v0039：字幕页批次总览里的“去字幕任务”入口（由 app.js 注入）
   openSubtitleJobs: null,
+  // v0057：历史 / 删除任务面板打开某次扫描（由 app.js 注入，签名 openScan(scan)）
+  openScan: null,
   // v0051：下载页目录选择器（签名 openDownloadDirPicker({initial, onConfirm})）
   openDownloadDirPicker: null,
   // v0056：转换页目录选择器（源目录 / 输出目录共用）
   openConvertDirPicker: null,
   preview: { urls: [], abort: null },
   historyCache: null,
-  // 任务中心标签页：history / subtitles / deletions / logs（v0038：操作日志并入）
-  taskTab: 'history',
+  // v0057：各视图的内嵌标签页（扫描：scan/history/deletion；字幕：submit/jobs；设置：general/logs）
+  viewTab: { scan: 'scan', subtitles: 'submit', settings: 'general' },
   deletionJobs: { list: [], loading: false, loaded: false, lastError: '' },
   diagnostics: { data: null, loading: false, loaded: false, busy: false },
   logsLoaded: false,
@@ -85,7 +87,7 @@ export var state = {
 
 export var els = {};
 export var IDS = ('loginView loginForm loginUsername loginPassword loginOtp loginSubmit loginError app riskBanner envBadge userChip userName ' +
-  'logoutBtn main view-scan view-subtitles view-history view-settings navSettingsBtn scanHeading subtitlesHeading historyHeading settingsHeading ' +
+  'logoutBtn main view-scan view-subtitles view-settings navSettingsBtn scanHeading subtitlesHeading settingsHeading ' +
   'rootsList rootsCount rootsError pickRootsBtn clearRootsBtn excludeChips excludeCount pickExcludesBtn optionsForm resetOptionsBtn ' +
   'hashAlgo keepMode keepModeHint pinnedField pinnedValue pinnedError pickPinnedBtn clearPinnedBtn minSize minUnit minSizeError maxSize maxUnit ' +
   'maxSizeError includeExt includeExtError excludeExt excludeExtError ignoreCaseExt skipEmpty skipHidden recycleDefault ' +
@@ -169,8 +171,12 @@ export var IDS = ('loginView loginForm loginUsername loginPassword loginOtp logi
   'setSubtitleConcurrency setSubtitleConcurrencyError ' +
   'setSubtitleTranslateOutputs setSubtitleTranslateOutputsError ' +
   'subtitleGroupCurrent subtitleJobsFilter subtitleJobsActive ' +
-  'taskTabHistory taskTabSubtitles taskTabDeletions taskTabLogs ' +
-  'taskPanelHistory taskPanelSubtitles taskPanelDeletions taskPanelLogs ' +
+  'tabScanMain tabScanHistory tabScanDeletion ' +
+  'tabPanelScan tabPanelHistory tabPanelDeletion ' +
+  'tabSubtitleSubmit tabSubtitleJobs ' +
+  'tabPanelSubtitleSubmit tabPanelSubtitleJobs ' +
+  'tabSettingsGeneral tabSettingsLogs ' +
+  'tabPanelSettingsGeneral tabPanelSettingsLogs ' +
   'settingsDiagnosticsGroup settingsDiagnosticsSummary ' +
   'deletionJobsPanel deletionJobsHeading deletionJobsStatus deletionJobsRefreshBtn ' +
   'deletionJobsLoading deletionJobsError deletionJobsEmpty deletionJobsList ' +
@@ -205,7 +211,7 @@ export var IDS = ('loginView loginForm loginUsername loginPassword loginOtp logi
   'setNotifyFailThreshold setNotifyFreedGb setNotifyTimeout ' +
   'notifyChannelsHint notifyTestDsm notifyTestWebhook notifyTestTelegram ' +
   'notifyTestResult ' +
-  'taskTabTrash taskPanelTrash trashList trashLoading trashError trashEmpty ' +
+  'trashList trashLoading trashError trashEmpty ' +
   'trashRefreshBtn trashRecycleMode trashMergeList trashMergeLoading ' +
   'trashMergeEmpty trashMergeCount ' +
   'view-download downloadHeading downloadPageStatusBadge downloadUrls ' +

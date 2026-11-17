@@ -2,8 +2,8 @@
 
 一款为 Synology DSM 7.x 编写的重复文件清理套件：提供**哈希精准匹配**、**图片/文档内容相似**与**视频视觉相似**三种扫描模式，默认只保留**创建时间最晚**的一份；先出报告，人工核对、两次确认后才删除，默认移入群晖回收站，并持久化操作日志。图片/文档相似结果必须人工复核、禁止一键批量删除；视频相似组默认不勾选，允许手动全选批量删除。
 
-> **当前代码版本：1.1.0-0056（已打包 / 未发布）**（2026-11-17）—— 新增「格式转换」：视频/音频按预设互转、换容器或只提取音频；修复 `.dcpart` 未显式指定封装器导致 FFmpeg 合并/封装失败。
-> 最近一次正式发布仍为 [v1.1.0-0050](https://github.com/yitianfadi/synology-duplicate-cleaner/releases/tag/v1.1.0-0050)；v0051–v0056 的说明见 [发布说明](docs/RELEASE_NOTES_v1.1.0-0056.md)。
+> **当前代码版本：1.1.0-0057（已打包 / 未发布）**（2026-11-17）—— 退役「任务中心」页面：扫描历史 / 删除与回收站 / 字幕任务 / 操作日志分别并入扫描、字幕、设置页的内嵌标签；导航精简为 扫描 / 字幕 / 下载 / 转换 + 设置。
+> 最近一次正式发布仍为 [v1.1.0-0050](https://github.com/yitianfadi/synology-duplicate-cleaner/releases/tag/v1.1.0-0050)；v0051–v0057 的说明见 [发布说明](docs/RELEASE_NOTES_v1.1.0-0057.md)。
 
 > ## ⚠️ 风险提示
 > **删除文件存在数据丢失风险，重要数据建议先备份；本工具仅基于哈希判定重复，无法保证业务文件适用性，请核对扫描结果再操作。**
@@ -76,13 +76,14 @@
 - **空闲时段**：可只在夜间执行转换，窗口外任务排队等待，避免与字幕/下载抢 CPU 与磁盘 IO
 - **批量选择**：目录递归枚举（按音视频后缀过滤）或手动粘贴路径，提交前可见已选列表与总体积
 
-**任务中心与运维**
+**任务与运维（v0057：任务中心已并入各模块）**
 
+- **内嵌标签**：「扫描」页 = 扫描 / 历史 / 删除与回收站；「字幕」页 = 提交 / 任务；「设置」页 = 常规 / 操作日志。深链 `#/scan?tab=history`、`#/subtitles?tab=jobs`、`#/settings?tab=logs`
 - **任务检索与批量操作（v0049）**：字幕任务按状态/路径/目录/后缀/失败分类筛选；支持全选、批量取消/重试/置顶
 - **权限与路径体检（v0049）**：一键只读检查配置目录与共享文件夹的可读/可写状态，汇总扫描/字幕权限异常并给出 DSM 操作指引（不做自动提权）
 - **日志（v0049）**：按任务 ID/关键字检索日志与审计，一键导出可读文本；操作日志支持勾选删除或只保留最近 N 天
-- **即将执行队列（v0039）**：任务中心按真实 FIFO 顺序显示将执行的排队任务（含队列位置/总数），并单列「已暂停」「最近完成」
-- **导航结构（v0038）**：顶部为「扫描 / 字幕 / 下载 / 转换 / 任务中心」（v0056 新增转换），设置移到右上角；旧 `#/logs` 书签自动兼容
+- **即将执行队列（v0039）**：字幕任务按真实 FIFO 顺序显示将执行的排队任务（含队列位置/总数），并单列「已暂停」「最近完成」
+- **导航结构（v0057）**：顶部为「扫描 / 字幕 / 下载 / 转换」，设置移到右上角；旧 `#/history`、`#/logs` 书签不再重定向（按需求）
 - 扫描可暂停/继续/停止；精准/相似并发、哈希限速、特征缓存、低优先级（nice/ionice）；跳过符号链接、空文件、隐藏/系统文件与自定义后缀；扫描历史与操作日志持久化可下载
 - 前端为 ES modules（`app.js` 入口 + `js/` 模块），无构建、无第三方依赖；静态检查包含模块图与无头浏览器冒烟
 
@@ -93,7 +94,7 @@
 ```bash
 python build/fetch_ffmpeg.py   # 首次构建：下载两个架构的静态 FFmpeg 到 vendor/ffmpeg/
 python build/build_spk.py
-# 生成 dist/DuplicateCleaner-1.1.0-0056.spk
+# 生成 dist/DuplicateCleaner-1.1.0-0057.spk
 ```
 
 构建机需要 Python 3.8+；FFmpeg 二进制不提交到 Git，首次构建需运行 `build/fetch_ffmpeg.py`。重新生成图标需要 Pillow（仓库已带 PNG，可 `--no-icons`）。
@@ -101,7 +102,7 @@ python build/build_spk.py
 ### 2. 安装到 DSM
 
 1. DSM 套件中心先安装 **Python3**（3.8+）。
-2. 套件中心 → 手动安装 → 选择 `dist/DuplicateCleaner-1.1.0-0056.spk`。
+2. 套件中心 → 手动安装 → 选择 `dist/DuplicateCleaner-1.1.0-0057.spk`。
 3. 启动套件；从 DSM 主菜单打开“重复文件清理与字幕”，或访问 `http://<NAS>:8787/`。
 4. 使用 administrators 组账号登录。
 5. 按页面黄色“权限提示”给 `duplicatecleaner` 系统内部用户授权目标共享文件夹（读取；删除副本需读取/写入）。
@@ -150,7 +151,7 @@ python qa/bench_search.py
 - 契约：[前后端接口](docs/CONTRACT.md) · [内容相似](docs/SIMILARITY_CONTRACT.md) · [视频相似](docs/VIDEO_CONTRACT.md) · [存储层](docs/STORAGE_CONTRACT.md)
 - 字幕：[云端字幕](docs/SUBTITLE_CONTRACT.md) · [目录批量字幕](docs/SUBTITLE_BATCH_CONTRACT.md) · [字幕 ASR v2](docs/SUBTITLE_ASR_V2_CONTRACT.md)
 - 下载：[下载中心契约](docs/DOWNLOAD_CONTRACT.md) · [架构 §21](docs/ARCHITECTURE.md)
-- 交付与验收：[v2 需求交付与取舍](docs/REQUIREMENTS_V2_ASSESSMENT.md) · [发布说明 1.1.0-0056](docs/RELEASE_NOTES_v1.1.0-0056.md) · [QA 验收报告](qa/REPORT.md)
+- 交付与验收：[v2 需求交付与取舍](docs/REQUIREMENTS_V2_ASSESSMENT.md) · [发布说明 1.1.0-0057](docs/RELEASE_NOTES_v1.1.0-0057.md) · [QA 验收报告](qa/REPORT.md)
 
 ## 仓库结构
 

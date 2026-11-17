@@ -8,10 +8,15 @@ export var POLL_MS = 800;                 // 扫描 / 删除任务轮询间隔�
 export var GROUPS_LIMIT = 50;             // 结果分页大小
 export var TERMINAL_STATUS = ['completed', 'failed', 'stopped', 'interrupted'];
 export var ACTIVE_STATUS = ['queued', 'running', 'paused', 'stopping'];
-export var VIEWS = ['scan', 'subtitles', 'download', 'convert', 'history', 'settings'];
-export var VIEW_HEADINGS = { scan: 'scanHeading', subtitles: 'subtitlesHeading', download: 'downloadHeading', convert: 'convertHeading', history: 'historyHeading', settings: 'settingsHeading' };
-// v0038：旧书签 #/logs 兼容 → 任务中心「操作日志」标签页
-export var LEGACY_VIEW_ALIASES = { logs: 'history' };
+export var VIEWS = ['scan', 'subtitles', 'download', 'convert', 'settings'];
+export var VIEW_HEADINGS = { scan: 'scanHeading', subtitles: 'subtitlesHeading', download: 'downloadHeading', convert: 'convertHeading', settings: 'settingsHeading' };
+// v0057：视图内嵌标签页（任务中心已拆分到各自模块）
+export var VIEW_TABS = {
+  scan: ['scan', 'history', 'deletion'],
+  subtitles: ['submit', 'jobs'],
+  settings: ['general', 'logs']
+};
+export var VIEW_DEFAULT_TABS = { scan: 'scan', subtitles: 'submit', settings: 'general' };
 
 export var STATUS_LABEL = {
   queued: '排队中', running: '扫描中', paused: '已暂停', stopping: '正在停止',

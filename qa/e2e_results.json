@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-11-17T20:37:39+0800",
+  "generated_at": "2026-11-17T22:22:18+0800",
   "python": "3.12.9 | packaged by Anaconda, Inc. | (main, Feb  6 2025, 18:49:16) [MSC v.1929 64 bit (AMD64)]",
   "repo": "D:\\code\\zhouyi\\qunhui\\synology-duplicate-cleaner",
   "summary": {
@@ -11,11 +11,11 @@
     "fixture_files": 46,
     "python": "3.12.9",
     "birthtime_supported": true,
-    "backend_port": 2655,
+    "backend_port": 10387,
     "csrf_token_len": 43,
     "meta": {
       "ok": true,
-      "app_version": "1.1.0-0056",
+      "app_version": "1.1.0-0057",
       "dsm_version": "dev",
       "python_version": "3.12.9",
       "creation_time_supported": true,
@@ -631,7 +631,7 @@
       }
     },
     "subtitle_enumerate_count": 0,
-    "main_scan_id": "20261117-203625-5fa871",
+    "main_scan_id": "20261117-222104-2545b4",
     "main_scan_final": "completed",
     "main_stats": {
       "files_seen": 38,
@@ -645,7 +645,7 @@
       "selectable_duplicate_files": 15,
       "selectable_reclaimable_bytes": 4403200,
       "bytes_hashed": 8753152,
-      "bytes_per_sec": 404613117,
+      "bytes_per_sec": 391075443,
       "errors": 0,
       "skipped": {
         "symlink": 0,
@@ -721,13 +721,13 @@
     },
     "main_groups_total": 12,
     "recycle_plan": {
-      "plan_id": "plan-b2544e9ce3308f5a",
+      "plan_id": "plan-a926b77a1e78d006",
       "count": 2,
       "bytes": 40960,
       "groups_affected": 1
     },
     "recycle_job": {
-      "job_id": "del-20261117-203626-a9fd16",
+      "job_id": "del-20261117-222105-24706a",
       "status": "completed",
       "done": 2,
       "failed": 0,
@@ -1261,7 +1261,7 @@
       "id": "SKIP-04",
       "name": "符号链接跳过（当前环境无法创建 symlink）",
       "status": "UNVERIFIED",
-      "detail": "os.symlink failed: [WinError 1314] 客户端没有所需的特权。: 'C:\\\\Users\\\\zhouyi\\\\AppData\\\\Local\\\\Temp\\\\dupqa-ma053hem\\\\qa-share-a\\\\dup' -> 'C:\\\\Users\\\\zhouyi\\\\AppData\\\\Local\\\\Temp\\\\dupqa-ma053hem\\\\qa-share-a\\\\link_to_dup'"
+      "detail": "os.symlink failed: [WinError 1314] 客户端没有所需的特权。: 'C:\\\\Users\\\\zhouyi\\\\AppData\\\\Local\\\\Temp\\\\dupqa-o6lhk6kq\\\\qa-share-a\\\\dup' -> 'C:\\\\Users\\\\zhouyi\\\\AppData\\\\Local\\\\Temp\\\\dupqa-o6lhk6kq\\\\qa-share-a\\\\link_to_dup'"
     },
     {
       "id": "HARDLINK-01",
