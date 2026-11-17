@@ -7,9 +7,9 @@ import os
 import re
 
 APP_NAME = "DuplicateCleaner"
-APP_VERSION = "1.1.0-0057"
+APP_VERSION = "1.1.0-0059"
 DISPLAY_NAME = "重复文件清理与字幕"
-SPK_VERSION = "1.1.0-0057"
+SPK_VERSION = "1.1.0-0059"
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8787
@@ -571,6 +571,49 @@ CONVERT_PRESET_DEFAULT = "mp4_h264"
 CONVERT_ESTIMATE_MIN_RATIO = 0.25
 CONVERT_ESTIMATE_MAX_RATIO = 3.0
 
+# --- v0059 音视频合成（拼接 + 混流；docs/AV_MERGE_CONTRACT.md）-------------
+AVMERGE_CONCURRENCY_DEFAULT = 1
+AVMERGE_CONCURRENCY_MAX = 2
+AVMERGE_JOB_LIMIT_DEFAULT = 200
+AVMERGE_MIN_FREE_GB_DEFAULT = 1
+AVMERGE_OUTPUT_MODES = ("alongside", "fixed", "subdir")
+AVMERGE_OUTPUT_MODE_DEFAULT = "alongside"
+AVMERGE_CONTAINERS = ("mp4", "mkv")
+AVMERGE_CONTAINER_DEFAULT = "mp4"
+AVMERGE_MODES = ("auto", "copy", "encode")
+AVMERGE_MODE_DEFAULT = "auto"
+AVMERGE_OVERWRITE_MODES = ("rename", "skip", "overwrite")
+AVMERGE_OVERWRITE_DEFAULT = "rename"
+AVMERGE_MAX_RESOLUTIONS = (0, 2160, 1080, 720, 480)
+AVMERGE_MAX_RESOLUTION_DEFAULT = 0
+AVMERGE_QUALITIES = ("high", "standard", "small")
+AVMERGE_QUALITY_DEFAULT = "standard"
+AVMERGE_CRF = {"high": 18, "standard": 20, "small": 24}
+AVMERGE_AUDIO_KBPS = {"high": 256, "standard": 192, "small": 128}
+AVMERGE_NAME_TEMPLATE_DEFAULT = "{name}_merged"
+AVMERGE_NAME_TEMPLATE_MAX = 200
+AVMERGE_NAME_TEMPLATE_TOKENS = ("name", "date")
+AVMERGE_SUBDIR_DEFAULT = "merged"
+AVMERGE_SUBDIR_MAX = 60
+AVMERGE_PROGRESS_FLUSH_SEC = 2.0
+AVMERGE_PROBE_TIMEOUT_SEC = 30
+AVMERGE_TIMEOUT_MIN_SEC = 600
+AVMERGE_TIMEOUT_FACTOR_COPY = 1.0
+AVMERGE_TIMEOUT_FACTOR_TRANSCODE = 8.0
+AVMERGE_VERIFY_TOLERANCE_SEC = 5
+AVMERGE_MIN_OUTPUT_BYTES = 1024
+AVMERGE_ENUMERATE_MAX_ITEMS = 2000
+AVMERGE_VIDEO_EXTENSIONS = (
+    ".mkv", ".mp4", ".mov", ".m4v", ".avi", ".ts", ".webm", ".flv", ".wmv",
+    ".mpg", ".mpeg")
+AVMERGE_AUDIO_EXTENSIONS = (
+    ".m4a", ".aac", ".mp3", ".flac", ".wav", ".ogg", ".opus", ".ac3",
+    ".eac3", ".dts", ".mka", ".wma", ".alac")
+AVMERGE_MP4_VIDEO_CODECS = ("h264", "hevc", "av1", "mpeg4")
+AVMERGE_MP4_AUDIO_CODECS = ("aac", "mp3", "ac3", "eac3", "alac")
+AVMERGE_VIDEO_ENCODERS = {"h264": "libx264", "hevc": "libx265"}
+AVMERGE_DEFAULT_VIDEO_ENCODER = "libx264"
+
 # 系统 / 隐藏目录名：任何一层路径出现都必须拒绝（回收站目标除外）。
 SYSTEM_DIR_NAMES = frozenset([
     "@eaDir", "@tmp", "@appstore", "@docker", "@synologydrive", "@database",
@@ -616,6 +659,8 @@ DOWNLOAD_JOB_ID_RE = re.compile(r"^dl-[A-Za-z0-9._-]{6,80}$")
 DOWNLOAD_GROUP_ID_RE = re.compile(r"^dg-[A-Za-z0-9._-]{6,80}$")
 # v0056 格式转换任务 ID
 CONVERT_JOB_ID_RE = re.compile(r"^cv-[A-Za-z0-9._-]{6,80}$")
+# v0059 音视频合成任务 ID
+AVMERGE_JOB_ID_RE = re.compile(r"^am-[A-Za-z0-9._-]{6,80}$")
 
 
 def secure_permissions(path, mode=SECURE_FILE_MODE):

@@ -4,7 +4,7 @@
 |---|---|
 | 项目 | 重复文件清理与字幕 / DuplicateCleaner（DSM 7 SPK） |
 | 套件 ID | `DuplicateCleaner` |
-| 当前版本 | 1.1.0-0057（已打包，未发布） |
+| 当前版本 | 1.1.0-0059（已打包，未发布） |
 | 最近更新 | 2026-11-17 |
 | 验收主机 | Windows 本地 |
 | 验收结论 | PASS（发布基线） |
@@ -15,25 +15,25 @@
 
 ## 1. 当前基线
 
-最新一次全量验收为 1.1.0-0057（已打包，SPK 结构/同步检查全绿）。
+最新一次全量验收为 1.1.0-0059（已打包，SPK 结构/同步检查全绿）。
 
 | 套件 | 命令 | 结果 |
 |---|---|---|
-| 后端单元测试 | `cd src/backend && python -m unittest discover -s tests` | **826 OK（5 skipped）** |
-| 静态检查 | `python qa/static_checks.py` | **234 PASS / 0 FAIL / 0 UNVERIFIED** |
-| 端到端 | `python qa/e2e_test.py` | **245 PASS / 0 FAIL / 1 UNVERIFIED**（Windows symlink 历史项；含 DL-00…DL-18、CV-00…CV-14、RESTART-08、SET-08…SET-10） |
-| 前端模块图 | `node qa/check_web_modules.mjs` | **35/35 PASS**（v0057 起新增 7 个业务模块） |
+| 后端单元测试 | `cd src/backend && python -m unittest discover -s tests` | **846 OK（6 skipped）** |
+| 静态检查 | `python qa/static_checks.py` | **238 PASS / 0 FAIL / 0 UNVERIFIED** |
+| 端到端 | `python qa/e2e_test.py` | **253 PASS / 0 FAIL / 1 UNVERIFIED**（Windows symlink 历史项；含 DL-00…DL-18、CV-00…CV-14、MG-00…MG-07、RESTART-08、SET-08…SET-10） |
+| 前端模块图 | `node qa/check_web_modules.mjs` | **36/36 PASS**（v0059 新增合成页） |
 | 无头浏览器冒烟 | `python qa/web_smoke.py` | 8/8 PASS（最近一次 static 内联执行） |
-| 真实 Chromium 探针 | `.uiprobe/probe_v0043..v0050.mjs`、`.uiprobe/ui_probe.py` | v0043–v0050 全通过；v0057 用 `ui_probe.py`（登录 → 逐个点击扫描/字幕/设置标签 → 校验面板可见性与 hash 深链）14/14 通过 |
+| 真实 Chromium 探针 | `.uiprobe/probe_v0043..v0050.mjs`、`.uiprobe/ui_probe.py` | v0043–v0050 全通过；v0057/v0058/v0059 用 `ui_probe.py`（登录 → 逐页点击扫描/字幕/下载/转换/合成/设置 → 校验面板、无“未启用”、无 console 错误）通过 |
 
 | 产物项 | 值 |
 |---|---|
-| 文件 | `dist/DuplicateCleaner-1.1.0-0057.spk` |
-| 大小 | 39,229,440 B |
-| SHA256 | `a6f28e286b2b4b9591fa75464696dbef2888b07672cda246ff4f9a02833ac397` |
-| package.tgz MD5 | `1d091a0d738f40593ebfbb090b3705be`（= INFO.checksum，39,181,709 B） |
-| SQLite schema | v10（v0051 新增 download_jobs / download_groups；v0056 新增 convert_jobs；v0052–v0055 无迁移） |
-| 版本同步 | 1.1.0-0057 同步 8 处（static `SPK-BUILD-VERSION`/`SPK-SYNC` 通过） |
+| 文件 | `dist/DuplicateCleaner-1.1.0-0059.spk` |
+| 大小 | 39,260,160 B |
+| SHA256 | `322f63fa4e04c6dc5b55046cb133b32511342bddca7dbe617ed23b5abcc6d763` |
+| package.tgz MD5 | `cd949e11282bce5cf19b67ec5a388c9a`（= INFO.checksum，39,206,373 B） |
+| SQLite schema | v11（v10 convert_jobs；v11 avmerge_jobs；v0052–v0055/v0057/v0058 无迁移） |
+| 版本同步 | 1.1.0-0059 同步 8 处（static `SPK-BUILD-VERSION`/`SPK-SYNC` 通过） |
 
 判定口径：
 
@@ -42,18 +42,18 @@
 - UNVERIFIED：当前环境无法构造（仅 Windows symlink 一项）。
 - 探针、冒烟、模块图不替代 e2e/static，仅作为浏览器层补充证据。
 
-### 1.1 基线变化（v0042 → v0057）
+### 1.1 基线变化（v0042 → v0059）
 
-| 指标 | v0042 | v0050 | v0051 | v0052 | v0053 | v0054 | v0055 | v0056 | v0057 |
-|---|---|---|---|---|---|---|---|---|---|
-| unittest | 459（skip 6） | 666（skip 5） | 694（skip 5） | 713（skip 5） | 732（skip 5） | 748（skip 5） | 757（skip 5） | 826（skip 5） | 826（skip 5） |
-| static | 169 PASS | 197 PASS | 207 PASS | 未执行 | 199 PASS / 1 UNVERIFIED | 222 PASS | 224 PASS | 233 PASS | 234 PASS |
-| e2e | 157/1 U | 207/1 U | 214/1 U | 217/1 U | 221/1 U | 227/1 U | 230/1 U | 245/1 U | 245/1 U |
-| SQLite schema | v7 | v8 | v9 | v9 | v9（无迁移） | v9 | v9 | v10 | v10（无迁移） |
-| SPK 大小 | 39,014,400 B | 39,127,040 B | 39,168,000 B | 39,168,000 B | 39,198,720 B | 39,198,720 B | 39,198,720 B | 39,229,440 B | 39,229,440 B |
-| 浏览器探针 | 真机 1 组 | 本地 8 组（v0043–v0050） | 同左 | 同左 | 同左（模块图 + e2e 覆盖） | 同左 | 同左 | 同左 | 本版本 14 项（登录 → 逐标签 → 深链） |
+| 指标 | v0042 | v0050 | v0051 | v0052 | v0053 | v0054 | v0055 | v0056 | v0057 | v0058 | v0059 |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| unittest | 459（skip 6） | 666（skip 5） | 694（skip 5） | 713（skip 5） | 732（skip 5） | 748（skip 5） | 757（skip 5） | 826（skip 5） | 826（skip 5） | 826（skip 5） | 846（skip 6） |
+| static | 169 PASS | 197 PASS | 207 PASS | 未执行 | 199 PASS / 1 UNVERIFIED | 222 PASS | 224 PASS | 233 PASS | 234 PASS | 235 PASS | 238 PASS |
+| e2e | 157/1 U | 207/1 U | 214/1 U | 217/1 U | 221/1 U | 227/1 U | 230/1 U | 245/1 U | 245/1 U | 245/1 U | 253/1 U |
+| SQLite schema | v7 | v8 | v9 | v9 | v9（无迁移） | v9 | v9 | v10 | v10（无迁移） | v10（无迁移） | v11 |
+| SPK 大小 | 39,014,400 B | 39,127,040 B | 39,168,000 B | 39,168,000 B | 39,198,720 B | 39,198,720 B | 39,198,720 B | 39,229,440 B | 39,229,440 B | 39,229,440 B | 39,260,160 B |
+| 浏览器探针 | 真机 1 组 | 本地 8 组（v0043–v0050） | 同左 | 同左 | 同左（模块图 + e2e 覆盖） | 同左 | 同左 | 同左 | 本版本 14 项（登录 → 逐标签 → 深链） | 追加下载/转换页无“未启用”断言 | 追加合成页有序列表/提交按钮/FFmpeg 徽标断言 |
 
-v0043 是分界点：schema 升到 v8、引入增量哈希缓存；v0044–v0050 均为增量能力；v0051 新增下载中心并升到 v9；v0052/v0053/v0054 继续扩展下载（网页解析、下载增强、DASH/订阅），v0055 为设置键回归修复，v0056 新增格式转换并升到 v10（纯新增 `convert_jobs`），v0057 为纯前端信息架构调整（任务中心退役，schema v10 不变）。
+v0043 是分界点：schema 升到 v8、引入增量哈希缓存；v0044–v0050 均为增量能力；v0051 新增下载中心并升到 v9；v0052/v0053/v0054 继续扩展下载（网页解析、下载增强、DASH/订阅），v0055 为设置键回归修复，v0056 新增格式转换并升到 v10（纯新增 `convert_jobs`），v0057 为纯前端信息架构调整（任务中心退役），v0058 去掉下载/转换的启用开关（行为调整），v0059 新增音视频合成并升到 v11（纯新增 `avmerge_jobs`）。
 
 ### 1.2 验收范围
 
@@ -305,6 +305,8 @@ REQ 编号沿用 v1.0 基线，状态按当前版本事实更新。
 | v0055 | 2026-11-15 | 修复设置键回归（download_subscribe_enabled） | 757（skip 5） | 224 | 230/0/1 | — | `29a9f703…b5b138` |
 | v0056 | 2026-11-17 | 格式转换（16 预设 / 换封装 / 队列）+ `.dcpart` 封装器修复 | 826（skip 5） | 233 | 245/0/1 | — | `ed1de79b…ba5829` |
 | v0057 | 2026-11-17 | 任务中心退役（扫入扫描/字幕/设置内嵌标签）+ 深链 `?tab=` | 826（skip 5） | 234 | 245/0/1 | 14/14（登录→逐标签→面板/深链） | `a6278664…f71567` |
+| v0058 | 2026-11-17 | 下载/转换改为内置功能（去掉启用开关与 403 闸门） | 826（skip 5） | 235 | 245/0/1 | 追加下载/转换页无“未启用”断言 | `e27f849b…0e0e470` |
+| v0059 | 2026-11-17 | 音视频合成（有序拼接 + 混流，schema v11）+ 更名「影音工具」 | 846（skip 6） | 238 | 253/0/1 | 追加合成页有序列表/提交/FFmpeg 徽标断言 | `322f63fa…c6d763` |
 
 说明：
 
@@ -328,6 +330,8 @@ REQ 编号沿用 v1.0 基线，状态按当前版本事实更新。
 - v0055：修复 v0054 遗留的设置键白名单漏项（`download_subscribe_enabled` 导致保存设置整单 400）；新增 static `BE-SETTINGS-KEYS`/`BE-SETTINGS-NORMALIZE`、单元 9 例、e2e SET-08…SET-10。
 - v0056：新增格式转换（16 预设的视频/音频互转 + 仅换封装 + 提取音频、队列/进度/取消/重试、删源二次确认、空闲时段、schema v10）；修 `.dcpart` 未显式 `-f` 导致下载合并与转换封装失败（`BE-DOWNLOAD-PART-FORMAT` 兜底）；e2e 新增 CV-00…CV-14，模块图新增转换页（28/28）。
 - v0057：退役独立「任务中心」页，5 个标签按归属拆入扫描（历史 / 删除与回收站）、字幕（任务）、设置（操作日志）；统一 `setTab` + `#/view?tab=x` 深链；**同一版本把 app.js 的面板代码拆成 7 个模块**（labels / scan-history / deletion-jobs / trash-page / logs-page / subtitle-shared / subtitle-jobs，app.js 11,694→9,036 行，模块图 35/35）；新增 static `FE-TABS-V0057`，并首次加入可交互的 Chromium 探针（`.uiprobe/ui_probe.py`）；后端接口/schema 不变。
+- v0058：下载 / 转换改为内置功能——去掉设置里的启用复选框与「未启用」徽标，后端不再因 `download_enabled`/`convert_enabled` 返回 403（两个键保留为兼容项、默认改 `true`、不再生效）；新增 static `FE-NOGATE-V0058`，3 个单测与 `DL-00`/`CV-00` 改为验证“开关值被忽略”；schema v10 不变。
+- v0059：新增「合成」页（导航第 5 项）：视频/音频各自有序列表 → 按选择顺序拼接 + 混流；`copy`/`encode`/`auto` 两条路径，音频以视频时长为准 apad/截断；schema 升 v11（纯新增 `avmerge_jobs`）；新增 `AV_MERGE_CONTRACT.md`、static `BE-AVMERGE-*`/`FE-MERGE-UI`、e2e `MG-00`…`MG-07`（含真实 FFmpeg 合成）；同时把显示名改为「重复文件清理与影音工具 / Duplicate Cleaner & Media Toolkit」（包 ID/数据目录不变）。
 
 ### 6.2 原报告记录异常（保留说明，不再重复展开）
 
@@ -358,8 +362,8 @@ node qa/check_web_modules.mjs
 python qa/web_smoke.py
 
 # 产物校验
-Get-FileHash dist\DuplicateCleaner-1.1.0-0057.spk -Algorithm SHA256
-Get-Content dist\DuplicateCleaner-1.1.0-0057.spk.sha256
+Get-FileHash dist\DuplicateCleaner-1.1.0-0059.spk -Algorithm SHA256
+Get-Content dist\DuplicateCleaner-1.1.0-0059.spk.sha256
 
 # 构建可复现性（独立输出目录，不影响 dist）
 python build/build_spk.py --no-icons --out-dir $env:TEMP\qa-build1
@@ -371,8 +375,8 @@ python build/build_spk.py --no-icons --out-dir $env:TEMP\qa-build1
 |---|---|---|
 | e2e 结果 | `qa/e2e_results.json` | 逐条 `id`/结论/说明 |
 | static 结果 | `qa/static_results.json` | 逐条 `id`/结论 |
-| SPK | `dist/DuplicateCleaner-1.1.0-0057.spk` | 39,229,440 B |
-| 校验文件 | `dist/DuplicateCleaner-1.1.0-0057.spk.sha256` | 与产物 SHA256 一致 |
+| SPK | `dist/DuplicateCleaner-1.1.0-0059.spk` | 39,229,440 B |
+| 校验文件 | `dist/DuplicateCleaner-1.1.0-0059.spk.sha256` | 与产物 SHA256 一致 |
 | 探针脚本/截图 | `.uiprobe/probe_v0043..v0050.mjs`、`.uiprobe/*.png` | 真实 Chromium |
 | 契约 | `docs/*_CONTRACT.md` | 逐版本接口与行为 |
 

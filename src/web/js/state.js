@@ -214,14 +214,14 @@ export var IDS = ('loginView loginForm loginUsername loginPassword loginOtp logi
   'trashList trashLoading trashError trashEmpty ' +
   'trashRefreshBtn trashRecycleMode trashMergeList trashMergeLoading ' +
   'trashMergeEmpty trashMergeCount ' +
-  'view-download downloadHeading downloadPageStatusBadge downloadUrls ' +
+  'view-download downloadHeading downloadUrls ' +
   'downloadDirPath downloadDirPickBtn downloadMaxHeight downloadSubdirMode ' +
   'downloadOverwrite downloadKeepTemp downloadSubmitBtn downloadRefreshBtn ' +
   'downloadSubmitHint downloadSubmitError downloadQueueHint downloadEmpty ' +
   'downloadJobsList downloadRecentEmpty downloadListError ' +
   'downloadConcurrencyHint downloadAdvancedDetails ' +
-  'settingsDownloadDetails settingsDownloadSummary downloadStatusBadgeSettings ' +
-  'setDownloadEnabled setDownloadOutputDir setDownloadOutputDirError ' +
+  'settingsDownloadDetails settingsDownloadSummary ' +
+  'setDownloadOutputDir setDownloadOutputDirError ' +
   'setDownloadDirPickBtn setDownloadSubdirMode setDownloadSubdirTemplate ' +
   'setDownloadSubdirTemplateError setDownloadConcurrency ' +
   'setDownloadConcurrencyError setDownloadSegmentConcurrency ' +
@@ -269,8 +269,8 @@ export var IDS = ('loginView loginForm loginUsername loginPassword loginOtp logi
   'convertSubmitError convertCancelAllBtn convertRetryFailedBtn ' +
   'convertClearFinishedBtn convertExportLink convertQueueHint ' +
   'convertStorageHint convertListError convertEmpty convertJobsList ' +
-  'settingsConvertDetails settingsConvertSummary convertStatusBadgeSettings ' +
-  'setConvertEnabled setConvertOutputDir setConvertOutputDirError ' +
+  'settingsConvertDetails settingsConvertSummary ' +
+  'setConvertOutputDir setConvertOutputDirError ' +
   'setConvertDirPickBtn setConvertOutputMode setConvertOutputSubdir ' +
   'setConvertOutputSubdirError setConvertConcurrency ' +
   'setConvertConcurrencyError setConvertDefaultPreset setConvertQuality ' +
@@ -281,4 +281,17 @@ export var IDS = ('loginView loginForm loginUsername loginPassword loginOtp logi
   'setConvertKeepTemp setConvertOffpeakEnabled setConvertOffpeakStart ' +
   'setConvertOffpeakStartError setConvertOffpeakEnd ' +
   'setConvertOffpeakEndError setConvertAutoScan setConvertAutoSubtitle ' +
+  'view-merge mergeHeading mergePageStatusBadge mergeDirPath mergeDirPickBtn ' +
+  'mergeRecursive mergeEnumerateBtn mergeEnumerateSummary mergeEnumerateError ' +
+  'mergeCandidatesCard mergeCandidates mergeCandidatesEmpty ' +
+  'mergeVideoPaths mergeAudioPaths mergeVideoHint mergeAudioHint ' +
+  'mergeOutputMode mergeOutputDir mergeOutputDirPickBtn mergeOutputSubdir ' +
+  'mergeContainer mergeMode mergeQuality mergeMaxResolution mergeNameTemplate ' +
+  'mergeDeleteSource mergeSubmitBtn mergeSubmitError mergeSubmitHint ' +
+  'mergeJobsStatus mergeRefreshBtn mergeListError mergeJobsEmpty mergeJobsList ' +
+  'settingsMergeDetails settingsMergeSummary setMergeOutputMode ' +
+  'setMergeOutputDir setMergeOutputDirError setMergeDirPickBtn ' +
+  'setMergeOutputSubdir setMergeContainer setMergeMode setMergeQuality ' +
+  'setMergeMaxResolution setMergeNameTemplate setMergeConcurrency ' +
+  'setMergeMinFreeGb setMergeJobLimit setMergeKeepSource ' +
   'footerMeta toastRoot modalRoot').split(' ');

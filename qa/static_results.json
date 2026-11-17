@@ -1,7 +1,7 @@
 {
-  "generated_at": "2026-11-17T22:20:58+0800",
+  "generated_at": "2026-11-17T23:10:51+0800",
   "summary": {
-    "PASS": 234,
+    "PASS": 238,
     "FAIL": 0,
     "UNVERIFIED": 0
   },
@@ -28,7 +28,7 @@
       "id": "BE-FILE-COUNT",
       "name": "后端 Python 文件数",
       "status": "INFO",
-      "detail": "83"
+      "detail": "85"
     },
     {
       "id": "BE-SRC-HYGIENE",
@@ -52,7 +52,7 @@
       "id": "BE-UNITTEST-LOG",
       "name": "unittest 结果",
       "status": "INFO",
-      "detail": "Ran 826 tests in 207.492s"
+      "detail": "Ran 846 tests in 151.656s"
     },
     {
       "id": "BE-NO-AUTODELETE",
@@ -794,7 +794,7 @@
     },
     {
       "id": "BE-CONVERT-SAFETY",
-      "name": "删除源文件需 confirm、覆盖默认改名、产物 .dcpart 原子改名、拒符号链接",
+      "name": "删除源文件需 confirm、覆盖默认改名、产物 .dcpart 原子改名、拒符号链接、无启用开关",
       "status": "PASS",
       "detail": ""
     },
@@ -819,6 +819,30 @@
     {
       "id": "FE-CONVERT-PROGRESS",
       "name": "转换进度条走 node.style（不使用 el(..., {style})）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "FE-NOGATE-V0058",
+      "name": "下载/转换不再需要设置里开启：后端无开关闸门、设置页无启用复选框、页面无未启用徽标",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "BE-AVMERGE-MODULE",
+      "name": "合成模块：concat 清单 / 策略选择 / 视频音频滤镜 / apad 补齐 / 原子改名 / 删源确认",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "BE-AVMERGE-SCHEMA",
+      "name": "schema ≥ v11 含 avmerge_jobs 表",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "FE-MERGE-UI",
+      "name": "合成页：视频/音频有序列表、提交、队列、设置卡片；无启用开关",
       "status": "PASS",
       "detail": ""
     },
@@ -1316,7 +1340,7 @@
     },
     {
       "id": "SPK-DIST",
-      "name": "构建产物存在（DuplicateCleaner-1.1.0-0057.spk）",
+      "name": "构建产物存在（DuplicateCleaner-1.1.0-0059.spk）",
       "status": "PASS",
       "detail": ""
     },
@@ -1328,7 +1352,7 @@
     },
     {
       "id": "SPK-VERSION",
-      "name": "SPK INFO.version 与当前源码 APP_VERSION（1.1.0-0057）一致",
+      "name": "SPK INFO.version 与当前源码 APP_VERSION（1.1.0-0059）一致",
       "status": "PASS",
       "detail": ""
     },

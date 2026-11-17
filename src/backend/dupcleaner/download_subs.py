@@ -326,8 +326,6 @@ class DownloadSubscriptionService(object):
             snapshot = dict(sub)
         if not force and not settings.get("download_subscribe_enabled"):
             raise SubError("DOWNLOAD_DISABLED", u"下载订阅未启用")
-        if not settings.get("download_enabled"):
-            raise SubError("DOWNLOAD_DISABLED", u"下载功能未启用")
         kind = snapshot.get("kind") or "page"
         options = dict(snapshot.get("options") or {})
         items = []

@@ -217,12 +217,19 @@ class ParseServiceTest(unittest.TestCase):
         self.assertTrue(view["options"].get("cookie_set"))
         self.assertNotIn("cookie", view["options"])
 
-    def test_parse_disabled(self):
+    def test_parse_ignores_disabled_setting(self):
+        # v0058：download_enabled 键保留但不再生效，解析照常工作。
+        media = (u"#EXTM3U\n#EXT-X-TARGETDURATION:4\n#EXTINF:4.0,\n"
+                 u"seg0.ts\n#EXT-X-ENDLIST\n")
+        base = self.cdn.url("").rstrip("/")
+        self.cdn.put("/data-src.m3u8", media, text=True)
+        self.cdn.put("/p/page.html",
+                     PAGE_HTML.replace("https://cdn.example.com", base),
+                     text=True)
         self.h.settings["download_enabled"] = False
-        with self.assertRaises(ApiError) as ctx:
-            self.h.service.parse_target("admin",
-                                        {"url": "https://example.com/"})
-        self.assertEqual(ctx.exception.code, "DOWNLOAD_DISABLED")
+        result = self.h.service.parse_target(
+            "admin", {"url": self.cdn.url("/p/page.html")})
+        self.assertTrue(result["ok"])
 
     def test_parse_empty_page_hint(self):
         self.cdn.put("/e/page.html", u"<html><body>nothing</body></html>",

@@ -548,7 +548,8 @@ def check_backend():
     check("BE-INC-HASH-CACHE",
           "增量扫描：跨扫描哈希缓存（hash_cache 表 + store 读写 + 扫描器复用未变文件）",
           "hash_cache" in db_src
-          and "CURRENT_SCHEMA_VERSION = 10" in db_src
+          and bool(re.search(r"CURRENT_SCHEMA_VERSION = (\d+)", db_src))
+          and int(re.search(r"CURRENT_SCHEMA_VERSION = (\d+)", db_src).group(1)) >= 8
           and "def hash_cache_get" in store_src
           and "def hash_cache_put_many" in store_src
           and "def _load_hash_cache" in scanner_src
@@ -882,7 +883,7 @@ def check_frontend():
                     "trash-page.js", "logs-page.js",
                     "subtitle-shared.js", "subtitle-jobs.js",
                     "subtitle-probe.js", "subtitle-page.js",
-                    "download-page.js", "convert-page.js"]
+                    "download-page.js", "convert-page.js", "merge-page.js"]
     module_paths = [os.path.join(js_dir, name) for name in module_names]
     missing_modules = [name for name in module_names
                        if not os.path.isfile(os.path.join(js_dir, name))]
@@ -1545,13 +1546,13 @@ def check_frontend():
           and ("scale=-2:min(%d\\\\,ih)" in convert_src),
           "convert ffmpeg args markers missing")
     check("BE-CONVERT-SAFETY",
-          "删除源文件需 confirm、覆盖默认改名、产物 .dcpart 原子改名、拒符号链接",
+          "删除源文件需 confirm、覆盖默认改名、产物 .dcpart 原子改名、拒符号链接、无启用开关",
           ("DELETE SOURCE" in convert_src)
           and ("CONVERT_OVERWRITE_DEFAULT" in convert_src)
           and ("config.CONVERT_PART_EXT" in convert_src)
           and ("os.replace" in convert_src)
           and ("has_symlink_component" in convert_src)
-          and ("CONVERT_DISABLED" in convert_src),
+          and ("convert_enabled" not in convert_src),
           "convert safety markers missing")
     check("BE-CONVERT-SCHEMA", "schema ≥ v10 含 convert_jobs 表",
           schema_version >= 10 and ("convert_jobs" in schema_src),
@@ -1570,6 +1571,61 @@ def check_frontend():
     check("FE-CONVERT-PROGRESS", "转换进度条走 node.style（不使用 el(..., {style})）",
           ("fill.style.width" in app) and ("convertEmpty" in html),
           "convert progress marker missing")
+    # ---- v0058：下载 / 转换是独立功能，不再有「启用」开关 ----
+    gate_settings_src = read(os.path.join(backend, "dupcleaner", "settings.py"))
+    gate_ok = (
+        ('"download_enabled": True' in gate_settings_src)
+        and ('"convert_enabled": True' in gate_settings_src)
+        and ('settings.get("download_enabled")' not in downloads_src)
+        and ('settings.get("convert_enabled")' not in convert_src)
+        and (u"下载功能未启用" not in httpapi_src)
+        and (u"格式转换未启用" not in httpapi_src)
+        and ("setDownloadEnabled" not in html)
+        and ("setConvertEnabled" not in html)
+        and ("downloadStatusBadgeSettings" not in html)
+        and ("convertStatusBadgeSettings" not in html)
+        and ("downloadPageStatusBadge" not in html)
+        and ("s.download_enabled" not in app)
+        and ("s.convert_enabled" not in app)
+    )
+    check("FE-NOGATE-V0058",
+          "下载/转换不再需要设置里开启：后端无开关闸门、设置页无启用复选框、页面无未启用徽标",
+          gate_ok, "feature gate markers still present")
+    # ---- v0059 音视频合成（docs/AV_MERGE_CONTRACT.md）----
+    avmerge_path = os.path.join(backend, "dupcleaner", "avmerge.py")
+    avmerge_src = read(avmerge_path) if os.path.isfile(avmerge_path) else ""
+    avmerge_ok = (
+        bool(avmerge_src)
+        and ("build_concat_list" in avmerge_src)
+        and ("choose_strategy" in avmerge_src)
+        and ("_video_filter_graph" in avmerge_src)
+        and ('"concat"' in avmerge_src)
+        and ("matroska" in avmerge_src)
+        and ("ipod" in avmerge_src)
+        and ("apad" in avmerge_src)
+        and ("DELETE SOURCE" in avmerge_src)
+        and ("os.replace" in avmerge_src)
+        and (".dcpart" in avmerge_src)
+        and ("avmerge_jobs" in avmerge_src or "save_avmerge_job" in avmerge_src)
+    )
+    check("BE-AVMERGE-MODULE",
+          "合成模块：concat 清单 / 策略选择 / 视频音频滤镜 / apad 补齐 / 原子改名 / 删源确认",
+          avmerge_ok, "avmerge module markers missing")
+    check("BE-AVMERGE-SCHEMA", "schema ≥ v11 含 avmerge_jobs 表",
+          schema_version >= 11 and ("avmerge_jobs" in schema_src),
+          "schema v11 markers missing")
+    merge_ui_ok = (
+        all(marker in html for marker in (
+            "view-merge", "mergeVideoPaths", "mergeAudioPaths",
+            "mergeSubmitBtn", "mergeJobsList", "settingsMergeDetails"))
+        and ("initMergePage" in app)
+        and ("showMergePage" in app)
+        and os.path.isfile(os.path.join(js_dir, "merge-page.js"))
+        and ("avmerge_enabled" not in gate_settings_src)
+    )
+    check("FE-MERGE-UI",
+          "合成页：视频/音频有序列表、提交、队列、设置卡片；无启用开关",
+          merge_ui_ok, "merge page markers missing")
     # ---- v0052 播放网页解析（docs/DOWNLOAD_CONTRACT.md §14）----
     pageparse_path = os.path.join(backend, "dupcleaner", "pageparse.py")
     pageparse_src = read(pageparse_path) if os.path.isfile(pageparse_path) else ""

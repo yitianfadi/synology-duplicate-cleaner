@@ -2073,10 +2073,8 @@ class DownloadService(object):
     # -- 对外：网页解析（v0052） ----------------------------------------
     def parse_target(self, user, payload):
         """解析一个播放网页 / 粘贴的源码 / curl 命令，返回候选媒体地址。"""
+        # v0058：下载是独立功能，不再受 download_enabled 开关限制。
         settings = self._settings_snapshot()
-        if not settings.get("download_enabled"):
-            raise ApiError("DOWNLOAD_DISABLED",
-                           u"下载功能未启用，请先在设置中开启")
         if not isinstance(payload, dict):
             raise invalid(u"请求体必须是 JSON 对象")
         allow_private = bool(settings.get("download_allow_private"))
@@ -2377,10 +2375,8 @@ class DownloadService(object):
 
     # -- 对外：创建 -----------------------------------------------------
     def create(self, user, payload):
+        # v0058：下载是独立功能，不再受 download_enabled 开关限制。
         settings = self._settings_snapshot()
-        if not settings.get("download_enabled"):
-            raise ApiError("DOWNLOAD_DISABLED",
-                           u"下载功能未启用，请先在设置中开启")
         if not isinstance(payload, dict):
             raise invalid(u"请求体必须是 JSON 对象")
         urls = payload.get("urls")

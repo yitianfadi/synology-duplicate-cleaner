@@ -11,6 +11,7 @@ from . import config
 from .auth import AuthManager
 from .browse import BrowseService
 from .convert import ConvertService
+from .avmerge import AVMergeService
 from .deletion import DeletionManager
 from .downloads import DownloadService
 from .download_subs import DownloadSubscriptionService
@@ -45,7 +46,7 @@ class Services(object):
                  notification_service=None, scheduler_service=None,
                  subtitle_watch_service=None, permission_inspector=None,
                  download_service=None, download_subs_service=None,
-                 convert_service=None):
+                 convert_service=None, avmerge_service=None):
         self.config = runtime_config
         self.store = store
         self.settings = settings_manager
@@ -67,6 +68,8 @@ class Services(object):
         self.downloads = download_service
         self.download_subs = download_subs_service
         self.convert = convert_service
+        # v0059：音视频合成（拼接 + 混流）
+        self.avmerge = avmerge_service
 
     def shutdown(self, timeout=5.0):
         # 先停升级 drain 监视，避免正常退出时又把扫描暂停。
@@ -116,6 +119,11 @@ class Services(object):
         try:
             if self.convert is not None:
                 self.convert.shutdown(timeout=timeout)
+        except Exception:
+            pass
+        try:
+            if self.avmerge is not None:
+                self.avmerge.shutdown(timeout=timeout)
         except Exception:
             pass
         try:
@@ -289,6 +297,10 @@ def build_services(runtime_config):
             scan_manager, subtitle_service, settings_manager),
         notifier=notification_service)
     convert_service.start()
+    # v0059：音视频合成（视频/音频按选择顺序拼接 + 混流；无启用开关）
+    avmerge_service = AVMergeService(
+        runtime_config, store, share_service, settings_manager.get)
+    avmerge_service.start()
     # 升级 drain 握手：preupgrade 写 <var>/upgrade.drain，后端暂停扫描后写 done。
     upgrade_monitor = UpgradeDrainMonitor(runtime_config.data_dir, scan_manager)
     upgrade_monitor.start()
@@ -299,4 +311,4 @@ def build_services(runtime_config):
                     trash_manager, notification_service, scheduler_service,
                     subtitle_watch_service, permission_inspector,
                     download_service, download_subs_service,
-                    convert_service)
+                    convert_service, avmerge_service)

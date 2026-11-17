@@ -449,12 +449,14 @@ class ConvertServiceTest(unittest.TestCase):
         self.assertEqual(job.source_path, source)
         self.assertEqual(self.service.counts()["queued"], 1)
 
-    def test_create_requires_enabled(self):
+    def test_create_ignores_disabled_setting(self):
+        # v0058：转换是独立功能，convert_enabled 键保留但不再生效。
         self.settings["convert_enabled"] = False
         source = self._source()
-        with self.assertRaises(ApiError) as ctx:
-            self.service.create("admin", {"paths": [source]})
-        self.assertEqual(ctx.exception.code, "CONVERT_DISABLED")
+        result = self.service.create("admin", {"paths": [source]})
+        self.assertEqual(len(result["jobs"]), 1)
+        job = self._job(result["jobs"][0]["job_id"])
+        self.assertEqual(job.status, "queued")
 
     def test_create_rejects_unknown_preset(self):
         source = self._source()

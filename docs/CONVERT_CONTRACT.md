@@ -64,7 +64,7 @@
 
 ## 3. API
 
-全部需要管理员会话；除 `capabilities` 外都要求 `convert_enabled=true`（否则 403 `CONVERT_DISABLED`）。
+全部需要管理员会话。v0058 起转换是独立功能，**不再有启用开关**（`convert_enabled` 键仅为兼容保留、不再生效）；`capabilities.enabled` 恒为 `true`。
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
@@ -133,7 +133,7 @@ CREATE INDEX idx_convert_jobs_status ON convert_jobs(status, created_epoch);
 
 | 键 | 默认 | 校验 |
 |---|---|---|
-| `convert_enabled` | `false` | bool；未启用时接口 403 |
+| `convert_enabled` | `true` | 兼容键，v0058 起不再生效（功能恒可用） |
 | `convert_output_dir` | `""` | 绝对路径或空 |
 | `convert_output_mode` | `alongside` | `alongside/fixed/subdir` |
 | `convert_output_subdir` | `converted` | 单层目录名，无分隔符/`..`，≤60 字符 |

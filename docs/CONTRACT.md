@@ -1,7 +1,7 @@
 # 实现契约（前后端共享，版本 1.0）
 
 > 本文件是前后端并行开发的唯一接口约定。任何一方需要改动字段，先改本文件并在团队任务中说明。
-> 产品名：**DuplicateCleaner**；显示名：**重复文件清理与字幕**；SPK 版本：**1.1.0-0057**。
+> 产品名：**DuplicateCleaner**；显示名：**重复文件清理与字幕**；SPK 版本：**1.1.0-0059**。
 > v1.1 新增内容相似度模式；相似模式字段与行为见 [SIMILARITY_CONTRACT.md](SIMILARITY_CONTRACT.md)，**精准模式规则不变**。
 
 ## 1. 仓库与写入边界
@@ -154,7 +154,7 @@ v0042 增量（升级启动稳定性）：
 ### GET /api/meta
 ```json
 {
- "app_version": "1.1.0-0057",
+ "app_version": "1.1.0-0059",
  "dsm_version": "7.2.2-72806" | "dev",
  "python_version": "3.8.16",
  "creation_time_supported": true,
@@ -650,7 +650,7 @@ Content-Disposition: attachment; filename="duplicate-scan-<id>.csv"
 - 后端 unittest 覆盖：statx 时间读取降级、哈希分片/限速、重复分组与三种保留策略、
   路径黑名单、删除前重校验、回收站路径生成、CSV、API 鉴权。
 - 前端可用静态检查 + 本地 dev 后端联调；QA 用 dev 模式在临时目录生成重复文件跑完整 API 流程。
-- 打包产物 `dist/DuplicateCleaner-1.1.0-0057.spk` 必须能通过 `tar -tf` 检查，包含 INFO/package.tgz/scripts/conf/ui。
+- 打包产物 `dist/DuplicateCleaner-1.1.0-0059.spk` 必须能通过 `tar -tf` 检查，包含 INFO/package.tgz/scripts/conf/ui。
 ## 12. 下载中心（v0051）
 
 完整契约见 [DOWNLOAD_CONTRACT.md](DOWNLOAD_CONTRACT.md)；本节只列接口与通用约定。
@@ -671,7 +671,7 @@ Content-Disposition: attachment; filename="duplicate-scan-<id>.csv"
 | GET | `/api/downloads/groups`、`/api/downloads/groups/{group_id}` | 批量组列表 / 详情 |
 | POST | `/api/downloads/groups/{group_id}/{pause\|resume\|cancel\|retry}` | 组级控制 |
 
-- 全部接口仅管理员；写操作需 CSRF；`download_enabled=false` 返回 `DOWNLOAD_DISABLED`(403)。
+- 全部接口仅管理员；写操作需 CSRF。v0058 起下载是独立功能，恒可用；`download_enabled` 仅为兼容键，不再触发 `DOWNLOAD_DISABLED`。
 - 任务对象字段、状态机、错误码、设置键默认值与落盘/清理规则见 `DOWNLOAD_CONTRACT.md` §3、§5–§8。
 
 ## 13. 格式转换（v0056）
@@ -691,7 +691,7 @@ Content-Disposition: attachment; filename="duplicate-scan-<id>.csv"
 | POST | `/api/convert/bulk` | `{action: cancel_all\|retry_failed\|clear_finished}` |
 | GET | `/api/convert/export` | 转换任务导出 CSV |
 
-- 全部接口仅管理员；写操作需 CSRF；除 `capabilities` 外 `convert_enabled=false` 返回 `CONVERT_DISABLED`(403)。
+- 全部接口仅管理员；写操作需 CSRF。v0058 起转换是独立功能，恒可用；`convert_enabled` 仅为兼容键，不再触发 `CONVERT_DISABLED`。
 - 「删除源文件」必须 `confirm="DELETE SOURCE"`，且只在产物校验通过后执行。
 - 预设表、参数映射、状态机、设置键与错误码见 `CONVERT_CONTRACT.md` §2、§4–§7。
 
@@ -707,3 +707,24 @@ Content-Disposition: attachment; filename="duplicate-scan-<id>.csv"
 - **深链**：`#/<view>?tab=<tab>`；非默认标签才写 `?tab=`（`writeHash`）。旧 `#/history`、`#/logs` 不再兼容（按需求不加重定向）。
 - **数据接口不变**：扫描历史仍 `GET /api/history`、字幕任务仍 `/api/subtitles*`、删除任务仍 `/api/deletions*`、回收站/合并仍 `/api/trash*`、`/api/merges*`、日志仍 `/api/logs*`。
 - **后端只改了 5 处提示文案**（`deletion.py`、`notifications.py`×2、前端 3 处、`settings.py`/`subtitles.py` 注释），错误码与响应结构不变。
+
+## 15. 音视频合成（v0059）
+
+完整契约见 [AV_MERGE_CONTRACT.md](AV_MERGE_CONTRACT.md)；本节只列接口与通用约定。
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/api/avmerge/capabilities` | FFmpeg 状态、容器/模式/质量、并发与默认值 |
+| POST | `/api/avmerge` | 提交（202）：`{video_paths[], audio_paths[], options{}, confirm?}` |
+| POST | `/api/avmerge/enumerate` | 目录枚举 `{path, recursive}` |
+| GET | `/api/avmerge` | 任务列表（status/q/分页） |
+| GET | `/api/avmerge/queue` | 队列快照（running/queued/recent + counts） |
+| GET | `/api/avmerge/{job_id}` | 任务详情（steps/verify/options） |
+| POST | `/api/avmerge/{job_id}/cancel`、`/retry` | 取消 / 重新排队 |
+| DELETE | `/api/avmerge/{job_id}?delete_output=1` | 删除终态任务（可选删产物） |
+| POST | `/api/avmerge/bulk` | `{action: cancel_all|retry_failed|clear_finished}` |
+| GET | `/api/avmerge/export` | 导出 CSV |
+
+- 全部接口仅管理员；写操作需 CSRF；**无启用开关**，内置可用。
+- 顺序即输出顺序；`delete_source=true` 必须 `confirm="DELETE SOURCE"`。
+- 状态机、设置键、错误码见 `AV_MERGE_CONTRACT.md` §4–§7。

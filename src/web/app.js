@@ -60,6 +60,9 @@ import {
 import {
   hideConvertPage, initConvertPage, showConvertPage
 } from './js/convert-page.js';
+import {
+  hideMergePage, initMergePage, showMergePage
+} from './js/merge-page.js';
 import { toast } from './js/toast.js';
 import {
   closeModal, confirmDialog, getActiveModal, isModalOpen, openModal, setModalDismissible,
@@ -335,9 +338,11 @@ import { bindLogsEvents, loadLogs } from './js/logs-page.js';
     if (view !== 'subtitles') { stopSubtitlePagePolling(); }
     if (view !== 'download') { hideDownloadPage(); }
     if (view !== 'convert') { hideConvertPage(); }
+    if (view !== 'merge') { hideMergePage(); }
     if (view === 'subtitles') { showSubtitlePage(); }
     else if (view === 'download') { showDownloadPage(); }
     else if (view === 'convert') { showConvertPage(); }
+    else if (view === 'merge') { showMergePage(); }
     else if (view === 'settings') {
       loadSettingsPage();
       if (!state.diagnostics.loaded) { loadDiagnostics(); }
@@ -476,13 +481,14 @@ import { bindLogsEvents, loadLogs } from './js/logs-page.js';
     pinned: '选择目录或文件作为“指定路径”保留策略的匹配前缀。',
     subtitle: '选择要批量生成/翻译字幕的视频目录（单选）。点击文件夹名称进入下一级，左侧箭头展开子目录，点“选择当前目录”后再“完成选择”。',
     download: '选择下载文件保存的目录（单选，必须在共享文件夹内）。点击文件夹名称进入下一级，点“选择当前目录”后再“完成选择”。',
-    convert: '选择转换的源目录或输出目录（单选，必须在共享文件夹内）。点击文件夹名称进入下一级，点“选择当前目录”后再“完成选择”。'
+    convert: '选择转换的源目录或输出目录（单选，必须在共享文件夹内）。点击文件夹名称进入下一级，点“选择当前目录”后再“完成选择”。',
+    merge: '选择合成素材目录或输出目录（单选，必须在共享文件夹内）。点击文件夹名称进入下一级，点“选择当前目录”后再“完成选择”。'
   };
 
   // v0051：单选目录模式（字幕页 / 下载页复用同一套选择器与回调）
   function isSingleDirPicker(picker) {
     return picker.mode === 'subtitle' || picker.mode === 'download' ||
-      picker.mode === 'convert';
+      picker.mode === 'convert' || picker.mode === 'merge';
   }
 
   function openFolderPicker(mode, options) {
@@ -1125,6 +1131,11 @@ import { bindLogsEvents, loadLogs } from './js/logs-page.js';
   // v0056：转换页复用同一个选择器（源目录 / 输出目录）
   state.openConvertDirPicker = function (options) {
     openFolderPicker('convert', options || {});
+  };
+
+  // v0059：合成页复用同一个选择器（素材目录 / 输出目录）
+  state.openMergeDirPicker = function (options) {
+    openFolderPicker('merge', options || {});
   };
 
   // ==================== 9. 扫描范围与选项表单 ====================
@@ -2427,9 +2438,6 @@ import { bindLogsEvents, loadLogs } from './js/logs-page.js';
   // ---------- 下载中心设置（v0051） ----------
   function fillDownloadSettingsForm(settings) {
     var s = settings || {};
-    if (els.setDownloadEnabled) {
-      els.setDownloadEnabled.checked = s.download_enabled === true;
-    }
     if (els.setDownloadOutputDir) {
       els.setDownloadOutputDir.value = s.download_output_dir || '';
     }
@@ -2514,21 +2522,13 @@ import { bindLogsEvents, loadLogs } from './js/logs-page.js';
       els.setDownloadNameTemplate.value = s.download_name_template || '{title}';
     }
     if (els.settingsDownloadSummary) {
-      setText(els.settingsDownloadSummary, s.download_enabled
-        ? ('默认目录 ' + (s.download_output_dir || '未设置') +
-           ' · 同时 ' + (parseInt(s.download_concurrency, 10) || 2) + ' 个')
-        : '未启用');
-    }
-    if (els.downloadStatusBadgeSettings) {
-      setText(els.downloadStatusBadgeSettings, s.download_enabled ? '已启用' : '未启用');
-      els.downloadStatusBadgeSettings.className =
-        'badge ' + (s.download_enabled ? 'badge-green' : 'badge-gray');
+      setText(els.settingsDownloadSummary,
+        '默认目录 ' + (s.download_output_dir || '未设置') +
+        ' · 同时 ' + (parseInt(s.download_concurrency, 10) || 2) + ' 个');
     }
   }
 
   function readDownloadSettings(settings, errors) {
-    settings.download_enabled = !!(els.setDownloadEnabled
-      && els.setDownloadEnabled.checked);
     var outputDir = String(els.setDownloadOutputDir
       ? els.setDownloadOutputDir.value : '').trim();
     if (outputDir && !isAbsolutePath(outputDir)) {
@@ -2658,9 +2658,6 @@ import { bindLogsEvents, loadLogs } from './js/logs-page.js';
   // ---------- 格式转换设置（v0056） ----------
   function fillConvertSettingsForm(settings) {
     var s = settings || {};
-    if (els.setConvertEnabled) {
-      els.setConvertEnabled.checked = s.convert_enabled === true;
-    }
     if (els.setConvertOutputDir) {
       els.setConvertOutputDir.value = s.convert_output_dir || '';
     }
@@ -2725,22 +2722,12 @@ import { bindLogsEvents, loadLogs } from './js/logs-page.js';
         s.convert_output_mode === 'subdir'
         ? (s.convert_output_dir || '未设置目录')
         : '源目录';
-      setText(els.settingsConvertSummary, s.convert_enabled
-        ? (where + ' · 同时 ' +
-           (parseInt(s.convert_concurrency, 10) || 1) + ' 个')
-        : '未启用');
-    }
-    if (els.convertStatusBadgeSettings) {
-      setText(els.convertStatusBadgeSettings,
-        s.convert_enabled ? '已启用' : '未启用');
-      els.convertStatusBadgeSettings.className =
-        'badge ' + (s.convert_enabled ? 'badge-green' : 'badge-gray');
+      setText(els.settingsConvertSummary, where + ' · 同时 ' +
+        (parseInt(s.convert_concurrency, 10) || 1) + ' 个');
     }
   }
 
   function readConvertSettings(settings, errors) {
-    settings.convert_enabled = !!(els.setConvertEnabled
-      && els.setConvertEnabled.checked);
     var dir = String(els.setConvertOutputDir
       ? els.setConvertOutputDir.value : '').trim();
     if (dir && !isAbsolutePath(dir)) {
@@ -2823,6 +2810,65 @@ import { bindLogsEvents, loadLogs } from './js/logs-page.js';
       && els.setConvertAutoScan.checked);
     settings.convert_auto_subtitle = !!(els.setConvertAutoSubtitle
       && els.setConvertAutoSubtitle.checked);
+  }
+
+  function fillMergeSettingsForm(settings) {
+    var s = settings || {};
+    if (els.setMergeOutputMode) {
+      els.setMergeOutputMode.value = s.avmerge_output_mode || 'alongside';
+    }
+    if (els.setMergeOutputDir) { els.setMergeOutputDir.value = s.avmerge_output_dir || ''; }
+    if (els.setMergeOutputSubdir) {
+      els.setMergeOutputSubdir.value = s.avmerge_output_subdir || 'merged';
+    }
+    if (els.setMergeContainer) { els.setMergeContainer.value = s.avmerge_container || 'mp4'; }
+    if (els.setMergeMode) { els.setMergeMode.value = s.avmerge_mode || 'auto'; }
+    if (els.setMergeQuality) { els.setMergeQuality.value = s.avmerge_quality || 'standard'; }
+    if (els.setMergeMaxResolution) {
+      els.setMergeMaxResolution.value = String(s.avmerge_max_resolution || 0);
+    }
+    if (els.setMergeNameTemplate) {
+      els.setMergeNameTemplate.value = s.avmerge_name_template || '{name}_merged';
+    }
+    if (els.setMergeConcurrency) { els.setMergeConcurrency.value = s.avmerge_concurrency || 1; }
+    if (els.setMergeMinFreeGb) { els.setMergeMinFreeGb.value = s.avmerge_min_free_gb; }
+    if (els.setMergeJobLimit) { els.setMergeJobLimit.value = s.avmerge_job_limit || 200; }
+    if (els.setMergeKeepSource) {
+      els.setMergeKeepSource.checked = s.avmerge_keep_source !== false;
+    }
+    if (els.settingsMergeSummary) {
+      setText(els.settingsMergeSummary,
+        (s.avmerge_output_mode === 'alongside' || !s.avmerge_output_mode
+          ? '源目录' : (s.avmerge_output_dir || '未设置目录')) +
+        ' · ' + String(s.avmerge_container || 'mp4').toUpperCase());
+    }
+  }
+
+  function readMergeSettings(settings) {
+    settings.avmerge_output_mode = els.setMergeOutputMode
+      ? els.setMergeOutputMode.value : 'alongside';
+    settings.avmerge_output_dir = String(els.setMergeOutputDir
+      ? els.setMergeOutputDir.value : '').trim();
+    settings.avmerge_output_subdir = String(els.setMergeOutputSubdir
+      ? els.setMergeOutputSubdir.value : '').trim();
+    settings.avmerge_container = els.setMergeContainer
+      ? els.setMergeContainer.value : 'mp4';
+    settings.avmerge_mode = els.setMergeMode ? els.setMergeMode.value : 'auto';
+    settings.avmerge_quality = els.setMergeQuality
+      ? els.setMergeQuality.value : 'standard';
+    settings.avmerge_max_resolution = parseInt(
+      els.setMergeMaxResolution ? els.setMergeMaxResolution.value : '0', 10) || 0;
+    settings.avmerge_name_template = String(els.setMergeNameTemplate
+      ? els.setMergeNameTemplate.value : '').trim();
+    settings.avmerge_concurrency = parseInt(
+      els.setMergeConcurrency ? els.setMergeConcurrency.value : '1', 10) || 1;
+    settings.avmerge_min_free_gb = parseInt(
+      els.setMergeMinFreeGb ? els.setMergeMinFreeGb.value : '1', 10);
+    if (isNaN(settings.avmerge_min_free_gb)) { settings.avmerge_min_free_gb = 1; }
+    settings.avmerge_job_limit = parseInt(
+      els.setMergeJobLimit ? els.setMergeJobLimit.value : '200', 10) || 200;
+    settings.avmerge_keep_source = !!(els.setMergeKeepSource
+      && els.setMergeKeepSource.checked);
   }
 
   // ---------- 云端字幕：获取模型列表 / 测试连接（v0026） ----------
@@ -8657,6 +8703,7 @@ import { bindLogsEvents, loadLogs } from './js/logs-page.js';
     fillSubtitleSettingsForm(settings);
     fillDownloadSettingsForm(settings);
     fillConvertSettingsForm(settings);
+    fillMergeSettingsForm(settings);
     clearSettingsErrors();
     updateSettingsSummaries();
     renderSettingsStatusSummary();
@@ -8779,6 +8826,7 @@ import { bindLogsEvents, loadLogs } from './js/logs-page.js';
     readSubtitleSettings(settings, errors);
     readDownloadSettings(settings, errors);
     readConvertSettings(settings, errors);
+    readMergeSettings(settings);
     // v0043：增量扫描 / 保留规则链 / 排除规则
     settings.incremental_scan = els.setIncrementalScan ? !!els.setIncrementalScan.checked : true;
     settings.keep_rules = composeKeepRules('setKeep');
@@ -8950,6 +8998,20 @@ import { bindLogsEvents, loadLogs } from './js/logs-page.js';
         });
       });
     }
+    if (els.setMergeDirPickBtn) {
+      els.setMergeDirPickBtn.addEventListener('click', function () {
+        if (typeof state.openMergeDirPicker !== 'function') { return; }
+        state.openMergeDirPicker({
+          initial: els.setMergeOutputDir ? els.setMergeOutputDir.value : '',
+          onConfirm: function (path) {
+            if (els.setMergeOutputDir) {
+              els.setMergeOutputDir.value = path || '';
+            }
+            clearSettingsErrors();
+          }
+        });
+      });
+    }
     els.settingsForm.addEventListener('input', function () { clearSettingsErrors(); updateSettingsSummaries(); });
     els.settingsForm.addEventListener('change', function () { clearSettingsErrors(); updateSettingsSummaries(); });
     if (els.setSimExtList) { els.setSimExtList.addEventListener('change', clearSettingsErrors); }
@@ -9068,6 +9130,7 @@ import { bindLogsEvents, loadLogs } from './js/logs-page.js';
     initSubtitlePage();
     initDownloadPage();
     initConvertPage();
+    initMergePage();
     // v0057：字幕页批次总览“去任务列表”入口
     state.openSubtitleJobs = goToSubtitleJobs;
     // v0057：历史 / 删除任务面板通过该钩子打开某次扫描（实现在 app.js）

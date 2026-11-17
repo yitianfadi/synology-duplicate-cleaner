@@ -165,6 +165,7 @@ const EXPECTED = {
   'subtitle-page.js': ['initSubtitlePage', 'showSubtitlePage', 'stopSubtitlePagePolling'],
   'download-page.js': ['initDownloadPage', 'showDownloadPage', 'hideDownloadPage'],
   'convert-page.js': ['initConvertPage', 'showConvertPage', 'hideConvertPage'],
+  'merge-page.js': ['initMergePage', 'showMergePage', 'hideMergePage'],
   // v0057：从 app.js 拆出的面板模块
   'labels.js': ['detectScanMode', 'reasonLabel'],
   'scan-history.js': ['loadHistory', 'initScanHistory'],
@@ -182,7 +183,7 @@ const MODULE_ORDER = ['constants.js', 'state.js', 'format.js', 'util.js', 'dom.j
   'api.js', 'toast.js', 'modal.js', 'labels.js', 'scan-history.js', 'deletion-jobs.js',
   'trash-page.js', 'logs-page.js', 'subtitle-shared.js', 'subtitle-jobs.js',
   'subtitle-probe.js', 'subtitle-page.js',
-  'download-page.js', 'convert-page.js'];
+  'download-page.js', 'convert-page.js', 'merge-page.js'];
 
 const results = [];
 
@@ -402,8 +403,8 @@ async function main() {
         dlInitOk && constantsMod.VIEWS.indexOf('download') !== -1
         && constantsMod.VIEW_HEADINGS.download === 'downloadHeading', dlInitError);
       record('WEB-MOD-DOWNLOAD-DEFAULTS',
-        '下载默认设置与后端契约一致（enabled=false / 并发 2 / 分片 4）',
-        constantsMod.DEFAULT_SETTINGS.download_enabled === false
+        '下载默认设置与后端契约一致（v0058 恒可用 / 并发 2 / 分片 4）',
+        constantsMod.DEFAULT_SETTINGS.download_enabled === true
         && constantsMod.DEFAULT_SETTINGS.download_concurrency === 2
         && constantsMod.DEFAULT_SETTINGS.download_segment_concurrency === 4
         && constantsMod.DEFAULT_SETTINGS.download_subdir_mode === 'none');
@@ -444,8 +445,8 @@ async function main() {
         cvInitOk && constantsMod.VIEWS.indexOf('convert') !== -1
         && constantsMod.VIEW_HEADINGS.convert === 'convertHeading', cvInitError);
       record('WEB-MOD-CONVERT-DEFAULTS',
-        '转换默认设置与后端契约一致（enabled=false / 并发 1 / 同目录 / rename）',
-        constantsMod.DEFAULT_SETTINGS.convert_enabled === false
+        '转换默认设置与后端契约一致（v0058 恒可用 / 并发 1 / 同目录 / rename）',
+        constantsMod.DEFAULT_SETTINGS.convert_enabled === true
         && constantsMod.DEFAULT_SETTINGS.convert_concurrency === 1
         && constantsMod.DEFAULT_SETTINGS.convert_output_mode === 'alongside'
         && constantsMod.DEFAULT_SETTINGS.convert_overwrite === 'rename');

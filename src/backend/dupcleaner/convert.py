@@ -1443,14 +1443,12 @@ class ConvertService(object):
             "concurrency": self._concurrency(),
             "counts": self.counts(),
             "offpeak": self._offpeak_state(settings),
-            "enabled": bool(settings.get("convert_enabled")),
+            # v0058：转换是独立功能，开关键保留仅为兼容旧配置，始终可用。
+            "enabled": True,
         }
 
     def create(self, user, payload):
         settings = self._settings_snapshot()
-        if not settings.get("convert_enabled"):
-            raise ApiError("CONVERT_DISABLED",
-                           u"格式转换未启用，请先在「设置 → 转换」开启")
         if not isinstance(payload, dict):
             raise invalid(u"请求体必须是 JSON 对象")
         raw_paths = payload.get("paths")

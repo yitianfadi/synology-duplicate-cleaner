@@ -1,9 +1,9 @@
 {
-  "generated_at": "2026-11-17T22:22:18+0800",
+  "generated_at": "2026-11-17T23:08:00+0800",
   "python": "3.12.9 | packaged by Anaconda, Inc. | (main, Feb  6 2025, 18:49:16) [MSC v.1929 64 bit (AMD64)]",
   "repo": "D:\\code\\zhouyi\\qunhui\\synology-duplicate-cleaner",
   "summary": {
-    "PASS": 245,
+    "PASS": 253,
     "FAIL": 0,
     "UNVERIFIED": 1
   },
@@ -11,11 +11,11 @@
     "fixture_files": 46,
     "python": "3.12.9",
     "birthtime_supported": true,
-    "backend_port": 10387,
+    "backend_port": 9327,
     "csrf_token_len": 43,
     "meta": {
       "ok": true,
-      "app_version": "1.1.0-0057",
+      "app_version": "1.1.0-0059",
       "dsm_version": "dev",
       "python_version": "3.12.9",
       "creation_time_supported": true,
@@ -183,7 +183,7 @@
         "scheduled_scan_rules": [],
         "scheduled_scan_roots": [],
         "scheduled_scan_max_load": 0.0,
-        "download_enabled": false,
+        "download_enabled": true,
         "download_output_dir": "",
         "download_subdir_mode": "none",
         "download_subdir_template": "{site}/{date}",
@@ -213,7 +213,7 @@
         "download_offpeak_rate_limit_kbps": 0,
         "download_name_template": "{title}",
         "download_subscribe_enabled": false,
-        "convert_enabled": false,
+        "convert_enabled": true,
         "convert_output_dir": "",
         "convert_output_mode": "alongside",
         "convert_output_subdir": "converted",
@@ -234,6 +234,19 @@
         "convert_name_template": "{name}",
         "convert_auto_scan": false,
         "convert_auto_subtitle": false,
+        "avmerge_output_dir": "",
+        "avmerge_output_mode": "alongside",
+        "avmerge_output_subdir": "merged",
+        "avmerge_container": "mp4",
+        "avmerge_mode": "auto",
+        "avmerge_overwrite": "rename",
+        "avmerge_keep_source": true,
+        "avmerge_name_template": "{name}_merged",
+        "avmerge_concurrency": 1,
+        "avmerge_max_resolution": 0,
+        "avmerge_quality": "standard",
+        "avmerge_job_limit": 200,
+        "avmerge_min_free_gb": 1,
         "subtitle_asr_api_key_set": false,
         "subtitle_llm_api_key_set": false,
         "notify_telegram_bot_token_set": false,
@@ -521,7 +534,7 @@
         "trash_dir_name": "#duplicate-cleaner-trash"
       },
       "download": {
-        "enabled": false,
+        "enabled": true,
         "concurrency_max": 4,
         "concurrency_default": 2,
         "segment_concurrency_max": 16,
@@ -631,7 +644,7 @@
       }
     },
     "subtitle_enumerate_count": 0,
-    "main_scan_id": "20261117-222104-2545b4",
+    "main_scan_id": "20261117-230646-73ddce",
     "main_scan_final": "completed",
     "main_stats": {
       "files_seen": 38,
@@ -645,7 +658,7 @@
       "selectable_duplicate_files": 15,
       "selectable_reclaimable_bytes": 4403200,
       "bytes_hashed": 8753152,
-      "bytes_per_sec": 391075443,
+      "bytes_per_sec": 422609791,
       "errors": 0,
       "skipped": {
         "symlink": 0,
@@ -721,13 +734,13 @@
     },
     "main_groups_total": 12,
     "recycle_plan": {
-      "plan_id": "plan-a926b77a1e78d006",
+      "plan_id": "plan-16decb838e66c5fd",
       "count": 2,
       "bytes": 40960,
       "groups_affected": 1
     },
     "recycle_job": {
-      "job_id": "del-20261117-222105-24706a",
+      "job_id": "del-20261117-230647-cea655",
       "status": "completed",
       "done": 2,
       "failed": 0,
@@ -1261,7 +1274,7 @@
       "id": "SKIP-04",
       "name": "符号链接跳过（当前环境无法创建 symlink）",
       "status": "UNVERIFIED",
-      "detail": "os.symlink failed: [WinError 1314] 客户端没有所需的特权。: 'C:\\\\Users\\\\zhouyi\\\\AppData\\\\Local\\\\Temp\\\\dupqa-o6lhk6kq\\\\qa-share-a\\\\dup' -> 'C:\\\\Users\\\\zhouyi\\\\AppData\\\\Local\\\\Temp\\\\dupqa-o6lhk6kq\\\\qa-share-a\\\\link_to_dup'"
+      "detail": "os.symlink failed: [WinError 1314] 客户端没有所需的特权。: 'C:\\\\Users\\\\zhouyi\\\\AppData\\\\Local\\\\Temp\\\\dupqa-u3cflrz_\\\\qa-share-a\\\\dup' -> 'C:\\\\Users\\\\zhouyi\\\\AppData\\\\Local\\\\Temp\\\\dupqa-u3cflrz_\\\\qa-share-a\\\\link_to_dup'"
     },
     {
       "id": "HARDLINK-01",
@@ -1967,7 +1980,7 @@
     },
     {
       "id": "DL-00",
-      "name": "下载未启用时接口返回 403 DOWNLOAD_DISABLED",
+      "name": "下载是独立功能：download_enabled=false 也不再返回 403",
       "status": "PASS",
       "detail": ""
     },
@@ -2081,7 +2094,7 @@
     },
     {
       "id": "CV-00",
-      "name": "v0056 转换未启用时接口返回 403 CONVERT_DISABLED",
+      "name": "v0058 转换是独立功能：convert_enabled=false 也不再 403",
       "status": "PASS",
       "detail": ""
     },
@@ -2166,6 +2179,54 @@
     {
       "id": "CV-14",
       "name": "v0056 真实仅换封装转换完成且产物可读",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "MG-00",
+      "name": "v0059 合成能力：容器/模式/FFmpeg 状态",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "MG-01",
+      "name": "v0059 合成至少需要一个视频片段",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "MG-02",
+      "name": "v0059 删除源文件必须显式 confirm=DELETE SOURCE",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "MG-03",
+      "name": "v0059 真实合成完成（2 段视频 + 短音频补齐）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "MG-04",
+      "name": "v0059 合成顺序与选择顺序一致",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "MG-05",
+      "name": "v0059 合成队列快照包含计数",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "MG-06",
+      "name": "v0059 合成任务可导出 CSV",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "MG-07",
+      "name": "v0059 删除任务时同时删除产物",
       "status": "PASS",
       "detail": ""
     },

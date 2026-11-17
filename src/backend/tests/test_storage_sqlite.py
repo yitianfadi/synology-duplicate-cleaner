@@ -184,7 +184,7 @@ class SchemaTest(StoreTestCase):
                       "subtitle_batch_groups", "scan_file_deletions",
                       "hash_cache", "media_probe_cache",
                       "download_jobs", "download_groups",
-                      "convert_jobs"):
+                      "convert_jobs", "avmerge_jobs"):
             self.assertIn(table, names)
         # v5：scan_files 不再冗余保存 payload_json（group payload 才是真源）
         # v6（v0028）：新增 subtitle_batches 批次表
@@ -192,7 +192,8 @@ class SchemaTest(StoreTestCase):
         # v8（v0043）：新增 hash_cache + media_probe_cache，scan_groups 补增量列
         # v9（v0051）：新增 download_jobs + download_groups（下载中心）
         # v10（v0056）：新增 convert_jobs（格式转换）
-        self.assertEqual(db_module.CURRENT_SCHEMA_VERSION, 10)
+        # v11（v0059）：新增 avmerge_jobs（音视频合成）
+        self.assertEqual(db_module.CURRENT_SCHEMA_VERSION, 11)
         scan_group_columns = {row[1] for row in store.db.query(
             "PRAGMA table_info(scan_groups)")}
         for column in ("new_files", "changed_files"):

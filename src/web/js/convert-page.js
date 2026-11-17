@@ -131,10 +131,7 @@ function renderCapabilityBadge() {
     badge.className = 'badge badge-gray';
     return;
   }
-  if (!caps.enabled) {
-    setText(badge, '未启用');
-    badge.className = 'badge badge-amber';
-  } else if (!caps.ffmpeg || !caps.ffmpeg.available) {
+  if (!caps.ffmpeg || !caps.ffmpeg.available) {
     setText(badge, 'FFmpeg 不可用');
     badge.className = 'badge badge-red';
   } else {
@@ -142,11 +139,11 @@ function renderCapabilityBadge() {
       ' · 同时 ' + caps.concurrency + ' 个');
     badge.className = 'badge badge-green';
   }
-  var disabled = !caps.enabled || !(caps.ffmpeg && caps.ffmpeg.available);
+  // v0058：转换是独立功能，恒可用；只有 FFmpeg 不可用时才禁用提交。
+  var disabled = !(caps.ffmpeg && caps.ffmpeg.available);
   if (els.convertSubmitBtn) { els.convertSubmitBtn.disabled = disabled; }
   setText(els.convertPresetHint, disabled
-    ? (caps.enabled ? 'FFmpeg 不可用，请在设置里指定路径'
-                    : '请先在「设置 → 转换」启用本功能')
+    ? 'FFmpeg 不可用，请在设置里指定路径'
     : (caps.offpeak && caps.offpeak.enabled && !caps.offpeak.open
        ? '当前不在空闲时段（' + caps.offpeak.start + '–' + caps.offpeak.end +
          '），任务会排队等待'
@@ -449,11 +446,6 @@ async function submitConvert() {
   setSubmitError('');
   if (!paths.length) {
     setSubmitError('请先选择要转换的文件。');
-    return;
-  }
-  var caps = cs.caps || {};
-  if (!caps.enabled) {
-    setSubmitError('格式转换未启用，请先在「设置 → 转换」开启。');
     return;
   }
   var confirmText = '';

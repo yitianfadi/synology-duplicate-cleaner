@@ -2848,10 +2848,11 @@ def run():
         # ---------------- v0051：下载中心（直链 / 直播拒绝 / SSRF） ----------------
         download_dir = os.path.join(roots[0], "downloads")
         os.makedirs(download_dir, exist_ok=True)
+        client.put_json("/api/settings", {"settings": {"download_enabled": False}})
         resp = client.get("/api/downloads")
         code, _ = err_code(resp)
-        check("DL-00", "下载未启用时接口返回 403 DOWNLOAD_DISABLED",
-              resp.status == 403 and code == "DOWNLOAD_DISABLED",
+        check("DL-00", "下载是独立功能：download_enabled=false 也不再返回 403",
+              resp.status == 200,
               "status=%s code=%s" % (resp.status, code))
 
         client.put_json("/api/settings", {"settings": {
@@ -3149,10 +3150,11 @@ def run():
         # ---------------- v0056：格式转换（预设 / 枚举 / 队列 / 取消 / 真转码） ----------------
         convert_dir = os.path.join(roots[0], "convert")
         os.makedirs(convert_dir, exist_ok=True)
+        client.put_json("/api/settings", {"settings": {"convert_enabled": False}})
         resp = client.get("/api/convert")
         code, _ = err_code(resp)
-        check("CV-00", "v0056 转换未启用时接口返回 403 CONVERT_DISABLED",
-              resp.status == 403 and code == "CONVERT_DISABLED",
+        check("CV-00", "v0058 转换是独立功能：convert_enabled=false 也不再 403",
+              resp.status == 200,
               "status=%s code=%s" % (resp.status, code))
 
         # 打开功能 + 用空闲时段闸门让任务保持排队（避免 e2e 立刻跑转码）
@@ -3333,6 +3335,117 @@ def run():
             except (subprocess.CalledProcessError, OSError) as exc:
                 record("CV-14", "v0056 真实仅换封装转换完成且产物可读",
                        "UNVERIFIED", "生成测试样本失败: %s" % exc)
+
+        # ---------------- v0059：音视频合成（拼接 + 混流，真实 ffmpeg） ----------------
+        merge_dir = os.path.join(roots[0], "merge")
+        os.makedirs(merge_dir, exist_ok=True)
+        resp = client.get("/api/avmerge/capabilities")
+        caps_mg = jd(resp)
+        check("MG-00", "v0059 合成能力：容器/模式/FFmpeg 状态",
+              resp.status == 200
+              and "mp4" in (caps_mg.get("containers") or [])
+              and "auto" in (caps_mg.get("modes") or []),
+              "status=%s caps=%s" % (resp.status, caps_mg))
+        resp = client.post_json("/api/avmerge",
+                                {"video_paths": [], "audio_paths": []})
+        check("MG-01", "v0059 合成至少需要一个视频片段",
+              resp.status == 400, "status=%s" % resp.status)
+        resp = client.post_json("/api/avmerge", {
+            "video_paths": [os.path.join(merge_dir, "none.mp4")],
+            "options": {"delete_source": True}})
+        check("MG-02", "v0059 删除源文件必须显式 confirm=DELETE SOURCE",
+              resp.status in (400, 404), "status=%s" % resp.status)
+
+        ffmpeg_mg = shutil.which("ffmpeg")
+        if not ffmpeg_mg:
+            try:
+                backend_dir = os.path.join(
+                    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                    "src", "backend")
+                if backend_dir not in sys.path:
+                    sys.path.insert(0, backend_dir)
+                from dupcleaner.video_similarity import FFmpegTool
+                resolved_mg = FFmpegTool().resolve()
+                ffmpeg_mg = resolved_mg[0] if resolved_mg else None
+            except Exception:
+                ffmpeg_mg = None
+        if not ffmpeg_mg:
+            record("MG-03", "v0059 真实合成", "UNVERIFIED", "本机没有 ffmpeg")
+        else:
+            def _make_clip(path, color):
+                subprocess.run(
+                    [ffmpeg_mg, "-nostdin", "-hide_banner", "-loglevel",
+                     "error", "-y", "-f", "lavfi", "-i",
+                     "color=c=%s:s=160x120:d=0.8:r=15" % color,
+                     "-c:v", "libx264", "-preset", "ultrafast",
+                     "-pix_fmt", "yuv420p", "-an", path],
+                    check=True, timeout=120,
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+            v1 = os.path.join(merge_dir, "m1.mp4")
+            v2 = os.path.join(merge_dir, "m2.mp4")
+            au = os.path.join(merge_dir, "m.m4a")
+            try:
+                _make_clip(v1, "red")
+                _make_clip(v2, "blue")
+                subprocess.run(
+                    [ffmpeg_mg, "-nostdin", "-hide_banner", "-loglevel",
+                     "error", "-y", "-f", "lavfi", "-i",
+                     "sine=frequency=440:sample_rate=48000:duration=0.5",
+                     "-c:a", "aac", "-b:a", "96k", au],
+                    check=True, timeout=120,
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                client.put_json("/api/settings", {"settings": {
+                    "avmerge_min_free_gb": 0,
+                    "avmerge_output_mode": "alongside",
+                    "avmerge_container": "mp4",
+                    "avmerge_mode": "auto",
+                }})
+                resp = client.post_json("/api/avmerge", {
+                    "video_paths": [v2, v1],
+                    "audio_paths": [au],
+                    "options": {"container": "mp4", "mode": "auto",
+                                "name_template": "qa_merge"},
+                })
+                mg_id = (jd(resp) or {}).get("job_id")
+                mg_detail = {}
+                deadline = time.time() + 120
+                while time.time() < deadline:
+                    r_mg = client.get("/api/avmerge/%s" % quote(mg_id or "am-x"))
+                    mg_detail = (jd(r_mg).get("job") or {})
+                    if mg_detail.get("status") in ("done", "failed",
+                                                   "cancelled"):
+                        break
+                    time.sleep(0.2)
+                out_mg = mg_detail.get("output_path") or ""
+                check("MG-03", "v0059 真实合成完成（2 段视频 + 短音频补齐）",
+                      mg_detail.get("status") == "done"
+                      and out_mg.endswith(".mp4") and os.path.isfile(out_mg)
+                      and float(mg_detail.get("duration_sec") or 0) > 1.2,
+                      "id=%s status=%s out=%s err=%s"
+                      % (mg_id, mg_detail.get("status"), out_mg,
+                         mg_detail.get("error_message")))
+                check("MG-04", "v0059 合成顺序与选择顺序一致",
+                      (mg_detail.get("video_paths") or []) == [v2, v1],
+                      "paths=%s" % (mg_detail.get("video_paths"),))
+                queue_mg = jd(client.get("/api/avmerge/queue"))
+                check("MG-05", "v0059 合成队列快照包含计数",
+                      isinstance(queue_mg.get("counts"), dict)
+                      and (queue_mg.get("counts") or {}).get("done", 0) >= 1,
+                      "queue=%s" % (queue_mg.get("counts"),))
+                export_mg = client.get("/api/avmerge/export")
+                check("MG-06", "v0059 合成任务可导出 CSV",
+                      export_mg.status == 200
+                      and "text/csv" in (export_mg.headers.get("content-type") or ""),
+                      "status=%s" % export_mg.status)
+                if mg_id and out_mg:
+                    client.request("DELETE",
+                                   "/api/avmerge/%s?delete_output=1" % quote(mg_id))
+                    check("MG-07", "v0059 删除任务时同时删除产物",
+                          not os.path.isfile(out_mg), "out=%s" % out_mg)
+            except (OSError, subprocess.SubprocessError) as exc:
+                record("MG-03", "v0059 真实合成", "UNVERIFIED",
+                       "生成/合成样例失败: %r" % (exc,))
 
         # ---------------- 重启持久化 ----------------
         client.put_json("/api/settings", {"settings": {"concurrency": 3}})

@@ -151,8 +151,8 @@ DEFAULT_SETTINGS = {
     "scheduled_scan_roots": [],
     "scheduled_scan_max_load": 0.0,
     # --- v0051 下载中心（docs/DOWNLOAD_CONTRACT.md §6）---
-    # 默认关闭；开启后下载页可用。输出目录为空时，下载页必须显式选目录。
-    "download_enabled": False,
+    # v0058：下载是独立功能，恒可用；该键保留仅为兼容旧配置/旧客户端，不再生效。
+    "download_enabled": True,
     "download_output_dir": "",
     # 输出子目录策略：none（平铺）/ site（按站点）/ date（按日期）/
     # site_date（站点+日期）/ custom（自定义模板，见 download_subdir_template）。
@@ -201,9 +201,10 @@ DEFAULT_SETTINGS = {
     # 单个订阅「立即检查」（手动触发不受此开关限制）。
     "download_subscribe_enabled": False,
     # --- v0056 格式转换（docs/CONVERT_CONTRACT.md §6）---
-    # 默认关闭；开启后「转换」页可用。输出目录为空时按 output_mode 决定：
+    # v0058：转换是独立功能，恒可用；该键保留仅为兼容旧配置/旧客户端，不再生效。
+    # 输出目录为空时按 output_mode 决定：
     # alongside=源文件同目录（默认）；fixed/subdir 则必须设置 convert_output_dir。
-    "convert_enabled": False,
+    "convert_enabled": True,
     "convert_output_dir": "",
     "convert_output_mode": config.CONVERT_OUTPUT_MODE_DEFAULT,
     "convert_output_subdir": config.CONVERT_SUBDIR_DEFAULT,
@@ -234,6 +235,21 @@ DEFAULT_SETTINGS = {
     # 转换完成后的可选联动（默认关）：自动入队扫描 / 自动提交字幕。
     "convert_auto_scan": False,
     "convert_auto_subtitle": False,
+    # --- v0059 音视频合成（docs/AV_MERGE_CONTRACT.md §6；无启用开关）---
+    "avmerge_output_dir": "",
+    "avmerge_output_mode": config.AVMERGE_OUTPUT_MODE_DEFAULT,
+    "avmerge_output_subdir": config.AVMERGE_SUBDIR_DEFAULT,
+    "avmerge_container": config.AVMERGE_CONTAINER_DEFAULT,
+    # auto=能拷贝就拷贝、否则转码；copy=只拷贝（不兼容则报错）；encode=强制转码。
+    "avmerge_mode": config.AVMERGE_MODE_DEFAULT,
+    "avmerge_overwrite": config.AVMERGE_OVERWRITE_DEFAULT,
+    "avmerge_keep_source": True,
+    "avmerge_name_template": config.AVMERGE_NAME_TEMPLATE_DEFAULT,
+    "avmerge_concurrency": config.AVMERGE_CONCURRENCY_DEFAULT,
+    "avmerge_max_resolution": config.AVMERGE_MAX_RESOLUTION_DEFAULT,
+    "avmerge_quality": config.AVMERGE_QUALITY_DEFAULT,
+    "avmerge_job_limit": config.AVMERGE_JOB_LIMIT_DEFAULT,
+    "avmerge_min_free_gb": config.AVMERGE_MIN_FREE_GB_DEFAULT,
 }
 
 # 密钥键：GET/日志/审计/扫描结果中绝不允许出现明文
@@ -500,6 +516,38 @@ def _check_convert_subdir(key, value):
         _err(u"设置 %s 不能包含路径分隔符" % key, {"key": key})
     if text in (".", "..") or "\x00" in text:
         _err(u"设置 %s 的目录名非法" % key, {"key": key})
+    return text
+
+
+def _check_avmerge_subdir(key, value):
+    """合成输出子目录名（v0059）：单层目录名，不允许分隔符/..。"""
+    text = _check_str(key, value, max_len=config.AVMERGE_SUBDIR_MAX).strip()
+    if not text:
+        return config.AVMERGE_SUBDIR_DEFAULT
+    if "/" in text or "\\" in text:
+        _err(u"设置 %s 不能包含路径分隔符" % key, {"key": key})
+    if text in (".", "..") or "\x00" in text:
+        _err(u"设置 %s 的目录名非法" % key, {"key": key})
+    return text
+
+
+def _check_avmerge_name_template(key, value):
+    """合成输出名模板（v0059）：只允许 {name}/{date}。"""
+    text = _check_str(key, value,
+                      max_len=config.AVMERGE_NAME_TEMPLATE_MAX).strip()
+    if not text:
+        return config.AVMERGE_NAME_TEMPLATE_DEFAULT
+    if "/" in text or "\\" in text:
+        _err(u"设置 %s 不能包含路径分隔符" % key, {"key": key})
+    for token in re.findall(r"\{([^{}]*)\}", text):
+        if token not in config.AVMERGE_NAME_TEMPLATE_TOKENS:
+            _err(u"设置 %s 含未知占位符 {%s}（可用：%s）"
+                 % (key, token, ", ".join("{%s}" % t for t in
+                                          config.AVMERGE_NAME_TEMPLATE_TOKENS)),
+                 {"key": key})
+    stripped = re.sub(r"\{[^{}]*\}", "", text)
+    if "{" in stripped or "}" in stripped:
+        _err(u"设置 %s 的占位符未闭合" % key, {"key": key})
     return text
 
 
@@ -1014,6 +1062,53 @@ def _normalize_value(key, value):
         return _check_hhmm(key, value)
     if key == "convert_name_template":
         return _check_convert_name_template(key, value)
+    # --- v0059 音视频合成 ---
+    if key == "avmerge_keep_source":
+        return _check_bool(key, value)
+    if key == "avmerge_output_dir":
+        text = _check_str(key, value, max_len=1024).strip()
+        if not text:
+            return ""
+        if not os.path.isabs(text):
+            _err(u"avmerge_output_dir 必须是绝对路径", {"key": key})
+        return os.path.normpath(text)
+    if key == "avmerge_output_mode":
+        if value not in config.AVMERGE_OUTPUT_MODES:
+            _err(u"avmerge_output_mode 只能是 %s"
+                 % "/".join(config.AVMERGE_OUTPUT_MODES), {"key": key})
+        return value
+    if key == "avmerge_output_subdir":
+        return _check_avmerge_subdir(key, value)
+    if key == "avmerge_container":
+        if value not in config.AVMERGE_CONTAINERS:
+            _err(u"avmerge_container 只能是 %s"
+                 % "/".join(config.AVMERGE_CONTAINERS), {"key": key})
+        return value
+    if key == "avmerge_mode":
+        if value not in config.AVMERGE_MODES:
+            _err(u"avmerge_mode 只能是 %s"
+                 % "/".join(config.AVMERGE_MODES), {"key": key})
+        return value
+    if key == "avmerge_overwrite":
+        if value not in config.AVMERGE_OVERWRITE_MODES:
+            _err(u"avmerge_overwrite 只能是 %s"
+                 % "/".join(config.AVMERGE_OVERWRITE_MODES), {"key": key})
+        return value
+    if key == "avmerge_name_template":
+        return _check_avmerge_name_template(key, value)
+    if key == "avmerge_concurrency":
+        return _check_int(key, value, 1, config.AVMERGE_CONCURRENCY_MAX)
+    if key == "avmerge_max_resolution":
+        return _check_int(key, value, 0, 4320)
+    if key == "avmerge_quality":
+        if value not in config.AVMERGE_QUALITIES:
+            _err(u"avmerge_quality 只能是 %s"
+                 % "/".join(config.AVMERGE_QUALITIES), {"key": key})
+        return value
+    if key == "avmerge_job_limit":
+        return _check_int(key, value, 20, 1000)
+    if key == "avmerge_min_free_gb":
+        return _check_int(key, value, 0, 1000)
     if key == "skip_symlinks":
         # 无论前端传什么，符号链接一律跳过（安全强制）
         if not isinstance(value, bool):

@@ -409,6 +409,27 @@ class Api(object):
              self._convert_retry, False),
             ("DELETE", re.compile(r"^/api/convert/(?P<job_id>[^/]+)$"),
              self._convert_delete, False),
+            # v0059 音视频合成（拼接 + 混流；内置功能，无启用开关）
+            ("GET", re.compile(r"^/api/avmerge/capabilities$"),
+             self._avmerge_capabilities, False),
+            ("GET", re.compile(r"^/api/avmerge$"), self._avmerge_list, False),
+            ("POST", re.compile(r"^/api/avmerge$"), self._avmerge_create, False),
+            ("POST", re.compile(r"^/api/avmerge/enumerate$"),
+             self._avmerge_enumerate, False),
+            ("POST", re.compile(r"^/api/avmerge/bulk$"),
+             self._avmerge_bulk, False),
+            ("GET", re.compile(r"^/api/avmerge/export$"),
+             self._avmerge_export, False),
+            ("GET", re.compile(r"^/api/avmerge/queue$"),
+             self._avmerge_queue, False),
+            ("GET", re.compile(r"^/api/avmerge/(?P<job_id>[^/]+)$"),
+             self._avmerge_get, False),
+            ("POST", re.compile(r"^/api/avmerge/(?P<job_id>[^/]+)/cancel$"),
+             self._avmerge_cancel, False),
+            ("POST", re.compile(r"^/api/avmerge/(?P<job_id>[^/]+)/retry$"),
+             self._avmerge_retry, False),
+            ("DELETE", re.compile(r"^/api/avmerge/(?P<job_id>[^/]+)$"),
+             self._avmerge_delete, False),
         ]
 
     # ------------------------------------------------------------------
@@ -572,8 +593,8 @@ class Api(object):
             },
             # v0051：下载中心能力（docs/DOWNLOAD_CONTRACT.md §3）
             "download": {
-                "enabled": bool(
-                    self.services.settings.get().get("download_enabled")),
+                # v0058：下载是独立功能，恒可用；键保留仅为兼容旧客户端。
+                "enabled": True,
                 "concurrency_max": config.DOWNLOAD_CONCURRENCY_MAX,
                 "concurrency_default":
                     config.DOWNLOAD_DEFAULT_CONCURRENCY,
@@ -727,10 +748,7 @@ class Api(object):
 
     def _require_download_admin(self, session):
         self._require_admin(session, u"仅管理员可以使用下载中心")
-        settings = self.services.settings.get()
-        if not settings.get("download_enabled"):
-            raise ApiError("DOWNLOAD_DISABLED",
-                           u"下载功能未启用，请先在设置中开启")
+        # v0058：下载是独立功能，不再检查 download_enabled。
         return self._download_service()
 
     def _download_list(self, request, session, params):
@@ -913,14 +931,11 @@ class Api(object):
 
     def _require_convert_admin(self, session):
         self._require_admin(session, u"仅管理员可以使用格式转换")
-        settings = self.services.settings.get()
-        if not settings.get("convert_enabled"):
-            raise ApiError("CONVERT_DISABLED",
-                           u"格式转换未启用，请先在「设置 → 转换」开启")
+        # v0058：转换是独立功能，不再检查 convert_enabled。
         return self._convert_service()
 
     def _convert_capabilities(self, request, session, params):
-        # 能力探测不受 convert_enabled 限制：页面要用它显示"可用预设/未启用"。
+        # 能力探测只要求管理员；enabled 恒为 True（v0058 起不再有开关）。
         self._require_admin(session, u"仅管理员可以使用格式转换")
         return json_response(self._convert_service().capabilities())
 
@@ -998,6 +1013,96 @@ class Api(object):
             headers={
                 "Content-Disposition":
                     'attachment; filename="conversions.csv"',
+                "Cache-Control": "no-store",
+            },
+        )
+
+    # ------------------------------------------------------------------
+    # v0059：音视频合成（内置功能，无启用开关）
+    # ------------------------------------------------------------------
+    def _avmerge_service(self):
+        service = getattr(self.services, "avmerge", None)
+        if service is None:
+            raise ApiError("MERGE_FAILED", u"音视频合成功能不可用")
+        return service
+
+    def _require_avmerge_admin(self, session):
+        self._require_admin(session, u"仅管理员可以使用音视频合成")
+        return self._avmerge_service()
+
+    def _avmerge_capabilities(self, request, session, params):
+        self._require_admin(session, u"仅管理员可以使用音视频合成")
+        return json_response(self._avmerge_service().capabilities())
+
+    def _avmerge_list(self, request, session, params):
+        service = self._require_avmerge_admin(session)
+        return json_response(service.list_page(
+            status=request.query_last("status"),
+            offset=_query_int(request, "offset", 0),
+            limit=_query_int(request, "limit", 50),
+            q=request.query_last("q")))
+
+    def _avmerge_create(self, request, session, params):
+        service = self._require_avmerge_admin(session)
+        body = _json_body(request)
+        return json_response(service.create(session.user, body), status=202)
+
+    def _avmerge_enumerate(self, request, session, params):
+        service = self._require_avmerge_admin(session)
+        body = _json_body(request)
+        return json_response(service.enumerate_files(body))
+
+    def _avmerge_bulk(self, request, session, params):
+        service = self._require_avmerge_admin(session)
+        body = _json_body(request)
+        return json_response(service.bulk_action(
+            session.user, body.get("action"), body.get("scope") or "all"))
+
+    def _avmerge_queue(self, request, session, params):
+        service = self._require_avmerge_admin(session)
+        return json_response(service.queue_snapshot(
+            active_limit=_query_int(request, "active_limit", 20),
+            queued_limit=_query_int(request, "queued_limit", 50),
+            recent_limit=_query_int(request, "recent_limit", 20)))
+
+    def _avmerge_get(self, request, session, params):
+        service = self._require_avmerge_admin(session)
+        return json_response({"ok": True,
+                              "job": service.get_view(params["job_id"])})
+
+    def _avmerge_cancel(self, request, session, params):
+        service = self._require_avmerge_admin(session)
+        return json_response({"ok": True, "action": "cancel",
+                              "job": service.cancel(params["job_id"])})
+
+    def _avmerge_retry(self, request, session, params):
+        service = self._require_avmerge_admin(session)
+        return json_response({"ok": True, "action": "retry",
+                              "job": service.retry(params["job_id"])})
+
+    def _avmerge_delete(self, request, session, params):
+        service = self._require_avmerge_admin(session)
+        delete_output = _query_bool(request, "delete_output", False)
+        return json_response(service.delete(params["job_id"],
+                                            delete_output=delete_output))
+
+    def _avmerge_export(self, request, session, params):
+        service = self._require_avmerge_admin(session)
+        rows = service.export_rows(status=request.query_last("status"))
+        buffer = io.StringIO()
+        writer = csv.writer(buffer)
+        writer.writerow(["任务 ID", "创建时间", "状态", "方式", "视频片段",
+                         "音频片段", "时长(秒)", "产物", "错误码", "错误"])
+        for row in rows:
+            writer.writerow(row)
+        data = (u"\ufeff" + buffer.getvalue()).encode("utf-8")
+        return Response(
+            status=200,
+            content_type="text/csv; charset=utf-8",
+            body=data,
+            headers={
+                "Content-Disposition":
+                    'attachment; filename="merges.csv"',
                 "Cache-Control": "no-store",
             },
         )

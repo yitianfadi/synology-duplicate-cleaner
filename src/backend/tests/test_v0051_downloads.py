@@ -584,11 +584,12 @@ class DownloadServiceTest(unittest.TestCase):
         self.assertEqual(group["counts"]["done"], 2)
         self.assertTrue(group["is_done"])
 
-    def test_disabled_rejects(self):
+    def test_disabled_setting_ignored(self):
+        # v0058：下载是独立功能，download_enabled 键保留但不再生效。
         self.h.settings["download_enabled"] = False
-        with self.assertRaises(ApiError) as ctx:
-            self.h.service.create("admin", {"urls": ["http://x.test/a"]})
-        self.assertEqual(ctx.exception.code, "DOWNLOAD_DISABLED")
+        created = self.h.service.create("admin", {"urls": ["http://x.test/a"]})
+        self.assertTrue(created.get("jobs"))
+        self.assertTrue(created["jobs"][0].get("job_id"))
 
     def test_private_url_rejected_at_submit(self):
         self.h.settings["download_allow_private"] = False

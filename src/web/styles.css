@@ -2601,3 +2601,47 @@ input[type="checkbox"]:disabled { cursor: not-allowed; }
 .download-storage { font-size: 12px; }
 .download-storage.is-warn { color: var(--warning); font-weight: 600; }
 #downloadBookmarkletCode { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }
+
+/* ===== v0059 音视频合成 ===== */
+.merge-lists {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-top: 8px;
+}
+.merge-lists textarea {
+  width: 100%;
+  min-height: 120px;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  resize: vertical;
+}
+.merge-candidates {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 280px;
+  overflow: auto;
+  margin: 8px 0 4px;
+}
+.merge-candidate {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.merge-candidate-path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 12px;
+}
+@media (max-width: 900px) {
+  .merge-lists { grid-template-columns: 1fr; }
+}

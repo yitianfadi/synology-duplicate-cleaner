@@ -1,7 +1,7 @@
 # 整体方案架构
 
 > 项目：**重复文件清理与字幕（Duplicate Cleaner & Subtitles）** · 群晖 DSM 7.x SPK 套件
-> 版本：1.1.0-0057
+> 版本：1.1.0-0059
 > 原则：**先扫描、出报告、人工确认、二次确认、可回收、全程审计**。任何情况下都不自动静默删除。
 
 ## 1. 目标与边界
@@ -687,3 +687,22 @@ Linux 的 `st_ctime` 是 **inode 状态变更时间**，不是创建时间，复
 - **代码拆分（wave 2）**：字幕任务的 56 个函数 + 共享渲染助手拆成 `subtitle-jobs.js`（列表/失败面板/详情弹窗/SRT 预览/批量操作/轮询）与 `subtitle-shared.js`（状态标签、翻译按钮、输出渲染、语言下拉等结果页与任务面板共用的小函数）；`buildSubtitleTranslateButton`/`subtitleTranslateGate`/`subtitleTranslateJob` 放在 jobs 模块内，保持依赖单向（jobs → shared），避免循环 import。
 - **拆分纪律**：模块一律不 import `app.js`；跨模块动作通过 `state.js` 的钩子（`openScan`、`openSubtitleJobs`）或公开函数传递。拆完后 `app.js` 从 11,694 行降到约 9,040 行，`js/` 下 19 个模块；`qa/check_web_modules.mjs` 扩到 35 项，静态检查新增模块清单校验。
 - **拆分后验证**：`web_smoke.py` 8/8、模块图 35/35、可交互探针覆盖 5 个标签（历史/删除与回收站/任务/操作日志/常规）且无 console 错误；另用脚本扫描“模块内是否还有未声明标识符 / 是否引用 app.js 内部函数”，结果为空。
+
+## 24. 下载 / 转换改为内置功能（v0058）
+
+- **去掉启用开关**：`download_enabled` / `convert_enabled` 不再作为闸门——`httpapi._require_download_admin` / `_require_convert_admin` 不再读设置，`downloads.create` / `parse_target`、`convert.create` 与 `download_subs` 里的 403 分支删除；`/api/convert/capabilities.enabled` 与 `/api/meta.download.enabled` 恒为 `true`。
+- **前端**：设置页删除两个启用复选框与「未启用」徽标（两个分组只保留目录/并发/空闲时段等参数）；下载页去掉状态徽标；转换页只在 FFmpeg 不可用时禁用提交，徽标显示 FFmpeg 版本与并发数。
+- **兼容**：两个设置键仍保留在 `DEFAULT_SETTINGS`（默认值改为 `true`）以兼容旧 `settings.json` 与旧客户端，**值不再生效**；升级后即使旧配置是 `false`，功能照常可用。
+- **为什么**：下载中心与格式转换各自已是独立页面（v0051 / v0056），再要求先去设置“开功能”只是历史门槛——用户点进页面发现按钮全灰，还要跳设置。保留真正需要的参数即可。
+- **验证**：`FE-NOGATE-V0058`（static）断言后端无开关闸门、设置页无复选框、页面无未启用徽标；原「未启用返回 403」的 3 个单测与 `DL-00`/`CV-00` 改为验证“开关值被忽略、接口仍可用”。
+
+## 25. 音视频合成（v0059）
+
+- **模块**：`avmerge.py`（纯函数：探测解析/兼容性/策略/滤镜参数 + `AVMergeService` 队列）、`merge-page.js`（合成页，导航第 5 项）。
+- **语义**：视频片段按选择顺序拼成画面、音频片段按选择顺序拼成声音，再混流；1 视频 + 1 音频退化为混流；音频为空输出无声视频。
+- **两条路径**：`copy`（同编码/分辨率/像素格式/帧率 + 音频同采样/声道 → concat demuxer `-c copy`，秒级）与 `encode`（filter_complex `concat` + scale/pad/fps、音频 `aresample` 统一 48k 立体声 AAC）；`auto` 先探测再选路，UI 显示“直接拼接/统一转码”。
+- **时长**：以拼接后的视频总时长为准；音频不足 `apad` 补齐、超出 `-t` 截断；校验容差 ±5s。
+- **三阶段执行**：video.mkv（拼接画面，剥离音轨）→ audio.m4a（拼接+补齐）→ 混流为最终 `.dcpart`（显式 `-f matroska|mp4`）→ 校验后 `os.replace` 改名。
+- **与硬链接合并区分**：v0045 的“合并”是文件系统硬链接（`merge.py`/`/api/merges`），本模块是音视频拼接（`avmerge.py`/`/api/avmerge`），命名空间完全分开。
+- **存储**：schema v11 新增 `avmerge_jobs`（与 convert_jobs 同构）；无启用开关（v0058 约定），设置键 `avmerge_*` 只放默认参数。
+- **安全**：源文件共享内/普通文件/拒符号链接；输出目录可写 + 剩余空间；产物校验（有视频轨、需要时有音频轨、时长匹配）；删源必须 `confirm="DELETE SOURCE"` 且校验通过。

@@ -5,9 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light">
 <meta name="referrer" content="same-origin">
-<title>重复文件清理与字幕 · Duplicate Cleaner &amp; Subtitles</title>
-<link rel="icon" href="./assets/favicon.svg?v=1.1.0-0057" type="image/svg+xml">
-<link rel="stylesheet" href="./styles.css?v=1.1.0-0057">
+<title>重复文件清理与影音工具 · Duplicate Cleaner &amp; Media Toolkit</title>
+<link rel="icon" href="./assets/favicon.svg?v=1.1.0-0059" type="image/svg+xml">
+<link rel="stylesheet" href="./styles.css?v=1.1.0-0059">
 </head>
 <body>
 <a class="skip-link" href="#main">跳到主要内容</a>
@@ -23,7 +23,7 @@
         <path d="M29 28l4 4 8-8" stroke="#9fe1b7" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round" fill="none" transform="translate(-2 -1)"></path>
       </svg>
       <div>
-        <h1 class="login-title">重复文件清理与字幕</h1>
+        <h1 class="login-title">重复文件清理与影音工具</h1>
         <p class="login-subtitle">Duplicate Cleaner &amp; Subtitles · Synology DSM 7</p>
       </div>
     </div>
@@ -67,8 +67,8 @@
           <path d="M27 23.5l3 3 6-6" stroke="#9fe1b7" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" fill="none" transform="translate(-2 -1)"></path>
         </svg>
         <div class="brand-text">
-          <span class="brand-name">重复文件清理与字幕</span>
-          <span class="brand-sub">Duplicate Cleaner &amp; Subtitles</span>
+          <span class="brand-name">重复文件清理与影音工具</span>
+          <span class="brand-sub">Duplicate Cleaner &amp; Media Toolkit</span>
         </div>
       </div>
       <nav class="main-nav" aria-label="主导航">
@@ -76,6 +76,7 @@
         <button type="button" class="nav-item" data-nav="subtitles">字幕</button>
         <button type="button" class="nav-item" data-nav="download">下载</button>
         <button type="button" class="nav-item" data-nav="convert">转换</button>
+        <button type="button" class="nav-item" data-nav="merge">合成</button>
       </nav>
       <div class="topbar-right">
         <span class="env-badge" id="envBadge" hidden></span>
@@ -1016,7 +1017,6 @@
           <h1 id="downloadHeading">下载</h1>
           <p class="page-desc">粘贴直链或 m3u8 地址（每行一个），批量下载并合并为 MP4。只支持点播、未加密或 AES-128 的内容；DRM 与直播不支持。请仅下载你有权保存的内容。</p>
         </div>
-        <span class="badge badge-gray" id="downloadPageStatusBadge">检测中…</span>
       </div>
 
       <section class="card" aria-labelledby="downloadParseHeading">
@@ -1355,6 +1355,146 @@
         <p class="field-error" id="convertListError" role="alert" hidden></p>
         <div class="state-box state-empty" id="convertEmpty" hidden>还没有转换任务。</div>
         <div id="convertJobsList" class="download-jobs-list"></div>
+      </section>
+    </section>
+
+    <!-- ========== 音视频合成（v0059） ========== -->
+    <section id="view-merge" class="view" data-view="merge" aria-labelledby="mergeHeading" hidden>
+      <div class="page-head">
+        <div>
+          <h1 id="mergeHeading">合成</h1>
+          <p class="page-desc">把视频片段与音频片段按选择顺序合成为一个文件：视频片段按顺序拼成画面，音频片段按顺序拼成声音，再混流输出；只选 1 个视频 + 1 个音频时就是混流。内置功能，无需在设置里开启。</p>
+        </div>
+        <span class="badge badge-gray" id="mergePageStatusBadge">检测中…</span>
+      </div>
+
+      <section class="card" aria-labelledby="mergePickHeading">
+        <div class="card-head">
+          <h2 id="mergePickHeading">选择素材</h2>
+          <span class="muted">列表顺序即合成顺序；可手动粘贴或从目录加入</span>
+        </div>
+        <div class="form-grid">
+          <div class="field">
+            <label for="mergeDirPath">从目录添加</label>
+            <div class="subtitle-dir-row">
+              <input id="mergeDirPath" type="text" placeholder="/volume1/video" autocomplete="off" spellcheck="false">
+              <button type="button" class="btn btn-ghost" id="mergeDirPickBtn">选择目录</button>
+            </div>
+          </div>
+          <div class="field">
+            <label class="check"><input id="mergeRecursive" type="checkbox" checked>包含子目录</label>
+            <div class="settings-actions-row">
+              <button type="button" class="btn btn-primary btn-sm" id="mergeEnumerateBtn">枚举素材</button>
+              <span class="muted" id="mergeEnumerateSummary">尚未枚举</span>
+            </div>
+            <p class="field-error" id="mergeEnumerateError" role="alert" hidden></p>
+          </div>
+        </div>
+        <div id="mergeCandidatesCard" hidden>
+          <p class="hint">点击“加入视频 / 加入音频”会追加到对应列表末尾；点击列表项可移动到末尾。</p>
+          <div id="mergeCandidates" class="merge-candidates"></div>
+          <div class="state-box state-empty" id="mergeCandidatesEmpty" hidden>该目录没有可用的视频/音频文件。</div>
+        </div>
+        <div class="merge-lists">
+          <div class="field">
+            <label for="mergeVideoPaths">视频片段（每行一个，按顺序拼接）</label>
+            <textarea id="mergeVideoPaths" rows="6" placeholder="/volume1/video/part1.mp4"></textarea>
+            <p class="hint" id="mergeVideoHint">0 个视频片段</p>
+          </div>
+          <div class="field">
+            <label for="mergeAudioPaths">音频片段（每行一个，按顺序拼接；可留空 = 无声视频）</label>
+            <textarea id="mergeAudioPaths" rows="6" placeholder="/volume1/music/bgm.m4a"></textarea>
+            <p class="hint" id="mergeAudioHint">0 个音频片段</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="card" aria-labelledby="mergeOutputHeading">
+        <div class="card-head">
+          <h2 id="mergeOutputHeading">输出设置</h2>
+          <span class="muted">音频时长以视频为准：不足静音补齐，超出截断</span>
+        </div>
+        <div class="form-grid">
+          <div class="field">
+            <label for="mergeOutputMode">输出位置</label>
+            <select id="mergeOutputMode">
+              <option value="alongside">源文件同目录（推荐）</option>
+              <option value="fixed">指定目录</option>
+              <option value="subdir">指定目录 + 子目录</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="mergeOutputDir">输出目录</label>
+            <div class="subtitle-dir-row">
+              <input id="mergeOutputDir" type="text" placeholder="/volume1/media" autocomplete="off" spellcheck="false">
+              <button type="button" class="btn btn-ghost" id="mergeOutputDirPickBtn">选择目录</button>
+            </div>
+          </div>
+          <div class="field">
+            <label for="mergeOutputSubdir">输出子目录（仅“指定目录 + 子目录”）</label>
+            <input id="mergeOutputSubdir" type="text" placeholder="merged" autocomplete="off" spellcheck="false">
+          </div>
+          <div class="field">
+            <label for="mergeContainer">容器格式</label>
+            <select id="mergeContainer">
+              <option value="mp4">MP4（通用）</option>
+              <option value="mkv">MKV（兼容任意编码）</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="mergeMode">合成方式</label>
+            <select id="mergeMode">
+              <option value="auto">自动（能直拷就直拷，否则转码）</option>
+              <option value="copy">仅直拷（参数不一致会报错）</option>
+              <option value="encode">统一转码（兼容混合素材）</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="mergeQuality">质量</label>
+            <select id="mergeQuality">
+              <option value="high">高</option>
+              <option value="standard">标准</option>
+              <option value="small">小体积</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="mergeMaxResolution">分辨率上限（仅转码）</label>
+            <select id="mergeMaxResolution">
+              <option value="0">保持原样</option>
+              <option value="2160">2160p</option>
+              <option value="1080">1080p</option>
+              <option value="720">720p</option>
+              <option value="480">480p</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="mergeNameTemplate">输出文件名模板</label>
+            <input id="mergeNameTemplate" type="text" placeholder="{name}_merged" autocomplete="off" spellcheck="false">
+            <p class="hint">可用 {name}（第一个视频的文件名）、{date}。</p>
+          </div>
+          <div class="field field-wide">
+            <label class="check"><input id="mergeDeleteSource" type="checkbox">合成成功后删除源文件（不可恢复，逐次确认）</label>
+            <p class="hint">默认只保留产物；删除前会校验产物（存在视频轨、时长一致）。</p>
+          </div>
+        </div>
+        <p class="field-error" id="mergeSubmitError" role="alert" hidden></p>
+        <div class="subtitle-submit-row">
+          <button type="button" class="btn btn-primary" id="mergeSubmitBtn">开始合成</button>
+          <span class="muted" id="mergeSubmitHint"></span>
+        </div>
+      </section>
+
+      <section class="card" aria-labelledby="mergeQueueHeading">
+        <div class="card-head">
+          <h2 id="mergeQueueHeading">合成队列</h2>
+          <span class="muted" id="mergeJobsStatus"></span>
+          <button type="button" class="btn btn-ghost btn-sm" id="mergeRefreshBtn">
+            <svg class="icon" aria-hidden="true"><use href="#i-refresh"></use></svg>刷新
+          </button>
+        </div>
+        <p class="field-error" id="mergeListError" role="alert" hidden></p>
+        <div class="state-box state-empty" id="mergeJobsEmpty" hidden>还没有合成任务。</div>
+        <div id="mergeJobsList" class="download-jobs-list"></div>
       </section>
     </section>
 
@@ -1967,12 +2107,11 @@
           </fieldset>
         </details>
         <details class="advanced settings-group" id="settingsDownloadDetails">
-          <summary><span class="settings-group-title">下载 · m3u8 / 直链 → MP4</span><span class="settings-summary" id="settingsDownloadSummary"></span><span class="badge badge-gray" id="downloadStatusBadgeSettings">检测中…</span></summary>
+          <summary><span class="settings-group-title">下载 · m3u8 / 直链 → MP4</span><span class="settings-summary" id="settingsDownloadSummary"></span></summary>
           <p class="hint">下载页把直链或 HLS(m3u8) 分片下载到指定共享目录，并用内置 FFmpeg 合并为 MP4。只支持点播、未加密或 AES-128 的内容；DRM/直播明确不支持。请仅下载你有权保存的内容。</p>
           <div class="form-grid">
             <div class="field field-wide">
-              <label class="check"><input id="setDownloadEnabled" type="checkbox">启用下载中心（默认关闭）</label>
-              <p class="hint">仅管理员可用；未启用时下载页按钮禁用，不影响查重与字幕。</p>
+              <p class="hint">下载中心是内置功能，无需开启，始终可用（仅管理员）；本页只配置默认目录与下载行为。</p>
             </div>
             <div class="field">
               <label for="setDownloadOutputDir">默认下载目录</label>
@@ -2133,12 +2272,11 @@
           </div>
         </details>
         <details class="advanced settings-group" id="settingsConvertDetails">
-          <summary><span class="settings-group-title">转换 · 视频 / 音频格式互转</span><span class="settings-summary" id="settingsConvertSummary"></span><span class="badge badge-gray" id="convertStatusBadgeSettings">检测中…</span></summary>
+          <summary><span class="settings-group-title">转换 · 视频 / 音频格式互转</span><span class="settings-summary" id="settingsConvertSummary"></span></summary>
           <p class="hint">转换页用内置 FFmpeg 换容器/换编码或提取音频。「仅换封装」预设（MKV/MP4 copy）秒级完成且无损；重编码预设会很吃 CPU，NAS 上建议开启「仅空闲时段」并把并发设为 1。</p>
           <div class="form-grid">
             <div class="field field-wide">
-              <label class="check"><input id="setConvertEnabled" type="checkbox">启用格式转换（默认关闭）</label>
-              <p class="hint">仅管理员可用；未启用时转换页按钮禁用，不影响查重、字幕与下载。</p>
+              <p class="hint">格式转换是内置功能，无需开启，始终可用（仅管理员）；本页只配置默认输出位置与转码参数。</p>
             </div>
             <div class="field">
               <label for="setConvertOutputMode">默认输出位置</label>
@@ -2268,6 +2406,85 @@
               <label class="check"><input id="setConvertAutoScan" type="checkbox">转换完成后自动入队扫描该目录</label>
               <label class="check"><input id="setConvertAutoSubtitle" type="checkbox">转换完成后自动提交字幕任务</label>
               <p class="hint">需要同时启用「云端字幕」并配置好 ASR；同一目录 10 分钟内只触发一次扫描。</p>
+            </div>
+          </div>
+        </details>
+        <details class="advanced settings-group" id="settingsMergeDetails">
+          <summary><span class="settings-group-title">合成 · 视频 + 音频</span><span class="settings-summary" id="settingsMergeSummary"></span></summary>
+          <p class="hint">「合成」页把视频片段与音频片段按选择顺序拼接并混流。内置功能，无需开启；本页只配置默认输出位置与转码参数。</p>
+          <div class="form-grid">
+            <div class="field">
+              <label for="setMergeOutputMode">默认输出位置</label>
+              <select id="setMergeOutputMode">
+                <option value="alongside">源文件同目录（推荐）</option>
+                <option value="fixed">指定目录</option>
+                <option value="subdir">指定目录 + 子目录</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="setMergeOutputDir">默认输出目录（非“同目录”时必填）</label>
+              <div class="subtitle-dir-row">
+                <input id="setMergeOutputDir" type="text" placeholder="/volume1/media" autocomplete="off" spellcheck="false">
+                <button type="button" class="btn btn-ghost btn-sm" id="setMergeDirPickBtn">选择目录</button>
+              </div>
+              <p class="field-error" id="setMergeOutputDirError" role="alert" hidden></p>
+            </div>
+            <div class="field">
+              <label for="setMergeOutputSubdir">输出子目录名</label>
+              <input id="setMergeOutputSubdir" type="text" placeholder="merged" autocomplete="off" spellcheck="false">
+            </div>
+            <div class="field">
+              <label for="setMergeContainer">默认容器</label>
+              <select id="setMergeContainer">
+                <option value="mp4">MP4（通用）</option>
+                <option value="mkv">MKV（兼容任意编码）</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="setMergeMode">默认合成方式</label>
+              <select id="setMergeMode">
+                <option value="auto">自动（能直拷就直拷，否则转码）</option>
+                <option value="copy">仅直拷</option>
+                <option value="encode">统一转码</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="setMergeQuality">默认质量（转码时）</label>
+              <select id="setMergeQuality">
+                <option value="high">高</option>
+                <option value="standard">标准</option>
+                <option value="small">小体积</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="setMergeMaxResolution">分辨率上限（转码时）</label>
+              <select id="setMergeMaxResolution">
+                <option value="0">保持原样</option>
+                <option value="2160">2160p</option>
+                <option value="1080">1080p</option>
+                <option value="720">720p</option>
+                <option value="480">480p</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="setMergeNameTemplate">输出名模板</label>
+              <input id="setMergeNameTemplate" type="text" placeholder="{name}_merged" autocomplete="off" spellcheck="false">
+            </div>
+            <div class="field">
+              <label for="setMergeConcurrency">同时合成几个（1–2）</label>
+              <input id="setMergeConcurrency" type="number" inputmode="numeric" min="1" max="2" step="1" value="1">
+            </div>
+            <div class="field">
+              <label for="setMergeMinFreeGb">最少剩余空间（GB）</label>
+              <input id="setMergeMinFreeGb" type="number" inputmode="numeric" min="0" max="1000" step="1" value="1">
+            </div>
+            <div class="field">
+              <label for="setMergeJobLimit">保留任务数</label>
+              <input id="setMergeJobLimit" type="number" inputmode="numeric" min="20" max="1000" step="10" value="200">
+            </div>
+            <div class="field field-wide">
+              <label class="check"><input id="setMergeKeepSource" type="checkbox" checked>默认保留源文件</label>
+              <p class="hint">「合成成功后删除源文件」仍需在合成页逐次勾选并二次确认，不能靠默认值。</p>
             </div>
           </div>
         </details>
@@ -2500,6 +2717,6 @@
   <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.6" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M12 10.8v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="12" cy="7.6" r="1.05" fill="currentColor"/></symbol>
 </svg>
 
-<script type="module" src="./app.js?v=1.1.0-0057"></script>
+<script type="module" src="./app.js?v=1.1.0-0059"></script>
 </body>
 </html>

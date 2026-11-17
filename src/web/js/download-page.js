@@ -632,23 +632,7 @@ function updateSubmitHint() {
 }
 
 function updatePageBadge() {
-  var meta = state.meta || {};
-  var download = meta.download || {};
-  var enabled = download.enabled === true;
-  var badge = els.downloadPageStatusBadge;
-  if (badge) {
-    setText(badge, enabled ? '已启用' : '未启用');
-    badge.className = 'badge ' + (enabled ? 'badge-green' : 'badge-gray');
-  }
-  var settingsBadge = els.downloadStatusBadgeSettings;
-  if (settingsBadge) {
-    setText(settingsBadge, enabled ? '已启用' : '未启用');
-    settingsBadge.className = 'badge ' + (enabled ? 'badge-green' : 'badge-gray');
-  }
-  if (els.downloadSubmitBtn) {
-    els.downloadSubmitBtn.disabled = !enabled;
-    els.downloadSubmitBtn.title = enabled ? '' : '下载功能未启用，请先在设置中开启';
-  }
+  // v0058：下载是独立功能，恒可用，不再有“启用/未启用”状态。
   var defaultDir = (state.settings && state.settings.download_output_dir) || '';
   if (els.downloadDirPath && !els.downloadDirPath.value && defaultDir) {
     els.downloadDirPath.placeholder = defaultDir;

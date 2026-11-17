@@ -32,7 +32,7 @@
 
 ## 3. API
 
-全部接口**仅管理员**；写操作需要 `X-CSRF-Token`；`download_enabled=false` 时统一返回 `DOWNLOAD_DISABLED`（403）。
+全部接口**仅管理员**；写操作需要 `X-CSRF-Token`。v0058 起下载是独立功能，**不再有启用开关**，`download_enabled` 键仅为兼容保留、不再生效（旧配置里的 `false` 也不会再 403）。
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
@@ -104,7 +104,7 @@ download_groups(group_id PK, payload_json, created_epoch, updated_epoch)
 
 | 键 | 默认 | 范围 |
 |---|---|---|
-| `download_enabled` | `false` | bool |
+| `download_enabled` | `true` | 兼容键，v0058 起不再生效（功能恒可用） |
 | `download_output_dir` | `""` | 空或绝对路径（提交时校验共享目录归属） |
 | `download_subdir_mode` | `none` | `none/site/date/site_date/custom` |
 | `download_subdir_template` | `{site}/{date}` | ≤200 字符、相对、占位符 `{site}{date}{yyyy}{mm}{dd}{hour}{min}{title}` |

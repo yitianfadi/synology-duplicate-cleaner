@@ -8,8 +8,8 @@ export var POLL_MS = 800;                 // 扫描 / 删除任务轮询间隔�
 export var GROUPS_LIMIT = 50;             // 结果分页大小
 export var TERMINAL_STATUS = ['completed', 'failed', 'stopped', 'interrupted'];
 export var ACTIVE_STATUS = ['queued', 'running', 'paused', 'stopping'];
-export var VIEWS = ['scan', 'subtitles', 'download', 'convert', 'settings'];
-export var VIEW_HEADINGS = { scan: 'scanHeading', subtitles: 'subtitlesHeading', download: 'downloadHeading', convert: 'convertHeading', settings: 'settingsHeading' };
+export var VIEWS = ['scan', 'subtitles', 'download', 'convert', 'merge', 'settings'];
+export var VIEW_HEADINGS = { scan: 'scanHeading', subtitles: 'subtitlesHeading', download: 'downloadHeading', convert: 'convertHeading', merge: 'mergeHeading', settings: 'settingsHeading' };
 // v0057：视图内嵌标签页（任务中心已拆分到各自模块）
 export var VIEW_TABS = {
   scan: ['scan', 'history', 'deletion'],
@@ -353,7 +353,8 @@ export var DEFAULT_SETTINGS = {
   scheduled_scan_roots: [],
   scheduled_scan_max_load: 0,
   // v0051 下载中心默认值（与后端 settings.DEFAULT_SETTINGS 对齐）
-  download_enabled: false,
+  // v0058：下载是独立功能，恒可用；该键保留仅为兼容。
+  download_enabled: true,
   download_output_dir: '',
   download_subdir_mode: 'none',
   download_subdir_template: '{site}/{date}',
@@ -386,7 +387,8 @@ export var DEFAULT_SETTINGS = {
   // v0054 订阅下载总开关
   download_subscribe_enabled: false,
   // v0056 格式转换默认值（与后端 settings.DEFAULT_SETTINGS 对齐）
-  convert_enabled: false,
+  // v0058：转换是独立功能，恒可用；该键保留仅为兼容。
+  convert_enabled: true,
   convert_output_dir: '',
   convert_output_mode: 'alongside',
   convert_output_subdir: 'converted',
@@ -407,5 +409,19 @@ export var DEFAULT_SETTINGS = {
   convert_name_template: '{name}',
   convert_auto_scan: false,
   convert_auto_subtitle: false,
+  // v0059 音视频合成默认值（与后端 settings.DEFAULT_SETTINGS 对齐；无启用开关）
+  avmerge_output_dir: '',
+  avmerge_output_mode: 'alongside',
+  avmerge_output_subdir: 'merged',
+  avmerge_container: 'mp4',
+  avmerge_mode: 'auto',
+  avmerge_overwrite: 'rename',
+  avmerge_keep_source: true,
+  avmerge_name_template: '{name}_merged',
+  avmerge_concurrency: 1,
+  avmerge_max_resolution: 0,
+  avmerge_quality: 'standard',
+  avmerge_job_limit: 200,
+  avmerge_min_free_gb: 1,
 };
 export var SIZE_UNITS = { kb: 1024, mb: 1048576, gb: 1073741824 };
