@@ -548,7 +548,7 @@ def check_backend():
     check("BE-INC-HASH-CACHE",
           "增量扫描：跨扫描哈希缓存（hash_cache 表 + store 读写 + 扫描器复用未变文件）",
           "hash_cache" in db_src
-          and "CURRENT_SCHEMA_VERSION = 9" in db_src
+          and "CURRENT_SCHEMA_VERSION = 10" in db_src
           and "def hash_cache_get" in store_src
           and "def hash_cache_put_many" in store_src
           and "def _load_hash_cache" in scanner_src
@@ -879,7 +879,7 @@ def check_frontend():
     module_names = ["constants.js", "state.js", "dom.js", "format.js",
                     "util.js", "api.js", "toast.js", "modal.js",
                     "subtitle-probe.js", "subtitle-page.js",
-                    "download-page.js"]
+                    "download-page.js", "convert-page.js"]
     module_paths = [os.path.join(js_dir, name) for name in module_names]
     missing_modules = [name for name in module_names
                        if not os.path.isfile(os.path.join(js_dir, name))]
@@ -1444,6 +1444,12 @@ def check_frontend():
         # v0054 DASH / 订阅下载
         ("/api/downloads/subscriptions", "下载订阅"),
         ("/subscriptions/", "下载订阅控制"),
+        # v0056 格式转换
+        ("/api/convert/capabilities", "转换能力探测"),
+        ("/api/convert/enumerate", "转换目录枚举"),
+        ("/api/convert/queue", "转换队列视图"),
+        ("/api/convert/bulk", "转换批量操作"),
+        ("/api/convert/export", "转换任务导出"),
     ]
     missing = [name for marker, name in endpoints if marker not in app]
     check("FE-ENDPOINTS", "前端覆盖契约全部 API 端点",
@@ -1481,11 +1487,17 @@ def check_frontend():
           and ("rmtree" in downloads_src)
           and ("os.replace" in downloads_src),
           "cleanup markers missing")
-    check("BE-DOWNLOAD-SCHEMA", "schema v9 新增下载任务/批量组表",
-          ("CURRENT_SCHEMA_VERSION = 9" in read(
-              os.path.join(backend, "dupcleaner", "db.py")))
-          and ("download_jobs" in read(os.path.join(backend, "dupcleaner", "db.py")))
-          and ("download_groups" in read(os.path.join(backend, "dupcleaner", "db.py"))),
+    schema_src = read(os.path.join(backend, "dupcleaner", "db.py"))
+    schema_match = re.search(r"CURRENT_SCHEMA_VERSION = (\d+)", schema_src)
+    schema_version = int(schema_match.group(1)) if schema_match else 0
+    check("BE-DOWNLOAD-PART-FORMAT",
+          "合并/封装对 .dcpart 显式指定 -f mp4（扩展名无法推断容器）",
+          downloads_src.count('"-f", "mp4"') >= 2,
+          "explicit muxer marker missing")
+    check("BE-DOWNLOAD-SCHEMA", "schema ≥ v9 含下载任务/批量组表",
+          schema_version >= 9
+          and ("download_jobs" in schema_src)
+          and ("download_groups" in schema_src),
           "schema v9 markers missing")
     check("FE-DOWNLOAD-UI",
           "下载页含地址输入/目录选择/提交按钮/任务列表",
@@ -1502,6 +1514,59 @@ def check_frontend():
           and ("downloadHeading" in app)
           and ("showDownloadPage" in app),
           "download navigation markers missing")
+
+    # ---- v0056 格式转换（docs/CONVERT_CONTRACT.md）----
+    convert_path = os.path.join(backend, "dupcleaner", "convert.py")
+    convert_src = read(convert_path) if os.path.isfile(convert_path) else ""
+    services_src = read(os.path.join(backend, "dupcleaner", "services.py"))
+    httpapi_src = read(os.path.join(backend, "dupcleaner", "httpapi.py"))
+    check("BE-CONVERT-MODULE", "转换服务存在并接入服务容器/API 路由",
+          bool(convert_src) and ("class ConvertService" in convert_src)
+          and ("ConvertService(" in services_src)
+          and ("self.convert = convert_service" in services_src)
+          and ("/api/convert" in httpapi_src),
+          "convert service markers missing")
+    check("BE-CONVERT-PRESETS",
+          "预设覆盖视频/音频/仅换封装，质量映射覆盖所有非 copy 编码器",
+          all(marker in convert_src for marker in (
+              "mp4_h264", "mp4_h265", "mkv_h264", "mkv_copy", "mp4_copy",
+              "webm_vp9", "mov_h264", "ts_h264", "avi_mpeg4",
+              "audio_copy", "pcm_s16le", "_VIDEO_QUALITY_ARGS",
+              "_AUDIO_QUALITY_ARGS", "PRESET_MAP")),
+          "convert preset markers missing")
+    check("BE-CONVERT-ARGS",
+          "参数构造：-progress pipe:1 + copy 分支 + 字幕轨映射 + 缩放转义",
+          ('"-progress", "pipe:1"' in convert_src)
+          and ('"-c:v", "copy"' in convert_src)
+          and ("0:s?" in convert_src)
+          and ("scale=-2:min(%d\\\\,ih)" in convert_src),
+          "convert ffmpeg args markers missing")
+    check("BE-CONVERT-SAFETY",
+          "删除源文件需 confirm、覆盖默认改名、产物 .dcpart 原子改名、拒符号链接",
+          ("DELETE SOURCE" in convert_src)
+          and ("CONVERT_OVERWRITE_DEFAULT" in convert_src)
+          and ("config.CONVERT_PART_EXT" in convert_src)
+          and ("os.replace" in convert_src)
+          and ("has_symlink_component" in convert_src)
+          and ("CONVERT_DISABLED" in convert_src),
+          "convert safety markers missing")
+    check("BE-CONVERT-SCHEMA", "schema ≥ v10 含 convert_jobs 表",
+          schema_version >= 10 and ("convert_jobs" in schema_src),
+          "schema v10 markers missing")
+    check("FE-CONVERT-UI",
+          "转换页含目录枚举/预设/提交/队列",
+          all(marker in html for marker in (
+              "view-convert", "convertEnumerateBtn", "convertPreset",
+              "convertSubmitBtn", "convertJobsList", "convertOutputMode")),
+          "convert page markers missing")
+    check("FE-CONVERT-NAV", "主导航含转换入口，VIEWS/VIEW_HEADINGS 已注册",
+          ('data-nav="convert"' in html)
+          and ("convertHeading" in app)
+          and ("showConvertPage" in app),
+          "convert navigation markers missing")
+    check("FE-CONVERT-PROGRESS", "转换进度条走 node.style（不使用 el(..., {style})）",
+          ("fill.style.width" in app) and ("convertEmpty" in html),
+          "convert progress marker missing")
     # ---- v0052 播放网页解析（docs/DOWNLOAD_CONTRACT.md §14）----
     pageparse_path = os.path.join(backend, "dupcleaner", "pageparse.py")
     pageparse_src = read(pageparse_path) if os.path.isfile(pageparse_path) else ""
@@ -1710,7 +1775,18 @@ def check_frontend():
                     "download_offpeak_rate_limit_kbps",
                     "download_name_template",
                     # v0054 订阅下载
-                    "download_subscribe_enabled"]
+                    "download_subscribe_enabled",
+                    # v0056 格式转换
+                    "convert_enabled", "convert_output_dir",
+                    "convert_output_mode", "convert_output_subdir",
+                    "convert_concurrency", "convert_default_preset",
+                    "convert_quality", "convert_speed", "convert_overwrite",
+                    "convert_keep_source", "convert_copy_subtitles",
+                    "convert_max_resolution", "convert_job_limit",
+                    "convert_min_free_gb", "convert_keep_temp",
+                    "convert_offpeak_enabled", "convert_offpeak_start",
+                    "convert_offpeak_end", "convert_name_template",
+                    "convert_auto_scan", "convert_auto_subtitle"]
     missing_settings = [key for key in setting_keys if key not in app]
     check("FE-SETTINGS-KEYS", "设置页覆盖契约全部设置键",
           not missing_settings, "missing=%s" % missing_settings)

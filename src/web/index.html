@@ -6,8 +6,8 @@
 <meta name="color-scheme" content="light">
 <meta name="referrer" content="same-origin">
 <title>重复文件清理与字幕 · Duplicate Cleaner &amp; Subtitles</title>
-<link rel="icon" href="./assets/favicon.svg?v=1.1.0-0055" type="image/svg+xml">
-<link rel="stylesheet" href="./styles.css?v=1.1.0-0055">
+<link rel="icon" href="./assets/favicon.svg?v=1.1.0-0056" type="image/svg+xml">
+<link rel="stylesheet" href="./styles.css?v=1.1.0-0056">
 </head>
 <body>
 <a class="skip-link" href="#main">跳到主要内容</a>
@@ -75,6 +75,7 @@
         <button type="button" class="nav-item" data-nav="scan" aria-current="page">扫描</button>
         <button type="button" class="nav-item" data-nav="subtitles">字幕</button>
         <button type="button" class="nav-item" data-nav="download">下载</button>
+        <button type="button" class="nav-item" data-nav="convert">转换</button>
         <button type="button" class="nav-item" data-nav="history">任务中心</button>
       </nav>
       <div class="topbar-right">
@@ -1018,6 +1019,167 @@
           </div>
         </div>
       </details>
+    </section>
+
+    <section id="view-convert" class="view" data-view="convert" aria-labelledby="convertHeading" hidden>
+      <div class="page-head">
+        <div>
+          <h1 id="convertHeading">转换</h1>
+          <p class="page-desc">把视频或音频换成另一种格式。标「仅换封装」的预设只重写容器，秒级完成且画质不变；标「重编码」的会长时间占用 CPU。默认输出到源文件同目录并自动改名，绝不覆盖原文件。</p>
+        </div>
+        <span class="badge badge-gray" id="convertPageStatusBadge">检测中…</span>
+      </div>
+
+      <section class="card" aria-labelledby="convertSourceHeading">
+        <div class="card-head">
+          <h2 id="convertSourceHeading">选择要转换的文件</h2>
+          <span class="muted" id="convertCandidatesSummary"></span>
+        </div>
+        <div class="field">
+          <label for="convertDirPath">目录（递归查找音视频文件）</label>
+          <div class="subtitle-dir-row">
+            <input id="convertDirPath" type="text" placeholder="/volume1/video" autocomplete="off" spellcheck="false">
+            <button type="button" class="btn btn-ghost" id="convertDirPickBtn">选择目录</button>
+            <button type="button" class="btn btn-ghost" id="convertEnumerateBtn">列出文件</button>
+          </div>
+          <label class="check"><input id="convertRecursive" type="checkbox" checked>包含子目录</label>
+          <p class="hint">只列出共享文件夹内的普通文件；符号链接、隐藏目录与系统目录会跳过。</p>
+        </div>
+        <p class="field-error" id="convertEnumerateError" role="alert" hidden></p>
+        <div class="state-box" id="convertEnumerateLoading" hidden><span class="spinner" aria-hidden="true"></span>正在列出文件…</div>
+        <div id="convertCandidatesPanel" hidden>
+          <div class="card-head">
+            <h3>已选文件</h3>
+            <span class="muted">取消勾选可从列表移除</span>
+          </div>
+          <div class="subtitle-submit-row">
+            <button type="button" class="btn btn-link btn-sm" id="convertSelectAllBtn">全选本次列出</button>
+            <button type="button" class="btn btn-link btn-sm" id="convertSelectNoneBtn">清空</button>
+          </div>
+          <div id="convertCandidatesList" class="download-candidates"></div>
+        </div>
+        <details class="advanced" id="convertManualDetails">
+          <summary>手动粘贴路径（每行一个）</summary>
+          <div class="field">
+            <label for="convertPaths">文件路径</label>
+            <textarea id="convertPaths" rows="4" placeholder="/volume1/video/movie.mkv&#10;/volume1/music/song.flac" spellcheck="false"></textarea>
+            <button type="button" class="btn btn-ghost btn-sm" id="convertAddManualBtn">加入已选列表</button>
+          </div>
+        </details>
+      </section>
+
+      <section class="card" aria-labelledby="convertPresetHeading">
+        <div class="card-head">
+          <h2 id="convertPresetHeading">输出格式</h2>
+          <span class="muted" id="convertPresetHint"></span>
+        </div>
+        <div class="form-grid">
+          <div class="field">
+            <label for="convertPresetGroup">类型</label>
+            <select id="convertPresetGroup">
+              <option value="video">视频</option>
+              <option value="audio">只提取音频</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="convertPreset">预设</label>
+            <select id="convertPreset"></select>
+          </div>
+          <div class="field">
+            <label for="convertQuality">质量</label>
+            <select id="convertQuality">
+              <option value="high">高（文件更大）</option>
+              <option value="standard">标准</option>
+              <option value="small">小体积</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="convertSpeed">编码速度</label>
+            <select id="convertSpeed"></select>
+            <p class="hint">只对 H.264/H.265 生效；越快体积越大。</p>
+          </div>
+          <div class="field">
+            <label for="convertMaxResolution">分辨率上限</label>
+            <select id="convertMaxResolution"></select>
+            <p class="hint">只缩小不放大；仅重编码时生效。</p>
+          </div>
+          <div class="field">
+            <label for="convertChannels">声道</label>
+            <select id="convertChannels">
+              <option value="keep">保持原样</option>
+              <option value="stereo">强制立体声</option>
+            </select>
+          </div>
+        </div>
+        <p class="hint" id="convertPresetDesc"></p>
+      </section>
+
+      <section class="card" aria-labelledby="convertOutputHeading">
+        <div class="card-head">
+          <h2 id="convertOutputHeading">输出位置</h2>
+        </div>
+        <div class="form-grid">
+          <div class="field">
+            <label for="convertOutputMode">位置</label>
+            <select id="convertOutputMode"></select>
+          </div>
+          <div class="field" id="convertOutputDirField" hidden>
+            <label for="convertOutputDir">输出目录</label>
+            <div class="subtitle-dir-row">
+              <input id="convertOutputDir" type="text" placeholder="/volume1/video/converted" autocomplete="off" spellcheck="false">
+              <button type="button" class="btn btn-ghost" id="convertOutputPickBtn">选择目录</button>
+            </div>
+          </div>
+          <div class="field" id="convertOutputSubdirField" hidden>
+            <label for="convertOutputSubdir">子目录名</label>
+            <input id="convertOutputSubdir" type="text" placeholder="converted" autocomplete="off" spellcheck="false">
+          </div>
+          <div class="field">
+            <label for="convertNameTemplate">文件名模板</label>
+            <input id="convertNameTemplate" type="text" placeholder="{name}" autocomplete="off" spellcheck="false">
+            <p class="hint">可用：{name} {preset} {date}；扩展名由预设决定。</p>
+          </div>
+          <div class="field">
+            <label for="convertOverwrite">同名文件</label>
+            <select id="convertOverwrite"></select>
+          </div>
+          <div class="field field-wide">
+            <label class="check"><input id="convertKeepSource" type="checkbox" checked>保留源文件</label>
+            <label class="check"><input id="convertCopySubtitles" type="checkbox" checked>MKV 预设复制字幕轨</label>
+            <label class="check"><input id="convertDeleteSource" type="checkbox">转换成功后删除源文件</label>
+            <p class="hint">删除源文件需要二次确认；产物校验失败时不会删除。</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="card" aria-labelledby="convertSubmitHeading">
+        <div class="card-head">
+          <h2 id="convertSubmitHeading">提交</h2>
+          <span class="muted">转码很吃 CPU：NAS 无独显时，1 小时 1080p 可能要好几个小时</span>
+        </div>
+        <p class="field-error" id="convertSubmitError" role="alert" hidden></p>
+        <div class="subtitle-submit-row">
+          <button type="button" class="btn btn-primary" id="convertSubmitBtn">开始转换</button>
+          <span class="muted" id="convertSubmitHint"></span>
+        </div>
+        <div class="subtitle-submit-row">
+          <button type="button" class="btn btn-ghost btn-sm" id="convertCancelAllBtn">全部取消</button>
+          <button type="button" class="btn btn-ghost btn-sm" id="convertRetryFailedBtn">重试失败</button>
+          <button type="button" class="btn btn-link btn-sm" id="convertClearFinishedBtn">清理已结束</button>
+          <a class="btn btn-link btn-sm" id="convertExportLink" href="/api/convert/export">导出 CSV</a>
+        </div>
+      </section>
+
+      <section class="card" aria-labelledby="convertQueueHeading">
+        <div class="card-head">
+          <h2 id="convertQueueHeading">转换队列</h2>
+          <span class="muted" id="convertQueueHint"></span>
+        </div>
+        <p class="muted" id="convertStorageHint"></p>
+        <p class="field-error" id="convertListError" role="alert" hidden></p>
+        <div class="state-box state-empty" id="convertEmpty" hidden>还没有转换任务。</div>
+        <div id="convertJobsList" class="download-jobs-list"></div>
+      </section>
     </section>
 
     <section id="view-history" class="view" data-view="history" aria-labelledby="historyHeading" hidden>
@@ -2056,6 +2218,145 @@
             </div>
           </div>
         </details>
+        <details class="advanced settings-group" id="settingsConvertDetails">
+          <summary><span class="settings-group-title">转换 · 视频 / 音频格式互转</span><span class="settings-summary" id="settingsConvertSummary"></span><span class="badge badge-gray" id="convertStatusBadgeSettings">检测中…</span></summary>
+          <p class="hint">转换页用内置 FFmpeg 换容器/换编码或提取音频。「仅换封装」预设（MKV/MP4 copy）秒级完成且无损；重编码预设会很吃 CPU，NAS 上建议开启「仅空闲时段」并把并发设为 1。</p>
+          <div class="form-grid">
+            <div class="field field-wide">
+              <label class="check"><input id="setConvertEnabled" type="checkbox">启用格式转换（默认关闭）</label>
+              <p class="hint">仅管理员可用；未启用时转换页按钮禁用，不影响查重、字幕与下载。</p>
+            </div>
+            <div class="field">
+              <label for="setConvertOutputMode">默认输出位置</label>
+              <select id="setConvertOutputMode">
+                <option value="alongside">源文件同目录（推荐）</option>
+                <option value="fixed">指定目录</option>
+                <option value="subdir">指定目录 + 子目录</option>
+              </select>
+              <p class="hint">同目录时用文件名模板改名，绝不覆盖原文件。</p>
+            </div>
+            <div class="field">
+              <label for="setConvertOutputDir">默认输出目录（非「同目录」时必填）</label>
+              <div class="subtitle-dir-row">
+                <input id="setConvertOutputDir" type="text" placeholder="/volume2/video/converted" autocomplete="off" spellcheck="false">
+                <button type="button" class="btn btn-ghost btn-sm" id="setConvertDirPickBtn">选择目录</button>
+              </div>
+              <p class="field-error" id="setConvertOutputDirError" role="alert" hidden></p>
+            </div>
+            <div class="field">
+              <label for="setConvertOutputSubdir">输出子目录名（仅「指定目录 + 子目录」）</label>
+              <input id="setConvertOutputSubdir" type="text" placeholder="converted" autocomplete="off" spellcheck="false">
+              <p class="field-error" id="setConvertOutputSubdirError" role="alert" hidden></p>
+            </div>
+            <div class="field">
+              <label for="setConvertConcurrency">同时转换任务数（1–2，默认 1）</label>
+              <input id="setConvertConcurrency" type="number" inputmode="numeric" min="1" max="2" step="1" value="1">
+              <p class="hint">转码会占满 CPU；并发大于 1 只会互相拖慢，默认 1。</p>
+              <p class="field-error" id="setConvertConcurrencyError" role="alert" hidden></p>
+            </div>
+            <div class="field">
+              <label for="setConvertDefaultPreset">默认输出预设</label>
+              <select id="setConvertDefaultPreset">
+                <option value="mp4_h264">MP4 · H.264 + AAC</option>
+                <option value="mp4_h265">MP4 · H.265 + AAC</option>
+                <option value="mkv_h264">MKV · H.264 + AAC</option>
+                <option value="mkv_copy">MKV · 仅换封装</option>
+                <option value="mp4_copy">MP4 · 仅换封装</option>
+                <option value="webm_vp9">WEBM · VP9 + Opus</option>
+                <option value="mov_h264">MOV · H.264 + AAC</option>
+                <option value="ts_h264">TS · H.264 + AAC</option>
+                <option value="avi_mpeg4">AVI · MPEG-4 + MP3</option>
+                <option value="mp3">MP3</option>
+                <option value="m4a">M4A · AAC</option>
+                <option value="flac">FLAC</option>
+                <option value="wav">WAV · PCM 16bit</option>
+                <option value="ogg">OGG · Vorbis</option>
+                <option value="opus">OPUS</option>
+                <option value="audio_copy">原音轨提取（不重编码）</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="setConvertQuality">默认质量</label>
+              <select id="setConvertQuality">
+                <option value="high">高（文件更大）</option>
+                <option value="standard">标准</option>
+                <option value="small">小体积</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="setConvertSpeed">默认编码速度</label>
+              <select id="setConvertSpeed">
+                <option value="ultrafast">ultrafast</option>
+                <option value="superfast">superfast</option>
+                <option value="veryfast">veryfast（推荐）</option>
+                <option value="faster">faster</option>
+                <option value="medium">medium</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="setConvertMaxResolution">默认分辨率上限</label>
+              <select id="setConvertMaxResolution">
+                <option value="0">保持原样</option>
+                <option value="2160">2160p（4K）</option>
+                <option value="1080">1080p</option>
+                <option value="720">720p</option>
+                <option value="480">480p</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="setConvertOverwrite">同名文件策略</label>
+              <select id="setConvertOverwrite">
+                <option value="rename">自动改名（推荐）</option>
+                <option value="skip">跳过已存在</option>
+                <option value="overwrite">覆盖同名文件</option>
+              </select>
+              <p class="hint">覆盖只针对产物；源文件永远不会被原地覆盖。</p>
+            </div>
+            <div class="field">
+              <label for="setConvertNameTemplate">输出文件名模板</label>
+              <input id="setConvertNameTemplate" type="text" placeholder="{name}" autocomplete="off" spellcheck="false">
+              <p class="hint">可用：{name} {preset} {date}；不含目录分隔符。</p>
+              <p class="field-error" id="setConvertNameTemplateError" role="alert" hidden></p>
+            </div>
+            <div class="field">
+              <label for="setConvertJobLimit">已完成任务保留上限（10–5000）</label>
+              <input id="setConvertJobLimit" type="number" inputmode="numeric" min="10" max="5000" step="1" value="500">
+              <p class="field-error" id="setConvertJobLimitError" role="alert" hidden></p>
+            </div>
+            <div class="field">
+              <label for="setConvertMinFreeGb">最少剩余空间（GB，默认 20）</label>
+              <input id="setConvertMinFreeGb" type="number" inputmode="numeric" min="0" step="1" value="20">
+              <p class="field-error" id="setConvertMinFreeGbError" role="alert" hidden></p>
+            </div>
+            <div class="field field-wide">
+              <label class="check"><input id="setConvertKeepSource" type="checkbox" checked>默认保留源文件</label>
+              <label class="check"><input id="setConvertCopySubtitles" type="checkbox" checked>MKV 预设复制字幕轨</label>
+              <label class="check"><input id="setConvertKeepTemp" type="checkbox">失败时保留临时文件（.dcpart）</label>
+              <p class="hint">默认失败即清理；保留便于排查，但会一直占空间。删除源文件只能按任务勾选并二次确认，不能在这里设为默认。</p>
+            </div>
+            <div class="field field-wide">
+              <label class="check"><input id="setConvertOffpeakEnabled" type="checkbox">仅空闲时段执行（窗口外排队等待）</label>
+              <div class="form-grid">
+                <div class="field">
+                  <label for="setConvertOffpeakStart">开始（HH:MM）</label>
+                  <input id="setConvertOffpeakStart" type="text" placeholder="01:00" autocomplete="off" spellcheck="false">
+                  <p class="field-error" id="setConvertOffpeakStartError" role="alert" hidden></p>
+                </div>
+                <div class="field">
+                  <label for="setConvertOffpeakEnd">结束（HH:MM，可跨零点）</label>
+                  <input id="setConvertOffpeakEnd" type="text" placeholder="07:00" autocomplete="off" spellcheck="false">
+                  <p class="field-error" id="setConvertOffpeakEndError" role="alert" hidden></p>
+                </div>
+              </div>
+              <p class="hint">转码会与字幕/下载抢磁盘 IO；NAS 上建议只在夜间转换。</p>
+            </div>
+            <div class="field field-wide">
+              <label class="check"><input id="setConvertAutoScan" type="checkbox">转换完成后自动入队扫描该目录</label>
+              <label class="check"><input id="setConvertAutoSubtitle" type="checkbox">转换完成后自动提交字幕任务</label>
+              <p class="hint">需要同时启用「云端字幕」并配置好 ASR；同一目录 10 分钟内只触发一次扫描。</p>
+            </div>
+          </div>
+        </details>
         <details class="advanced settings-group" id="settingsStorageGroup">
           <summary><span class="settings-group-title">存储 · 回收站、时间安全与运行状态</span><span class="settings-summary" id="settingsStorageSummary"></span></summary>
           <div class="form-grid">
@@ -2195,6 +2496,6 @@
   <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.6" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M12 10.8v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="12" cy="7.6" r="1.05" fill="currentColor"/></symbol>
 </svg>
 
-<script type="module" src="./app.js?v=1.1.0-0055"></script>
+<script type="module" src="./app.js?v=1.1.0-0056"></script>
 </body>
 </html>

@@ -1,7 +1,7 @@
 # 整体方案架构
 
 > 项目：**重复文件清理与字幕（Duplicate Cleaner & Subtitles）** · 群晖 DSM 7.x SPK 套件
-> 版本：1.1.0-0055
+> 版本：1.1.0-0056
 > 原则：**先扫描、出报告、人工确认、二次确认、可回收、全程审计**。任何情况下都不自动静默删除。
 
 ## 1. 目标与边界
@@ -656,3 +656,17 @@ Linux 的 `st_ctime` 是 **inode 状态变更时间**，不是创建时间，复
 - **DASH**：`dash.py` 把 MPD 解析成「每轨 init + 分片」；`_materialize_dash` 用现有 `_fetch_all` 拉取后按序字节拼接成 `video_track.mp4`/`audio_track.mp4`，`_remux` 用 FFmpeg `-c copy` 封装（失败回退 AAC）；`_looks_like_mpd` 按后缀/Content-Type/正文识别，`ContentProtection` 一律 `DRM_UNSUPPORTED`。
 - **订阅**：`download_subs.DownloadSubscriptionService` 独立线程每 30s tick；状态存 `<var>/download_subscriptions.json`；RSS 用标准库 XML 解析，网页复用 `parse_target`（`mode=best/all`）；入队走 `downloads.create`，`seen` 集合去重（上限 200）。
 - **连接复用/自适应**：`_HttpClient` 增加按 host 的 keep-alive 连接池（仅无代理分片下载；重定向自动回退 urllib）；`_note_segment_duration` 统计慢分片，`_adaptive_concurrency` 把并发减半，自动重试时也会降并发。'
+
+## 22. 格式转换（v0056）
+
+- **模块**：`convert.py`（预设表 + 纯函数参数构造 + 转换服务）、`convert-page.js`（页面）、`video_similarity.FFmpegTool` 新增 `run_stream()` 与 `encoders()`；`services.py` 装配并在 `Services.shutdown()` 里 `convert.shutdown()`。
+- **为什么预设而不是「任意编码 × 容器」**：一半组合是无效的（Opus 进 MP4、VP9 进 AVI），预设把「容器 + 编码 + 参数 + 兼容性检查」绑在一起，UI 只需展示「仅换封装·秒级」或「重编码·慢」。
+- **参数构造是纯函数**：`build_args(preset, probe, options, src, dst)` 无副作用，单测用金标断言固定每个预设的参数顺序（含 `-progress pipe:1`、`-map 0:s?`、`scale=-2:min(H\,ih)`、`-f <muxer>`），改一处就会被测试抓住。
+- **进度**：`FFmpegTool.run_stream` 用两条线程分别读 stdout（`-progress`）与 stderr，主线程只等事件队列 → stop/timeout 在阻塞读时也能生效（Windows 的 `select` 不支持管道，所以不用 select）。
+- **队列**：与下载中心同构——单调度线程每 0.3s 按 `convert_concurrency` 取 FIFO；**没有 paused**，因为 FFmpeg 不能断点续转，暂停只能做成"队列暂停"骗人；`running` 在重启后回到 `queued` 从头再来。
+- **空闲时段**：`convert_offpeak_enabled` 打开时，窗口外调度器直接不取任务，任务停在 `queued`；窗口判定用本地时间、支持跨零点（与下载分时限速同一套 `_in_window`）。
+- **落盘**：产物先写 `<目标>.dcpart` → 探测校验（体积/流/时长）→ `os.replace` 原子改名；失败默认删除 `.dcpart`（`convert_keep_temp` 可保留排查）。
+- **覆盖与删除**：默认 `rename`（`名称 (2).ext`）；源=目标时强制改名，绝不原地覆盖；`delete_source` 必须 `confirm="DELETE SOURCE"` 且校验通过后才删，并记审计。
+- **`.dcpart` 的坑（v0056 一并修下载）**：FFmpeg 按输出扩展名推断容器，`.dcpart` 会让它报 `Unable to choose an output format`；转换所有预设显式 `-f <muxer>`，下载的 `_merge`/`_remux` 也补 `-f mp4`，并有 static `BE-DOWNLOAD-PART-FORMAT` 兜底。
+- **持久化**：SQLite schema v10 只新增 `convert_jobs`（`payload_json` 文档式），进度落库节流 2s，与下载一致。
+- **性能取舍**：NAS 无独显，转码并发默认 1；copy 预设（MKV/MP4 换封装）秒级、几乎不耗 CPU，是"先能用"的默认路径；重编码在设置里明确提示耗时风险。

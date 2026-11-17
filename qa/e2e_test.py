@@ -3146,6 +3146,194 @@ def run():
                 cdn.server_close()
                 cdn_thread.join(timeout=5)
 
+        # ---------------- v0056：格式转换（预设 / 枚举 / 队列 / 取消 / 真转码） ----------------
+        convert_dir = os.path.join(roots[0], "convert")
+        os.makedirs(convert_dir, exist_ok=True)
+        resp = client.get("/api/convert")
+        code, _ = err_code(resp)
+        check("CV-00", "v0056 转换未启用时接口返回 403 CONVERT_DISABLED",
+              resp.status == 403 and code == "CONVERT_DISABLED",
+              "status=%s code=%s" % (resp.status, code))
+
+        # 打开功能 + 用空闲时段闸门让任务保持排队（避免 e2e 立刻跑转码）
+        now_cv = time.localtime()
+        cv_start = "%02d:00" % ((now_cv.tm_hour + 1) % 24)
+        cv_end = "%02d:00" % ((now_cv.tm_hour + 2) % 24)
+        client.put_json("/api/settings", {"settings": {
+            "convert_enabled": True,
+            "convert_output_mode": "alongside",
+            "convert_min_free_gb": 0,
+            "convert_concurrency": 1,
+            "convert_offpeak_enabled": True,
+            "convert_offpeak_start": cv_start,
+            "convert_offpeak_end": cv_end,
+        }})
+        cv_files = []
+        for name in ("qa-a.mp4", "qa-b.mkv"):
+            path = os.path.join(convert_dir, name)
+            with open(path, "wb") as handle:
+                handle.write(b"QA-CONVERT-" * 512)
+            cv_files.append(path)
+
+        resp = client.get("/api/convert/capabilities")
+        caps = jd(resp)
+        presets = caps.get("presets") or []
+        check("CV-01", "v0056 能力探测返回 FFmpeg 状态与 16 个预设",
+              resp.status == 200 and len(presets) == 16
+              and isinstance(caps.get("ffmpeg"), dict)
+              and isinstance(caps.get("offpeak"), dict)
+              and isinstance(caps.get("defaults"), dict),
+              "status=%s presets=%s"
+              % (resp.status, len(presets)))
+
+        resp = client.post_json("/api/convert/enumerate",
+                                {"path": convert_dir, "recursive": True})
+        enum = jd(resp)
+        names = [item.get("name") for item in enum.get("items") or []]
+        check("CV-02", "v0056 目录枚举只返回音视频候选",
+              resp.status == 200 and set(names) == {"qa-a.mp4", "qa-b.mkv"}
+              and isinstance(enum.get("skipped"), dict),
+              "status=%s names=%s" % (resp.status, names))
+
+        resp = client.post_json("/api/convert", {"paths": cv_files,
+                                                 "preset": "nope"})
+        code, _ = err_code(resp)
+        check("CV-03", "v0056 未知预设返回 400 PRESET_UNKNOWN",
+              resp.status == 400 and code == "PRESET_UNKNOWN",
+              "status=%s code=%s" % (resp.status, code))
+
+        resp = client.post_json("/api/convert", {
+            "paths": cv_files, "preset": "mkv_copy",
+            "options": {"delete_source": True}})
+        code, _ = err_code(resp)
+        check("CV-04", "v0056 删除源文件缺少 confirm 被拒绝",
+              resp.status == 400 and code == "INVALID_ARGUMENT",
+              "status=%s code=%s" % (resp.status, code))
+
+        resp = client.post_json("/api/convert", {"paths": cv_files,
+                                                 "preset": "mkv_copy"})
+        data = jd(resp)
+        cv_jobs = data.get("jobs") or []
+        cv_ids = [item.get("job_id") for item in cv_jobs]
+        check("CV-05", "v0056 提交转换返回 202 + 排队任务",
+              resp.status == 202 and len(cv_ids) == 2
+              and all(item.get("status") == "queued" for item in cv_jobs)
+              and data.get("count") == 2,
+              "status=%s data=%s" % (resp.status, data))
+
+        resp = client.get("/api/convert/queue")
+        queue = jd(resp)
+        check("CV-06", "v0056 队列快照含排队任务/并发/空闲时段",
+              resp.status == 200 and len(queue.get("queued") or []) >= 2
+              and queue.get("concurrency") == 1
+              and (queue.get("offpeak") or {}).get("open") is False,
+              "status=%s queue=%s" % (resp.status,
+                                      repr(queue.get("queued"))[:160]))
+
+        resp = client.get("/api/convert/%s" % quote(cv_ids[0] if cv_ids else "cv-x"))
+        detail = jd(resp).get("job") or {}
+        check("CV-07", "v0056 任务详情含预设/时间线/体积估算",
+              resp.status == 200 and detail.get("preset") == "mkv_copy"
+              and isinstance(detail.get("timeline"), dict)
+              and "estimate_bytes" in detail,
+              "status=%s detail=%s" % (resp.status, detail))
+
+        resp = client.get("/api/convert?status=queued&q=qa-a")
+        listing = jd(resp)
+        matched = [item for item in listing.get("jobs") or []
+                   if item.get("job_id") in cv_ids]
+        check("CV-08", "v0056 列表支持状态与关键字筛选",
+              resp.status == 200 and isinstance(listing.get("counts"), dict)
+              and any("qa-a" in (item.get("source_path") or "")
+                      for item in matched),
+              "status=%s jobs=%s" % (resp.status, len(listing.get("jobs") or [])))
+
+        resp = client.post_json("/api/convert/%s/cancel"
+                                % quote(cv_ids[0] if cv_ids else "cv-x"), {})
+        view = jd(resp).get("job") or {}
+        check("CV-09", "v0056 取消排队任务 → cancelled",
+              resp.status == 200 and view.get("status") == "cancelled",
+              "status=%s job=%s" % (resp.status, view.get("status")))
+
+        resp = client.post_json("/api/convert/%s/retry"
+                                % quote(cv_ids[0] if cv_ids else "cv-x"), {})
+        view = jd(resp).get("job") or {}
+        check("CV-10", "v0056 重试已取消任务 → queued",
+              resp.status == 200 and view.get("status") == "queued",
+              "status=%s job=%s" % (resp.status, view.get("status")))
+
+        resp = client.get("/api/convert/export")
+        check("CV-11", "v0056 转换任务导出 CSV（BOM + 中文表头）",
+              resp.status == 200
+              and resp.body.startswith(b"\xef\xbb\xbf")
+              and "任务 ID".encode("utf-8") in resp.body,
+              "status=%s type=%s" % (resp.status,
+                                     resp.header("content-type")))
+
+        if len(cv_ids) > 1:
+            # 先取消再删除：只有已结束的任务允许删
+            client.post_json("/api/convert/%s/cancel" % quote(cv_ids[1]), {})
+            resp = client.request("DELETE", "/api/convert/%s" % quote(cv_ids[1]))
+            check("CV-12", "v0056 删除已取消任务返回成功",
+                  resp.status == 200, "status=%s" % resp.status)
+        else:
+            record("CV-12", "v0056 删除已取消任务返回成功", "FAIL",
+                   "任务 ID 缺失")
+
+        resp = client.post_json("/api/convert/bulk", {"action": "cancel_all"})
+        bulk = jd(resp)
+        check("CV-13", "v0056 批量取消全部转换任务",
+              resp.status == 200 and int(bulk.get("affected") or 0) >= 1,
+              "status=%s bulk=%s" % (resp.status, bulk))
+
+        # 真转码：1 秒 testsrc 样本 → MKV 仅换封装（有 ffmpeg 才跑）
+        ffmpeg_cv = shutil.which("ffmpeg")
+        if not ffmpeg_cv:
+            record("CV-14", "v0056 真实仅换封装转换完成且产物可读",
+                   "UNVERIFIED", "本机没有 ffmpeg")
+        else:
+            clip = os.path.join(convert_dir, "qa-real.mp4")
+            try:
+                subprocess.run(
+                    [ffmpeg_cv, "-nostdin", "-hide_banner", "-loglevel",
+                     "error", "-y", "-f", "lavfi", "-i",
+                     "testsrc2=size=160x120:rate=15:duration=1",
+                     "-c:v", "libx264", "-preset", "ultrafast",
+                     "-pix_fmt", "yuv420p", clip],
+                    check=True, timeout=120,
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                client.put_json("/api/settings", {"settings": {
+                    "convert_offpeak_enabled": False,
+                    "convert_min_free_gb": 0,
+                }})
+                resp = client.post_json("/api/convert", {
+                    "paths": [clip], "preset": "mkv_copy"})
+                real_id = ((jd(resp).get("jobs") or [{}])[0]).get("job_id")
+                real_detail = {}
+                deadline = time.time() + 90
+                while time.time() < deadline:
+                    r2 = client.get("/api/convert/%s" % quote(real_id or "cv-x"))
+                    real_detail = jd(r2).get("job") or {}
+                    if real_detail.get("status") in ("done", "failed",
+                                                     "cancelled"):
+                        break
+                    time.sleep(0.2)
+                output_path = real_detail.get("output_path") or ""
+                check("CV-14", "v0056 真实仅换封装转换完成且产物可读",
+                      real_detail.get("status") == "done"
+                      and output_path.endswith(".mkv")
+                      and os.path.isfile(output_path),
+                      "job=%s status=%s err=%s"
+                      % (real_id, real_detail.get("status"),
+                         real_detail.get("error_message")))
+                if real_id:
+                    client.request(
+                        "DELETE",
+                        "/api/convert/%s?delete_output=1" % quote(real_id))
+            except (subprocess.CalledProcessError, OSError) as exc:
+                record("CV-14", "v0056 真实仅换封装转换完成且产物可读",
+                       "UNVERIFIED", "生成测试样本失败: %s" % exc)
+
         # ---------------- 重启持久化 ----------------
         client.put_json("/api/settings", {"settings": {"concurrency": 3}})
         backend.stop()

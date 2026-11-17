@@ -1,7 +1,7 @@
 {
-  "generated_at": "2026-11-15T19:00:21+0800",
+  "generated_at": "2026-11-17T20:40:26+0800",
   "summary": {
-    "PASS": 224,
+    "PASS": 233,
     "FAIL": 0,
     "UNVERIFIED": 0
   },
@@ -28,7 +28,7 @@
       "id": "BE-FILE-COUNT",
       "name": "后端 Python 文件数",
       "status": "INFO",
-      "detail": "81"
+      "detail": "83"
     },
     {
       "id": "BE-SRC-HYGIENE",
@@ -52,7 +52,7 @@
       "id": "BE-UNITTEST-LOG",
       "name": "unittest 结果",
       "status": "INFO",
-      "detail": "Ran 757 tests in 154.583s"
+      "detail": "Ran 826 tests in 153.198s"
     },
     {
       "id": "BE-NO-AUTODELETE",
@@ -745,8 +745,14 @@
       "detail": ""
     },
     {
+      "id": "BE-DOWNLOAD-PART-FORMAT",
+      "name": "合并/封装对 .dcpart 显式指定 -f mp4（扩展名无法推断容器）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
       "id": "BE-DOWNLOAD-SCHEMA",
-      "name": "schema v9 新增下载任务/批量组表",
+      "name": "schema ≥ v9 含下载任务/批量组表",
       "status": "PASS",
       "detail": ""
     },
@@ -765,6 +771,54 @@
     {
       "id": "FE-DOWNLOAD-NAV",
       "name": "主导航含下载入口，VIEWS/VIEW_HEADINGS 已注册",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "BE-CONVERT-MODULE",
+      "name": "转换服务存在并接入服务容器/API 路由",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "BE-CONVERT-PRESETS",
+      "name": "预设覆盖视频/音频/仅换封装，质量映射覆盖所有非 copy 编码器",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "BE-CONVERT-ARGS",
+      "name": "参数构造：-progress pipe:1 + copy 分支 + 字幕轨映射 + 缩放转义",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "BE-CONVERT-SAFETY",
+      "name": "删除源文件需 confirm、覆盖默认改名、产物 .dcpart 原子改名、拒符号链接",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "BE-CONVERT-SCHEMA",
+      "name": "schema ≥ v10 含 convert_jobs 表",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "FE-CONVERT-UI",
+      "name": "转换页含目录枚举/预设/提交/队列",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "FE-CONVERT-NAV",
+      "name": "主导航含转换入口，VIEWS/VIEW_HEADINGS 已注册",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "FE-CONVERT-PROGRESS",
+      "name": "转换进度条走 node.style（不使用 el(..., {style})）",
       "status": "PASS",
       "detail": ""
     },
@@ -1256,7 +1310,7 @@
     },
     {
       "id": "SPK-DIST",
-      "name": "构建产物存在（DuplicateCleaner-1.1.0-0055.spk）",
+      "name": "构建产物存在（DuplicateCleaner-1.1.0-0056.spk）",
       "status": "PASS",
       "detail": ""
     },
@@ -1268,7 +1322,7 @@
     },
     {
       "id": "SPK-VERSION",
-      "name": "SPK INFO.version 与当前源码 APP_VERSION（1.1.0-0055）一致",
+      "name": "SPK INFO.version 与当前源码 APP_VERSION（1.1.0-0056）一致",
       "status": "PASS",
       "detail": ""
     },

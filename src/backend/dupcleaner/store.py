@@ -2177,6 +2177,78 @@ class Store(object):
         return result
 
     # ------------------------------------------------------------------
+    # 格式转换（schema v10 / docs/CONVERT_CONTRACT.md §5）
+    # ------------------------------------------------------------------
+    # 与下载同构：只存任务汇总与状态，产物在文件系统，进度按 FLUSH_SEC 节流。
+    def save_convert_job(self, job_id, record):
+        job_id = self._check_generic_job_id(job_id)
+        if not isinstance(record, dict):
+            return False
+        try:
+            created = float(record.get("created_epoch") or time.time())
+        except (TypeError, ValueError):
+            created = time.time()
+        try:
+            updated = float(record.get("updated_epoch") or created)
+        except (TypeError, ValueError):
+            updated = created
+        self.db.execute(
+            "INSERT OR REPLACE INTO convert_jobs"
+            "(job_id, status, payload_json, created_epoch, updated_epoch)"
+            " VALUES(?, ?, ?, ?, ?)",
+            (job_id, record.get("status"),
+             json.dumps(record, ensure_ascii=False), created, updated))
+        return True
+
+    def load_convert_job(self, job_id):
+        job_id = self._check_generic_job_id(job_id)
+        row = self.db.query_one(
+            "SELECT payload_json FROM convert_jobs WHERE job_id=?",
+            (job_id,))
+        if row is None:
+            return None
+        record = self._loads(row["payload_json"], None)
+        if not isinstance(record, dict):
+            return None
+        record.setdefault("job_id", job_id)
+        return record
+
+    def load_convert_jobs(self, limit=500, status=None):
+        sql = "SELECT job_id, payload_json FROM convert_jobs"
+        args = []
+        if status:
+            sql += " WHERE status=?"
+            args.append(status)
+        sql += " ORDER BY created_epoch DESC, job_id DESC LIMIT ?"
+        args.append(max(1, int(limit or 500)))
+        rows = self.db.query(sql, tuple(args))
+        result = []
+        for row in rows:
+            record = self._loads(row["payload_json"], None)
+            if not isinstance(record, dict):
+                continue
+            record.setdefault("job_id", row["job_id"])
+            result.append(record)
+        return result
+
+    def count_convert_jobs(self, statuses=None):
+        sql = "SELECT COUNT(*) AS n FROM convert_jobs"
+        args = ()
+        if statuses:
+            placeholders = ",".join("?" for _ in statuses)
+            sql += " WHERE status IN (%s)" % placeholders
+            args = tuple(statuses)
+        row = self.db.query_one(sql, args)
+        try:
+            return int(row["n"]) if row else 0
+        except (TypeError, ValueError, KeyError):
+            return 0
+
+    def delete_convert_job(self, job_id):
+        job_id = self._check_generic_job_id(job_id)
+        self.db.execute("DELETE FROM convert_jobs WHERE job_id=?", (job_id,))
+
+    # ------------------------------------------------------------------
     # 字幕批次（schema v6 / docs/SUBTITLE_BATCH_CONTRACT.md §7.3）
     # ------------------------------------------------------------------
     @staticmethod

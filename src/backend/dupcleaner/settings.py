@@ -200,6 +200,40 @@ DEFAULT_SETTINGS = {
     # 订阅自动轮询总开关（默认关）：关闭时不自动轮询，但下载页仍可对
     # 单个订阅「立即检查」（手动触发不受此开关限制）。
     "download_subscribe_enabled": False,
+    # --- v0056 格式转换（docs/CONVERT_CONTRACT.md §6）---
+    # 默认关闭；开启后「转换」页可用。输出目录为空时按 output_mode 决定：
+    # alongside=源文件同目录（默认）；fixed/subdir 则必须设置 convert_output_dir。
+    "convert_enabled": False,
+    "convert_output_dir": "",
+    "convert_output_mode": config.CONVERT_OUTPUT_MODE_DEFAULT,
+    "convert_output_subdir": config.CONVERT_SUBDIR_DEFAULT,
+    # 同时转几个（默认 1：NAS 转码吃满 CPU，批量并发只会互相拖慢）。
+    "convert_concurrency": config.CONVERT_DEFAULT_CONCURRENCY,
+    "convert_default_preset": config.CONVERT_PRESET_DEFAULT,
+    # 质量三档 high/standard/small → 编码器 CRF；速度档只对 x264/x265 生效。
+    "convert_quality": config.CONVERT_QUALITY_DEFAULT,
+    "convert_speed": config.CONVERT_SPEED_DEFAULT,
+    # 同名产物策略：rename（加序号）/ skip / overwrite（显式选择才覆盖）。
+    "convert_overwrite": config.CONVERT_OVERWRITE_DEFAULT,
+    # 保留源文件（默认是）；delete_source 需要任务级 confirm，不能靠设置默认。
+    "convert_keep_source": True,
+    # MKV 预设是否复制字幕轨（MP4 不支持，忽略）。
+    "convert_copy_subtitles": True,
+    # 分辨率上限（0=原样，只缩小不放大）。
+    "convert_max_resolution": config.CONVERT_MAX_RESOLUTION_DEFAULT,
+    "convert_job_limit": config.CONVERT_JOB_LIMIT_DEFAULT,
+    "convert_min_free_gb": config.CONVERT_MIN_FREE_GB_DEFAULT,
+    # 失败时是否保留 .dcpart（默认否，避免长期占空间）。
+    "convert_keep_temp": False,
+    # 仅空闲时段执行：窗口外排队等待，不自动开跑。
+    "convert_offpeak_enabled": config.CONVERT_OFFPEAK_ENABLED_DEFAULT,
+    "convert_offpeak_start": config.CONVERT_OFFPEAK_START_DEFAULT,
+    "convert_offpeak_end": config.CONVERT_OFFPEAK_END_DEFAULT,
+    # 输出文件名模板：{name} {preset} {date}（扩展名由预设决定）。
+    "convert_name_template": config.CONVERT_NAME_TEMPLATE_DEFAULT,
+    # 转换完成后的可选联动（默认关）：自动入队扫描 / 自动提交字幕。
+    "convert_auto_scan": False,
+    "convert_auto_subtitle": False,
 }
 
 # 密钥键：GET/日志/审计/扫描结果中绝不允许出现明文
@@ -434,6 +468,38 @@ def _check_name_template(key, value):
     stripped = re.sub(r"\{[^{}]*\}", "", text)
     if "{" in stripped or "}" in stripped:
         _err(u"设置 %s 的占位符未闭合" % key, {"key": key})
+    return text
+
+
+def _check_convert_name_template(key, value):
+    """格式转换输出名模板（v0056）：只允许 {name}/{preset}/{date}。"""
+    text = _check_str(key, value,
+                      max_len=config.CONVERT_NAME_TEMPLATE_MAX).strip()
+    if not text:
+        return config.CONVERT_NAME_TEMPLATE_DEFAULT
+    if "/" in text or "\\" in text:
+        _err(u"设置 %s 不能包含路径分隔符" % key, {"key": key})
+    for token in re.findall(r"\{([^{}]*)\}", text):
+        if token not in config.CONVERT_NAME_TEMPLATE_TOKENS:
+            _err(u"设置 %s 含未知占位符 {%s}（可用：%s）"
+                 % (key, token, ", ".join("{%s}" % t for t in
+                                          config.CONVERT_NAME_TEMPLATE_TOKENS)),
+                 {"key": key})
+    stripped = re.sub(r"\{[^{}]*\}", "", text)
+    if "{" in stripped or "}" in stripped:
+        _err(u"设置 %s 的占位符未闭合" % key, {"key": key})
+    return text
+
+
+def _check_convert_subdir(key, value):
+    """输出子目录名（v0056）：单层目录名，不允许分隔符/..。"""
+    text = _check_str(key, value, max_len=config.CONVERT_SUBDIR_MAX).strip()
+    if not text:
+        return config.CONVERT_SUBDIR_DEFAULT
+    if "/" in text or "\\" in text:
+        _err(u"设置 %s 不能包含路径分隔符" % key, {"key": key})
+    if text in (".", "..") or "\x00" in text:
+        _err(u"设置 %s 的目录名非法" % key, {"key": key})
     return text
 
 
@@ -894,6 +960,60 @@ def _normalize_value(key, value):
     # --- v0054 下载订阅 ---
     if key == "download_subscribe_enabled":
         return _check_bool(key, value)
+    # --- v0056 格式转换（docs/CONVERT_CONTRACT.md §6）---
+    if key in ("convert_enabled", "convert_keep_source",
+               "convert_copy_subtitles", "convert_keep_temp",
+               "convert_offpeak_enabled", "convert_auto_scan",
+               "convert_auto_subtitle"):
+        return _check_bool(key, value)
+    if key == "convert_output_dir":
+        text = _check_str(key, value, max_len=1024).strip()
+        if not text:
+            return ""
+        if not os.path.isabs(text):
+            _err(u"convert_output_dir 必须是绝对路径", {"key": key})
+        return os.path.normpath(text)
+    if key == "convert_output_mode":
+        if value not in config.CONVERT_OUTPUT_MODES:
+            _err(u"convert_output_mode 只能是 %s"
+                 % "/".join(config.CONVERT_OUTPUT_MODES), {"key": key})
+        return value
+    if key == "convert_output_subdir":
+        return _check_convert_subdir(key, value)
+    if key == "convert_concurrency":
+        return _check_int(key, value, 1, config.CONVERT_CONCURRENCY_MAX)
+    if key == "convert_default_preset":
+        from . import convert as convert_module
+        if value not in convert_module.PRESET_IDS:
+            _err(u"convert_default_preset 只能是 %s"
+                 % "/".join(convert_module.PRESET_IDS), {"key": key})
+        return value
+    if key == "convert_quality":
+        if value not in config.CONVERT_QUALITIES:
+            _err(u"convert_quality 只能是 %s"
+                 % "/".join(config.CONVERT_QUALITIES), {"key": key})
+        return value
+    if key == "convert_speed":
+        if value not in config.CONVERT_SPEEDS:
+            _err(u"convert_speed 只能是 %s"
+                 % "/".join(config.CONVERT_SPEEDS), {"key": key})
+        return value
+    if key == "convert_overwrite":
+        if value not in config.CONVERT_OVERWRITE_MODES:
+            _err(u"convert_overwrite 只能是 %s"
+                 % "/".join(config.CONVERT_OVERWRITE_MODES), {"key": key})
+        return value
+    if key == "convert_max_resolution":
+        return _check_int(key, value, 0, 4320)
+    if key == "convert_job_limit":
+        return _check_int(key, value, config.CONVERT_JOB_LIMIT_MIN,
+                          config.CONVERT_JOB_LIMIT_MAX)
+    if key == "convert_min_free_gb":
+        return _check_int(key, value, 0, config.CONVERT_MIN_FREE_GB_MAX)
+    if key in ("convert_offpeak_start", "convert_offpeak_end"):
+        return _check_hhmm(key, value)
+    if key == "convert_name_template":
+        return _check_convert_name_template(key, value)
     if key == "skip_symlinks":
         # 无论前端传什么，符号链接一律跳过（安全强制）
         if not isinstance(value, bool):

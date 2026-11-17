@@ -6,7 +6,7 @@
 
 | 我想…… | 先读 | 再查 |
 |---|---|---|
-| 了解功能、安装、跑起来 | [README](../README.md) | [发布说明](RELEASE_NOTES_v1.1.0-0054.md) |
+| 了解功能、安装、跑起来 | [README](../README.md) | [发布说明](RELEASE_NOTES_v1.1.0-0056.md) |
 | 部署 / 升级 / 排错 | [SPK_PACKAGING.md](SPK_PACKAGING.md) | [ARCHITECTURE.md](ARCHITECTURE.md) §9、`<var>/log/start.log` |
 | 看懂整体设计与数据流 | [ARCHITECTURE.md](ARCHITECTURE.md) §1–10 | [STORAGE_CONTRACT.md](STORAGE_CONTRACT.md) |
 | 看懂页面与交互 | [UI_PROTOTYPE.md](UI_PROTOTYPE.md) | [CONTRACT.md](CONTRACT.md) §10 |
@@ -15,10 +15,11 @@
 | 改相似度 / 视频识别 | [SIMILARITY_CONTRACT.md](SIMILARITY_CONTRACT.md)、[VIDEO_CONTRACT.md](VIDEO_CONTRACT.md) | [相似视频 v2](VIDEO_MATCHING_V2_CONTRACT.md) |
 | 改字幕（ASR / 翻译 / 批次） | [SUBTITLE_CONTRACT.md](SUBTITLE_CONTRACT.md) | [批量字幕](SUBTITLE_BATCH_CONTRACT.md)、[ASR v2](SUBTITLE_ASR_V2_CONTRACT.md) |
 | 改下载（m3u8 / 直链 → MP4 / 网页解析） | [DOWNLOAD_CONTRACT.md](DOWNLOAD_CONTRACT.md) | [ARCHITECTURE.md](ARCHITECTURE.md) §21 |
+| 改格式转换（换容器 / 换编码 / 提取音频） | [CONVERT_CONTRACT.md](CONVERT_CONTRACT.md) | [ARCHITECTURE.md](ARCHITECTURE.md) §22 |
 | 改任务中心 / 权限 / 日志 | [TASK_CENTER_V2_CONTRACT.md](TASK_CENTER_V2_CONTRACT.md) | [CONTRACT.md](CONTRACT.md) §6 |
 | 了解 v2 需求为什么这样做 | [REQUIREMENTS_V2_ASSESSMENT.md](REQUIREMENTS_V2_ASSESSMENT.md) | 各特性契约 |
 | 看验收结论与证据 | [qa/REPORT.md](../qa/REPORT.md) | [qa/TRACEABILITY.md](../qa/TRACEABILITY.md)、`qa/*_results.json` |
-| 看历史版本改了什么 | `git log` / GitHub Releases | [ARCHITECTURE.md](ARCHITECTURE.md) §11–21（演进附录） |
+| 看历史版本改了什么 | `git log` / GitHub Releases | [ARCHITECTURE.md](ARCHITECTURE.md) §11–22（演进附录） |
 
 ## 2. 文档清单
 
@@ -29,7 +30,7 @@
 | 文档 | 内容 | 状态 |
 |---|---|---|
 | [README.md](../README.md) | 功能概览、构建安装、开发联调、测试命令、已知限制 | 现行 |
-| [ARCHITECTURE.md](ARCHITECTURE.md) | 组件与目录、扫描/哈希/时间/删除设计、群晖 API 调用点、性能；§11–20 为按版本的设计演进 | 现行 |
+| [ARCHITECTURE.md](ARCHITECTURE.md) | 组件与目录、扫描/哈希/时间/删除设计、群晖 API 调用点、性能；§11–22 为按版本的设计演进 | 现行 |
 | [UI_PROTOTYPE.md](UI_PROTOTYPE.md) | 页面线框、文件夹选择器、结果页、两次确认流程、状态与验收要点 | 现行 |
 | [SPK_PACKAGING.md](SPK_PACKAGING.md) | 依赖与前置条件、构建、安装、权限、TLS、日志、升级/卸载、排错 | 现行 |
 
@@ -61,20 +62,22 @@
 | [SUBTITLE_BATCH_CONTRACT.md](SUBTITLE_BATCH_CONTRACT.md) | 目录批量字幕、批次组、补翻译、预览/进度、取消与删除（v0032–v0050） | 现行 + 版本增量 |
 | [SUBTITLE_ASR_V2_CONTRACT.md](SUBTITLE_ASR_V2_CONTRACT.md) | 失败分类/自动重试/失败清单、负载与优先级、音轨选择、目录监控（v0048） | 版本增量 |
 
-### 2.5 任务中心、下载与运维（v0049–v0054）
+### 2.5 任务中心、下载与运维（v0049–v0056）
 
 | 文档 | 内容 | 状态 |
 |---|---|---|
 | [TASK_CENTER_V2_CONTRACT.md](TASK_CENTER_V2_CONTRACT.md) | 任务检索筛选、批量操作、权限只读体检、日志检索与导出（v0049） | 版本增量 |
 | [SUBTITLE_BATCH_CONTRACT.md](SUBTITLE_BATCH_CONTRACT.md) §23 + [ARCHITECTURE.md](ARCHITECTURE.md) §20 | 批次组异步取消、取消剩余、强制删除、明细自动加载、已取消页签（v0050） | 版本增量 |
 | [DOWNLOAD_CONTRACT.md](DOWNLOAD_CONTRACT.md) + [ARCHITECTURE.md](ARCHITECTURE.md) §21 | 直链/HLS 下载、AES-128 本地化解密、合并 MP4、批量组、队列与并发、设置键（v0051）；播放网页解析与 cURL 登录态暂存（v0052）；去重/自动重试/分时限速/命名模板/优先级/导出/空间看板/通知（v0053）；DASH 清单与订阅下载、连接复用（v0054） | 版本增量 |
+| [CONVERT_CONTRACT.md](CONVERT_CONTRACT.md) + [ARCHITECTURE.md](ARCHITECTURE.md) §22 | 格式转换：16 个预设（换容器/换编码/提取音频/仅换封装）、队列与进度、删除源确认、空闲时段、schema v10（v0056） | 现行 |
 
 ### 2.6 交付、验收与历史
 
 | 文档 | 内容 | 状态 |
 |---|---|---|
 | [REQUIREMENTS_V2_ASSESSMENT.md](REQUIREMENTS_V2_ASSESSMENT.md) | v2 需求 → 版本交付映射、关键取舍、明确不做、默认值、真机清单 | 现行（结论） |
-| [RELEASE_NOTES_v1.1.0-0055.md](RELEASE_NOTES_v1.1.0-0055.md) | 修复 v0054 设置键回归（`download_subscribe_enabled` 漏加后端白名单导致保存设置 400）、新增设置键一致性静态/单元/e2e 校验 | 现行（已打包） |
+| [RELEASE_NOTES_v1.1.0-0056.md](RELEASE_NOTES_v1.1.0-0056.md) | 新增格式转换（16 预设、队列/进度/取消/重试、仅换封装、删除源二次确认、空闲时段、schema v10）；修 `.dcpart` 未显式 `-f` 导致合并/封装失败 | 现行（已打包） |
+| [RELEASE_NOTES_v1.1.0-0055.md](RELEASE_NOTES_v1.1.0-0055.md) | 修复 v0054 设置键回归（`download_subscribe_enabled` 漏加后端白名单导致保存设置 400）、新增设置键一致性静态/单元/e2e 校验 | 历史 |
 | [RELEASE_NOTES_v1.1.0-0054.md](RELEASE_NOTES_v1.1.0-0054.md) | v0051 下载中心 + v0052 网页解析 + v0053 下载增强 + v0054 DASH/订阅、兼容性、校验值、打包与回退 | 历史 |
 | [RELEASE_NOTES_v1.1.0-0053.md](RELEASE_NOTES_v1.1.0-0053.md) | 上一版未发布增量说明（v0051–v0053） | 历史 |
 | [RELEASE_NOTES_v1.1.0-0050.md](RELEASE_NOTES_v1.1.0-0050.md) | 上一版正式发布说明（v0043–v0050 累计） | 历史 |

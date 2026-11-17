@@ -56,6 +56,9 @@ import {
 import {
   hideDownloadPage, initDownloadPage, showDownloadPage
 } from './js/download-page.js';
+import {
+  hideConvertPage, initConvertPage, showConvertPage
+} from './js/convert-page.js';
 import { toast } from './js/toast.js';
 import {
   closeModal, confirmDialog, getActiveModal, isModalOpen, openModal, setModalDismissible,
@@ -305,9 +308,11 @@ import {
     if (view !== 'history') { stopSubtitleJobsPolling(); }
     if (view !== 'subtitles') { stopSubtitlePagePolling(); }
     if (view !== 'download') { hideDownloadPage(); }
+    if (view !== 'convert') { hideConvertPage(); }
     if (view === 'history') { setTaskTab(state.taskTab, { load: true }); }
     else if (view === 'subtitles') { showSubtitlePage(); }
     else if (view === 'download') { showDownloadPage(); }
+    else if (view === 'convert') { showConvertPage(); }
     else if (view === 'settings') {
       loadSettingsPage();
       if (!state.diagnostics.loaded) { loadDiagnostics(); }
@@ -432,12 +437,14 @@ import {
     excludes: '勾选需要排除的目录；排除目录必须位于扫描范围内，其中的文件不会被扫描或删除。',
     pinned: '选择目录或文件作为“指定路径”保留策略的匹配前缀。',
     subtitle: '选择要批量生成/翻译字幕的视频目录（单选）。点击文件夹名称进入下一级，左侧箭头展开子目录，点“选择当前目录”后再“完成选择”。',
-    download: '选择下载文件保存的目录（单选，必须在共享文件夹内）。点击文件夹名称进入下一级，点“选择当前目录”后再“完成选择”。'
+    download: '选择下载文件保存的目录（单选，必须在共享文件夹内）。点击文件夹名称进入下一级，点“选择当前目录”后再“完成选择”。',
+    convert: '选择转换的源目录或输出目录（单选，必须在共享文件夹内）。点击文件夹名称进入下一级，点“选择当前目录”后再“完成选择”。'
   };
 
   // v0051：单选目录模式（字幕页 / 下载页复用同一套选择器与回调）
   function isSingleDirPicker(picker) {
-    return picker.mode === 'subtitle' || picker.mode === 'download';
+    return picker.mode === 'subtitle' || picker.mode === 'download' ||
+      picker.mode === 'convert';
   }
 
   function openFolderPicker(mode, options) {
@@ -1075,6 +1082,11 @@ import {
   // v0051：下载页复用同一个选择器（单选目录 + 完成后回调）
   state.openDownloadDirPicker = function (options) {
     openFolderPicker('download', options || {});
+  };
+
+  // v0056：转换页复用同一个选择器（源目录 / 输出目录）
+  state.openConvertDirPicker = function (options) {
+    openFolderPicker('convert', options || {});
   };
 
   // ==================== 9. 扫描范围与选项表单 ====================
@@ -2637,6 +2649,176 @@ import {
     } else {
       settings.download_name_template = nameTemplate;
     }
+  }
+
+  // ---------- 格式转换设置（v0056） ----------
+  function fillConvertSettingsForm(settings) {
+    var s = settings || {};
+    if (els.setConvertEnabled) {
+      els.setConvertEnabled.checked = s.convert_enabled === true;
+    }
+    if (els.setConvertOutputDir) {
+      els.setConvertOutputDir.value = s.convert_output_dir || '';
+    }
+    if (els.setConvertOutputMode) {
+      var mode = String(s.convert_output_mode || 'alongside');
+      if (['alongside', 'fixed', 'subdir'].indexOf(mode) === -1) {
+        mode = 'alongside';
+      }
+      els.setConvertOutputMode.value = mode;
+    }
+    if (els.setConvertOutputSubdir) {
+      els.setConvertOutputSubdir.value = s.convert_output_subdir || 'converted';
+    }
+    setVideoNumberValue(els.setConvertConcurrency, s.convert_concurrency, 1, 1, 2);
+    if (els.setConvertDefaultPreset) {
+      els.setConvertDefaultPreset.value = s.convert_default_preset || 'mp4_h264';
+    }
+    if (els.setConvertQuality) {
+      els.setConvertQuality.value = s.convert_quality || 'standard';
+    }
+    if (els.setConvertSpeed) {
+      els.setConvertSpeed.value = s.convert_speed || 'veryfast';
+    }
+    if (els.setConvertMaxResolution) {
+      els.setConvertMaxResolution.value =
+        String(parseInt(s.convert_max_resolution, 10) || 0);
+    }
+    if (els.setConvertOverwrite) {
+      els.setConvertOverwrite.value = s.convert_overwrite || 'rename';
+    }
+    if (els.setConvertNameTemplate) {
+      els.setConvertNameTemplate.value = s.convert_name_template || '{name}';
+    }
+    if (els.setConvertKeepSource) {
+      els.setConvertKeepSource.checked = s.convert_keep_source !== false;
+    }
+    if (els.setConvertCopySubtitles) {
+      els.setConvertCopySubtitles.checked = s.convert_copy_subtitles !== false;
+    }
+    if (els.setConvertKeepTemp) {
+      els.setConvertKeepTemp.checked = s.convert_keep_temp === true;
+    }
+    setVideoNumberValue(els.setConvertJobLimit, s.convert_job_limit, 500, 10, 5000);
+    setVideoNumberValue(els.setConvertMinFreeGb, s.convert_min_free_gb, 20, 0, 102400);
+    if (els.setConvertOffpeakEnabled) {
+      els.setConvertOffpeakEnabled.checked = s.convert_offpeak_enabled === true;
+    }
+    if (els.setConvertOffpeakStart) {
+      els.setConvertOffpeakStart.value = s.convert_offpeak_start || '01:00';
+    }
+    if (els.setConvertOffpeakEnd) {
+      els.setConvertOffpeakEnd.value = s.convert_offpeak_end || '07:00';
+    }
+    if (els.setConvertAutoScan) {
+      els.setConvertAutoScan.checked = s.convert_auto_scan === true;
+    }
+    if (els.setConvertAutoSubtitle) {
+      els.setConvertAutoSubtitle.checked = s.convert_auto_subtitle === true;
+    }
+    if (els.settingsConvertSummary) {
+      var where = s.convert_output_mode === 'fixed' ||
+        s.convert_output_mode === 'subdir'
+        ? (s.convert_output_dir || '未设置目录')
+        : '源目录';
+      setText(els.settingsConvertSummary, s.convert_enabled
+        ? (where + ' · 同时 ' +
+           (parseInt(s.convert_concurrency, 10) || 1) + ' 个')
+        : '未启用');
+    }
+    if (els.convertStatusBadgeSettings) {
+      setText(els.convertStatusBadgeSettings,
+        s.convert_enabled ? '已启用' : '未启用');
+      els.convertStatusBadgeSettings.className =
+        'badge ' + (s.convert_enabled ? 'badge-green' : 'badge-gray');
+    }
+  }
+
+  function readConvertSettings(settings, errors) {
+    settings.convert_enabled = !!(els.setConvertEnabled
+      && els.setConvertEnabled.checked);
+    var dir = String(els.setConvertOutputDir
+      ? els.setConvertOutputDir.value : '').trim();
+    if (dir && !isAbsolutePath(dir)) {
+      errors.convertOutputDir = '默认输出目录必须是绝对路径（或留空）。';
+    }
+    settings.convert_output_dir = dir;
+    var mode = String(els.setConvertOutputMode
+      ? els.setConvertOutputMode.value : 'alongside');
+    settings.convert_output_mode =
+      ['alongside', 'fixed', 'subdir'].indexOf(mode) === -1
+        ? 'alongside' : mode;
+    var sub = String(els.setConvertOutputSubdir
+      ? els.setConvertOutputSubdir.value : '').trim();
+    if (!sub) {
+      errors.convertOutputSubdir = '子目录名不能为空。';
+    } else if (sub === '.' || sub === '..' || /[\\/]/.test(sub)) {
+      errors.convertOutputSubdir = '子目录名不能包含路径分隔符或 ..。';
+    } else {
+      settings.convert_output_subdir = sub;
+    }
+    var concurrency = readSubtitleInt(els.setConvertConcurrency, 1, 2,
+      '同时转换任务数', errors, 'convertConcurrency');
+    if (concurrency !== null) { settings.convert_concurrency = concurrency; }
+    if (els.setConvertDefaultPreset) {
+      settings.convert_default_preset = els.setConvertDefaultPreset.value;
+    }
+    if (els.setConvertQuality) {
+      settings.convert_quality = els.setConvertQuality.value;
+    }
+    if (els.setConvertSpeed) {
+      settings.convert_speed = els.setConvertSpeed.value;
+    }
+    if (els.setConvertMaxResolution) {
+      var resolution = parseInt(els.setConvertMaxResolution.value, 10);
+      settings.convert_max_resolution =
+        isFinite(resolution) && resolution > 0 ? resolution : 0;
+    }
+    if (els.setConvertOverwrite) {
+      settings.convert_overwrite = els.setConvertOverwrite.value;
+    }
+    var template = String(els.setConvertNameTemplate
+      ? els.setConvertNameTemplate.value : '').trim();
+    if (!template) {
+      errors.convertNameTemplate = '文件名模板不能为空（例如 {name}）。';
+    } else if (/[\\/]/.test(template)) {
+      errors.convertNameTemplate = '文件名模板不能包含路径分隔符。';
+    } else {
+      settings.convert_name_template = template;
+    }
+    settings.convert_keep_source = !!(els.setConvertKeepSource
+      && els.setConvertKeepSource.checked);
+    settings.convert_copy_subtitles = !!(els.setConvertCopySubtitles
+      && els.setConvertCopySubtitles.checked);
+    settings.convert_keep_temp = !!(els.setConvertKeepTemp
+      && els.setConvertKeepTemp.checked);
+    var jobLimit = readSubtitleInt(els.setConvertJobLimit, 10, 5000,
+      '已完成任务保留上限', errors, 'convertJobLimit');
+    if (jobLimit !== null) { settings.convert_job_limit = jobLimit; }
+    var minFree = readSubtitleInt(els.setConvertMinFreeGb, 0, 102400,
+      '最少剩余空间', errors, 'convertMinFreeGb');
+    if (minFree !== null) { settings.convert_min_free_gb = minFree; }
+    settings.convert_offpeak_enabled = !!(els.setConvertOffpeakEnabled
+      && els.setConvertOffpeakEnabled.checked);
+    var hhmm = /^([01]\d|2[0-3]):[0-5]\d$/;
+    var offpeakStart = String(els.setConvertOffpeakStart
+      ? els.setConvertOffpeakStart.value : '').trim();
+    if (!hhmm.test(offpeakStart)) {
+      errors.convertOffpeakStart = '开始时间需为 HH:MM（如 01:00）。';
+    } else {
+      settings.convert_offpeak_start = offpeakStart;
+    }
+    var offpeakEnd = String(els.setConvertOffpeakEnd
+      ? els.setConvertOffpeakEnd.value : '').trim();
+    if (!hhmm.test(offpeakEnd)) {
+      errors.convertOffpeakEnd = '结束时间需为 HH:MM（如 07:00）。';
+    } else {
+      settings.convert_offpeak_end = offpeakEnd;
+    }
+    settings.convert_auto_scan = !!(els.setConvertAutoScan
+      && els.setConvertAutoScan.checked);
+    settings.convert_auto_subtitle = !!(els.setConvertAutoSubtitle
+      && els.setConvertAutoSubtitle.checked);
   }
 
   // ---------- 云端字幕：获取模型列表 / 测试连接（v0026） ----------
@@ -10611,7 +10793,16 @@ import {
     downloadOffpeakStart: { input: 'setDownloadOffpeakStart', error: 'setDownloadOffpeakStartError' },
     downloadOffpeakEnd: { input: 'setDownloadOffpeakEnd', error: 'setDownloadOffpeakEndError' },
     downloadOffpeakRate: { input: 'setDownloadOffpeakRate', error: 'setDownloadOffpeakRateError' },
-    downloadNameTemplate: { input: 'setDownloadNameTemplate', error: 'setDownloadNameTemplateError' }
+    downloadNameTemplate: { input: 'setDownloadNameTemplate', error: 'setDownloadNameTemplateError' },
+    // v0056：格式转换
+    convertOutputDir: { input: 'setConvertOutputDir', error: 'setConvertOutputDirError' },
+    convertOutputSubdir: { input: 'setConvertOutputSubdir', error: 'setConvertOutputSubdirError' },
+    convertConcurrency: { input: 'setConvertConcurrency', error: 'setConvertConcurrencyError' },
+    convertNameTemplate: { input: 'setConvertNameTemplate', error: 'setConvertNameTemplateError' },
+    convertJobLimit: { input: 'setConvertJobLimit', error: 'setConvertJobLimitError' },
+    convertMinFreeGb: { input: 'setConvertMinFreeGb', error: 'setConvertMinFreeGbError' },
+    convertOffpeakStart: { input: 'setConvertOffpeakStart', error: 'setConvertOffpeakStartError' },
+    convertOffpeakEnd: { input: 'setConvertOffpeakEnd', error: 'setConvertOffpeakEndError' }
   };
 
   function bytesToMbValue(bytes) {
@@ -11053,6 +11244,7 @@ import {
     fillVideoSettingsForm(settings);
     fillSubtitleSettingsForm(settings);
     fillDownloadSettingsForm(settings);
+    fillConvertSettingsForm(settings);
     clearSettingsErrors();
     updateSettingsSummaries();
     renderSettingsStatusSummary();
@@ -11174,6 +11366,7 @@ import {
     readVideoSettings(settings, errors);
     readSubtitleSettings(settings, errors);
     readDownloadSettings(settings, errors);
+    readConvertSettings(settings, errors);
     // v0043：增量扫描 / 保留规则链 / 排除规则
     settings.incremental_scan = els.setIncrementalScan ? !!els.setIncrementalScan.checked : true;
     settings.keep_rules = composeKeepRules('setKeep');
@@ -11329,6 +11522,22 @@ import {
         });
       });
     }
+    // v0056：设置页的默认输出目录选择（复用共享文件夹选择器）
+    if (els.setConvertDirPickBtn) {
+      els.setConvertDirPickBtn.addEventListener('click', function () {
+        if (typeof state.openConvertDirPicker !== 'function') { return; }
+        state.openConvertDirPicker({
+          initial: els.setConvertOutputDir ? els.setConvertOutputDir.value : '',
+          onConfirm: function (path) {
+            if (els.setConvertOutputDir) {
+              els.setConvertOutputDir.value = path || '';
+            }
+            clearSettingsErrors();
+            updateSettingsSummaries();
+          }
+        });
+      });
+    }
     els.settingsForm.addEventListener('input', function () { clearSettingsErrors(); updateSettingsSummaries(); });
     els.settingsForm.addEventListener('change', function () { clearSettingsErrors(); updateSettingsSummaries(); });
     if (els.setSimExtList) { els.setSimExtList.addEventListener('change', clearSettingsErrors); }
@@ -11442,6 +11651,7 @@ import {
     bindSettingsEvents();
     initSubtitlePage();
     initDownloadPage();
+    initConvertPage();
     // v0039：字幕页批次总览“去任务中心”入口
     state.openSubtitleJobs = goToSubtitleJobs;
     state.view = initialViewFromHash();

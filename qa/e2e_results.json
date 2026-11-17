@@ -1,9 +1,9 @@
 {
-  "generated_at": "2026-11-15T19:01:08+0800",
+  "generated_at": "2026-11-17T20:37:39+0800",
   "python": "3.12.9 | packaged by Anaconda, Inc. | (main, Feb  6 2025, 18:49:16) [MSC v.1929 64 bit (AMD64)]",
   "repo": "D:\\code\\zhouyi\\qunhui\\synology-duplicate-cleaner",
   "summary": {
-    "PASS": 230,
+    "PASS": 245,
     "FAIL": 0,
     "UNVERIFIED": 1
   },
@@ -11,11 +11,11 @@
     "fixture_files": 46,
     "python": "3.12.9",
     "birthtime_supported": true,
-    "backend_port": 10998,
+    "backend_port": 2655,
     "csrf_token_len": 43,
     "meta": {
       "ok": true,
-      "app_version": "1.1.0-0055",
+      "app_version": "1.1.0-0056",
       "dsm_version": "dev",
       "python_version": "3.12.9",
       "creation_time_supported": true,
@@ -169,7 +169,9 @@
           "failure_burst",
           "freed_threshold",
           "download_done",
-          "download_failed"
+          "download_failed",
+          "convert_done",
+          "convert_failed"
         ],
         "notify_webhook_url": "",
         "notify_telegram_bot_token": "",
@@ -211,6 +213,27 @@
         "download_offpeak_rate_limit_kbps": 0,
         "download_name_template": "{title}",
         "download_subscribe_enabled": false,
+        "convert_enabled": false,
+        "convert_output_dir": "",
+        "convert_output_mode": "alongside",
+        "convert_output_subdir": "converted",
+        "convert_concurrency": 1,
+        "convert_default_preset": "mp4_h264",
+        "convert_quality": "standard",
+        "convert_speed": "veryfast",
+        "convert_overwrite": "rename",
+        "convert_keep_source": true,
+        "convert_copy_subtitles": true,
+        "convert_max_resolution": 0,
+        "convert_job_limit": 500,
+        "convert_min_free_gb": 20,
+        "convert_keep_temp": false,
+        "convert_offpeak_enabled": false,
+        "convert_offpeak_start": "01:00",
+        "convert_offpeak_end": "07:00",
+        "convert_name_template": "{name}",
+        "convert_auto_scan": false,
+        "convert_auto_subtitle": false,
         "subtitle_asr_api_key_set": false,
         "subtitle_llm_api_key_set": false,
         "notify_telegram_bot_token_set": false,
@@ -528,7 +551,9 @@
           "failure_burst",
           "freed_threshold",
           "download_done",
-          "download_failed"
+          "download_failed",
+          "convert_done",
+          "convert_failed"
         ],
         "event_labels": {
           "scan_complete": "扫描完成",
@@ -537,7 +562,9 @@
           "failure_burst": "批量失败超阈值",
           "freed_threshold": "释放空间达阈值",
           "download_done": "下载完成",
-          "download_failed": "下载失败"
+          "download_failed": "下载失败",
+          "convert_done": "转换完成",
+          "convert_failed": "转换失败"
         }
       },
       "scheduler": {
@@ -604,7 +631,7 @@
       }
     },
     "subtitle_enumerate_count": 0,
-    "main_scan_id": "20261115-190027-a19198",
+    "main_scan_id": "20261117-203625-5fa871",
     "main_scan_final": "completed",
     "main_stats": {
       "files_seen": 38,
@@ -618,7 +645,7 @@
       "selectable_duplicate_files": 15,
       "selectable_reclaimable_bytes": 4403200,
       "bytes_hashed": 8753152,
-      "bytes_per_sec": 414199267,
+      "bytes_per_sec": 404613117,
       "errors": 0,
       "skipped": {
         "symlink": 0,
@@ -694,13 +721,13 @@
     },
     "main_groups_total": 12,
     "recycle_plan": {
-      "plan_id": "plan-b3b0d8a6dba39472",
+      "plan_id": "plan-b2544e9ce3308f5a",
       "count": 2,
       "bytes": 40960,
       "groups_affected": 1
     },
     "recycle_job": {
-      "job_id": "del-20261115-190028-686eeb",
+      "job_id": "del-20261117-203626-a9fd16",
       "status": "completed",
       "done": 2,
       "failed": 0,
@@ -1234,7 +1261,7 @@
       "id": "SKIP-04",
       "name": "符号链接跳过（当前环境无法创建 symlink）",
       "status": "UNVERIFIED",
-      "detail": "os.symlink failed: [WinError 1314] 客户端没有所需的特权。: 'C:\\\\Users\\\\zhouyi\\\\AppData\\\\Local\\\\Temp\\\\dupqa-s2rjd2uj\\\\qa-share-a\\\\dup' -> 'C:\\\\Users\\\\zhouyi\\\\AppData\\\\Local\\\\Temp\\\\dupqa-s2rjd2uj\\\\qa-share-a\\\\link_to_dup'"
+      "detail": "os.symlink failed: [WinError 1314] 客户端没有所需的特权。: 'C:\\\\Users\\\\zhouyi\\\\AppData\\\\Local\\\\Temp\\\\dupqa-ma053hem\\\\qa-share-a\\\\dup' -> 'C:\\\\Users\\\\zhouyi\\\\AppData\\\\Local\\\\Temp\\\\dupqa-ma053hem\\\\qa-share-a\\\\link_to_dup'"
     },
     {
       "id": "HARDLINK-01",
@@ -2049,6 +2076,96 @@
     {
       "id": "DL-18",
       "name": "删除后订阅列表不再包含该订阅",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "CV-00",
+      "name": "v0056 转换未启用时接口返回 403 CONVERT_DISABLED",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "CV-01",
+      "name": "v0056 能力探测返回 FFmpeg 状态与 16 个预设",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "CV-02",
+      "name": "v0056 目录枚举只返回音视频候选",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "CV-03",
+      "name": "v0056 未知预设返回 400 PRESET_UNKNOWN",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "CV-04",
+      "name": "v0056 删除源文件缺少 confirm 被拒绝",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "CV-05",
+      "name": "v0056 提交转换返回 202 + 排队任务",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "CV-06",
+      "name": "v0056 队列快照含排队任务/并发/空闲时段",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "CV-07",
+      "name": "v0056 任务详情含预设/时间线/体积估算",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "CV-08",
+      "name": "v0056 列表支持状态与关键字筛选",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "CV-09",
+      "name": "v0056 取消排队任务 → cancelled",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "CV-10",
+      "name": "v0056 重试已取消任务 → queued",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "CV-11",
+      "name": "v0056 转换任务导出 CSV（BOM + 中文表头）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "CV-12",
+      "name": "v0056 删除已取消任务返回成功",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "CV-13",
+      "name": "v0056 批量取消全部转换任务",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "CV-14",
+      "name": "v0056 真实仅换封装转换完成且产物可读",
       "status": "PASS",
       "detail": ""
     },

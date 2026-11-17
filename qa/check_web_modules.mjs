@@ -163,12 +163,13 @@ const EXPECTED = {
   'subtitle-probe.js': ['normalizeProbeKind', 'readProbePayload', 'fetchModelList', 'testProvider',
     'normalizeModelList', 'formatModelListHint', 'formatProbeResult', 'formatProbeError'],
   'subtitle-page.js': ['initSubtitlePage', 'showSubtitlePage', 'stopSubtitlePagePolling'],
-  'download-page.js': ['initDownloadPage', 'showDownloadPage', 'hideDownloadPage']
+  'download-page.js': ['initDownloadPage', 'showDownloadPage', 'hideDownloadPage'],
+  'convert-page.js': ['initConvertPage', 'showConvertPage', 'hideConvertPage']
 };
 
 const MODULE_ORDER = ['constants.js', 'state.js', 'format.js', 'util.js', 'dom.js',
   'api.js', 'toast.js', 'modal.js', 'subtitle-probe.js', 'subtitle-page.js',
-  'download-page.js'];
+  'download-page.js', 'convert-page.js'];
 
 const results = [];
 
@@ -393,6 +394,48 @@ async function main() {
         && constantsMod.DEFAULT_SETTINGS.download_concurrency === 2
         && constantsMod.DEFAULT_SETTINGS.download_segment_concurrency === 4
         && constantsMod.DEFAULT_SETTINGS.download_subdir_mode === 'none');
+
+      // ---- convert-page.js：v0056 格式转换页 ----
+      const convertMod = await importFile(path.join(JS_DIR, 'convert-page.js'));
+      const originalFetch3 = globalThis.fetch;
+      let cvInitOk = true;
+      let cvInitError = '';
+      try {
+        globalThis.fetch = async function () {
+          return {
+            ok: true, status: 200,
+            headers: { get: function () { return 'application/json'; } },
+            json: async function () {
+              return { ok: true, enabled: false, concurrency: 1,
+                ffmpeg: { available: true, version: 'test', path: 'ffmpeg' },
+                presets: [], groups: { video: [], audio: [] },
+                defaults: {}, qualities: ['high', 'standard', 'small'],
+                speeds: ['veryfast'], max_resolutions: [0],
+                output_modes: ['alongside'], overwrite_modes: ['rename'],
+                counts: { running: 0, queued: 0 }, offpeak: { enabled: false, open: true },
+                active: [], queued: [], recent: [], storage: null };
+            }
+          };
+        };
+        convertMod.initConvertPage();
+        convertMod.showConvertPage();
+        convertMod.hideConvertPage();
+      } catch (err) {
+        cvInitOk = false;
+        cvInitError = String(err && err.message ? err.message : err);
+      } finally {
+        globalThis.fetch = originalFetch3;
+      }
+      record('WEB-MOD-CONVERT-PAGE',
+        '转换页初始化无异常且 VIEWS/VIEW_HEADINGS 含 convert',
+        cvInitOk && constantsMod.VIEWS.indexOf('convert') !== -1
+        && constantsMod.VIEW_HEADINGS.convert === 'convertHeading', cvInitError);
+      record('WEB-MOD-CONVERT-DEFAULTS',
+        '转换默认设置与后端契约一致（enabled=false / 并发 1 / 同目录 / rename）',
+        constantsMod.DEFAULT_SETTINGS.convert_enabled === false
+        && constantsMod.DEFAULT_SETTINGS.convert_concurrency === 1
+        && constantsMod.DEFAULT_SETTINGS.convert_output_mode === 'alongside'
+        && constantsMod.DEFAULT_SETTINGS.convert_overwrite === 'rename');
   }
 
   const failed = results.filter(function (item) { return item.status !== 'PASS'; });

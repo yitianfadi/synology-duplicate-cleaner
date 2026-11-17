@@ -8,8 +8,8 @@ export var POLL_MS = 800;                 // 扫描 / 删除任务轮询间隔�
 export var GROUPS_LIMIT = 50;             // 结果分页大小
 export var TERMINAL_STATUS = ['completed', 'failed', 'stopped', 'interrupted'];
 export var ACTIVE_STATUS = ['queued', 'running', 'paused', 'stopping'];
-export var VIEWS = ['scan', 'subtitles', 'download', 'history', 'settings'];
-export var VIEW_HEADINGS = { scan: 'scanHeading', subtitles: 'subtitlesHeading', download: 'downloadHeading', history: 'historyHeading', settings: 'settingsHeading' };
+export var VIEWS = ['scan', 'subtitles', 'download', 'convert', 'history', 'settings'];
+export var VIEW_HEADINGS = { scan: 'scanHeading', subtitles: 'subtitlesHeading', download: 'downloadHeading', convert: 'convertHeading', history: 'historyHeading', settings: 'settingsHeading' };
 // v0038：旧书签 #/logs 兼容 → 任务中心「操作日志」标签页
 export var LEGACY_VIEW_ALIASES = { logs: 'history' };
 
@@ -380,5 +380,27 @@ export var DEFAULT_SETTINGS = {
   download_name_template: '{title}',
   // v0054 订阅下载总开关
   download_subscribe_enabled: false,
+  // v0056 格式转换默认值（与后端 settings.DEFAULT_SETTINGS 对齐）
+  convert_enabled: false,
+  convert_output_dir: '',
+  convert_output_mode: 'alongside',
+  convert_output_subdir: 'converted',
+  convert_concurrency: 1,
+  convert_default_preset: 'mp4_h264',
+  convert_quality: 'standard',
+  convert_speed: 'veryfast',
+  convert_overwrite: 'rename',
+  convert_keep_source: true,
+  convert_copy_subtitles: true,
+  convert_max_resolution: 0,
+  convert_job_limit: 500,
+  convert_min_free_gb: 20,
+  convert_keep_temp: false,
+  convert_offpeak_enabled: false,
+  convert_offpeak_start: '01:00',
+  convert_offpeak_end: '07:00',
+  convert_name_template: '{name}',
+  convert_auto_scan: false,
+  convert_auto_subtitle: false,
 };
 export var SIZE_UNITS = { kb: 1024, mb: 1048576, gb: 1073741824 };

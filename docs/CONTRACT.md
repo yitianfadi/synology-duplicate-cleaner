@@ -1,7 +1,7 @@
 # 实现契约（前后端共享，版本 1.0）
 
 > 本文件是前后端并行开发的唯一接口约定。任何一方需要改动字段，先改本文件并在团队任务中说明。
-> 产品名：**DuplicateCleaner**；显示名：**重复文件清理与字幕**；SPK 版本：**1.1.0-0055**。
+> 产品名：**DuplicateCleaner**；显示名：**重复文件清理与字幕**；SPK 版本：**1.1.0-0056**。
 > v1.1 新增内容相似度模式；相似模式字段与行为见 [SIMILARITY_CONTRACT.md](SIMILARITY_CONTRACT.md)，**精准模式规则不变**。
 
 ## 1. 仓库与写入边界
@@ -154,7 +154,7 @@ v0042 增量（升级启动稳定性）：
 ### GET /api/meta
 ```json
 {
- "app_version": "1.1.0-0055",
+ "app_version": "1.1.0-0056",
  "dsm_version": "7.2.2-72806" | "dev",
  "python_version": "3.8.16",
  "creation_time_supported": true,
@@ -650,7 +650,7 @@ Content-Disposition: attachment; filename="duplicate-scan-<id>.csv"
 - 后端 unittest 覆盖：statx 时间读取降级、哈希分片/限速、重复分组与三种保留策略、
   路径黑名单、删除前重校验、回收站路径生成、CSV、API 鉴权。
 - 前端可用静态检查 + 本地 dev 后端联调；QA 用 dev 模式在临时目录生成重复文件跑完整 API 流程。
-- 打包产物 `dist/DuplicateCleaner-1.1.0-0055.spk` 必须能通过 `tar -tf` 检查，包含 INFO/package.tgz/scripts/conf/ui。
+- 打包产物 `dist/DuplicateCleaner-1.1.0-0056.spk` 必须能通过 `tar -tf` 检查，包含 INFO/package.tgz/scripts/conf/ui。
 ## 12. 下载中心（v0051）
 
 完整契约见 [DOWNLOAD_CONTRACT.md](DOWNLOAD_CONTRACT.md)；本节只列接口与通用约定。
@@ -673,3 +673,24 @@ Content-Disposition: attachment; filename="duplicate-scan-<id>.csv"
 
 - 全部接口仅管理员；写操作需 CSRF；`download_enabled=false` 返回 `DOWNLOAD_DISABLED`(403)。
 - 任务对象字段、状态机、错误码、设置键默认值与落盘/清理规则见 `DOWNLOAD_CONTRACT.md` §3、§5–§8。
+
+## 13. 格式转换（v0056）
+
+完整契约见 [CONVERT_CONTRACT.md](CONVERT_CONTRACT.md)；本节只列接口与通用约定。
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/api/convert/capabilities` | FFmpeg 版本/路径、16 个预设（含可用性）、默认值、并发、空闲时段 |
+| POST | `/api/convert` | 提交转换（202）：`{paths[], preset, options{}, confirm}` |
+| GET | `/api/convert` | 任务列表（status/q/分页） |
+| POST | `/api/convert/enumerate` | 目录枚举 `{path, recursive, extensions?}` → 候选 + skipped 统计 |
+| GET | `/api/convert/queue` | 队列快照（active/queued/recent + counts/concurrency/offpeak/storage） |
+| GET | `/api/convert/{job_id}` | 任务详情（含 timeline、options、source_info、estimate_bytes） |
+| POST | `/api/convert/{job_id}/cancel`、`/retry` | 取消 / 重新排队 |
+| DELETE | `/api/convert/{job_id}` | 删除终态任务（`?delete_output=1` 同时删产物） |
+| POST | `/api/convert/bulk` | `{action: cancel_all\|retry_failed\|clear_finished}` |
+| GET | `/api/convert/export` | 转换任务导出 CSV |
+
+- 全部接口仅管理员；写操作需 CSRF；除 `capabilities` 外 `convert_enabled=false` 返回 `CONVERT_DISABLED`(403)。
+- 「删除源文件」必须 `confirm="DELETE SOURCE"`，且只在产物校验通过后执行。
+- 预设表、参数映射、状态机、设置键与错误码见 `CONVERT_CONTRACT.md` §2、§4–§7。

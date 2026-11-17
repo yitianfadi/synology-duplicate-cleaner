@@ -38,7 +38,8 @@ DB_FILENAME = "dupcleaner.sqlite3"
 # （docs/SUBTITLE_BATCH_CONTRACT.md §7.3）。
 # v9（v0051 下载中心）：新增 download_jobs / download_groups
 # （docs/DOWNLOAD_CONTRACT.md §5）。
-CURRENT_SCHEMA_VERSION = 9
+# v10（v0056 格式转换）：新增 convert_jobs（docs/CONVERT_CONTRACT.md §5）。
+CURRENT_SCHEMA_VERSION = 10
 FTS_TABLE = "scan_files_fts"
 FTS_TRIGGER_NAMES = (
     "scan_files_fts_ai",
@@ -297,6 +298,24 @@ _SCHEMA_STATEMENTS = (
         updated_epoch REAL NOT NULL
     )
     """,
+    # --- v10（v0056 格式转换）：任务表（payload_json 文档式，与下载同构）---
+    """
+    CREATE TABLE IF NOT EXISTS convert_jobs (
+        job_id TEXT PRIMARY KEY,
+        status TEXT,
+        payload_json TEXT NOT NULL,
+        created_epoch REAL NOT NULL,
+        updated_epoch REAL NOT NULL
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_convert_jobs_created
+        ON convert_jobs(created_epoch)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_convert_jobs_status
+        ON convert_jobs(status, created_epoch)
+    """,
 )
 
 # v4：plan C 字幕 ASR 分片缓存表（v3 升级时只建表；chunk 行由任务运行时写入）。
@@ -434,6 +453,28 @@ _V9_MIGRATION_STATEMENTS = (
         created_epoch REAL NOT NULL,
         updated_epoch REAL NOT NULL
     )
+    """,
+)
+
+# v10（v0056 格式转换）：convert_jobs 表（幂等；行由转换任务运行时写入）。
+# 只存任务汇总与状态；产物在文件系统里，进度按 FLUSH_SEC 节流落库。
+_V10_MIGRATION_STATEMENTS = (
+    """
+    CREATE TABLE IF NOT EXISTS convert_jobs (
+        job_id TEXT PRIMARY KEY,
+        status TEXT,
+        payload_json TEXT NOT NULL,
+        created_epoch REAL NOT NULL,
+        updated_epoch REAL NOT NULL
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_convert_jobs_created
+        ON convert_jobs(created_epoch)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_convert_jobs_status
+        ON convert_jobs(status, created_epoch)
     """,
 )
 
@@ -800,6 +841,8 @@ class Database(object):
                 self._migrate_v8()
             elif next_version == 9:
                 self._migrate_v9()
+            elif next_version == 10:
+                self._migrate_v10()
             version = next_version
             self._conn.execute(
                 "INSERT OR REPLACE INTO schema_meta(key, value) "
@@ -920,6 +963,13 @@ class Database(object):
             conn.execute(statement)
         logger.info(u"SQLite schema 迁移到 v9 完成：已创建 download_jobs /"
                     u" download_groups 表")
+
+    def _migrate_v10(self):
+        """v9→v10（v0056）：只新建 convert_jobs（幂等，纯新增，不动历史数据）。"""
+        conn = self._conn
+        for statement in _V10_MIGRATION_STATEMENTS:
+            conn.execute(statement)
+        logger.info(u"SQLite schema 迁移到 v10 完成：已创建 convert_jobs 表")
 
     def _backfill_scan_group_columns(self):
         """按 rowid 分批回填 scan_groups 索引列与 scan_files（不整表载入）。"""

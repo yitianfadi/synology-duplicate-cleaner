@@ -20,6 +20,7 @@ import hashlib
 import json
 import math
 import os
+import queue
 import re
 import shlex
 import shutil
@@ -842,6 +843,8 @@ class FFmpegTool(object):
         self._resolved = bool(cmd)
         self._version = None
         self._hwaccels = None
+        # v0056：格式转换用的编码器能力缓存（同样随 ffmpeg_path 变化失效）。
+        self._encoders = None
         self._settings_path_seen = _SETTINGS_PATH_UNSET
 
     # -- settings 路径变化检测 -----------------------------------------
@@ -870,6 +873,7 @@ class FFmpegTool(object):
                 self._source = None
                 self._version = None
                 self._hwaccels = None
+                self._encoders = None
         return current
 
     def resolve(self, runtime_config=None):
@@ -944,6 +948,94 @@ class FFmpegTool(object):
         """
         return self._run(list(args), timeout, stop_check)
 
+    def run_stream(self, args, on_line, timeout, stop_check=None):
+        """v0056：边执行边逐行读 stdout（配合 `-progress pipe:1`）。
+
+        返回 (returncode, stderr_bytes)。FFmpeg 把进度写 stdout、日志写 stderr，
+        两个管道各由一条线程读取，主线程只等事件队列 —— 这样 stop/timeout 在
+        阻塞读期间也能生效（Windows 的 select 不支持管道，不能用 select）。
+        """
+        command = list(self.resolve() or []) + list(args)
+        if not command:
+            raise VideoSkip("error", u"未找到 ffmpeg")
+        try:
+            process = subprocess.Popen(
+                command, stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        except OSError as exc:
+            raise VideoSkip("error", u"无法启动 ffmpeg: %s" % exc)
+        events = queue.Queue()
+        stderr_chunks = []
+
+        def _read_stdout():
+            try:
+                while True:
+                    raw = process.stdout.readline()
+                    if not raw:
+                        break
+                    text = raw.decode("utf-8", "replace").strip()
+                    if text:
+                        events.put(text)
+            except (OSError, ValueError):
+                pass
+            finally:
+                events.put(None)
+
+        def _read_stderr():
+            try:
+                while True:
+                    block = process.stderr.read(4096)
+                    if not block:
+                        break
+                    stderr_chunks.append(block)
+                    # 只保留尾部若干块：错误信息通常在最后，避免大日志吃内存
+                    if len(stderr_chunks) > 256:
+                        del stderr_chunks[:128]
+            except (OSError, ValueError):
+                pass
+
+        readers = [threading.Thread(target=_read_stdout, daemon=True),
+                   threading.Thread(target=_read_stderr, daemon=True)]
+        for reader in readers:
+            reader.start()
+        deadline = time.monotonic() + max(1.0, float(timeout))
+        try:
+            while True:
+                if stop_check is not None and stop_check():
+                    _kill_process(process)
+                    raise VideoStopped()
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    _kill_process(process)
+                    raise VideoTimeout()
+                try:
+                    event = events.get(timeout=min(0.2, max(0.01, remaining)))
+                except queue.Empty:
+                    continue
+                if event is None:
+                    break
+                try:
+                    on_line(event)
+                except Exception:
+                    # 进度回调不允许影响转码本身
+                    pass
+            try:
+                process.wait(timeout=10)
+            except Exception:
+                _kill_process(process)
+        except BaseException:
+            _kill_process(process)
+            raise
+        finally:
+            for reader in readers:
+                reader.join(1.0)
+            for stream in (process.stdout, process.stderr):
+                try:
+                    stream.close()
+                except Exception:
+                    pass
+        return process.returncode, b"".join(stderr_chunks)
+
     def _run(self, args, timeout, stop_check=None):
         command = list(self.resolve() or []) + list(args)
         if not command:
@@ -1015,6 +1107,31 @@ class FFmpegTool(object):
 
     def hwaccel_label(self):
         return hwaccel_label_from(self.hwaccels())
+
+    def encoders(self):
+        """v0056：可用编码器名列表（解析 `ffmpeg -encoders`，带缓存）。
+
+        格式转换用它判断预设能否执行（缺 libx265 等时对应预设置灰），
+        避免运行到一半才失败。settings.ffmpeg_path 变化后缓存失效。
+        """
+        self.resolve()
+        with self._lock:
+            if self._encoders is not None:
+                return list(self._encoders)
+        if not self.available():
+            return []
+        try:
+            _code, stdout, _stderr = self._run(["-encoders"], timeout=15.0)
+        except (VideoSkip, VideoTimeout, VideoStopped):
+            return []
+        names = []
+        for line in stdout.decode("utf-8", "replace").splitlines():
+            parts = line.split()
+            if len(parts) >= 2 and re.match(r"^[VAS][A-Z.]{5}$", parts[0]):
+                names.append(parts[1])
+        with self._lock:
+            self._encoders = list(names)
+        return list(names)
 
     def probe_duration(self, path, timeout, stop_check=None):
         """解析 ffmpeg -i stderr 的 Duration（不依赖 ffprobe）。

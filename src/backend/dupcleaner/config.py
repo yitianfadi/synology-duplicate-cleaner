@@ -7,9 +7,9 @@ import os
 import re
 
 APP_NAME = "DuplicateCleaner"
-APP_VERSION = "1.1.0-0055"
+APP_VERSION = "1.1.0-0056"
 DISPLAY_NAME = "重复文件清理与字幕"
-SPK_VERSION = "1.1.0-0055"
+SPK_VERSION = "1.1.0-0056"
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8787
@@ -169,7 +169,8 @@ RECYCLE_MODE_LABELS = {
 NOTIFY_CHANNELS = ("dsm", "webhook", "telegram")
 NOTIFY_EVENTS = ("scan_complete", "scan_failed", "subtitle_batch_done",
                  "failure_burst", "freed_threshold",
-                 "download_done", "download_failed")
+                 "download_done", "download_failed",
+                 "convert_done", "convert_failed")
 NOTIFY_EVENT_LABELS = {
     "scan_complete": u"扫描完成",
     "scan_failed": u"扫描失败",
@@ -178,6 +179,8 @@ NOTIFY_EVENT_LABELS = {
     "freed_threshold": u"释放空间达阈值",
     "download_done": u"下载完成",
     "download_failed": u"下载失败",
+    "convert_done": u"转换完成",
+    "convert_failed": u"转换失败",
 }
 DSM_NOTIFY_PATH = "/usr/syno/bin/synodsmnotify"
 NOTIFY_TIMEOUT_DEFAULT = 5
@@ -494,6 +497,80 @@ DOWNLOAD_PARSE_CACHE_MAX = 32
 # 解析时最多跟随的 iframe 数（只抓一层，避免递归爆炸）。
 DOWNLOAD_PARSE_IFRAME_MAX = 3
 
+# ---------------------------------------------------------------------------
+# 格式转换（v0056，docs/CONVERT_CONTRACT.md）
+# ---------------------------------------------------------------------------
+# 任务级并发（同时转几个）：默认 1。NAS 无独显、磁盘 IO 又常被字幕占用，
+# 转码并发 >1 只会互相拖慢（真机 IO 已接近饱和）。
+CONVERT_CONCURRENCY_MAX = 2
+CONVERT_DEFAULT_CONCURRENCY = 1
+# 任务数量上限（排队 + 执行；已完成按 job_limit 清理）。
+CONVERT_JOB_LIMIT_MIN = 10
+CONVERT_JOB_LIMIT_MAX = 5000
+CONVERT_JOB_LIMIT_DEFAULT = 500
+# 落盘前要求的最小剩余空间（GB）。
+CONVERT_MIN_FREE_GB_MAX = 102400
+CONVERT_MIN_FREE_GB_DEFAULT = 20
+# 单次提交文件数上限（批量）。
+CONVERT_BATCH_MAX_ITEMS = 200
+# 目录枚举上限（防止误选 20 万文件的根目录）。
+CONVERT_ENUMERATE_MAX_ITEMS = 2000
+# 产物最小体积：小于此值视为失败（0 字节不落盘成"视频"）。
+CONVERT_MIN_OUTPUT_BYTES = 1024
+# 临时后缀：先写 <目标>.dcpart，校验通过后 os.replace 原子改名。
+CONVERT_PART_EXT = ".dcpart"
+# 输出位置：alongside=源文件同目录（默认）；fixed=设置里的固定目录；
+# subdir=固定目录下的子目录（名称取 convert_output_subdir）。
+CONVERT_OUTPUT_MODES = ("alongside", "fixed", "subdir")
+CONVERT_OUTPUT_MODE_DEFAULT = "alongside"
+CONVERT_SUBDIR_DEFAULT = "converted"
+CONVERT_SUBDIR_MAX = 60
+# 同名产物策略：rename=自动加序号（默认，永不覆盖原文件）；skip=跳过；
+# overwrite=覆盖（仅在用户显式选择时生效）。
+CONVERT_OVERWRITE_MODES = ("rename", "skip", "overwrite")
+CONVERT_OVERWRITE_DEFAULT = "rename"
+# 质量三档 → 各编码器 CRF/量化参数（见 convert.py 的 _QUALITY_ARGS）。
+CONVERT_QUALITIES = ("high", "standard", "small")
+CONVERT_QUALITY_DEFAULT = "standard"
+CONVERT_AUDIO_QUALITY_KBPS = {"high": 256, "standard": 192, "small": 128}
+# x264/x265 速度档（VP9/MPEG-4 忽略）。
+CONVERT_SPEEDS = ("ultrafast", "superfast", "veryfast", "faster", "medium")
+CONVERT_SPEED_DEFAULT = "veryfast"
+# 分辨率上限：0=保持原样；只缩小不放大。
+CONVERT_MAX_RESOLUTIONS = (0, 2160, 1080, 720, 480)
+CONVERT_MAX_RESOLUTION_DEFAULT = 0
+# 音频码率（提取/转码；无损预设忽略）。
+CONVERT_AUDIO_BITRATE_MIN_KBPS = 32
+CONVERT_AUDIO_BITRATE_MAX_KBPS = 512
+CONVERT_AUDIO_BITRATE_DEFAULT = 192
+# 输出文件名模板：{name} {preset} {date}（扩展名由预设决定，模板里不写）。
+CONVERT_NAME_TEMPLATE_DEFAULT = "{name}"
+CONVERT_NAME_TEMPLATE_MAX = 200
+CONVERT_NAME_TEMPLATE_TOKENS = ("name", "preset", "date")
+# 进度落库最小间隔（秒）：不逐帧写 SQLite。
+CONVERT_PROGRESS_FLUSH_SEC = 2.0
+# 只做封装/探测的超时（秒）；转码另按源时长 × 系数计算。
+CONVERT_PROBE_TIMEOUT_SEC = 30
+CONVERT_TIMEOUT_MIN_SEC = 600
+CONVERT_TIMEOUT_FACTOR_COPY = 1.0
+CONVERT_TIMEOUT_FACTOR_TRANSCODE = 8.0
+# 产物时长校验容差（秒）；超出只告警，不判失败（部分容器时间戳有偏移）。
+CONVERT_VERIFY_TOLERANCE_SEC = 5
+# 仅空闲时段执行（跨零点窗口）；窗口外排队等待，不自动开跑。
+CONVERT_OFFPEAK_ENABLED_DEFAULT = False
+CONVERT_OFFPEAK_START_DEFAULT = "01:00"
+CONVERT_OFFPEAK_END_DEFAULT = "07:00"
+# 音频源扩展名（目录枚举用；视频源沿用 video_extensions 设置）。
+CONVERT_AUDIO_EXTENSIONS = (
+    ".mp3", ".m4a", ".aac", ".flac", ".wav", ".ogg", ".oga", ".opus",
+    ".wma", ".ape", ".mka", ".ac3", ".dts", ".aiff", ".amr",
+)
+# 默认预设（mp4/h264 兼容性最好）；预设表见 convert.PRESETS。
+CONVERT_PRESET_DEFAULT = "mp4_h264"
+# 体积预估：按「源码率 × 目标相对系数」粗估，仅用于提示，不作为闸门。
+CONVERT_ESTIMATE_MIN_RATIO = 0.25
+CONVERT_ESTIMATE_MAX_RATIO = 3.0
+
 # 系统 / 隐藏目录名：任何一层路径出现都必须拒绝（回收站目标除外）。
 SYSTEM_DIR_NAMES = frozenset([
     "@eaDir", "@tmp", "@appstore", "@docker", "@synologydrive", "@database",
@@ -537,6 +614,8 @@ SUBTITLE_BATCH_GROUP_ID_RE = re.compile(r"^grp-[A-Za-z0-9._-]{6,80}$")
 # v0051 下载中心任务 / 批量组 ID
 DOWNLOAD_JOB_ID_RE = re.compile(r"^dl-[A-Za-z0-9._-]{6,80}$")
 DOWNLOAD_GROUP_ID_RE = re.compile(r"^dg-[A-Za-z0-9._-]{6,80}$")
+# v0056 格式转换任务 ID
+CONVERT_JOB_ID_RE = re.compile(r"^cv-[A-Za-z0-9._-]{6,80}$")
 
 
 def secure_permissions(path, mode=SECURE_FILE_MODE):

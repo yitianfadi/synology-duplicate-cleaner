@@ -386,6 +386,29 @@ class Api(object):
              self._download_priority, False),
             ("DELETE", re.compile(r"^/api/downloads/(?P<job_id>[^/]+)$"),
              self._download_delete, False),
+            # --- v0056 格式转换（docs/CONVERT_CONTRACT.md §3） ---
+            # 注意顺序：capabilities/enumerate/bulk/export/queue 必须在
+            # /api/convert/{job_id} 之前，否则会被当成任务 ID。
+            ("GET", re.compile(r"^/api/convert/capabilities$"),
+             self._convert_capabilities, False),
+            ("GET", re.compile(r"^/api/convert$"), self._convert_list, False),
+            ("POST", re.compile(r"^/api/convert$"), self._convert_create, False),
+            ("POST", re.compile(r"^/api/convert/enumerate$"),
+             self._convert_enumerate, False),
+            ("POST", re.compile(r"^/api/convert/bulk$"),
+             self._convert_bulk, False),
+            ("GET", re.compile(r"^/api/convert/export$"),
+             self._convert_export, False),
+            ("GET", re.compile(r"^/api/convert/queue$"),
+             self._convert_queue, False),
+            ("GET", re.compile(r"^/api/convert/(?P<job_id>[^/]+)$"),
+             self._convert_get, False),
+            ("POST", re.compile(r"^/api/convert/(?P<job_id>[^/]+)/cancel$"),
+             self._convert_cancel, False),
+            ("POST", re.compile(r"^/api/convert/(?P<job_id>[^/]+)/retry$"),
+             self._convert_retry, False),
+            ("DELETE", re.compile(r"^/api/convert/(?P<job_id>[^/]+)$"),
+             self._convert_delete, False),
         ]
 
     # ------------------------------------------------------------------
@@ -878,6 +901,106 @@ class Api(object):
         if session is None or not getattr(session, "is_admin", False):
             raise forbidden(message)
         return session
+
+    # ------------------------------------------------------------------
+    # v0056 格式转换（docs/CONVERT_CONTRACT.md §3）
+    # ------------------------------------------------------------------
+    def _convert_service(self):
+        service = getattr(self.services, "convert", None)
+        if service is None:
+            raise ApiError("CONVERT_DISABLED", u"格式转换功能不可用")
+        return service
+
+    def _require_convert_admin(self, session):
+        self._require_admin(session, u"仅管理员可以使用格式转换")
+        settings = self.services.settings.get()
+        if not settings.get("convert_enabled"):
+            raise ApiError("CONVERT_DISABLED",
+                           u"格式转换未启用，请先在「设置 → 转换」开启")
+        return self._convert_service()
+
+    def _convert_capabilities(self, request, session, params):
+        # 能力探测不受 convert_enabled 限制：页面要用它显示"可用预设/未启用"。
+        self._require_admin(session, u"仅管理员可以使用格式转换")
+        return json_response(self._convert_service().capabilities())
+
+    def _convert_list(self, request, session, params):
+        service = self._require_convert_admin(session)
+        return json_response(service.list_page(
+            status=request.query_last("status"),
+            offset=_query_int(request, "offset", 0),
+            limit=_query_int(request, "limit", 50),
+            q=request.query_last("q")))
+
+    def _convert_create(self, request, session, params):
+        service = self._require_convert_admin(session)
+        body = _json_body(request)
+        return json_response(service.create(session.user, body), status=202)
+
+    def _convert_enumerate(self, request, session, params):
+        service = self._require_convert_admin(session)
+        body = _json_body(request)
+        return json_response(service.enumerate_files(body))
+
+    def _convert_bulk(self, request, session, params):
+        service = self._require_convert_admin(session)
+        body = _json_body(request)
+        return json_response(service.bulk_action(
+            session.user, body.get("action"), body.get("scope") or "all"))
+
+    def _convert_queue(self, request, session, params):
+        service = self._require_convert_admin(session)
+        return json_response(service.queue_snapshot(
+            active_limit=_query_int(request, "active_limit", 20),
+            queued_limit=_query_int(request, "queued_limit", 50),
+            recent_limit=_query_int(request, "recent_limit", 20)))
+
+    def _convert_get(self, request, session, params):
+        service = self._require_convert_admin(session)
+        return json_response({"ok": True,
+                              "job": service.get_view(params["job_id"])})
+
+    def _convert_cancel(self, request, session, params):
+        service = self._require_convert_admin(session)
+        return json_response({"ok": True, "action": "cancel",
+                              "job": service.cancel(params["job_id"])})
+
+    def _convert_retry(self, request, session, params):
+        service = self._require_convert_admin(session)
+        return json_response({"ok": True, "action": "retry",
+                              "job": service.retry(params["job_id"])})
+
+    def _convert_delete(self, request, session, params):
+        service = self._require_convert_admin(session)
+        delete_output = _query_bool(request, "delete_output", False)
+        return json_response(service.delete(params["job_id"],
+                                            delete_output=delete_output))
+
+    def _convert_export(self, request, session, params):
+        service = self._require_convert_admin(session)
+        rows = service.export_rows(status=request.query_last("status"))
+        buffer = io.StringIO()
+        writer = csv.writer(buffer)
+        writer.writerow(["任务 ID", "源文件", "输出预设", "状态", "进度",
+                         "产物", "源大小", "产物大小", "创建时间", "完成时间",
+                         "错误"])
+        for row in rows:
+            writer.writerow([row["job_id"], row["source_path"], row["preset"],
+                             row["status"], row["progress"],
+                             row["output_path"], row["source_bytes"],
+                             row["output_size"], row["created_at"],
+                             row["finished_at"], row["error"]])
+        data = (u"\ufeff" + buffer.getvalue()).encode("utf-8")
+        return Response(
+            status=200,
+            content_type="text/csv; charset=utf-8",
+            body=data,
+            headers={
+                "Content-Disposition":
+                    'attachment; filename="conversions.csv"',
+                "Cache-Control": "no-store",
+            },
+        )
 
     # ------------------------------------------------------------------
     # v0049：权限与路径体检（只读检测 + 指引，不做提权）

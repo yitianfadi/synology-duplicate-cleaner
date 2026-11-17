@@ -1438,9 +1438,10 @@ class DownloadService(object):
             map_args = ["-map", "0:v:0", "-map", "1:a:0?"]
         attempts = [
             base + map_args + ["-c", "copy", "-movflags", "+faststart",
-                               "-y", part],
+                               "-f", "mp4", "-y", part],
             base + map_args + ["-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
-                               "-movflags", "+faststart", "-y", part],
+                               "-movflags", "+faststart", "-f", "mp4",
+                               "-y", part],
         ]
         last_error = u""
         for index, args in enumerate(attempts):
@@ -1839,10 +1840,11 @@ class DownloadService(object):
         if audio_list:
             map_args = ["-map", "0:v:0", "-map", "1:a:0?"]
         attempts.append(base + map_args + [
-            "-c", "copy", "-movflags", "+faststart", "-y", part])
+            "-c", "copy", "-movflags", "+faststart",
+            "-f", "mp4", "-y", part])
         attempts.append(base + map_args + [
             "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
-            "-movflags", "+faststart", "-y", part])
+            "-movflags", "+faststart", "-f", "mp4", "-y", part])
         last_error = u""
         for index, args in enumerate(attempts):
             try:

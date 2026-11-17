@@ -37,6 +37,12 @@ export var state = {
     // v0054：订阅列表
     subs: []
   },
+  // v0056：格式转换（选择/预设/队列/轮询）
+  convert: {
+    caps: null, capsLoading: false, candidates: [], selected: new Map(),
+    snapshot: null, timer: null, loading: false, loaded: false,
+    lastError: '', submitting: false, enumerating: false
+  },
   // 当前扫描
   scan: { id: null, data: null, stats: null, timer: null, abort: null, polling: false, errors: 0, handled: false },
   // 结果
@@ -62,6 +68,8 @@ export var state = {
   openSubtitleJobs: null,
   // v0051：下载页目录选择器（签名 openDownloadDirPicker({initial, onConfirm})）
   openDownloadDirPicker: null,
+  // v0056：转换页目录选择器（源目录 / 输出目录共用）
+  openConvertDirPicker: null,
   preview: { urls: [], abort: null },
   historyCache: null,
   // 任务中心标签页：history / subtitles / deletions / logs（v0038：操作日志并入）
@@ -240,4 +248,31 @@ export var IDS = ('loginView loginForm loginUsername loginPassword loginOtp logi
   'setDownloadOffpeakEnd setDownloadOffpeakEndError ' +
   'setDownloadOffpeakRate setDownloadOffpeakRateError ' +
   'setDownloadNameTemplate setDownloadNameTemplateError ' +
+  'view-convert convertHeading convertPageStatusBadge convertDirPath ' +
+  'convertDirPickBtn convertEnumerateBtn convertRecursive ' +
+  'convertEnumerateError convertEnumerateLoading convertCandidatesPanel ' +
+  'convertCandidatesSummary convertCandidatesList convertSelectAllBtn ' +
+  'convertSelectNoneBtn convertManualDetails convertPaths ' +
+  'convertAddManualBtn convertPresetGroup convertPreset ' +
+  'convertPresetDesc convertPresetHint convertQuality convertSpeed ' +
+  'convertMaxResolution convertChannels convertOutputMode ' +
+  'convertOutputDir convertOutputPickBtn convertOutputDirField ' +
+  'convertOutputSubdir convertOutputSubdirField convertNameTemplate ' +
+  'convertOverwrite convertKeepSource convertCopySubtitles ' +
+  'convertDeleteSource convertSubmitBtn convertSubmitHint ' +
+  'convertSubmitError convertCancelAllBtn convertRetryFailedBtn ' +
+  'convertClearFinishedBtn convertExportLink convertQueueHint ' +
+  'convertStorageHint convertListError convertEmpty convertJobsList ' +
+  'settingsConvertDetails settingsConvertSummary convertStatusBadgeSettings ' +
+  'setConvertEnabled setConvertOutputDir setConvertOutputDirError ' +
+  'setConvertDirPickBtn setConvertOutputMode setConvertOutputSubdir ' +
+  'setConvertOutputSubdirError setConvertConcurrency ' +
+  'setConvertConcurrencyError setConvertDefaultPreset setConvertQuality ' +
+  'setConvertSpeed setConvertMaxResolution setConvertOverwrite ' +
+  'setConvertKeepSource setConvertCopySubtitles setConvertNameTemplate ' +
+  'setConvertNameTemplateError setConvertJobLimit ' +
+  'setConvertJobLimitError setConvertMinFreeGb setConvertMinFreeGbError ' +
+  'setConvertKeepTemp setConvertOffpeakEnabled setConvertOffpeakStart ' +
+  'setConvertOffpeakStartError setConvertOffpeakEnd ' +
+  'setConvertOffpeakEndError setConvertAutoScan setConvertAutoSubtitle ' +
   'footerMeta toastRoot modalRoot').split(' ');
