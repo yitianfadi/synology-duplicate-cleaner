@@ -1083,26 +1083,32 @@ def run():
             "/api/subtitles/sub-20260101-000000-abcdef/translate",
             {"confirm_cloud": True})
         code, _ = err_code(resp)
-        check("SUB-22", "补翻译在翻译开关未启用时返回 400 TRANSLATE_DISABLED",
-              resp.status == 400 and code == "TRANSLATE_DISABLED",
+        check("SUB-22", "未配置 LLM Key 时补翻译返回 400 TRANSLATE_NOT_CONFIGURED",
+              resp.status == 400 and code == "TRANSLATE_NOT_CONFIGURED",
               "status=%s code=%s" % (resp.status, code))
 
         resp = client.put_json("/api/settings", {"settings": {
             "subtitle_translate_enabled": True,
             "subtitle_llm_api_key": "e2e-dummy-llm-key"}})
         data = jd(resp).get("settings", {})
-        check("SUB-23", "PUT /api/settings 可开启翻译并保存 LLM Key（只回显是否已配置）",
+        check("SUB-23", "PUT /api/settings 可保存 LLM Key（只回显是否已配置）",
               resp.status == 200
-              and data.get("subtitle_translate_enabled") is True
               and data.get("subtitle_llm_api_key_set") is True
+              and data.get("subtitle_translate_enabled") is True
               and "e2e-dummy-llm-key" not in resp.text(),
               "status=%s data=%s" % (resp.status, data))
+
+        resp = client.put_json("/api/settings", {"settings": {
+            "subtitle_translate_enabled": False}})
+        check("SUB-23B", "翻译总开关已废弃：关闭后仍可补翻译（键仅兼容保留）",
+              resp.status == 200,
+              "status=%s" % resp.status)
 
         resp = client.post_json(
             "/api/subtitles/sub-20260101-000000-abcdef/translate",
             {"confirm_cloud": True})
         code, _ = err_code(resp)
-        check("SUB-24", "补翻译未知任务返回 404 NOT_FOUND",
+        check("SUB-24", "补翻译未知任务返回 404 NOT_FOUND（翻译开关关闭也不再拦截）",
               resp.status == 404 and code == "NOT_FOUND",
               "status=%s code=%s" % (resp.status, code))
 
@@ -1199,7 +1205,7 @@ def run():
         # 恢复默认（关闭云端字幕），避免影响后续用例
         client.put_json("/api/settings", {"settings": {
             "subtitle_enabled": False, "subtitle_clear_asr_api_key": True,
-            "subtitle_translate_enabled": False,
+            "subtitle_translate_enabled": True,
             "subtitle_concurrency": 1,
             "subtitle_translate_outputs": "both",
             "subtitle_audio_prefetch": True,

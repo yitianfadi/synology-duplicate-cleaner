@@ -1348,7 +1348,7 @@ export function subtitleTranslateGate() {
   var sub = subtitleCapability();
   if (sub.supported !== true) { return { ok: false, reason: '当前后端未提供云端字幕能力' }; }
   if (sub.enabled !== true) { return { ok: false, reason: '请先在设置中启用云端字幕' }; }
-  if (sub.translateEnabled !== true) { return { ok: false, reason: '字幕翻译未启用（请在设置中开启）' }; }
+  // v0060：翻译不再受设置总开关限制，配了 LLM API Key 即可
   if (sub.llmKeySet !== true) { return { ok: false, reason: '请先在设置中配置 LLM API Key' }; }
   return { ok: true, reason: '' };
 }

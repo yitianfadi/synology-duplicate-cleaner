@@ -1,10 +1,14 @@
 # -*- coding: utf-8 -*-
-"""通知系统（v0046）：DSM 系统通知 / Webhook / Telegram。
+"""通知系统（v0046，v0060 起只有 Webhook / Telegram）。
+
+DSM 系统通知（`synodsmnotify` + `sysnotify` i18n 资源）仅对 Synology 自家套件开放，
+第三方 SPK 声明该资源会在安装时报 4539，因此本套件不提供该渠道。
 
 设计要点：
 - 设置里 `notify_enabled` 总开关 + `notify_channels` 渠道 + `notify_events` 事件订阅；
 - 发送走后台单线程队列（不阻塞扫描/删除/字幕线程），失败只记审计不影响主流程；
-- 四个触发点：扫描完成/失败、字幕批次结束、批量失败超阈值、单次删除释放空间达阈值；
+- 触发点：扫描完成/失败、字幕批次结束、批量失败超阈值、单次删除释放空间达阈值、
+  下载/转换完成或失败；
 - 测试接口 `POST /api/notifications/test` 便于在设置页逐个渠道验证；
 - 任何日志/审计/响应都不包含 Telegram token 与 Webhook 完整 URL（只留 host）。
 """
@@ -13,9 +17,7 @@ from __future__ import absolute_import
 
 import json
 import logging
-import os
 import queue
-import subprocess
 import threading
 import time
 import urllib.error
@@ -27,7 +29,6 @@ from . import config, timeutil
 logger = logging.getLogger("dupcleaner.notify")
 
 LEVEL_LABEL = {"info": u"信息", "warn": u"警告", "error": u"错误"}
-DSM_LEVEL = {"info": "info", "warn": "warn", "error": "error"}
 
 
 def _http_post_json(url, payload, timeout):
@@ -61,12 +62,11 @@ class NotificationService(object):
     EVENTS = config.NOTIFY_EVENTS
 
     def __init__(self, runtime_config, store, settings_provider,
-                 transport=None, dsm_runner=None):
+                 transport=None):
         self.config = runtime_config
         self.store = store
         self.settings = settings_provider
         self._transport = transport or _http_post_json
-        self._dsm_runner = dsm_runner or self._run_dsm_notify
         self._queue = queue.Queue(maxsize=config.NOTIFY_QUEUE_MAX)
         self._thread = None
         self._stop = threading.Event()
@@ -84,15 +84,6 @@ class NotificationService(object):
     def status(self):
         settings = self._settings()
         channels = []
-        dsm_available = os.path.isfile(config.DSM_NOTIFY_PATH)
-        channels.append({
-            "channel": "dsm",
-            "label": u"DSM 系统通知",
-            "available": dsm_available,
-            "configured": dsm_available,
-            "detail": (u"通过 synodsmnotify 发送给 @administrators"
-                       if dsm_available else u"当前系统没有 synodsmnotify（非 DSM 环境）"),
-        })
         webhook_url = (settings.get("notify_webhook_url") or "").strip()
         channels.append({
             "channel": "webhook",
@@ -134,8 +125,6 @@ class NotificationService(object):
         channels = []
         for channel in settings.get("notify_channels") or []:
             if channel not in self.CHANNELS:
-                continue
-            if channel == "dsm" and not os.path.isfile(config.DSM_NOTIFY_PATH):
                 continue
             if channel == "webhook" and not (
                     settings.get("notify_webhook_url") or "").strip():
@@ -220,8 +209,6 @@ class NotificationService(object):
         timeout = max(2, min(int(settings.get("notify_timeout_sec") or 5), 30))
         text = task["title"] if not task["message"] else (
             task["title"] + u"\n" + task["message"])
-        if channel == "dsm":
-            return self._dsm_runner(task, timeout)
         if channel == "webhook":
             url = (settings.get("notify_webhook_url") or "").strip()
             payload = {
@@ -245,24 +232,6 @@ class NotificationService(object):
             ok, detail, _body = self._transport(url, payload, timeout)
             return ok, detail
         return False, u"未知渠道: %s" % channel
-
-    def _run_dsm_notify(self, task, timeout):
-        path = config.DSM_NOTIFY_PATH
-        if not os.path.isfile(path):
-            return False, u"synodsmnotify 不存在"
-        command = [path, "-l", DSM_LEVEL.get(task["level"], "info"),
-                   "-c", task["title"][:120],
-                   "-t", task["message"][:1000],
-                   "@administrators"]
-        try:
-            completed = subprocess.run(command, stdout=subprocess.PIPE,
-                                       stderr=subprocess.PIPE, timeout=timeout)
-        except (OSError, subprocess.SubprocessError) as exc:
-            return False, u"DSM 通知失败: %s" % exc
-        if completed.returncode != 0:
-            err = (completed.stderr or b"").decode("utf-8", "replace")[:200]
-            return False, u"DSM 通知返回 %s: %s" % (completed.returncode, err)
-        return True, "synodsmnotify ok"
 
     # ------------------------------------------------------------------
     # 测试

@@ -1,7 +1,7 @@
 # 整体方案架构
 
 > 项目：**重复文件清理与字幕（Duplicate Cleaner & Subtitles）** · 群晖 DSM 7.x SPK 套件
-> 版本：1.1.0-0059
+> 版本：1.1.0-0060
 > 原则：**先扫描、出报告、人工确认、二次确认、可回收、全程审计**。任何情况下都不自动静默删除。
 
 ## 1. 目标与边界
@@ -525,8 +525,9 @@ Linux 的 `st_ctime` 是 **inode 状态变更时间**，不是创建时间，复
 
 - `NotificationService`：设置驱动（`notify_enabled`/`notify_channels`/`notify_events`），
   发送走后台单线程队列（200 条上限），不阻塞扫描/删除/字幕线程；队列满丢弃并审计。
-- 渠道：DSM `synodsmnotify @administrators`（不存在则自动跳过）、Webhook（POST JSON，含
-  event/title/message/level/timestamp/version/detail）、Telegram Bot API。
+- 渠道：Webhook（POST JSON，含 event/title/message/level/timestamp/version/detail）、
+  Telegram Bot API。**v0060 移除了 DSM 系统通知**：DSM 7 需要套件声明 `sysnotify`
+  资源注册 i18n 文案，而该 worker 是 Synology 专属，第三方 SPK 声明后安装会失败（4539）。
 - 触发点：扫描完成/失败（`ScanManager._audit_finish`）、删除任务结束的释放空间/失败阈值
   （`DeletionManager._run_job`）、字幕批次结束/批量失败（`SchedulerService` watcher 轮询
   `batch_group_overview`，按 group_id 去重持久化到 `<var>/notify_state.json`）。
@@ -581,7 +582,7 @@ Linux 的 `st_ctime` 是 **inode 状态变更时间**，不是创建时间，复
   抽音频（NAS mp3 / 服务器 remux / 预取）统一带 `-map`；`audio_tracks()` 供 UI 查询。
 - **目录监控**（新 `subtitle_watch.py`）：30 秒 tick + 配置间隔扫描监控目录，按
   `(size, mtime_ns)` 去重（`<var>/subtitle_watch_state.json`），每轮最多入队 20 个，
-  以 `user="watcher"` 提交批量任务，翻译开关用 `subtitle_translate_enabled`。
+  以 `user="watcher"` 提交批量任务，翻译跟随是否配置 LLM API Key（v0060 起 `subtitle_translate_enabled` 已废弃）。
 
 ## 19. 任务中心 / 权限体检 / 日志增强（v0049）
 

@@ -168,17 +168,13 @@ class TranslateJobTest(TranslateTestBase):
             os.path.join(self.service._job_dir(done["job_id"]),
                          "bilingual.en.srt")))
 
-    def test_translate_switch_key_and_confirm_errors(self):
+    def test_translate_key_and_confirm_errors(self):
         _video, source = self.done_asr_job(name="switch.mp4")
         payload = {"confirm_cloud": True}
         self._configure_settings(subtitle_enabled=False)
         with self.assertRaises(subtitles.SubtitleError) as ctx:
             self.service.translate_job("admin", source["job_id"], payload)
         self.assertEqual(ctx.exception.code, "SUBTITLE_DISABLED")
-        self._configure_settings(subtitle_translate_enabled=False)
-        with self.assertRaises(subtitles.SubtitleError) as ctx:
-            self.service.translate_job("admin", source["job_id"], payload)
-        self.assertEqual(ctx.exception.code, "TRANSLATE_DISABLED")
         # 密钥为空：空字符串=保持原值，需 clear 标记才能真正清空
         self._configure_settings(subtitle_llm_api_key="",
                                  subtitle_clear_llm_api_key=True)
@@ -202,6 +198,17 @@ class TranslateJobTest(TranslateTestBase):
         with self.assertRaises(ApiError) as ctx:
             self.service.translate_job("admin", source["job_id"], None)
         self.assertEqual(ctx.exception.code, "INVALID_ARGUMENT")
+
+    def test_deprecated_translate_switch_does_not_block(self):
+        """v0060：subtitle_translate_enabled=False 不再拦截补翻译。"""
+        _video, source = self.done_asr_job(name="switch-off.mp4")
+        self._configure_settings(subtitle_translate_enabled=False)
+        result = self.service.translate_job(
+            "admin", source["job_id"], {"confirm_cloud": True})
+        self.assertTrue(result["job"]["translate"])
+        done = self.wait_translate_job(result["job"]["job_id"])
+        self.assertEqual(done["status"], "done", done.get("error"))
+        self.assertFalse(done["translation_partial"])
 
     def test_not_done_and_unknown_source(self):
         real = self.service.client.transcribe
@@ -581,13 +588,13 @@ class TranslateApiTest(TranslateTestBase):
             {"confirm_cloud": True})
         self.assertEqual(status, 403)
         self.assertEqual(csrf_payload["error"]["code"], "CSRF_FAILED")
-        # 翻译开关关闭 → 400 TRANSLATE_DISABLED
+        # v0060：翻译总开关已废弃，不再拦截（配了 LLM Key 就放行）
         self._configure_settings(subtitle_translate_enabled=False)
-        status, _headers, disabled = self.client.json(
+        status, _headers, allowed = self.client.json(
             "POST", "/api/subtitles/%s/translate" % source["job_id"],
             {"confirm_cloud": True}, csrf=self.csrf)
-        self.assertEqual(status, 400, disabled)
-        self.assertEqual(disabled["error"]["code"], "TRANSLATE_DISABLED")
+        self.assertEqual(status, 200, allowed)
+        self.assertTrue(allowed.get("job"))
         self._configure_settings()
         # 任务不存在 → 404
         status, _headers, missing = self.client.json(

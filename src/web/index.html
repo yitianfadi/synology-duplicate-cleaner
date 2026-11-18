@@ -6,8 +6,8 @@
 <meta name="color-scheme" content="light">
 <meta name="referrer" content="same-origin">
 <title>重复文件清理与影音工具 · Duplicate Cleaner &amp; Media Toolkit</title>
-<link rel="icon" href="./assets/favicon.svg?v=1.1.0-0059" type="image/svg+xml">
-<link rel="stylesheet" href="./styles.css?v=1.1.0-0059">
+<link rel="icon" href="./assets/favicon.svg?v=1.1.0-0060" type="image/svg+xml">
+<link rel="stylesheet" href="./styles.css?v=1.1.0-0060">
 </head>
 <body>
 <a class="skip-link" href="#main">跳到主要内容</a>
@@ -1516,173 +1516,28 @@
       <div class="state-box" id="settingsLoading" hidden><span class="spinner" aria-hidden="true"></span>正在加载设置…</div>
       <div class="state-box state-error" id="settingsLoadError" role="alert" hidden></div>
       <form id="settingsForm" class="card settings-card" novalidate>
-        <details class="advanced settings-group" id="settingsScanGroup" open>
-          <summary><span class="settings-group-title">扫描 · 文件发现与哈希默认值</span><span class="settings-summary" id="settingsScanSummary"></span></summary>
-          <div class="form-grid">
-          <div class="field">
-            <label for="setHashAlgo">哈希算法</label>
-            <select id="setHashAlgo" name="hash_algo">
-              <option value="sha256">SHA-256（推荐）</option>
-              <option value="md5">MD5</option>
-            </select>
-          </div>
-          <div class="field">
-            <label for="setKeepMode">保留策略</label>
-            <select id="setKeepMode" name="keep_mode">
-              <option value="latest">最晚创建（保留最新）</option>
-              <option value="earliest">最早创建（保留最旧）</option>
-              <option value="pinned">指定路径（优先保留）</option>
-            </select>
-          </div>
-          <div class="field field-wide">
-            <label for="setPinnedPath">指定保留路径</label>
-            <input id="setPinnedPath" name="pinned_path" type="text" placeholder="/volume1/photo/keep" autocomplete="off" spellcheck="false">
-            <p class="hint">选择“指定路径”策略时使用；匹配该路径或目录前缀的副本优先保留。</p>
-          </div>
-          <div class="field">
-            <label for="setMinSizeMb">最小文件大小（MB）</label>
-            <input id="setMinSizeMb" name="min_size" type="number" inputmode="numeric" min="0" step="1" value="0">
-            <p class="hint">0 表示不限制。</p>
-            <p class="field-error" id="setMinSizeError" role="alert" hidden></p>
-          </div>
-          <div class="field">
-            <label for="setMaxSizeMb">最大文件大小（MB）</label>
-            <input id="setMaxSizeMb" name="max_size" type="number" inputmode="numeric" min="0" step="1" value="0">
-            <p class="hint">0 表示不限制；必须大于或等于最小值。</p>
-            <p class="field-error" id="setMaxSizeError" role="alert" hidden></p>
-          </div>
-          <div class="field">
-            <label for="setIncludeExt">包含后缀</label>
-            <input id="setIncludeExt" name="include_extensions" type="text" placeholder=".jpg,.png" autocomplete="off" spellcheck="false">
-            <p class="hint">逗号分隔，留空表示全部。</p>
-            <p class="field-error" id="setIncludeExtError" role="alert" hidden></p>
-          </div>
-          <div class="field">
-            <label for="setExcludeExt">排除后缀</label>
-            <input id="setExcludeExt" name="exclude_extensions" type="text" placeholder=".tmp,.part" autocomplete="off" spellcheck="false">
-            <p class="field-error" id="setExcludeExtError" role="alert" hidden></p>
-          </div>
-          <div class="field">
-            <label class="check"><input id="setIgnoreCase" type="checkbox" checked>忽略后缀大小写</label>
-            <label class="check"><input id="setSkipEmpty" type="checkbox" checked>跳过空文件（0 字节）</label>
-            <label class="check"><input id="setSkipHidden" type="checkbox" checked>跳过隐藏 / 系统文件</label>
-            <label class="check"><input id="setSkipSymlinks" type="checkbox" checked disabled>跳过符号链接（后端强制）</label>
-          </div>
-          <div class="field">
-            <label for="setQuickSampleKb">快速指纹采样（KB）</label>
-            <input id="setQuickSampleKb" name="quick_sample_kb" type="number" inputmode="numeric" min="4" max="1024" step="1" value="64">
-            <p class="field-error" id="setQuickSampleError" role="alert" hidden></p>
-          </div>
-          <div class="field">
-            <label for="setConcurrency">哈希并发数</label>
-            <input id="setConcurrency" name="concurrency" type="number" inputmode="numeric" min="1" max="8" step="1" value="2">
-            <p class="field-error" id="setConcurrencyError" role="alert" hidden></p>
-          </div>
-          <div class="field">
-            <label for="setHashRate">全量哈希限速（MB/s）</label>
-            <input id="setHashRate" name="hash_rate_mbps" type="number" inputmode="numeric" min="0" max="2000" step="1" value="0">
-            <p class="field-error" id="setHashRateError" role="alert" hidden></p>
-          </div>
-          <div class="field">
-            <label for="setMaxFiles">最大扫描文件数</label>
-            <input id="setMaxFiles" name="max_files" type="number" inputmode="numeric" min="1" step="1" value="500000">
-            <p class="field-error" id="setMaxFilesError" role="alert" hidden></p>
-          </div>
-          <div class="field field-wide">
-            <label for="setKeepPrimaryRule">高级保留规则 · 主规则（可选）</label>
-            <select id="setKeepPrimaryRule">
-              <option value="">沿用上面的“保留策略”</option>
-              <option value="created_latest">创建时间最晚</option>
-              <option value="created_earliest">创建时间最早</option>
-              <option value="mtime_latest">修改时间最晚</option>
-              <option value="mtime_earliest">修改时间最早</option>
-              <option value="size_largest">体积最大</option>
-              <option value="size_smallest">体积最小</option>
-              <option value="atime_latest">访问时间最晚（不可靠，仅参考）</option>
-            </select>
-            <div class="rule-grid">
-              <div class="field">
-                <label for="setKeepPathPriority">路径优先级（每行一个目录前缀，越靠前越优先）</label>
-                <textarea id="setKeepPathPriority" rows="2" placeholder="/volume1/video/收藏"></textarea>
-              </div>
-              <div class="field">
-                <label for="setKeepNamePriority">文件名优先级（每行一个通配符或 /正则/）</label>
-                <textarea id="setKeepNamePriority" rows="2" placeholder="*2160p*"></textarea>
-              </div>
-            </div>
-            <label class="check"><input id="setKeepPreferSubtitle" type="checkbox">优先保留带内嵌字幕的版本</label>
-            <label class="check"><input id="setKeepPreferMultiAudio" type="checkbox">优先保留内嵌音轨更多的版本</label>
-            <p class="hint">规则按顺序生效：先比主规则，平局再比路径 / 文件名 / 字幕 / 音轨；全部留空时使用上面的“保留策略”。</p>
-          </div>
-          <div class="field field-wide">
-            <label for="setExcludeNameRegex">文件名排除 · 正则（每行一条，最多 50 条）</label>
-            <textarea id="setExcludeNameRegex" rows="2" placeholder="^sample\."></textarea>
-            <p class="field-error" id="setExcludeNameRegexError" role="alert" hidden></p>
-            <label for="setExcludeNameGlob">文件名排除 · 通配符（每行一条，最多 50 条）</label>
-            <textarea id="setExcludeNameGlob" rows="2" placeholder="*.tmp"></textarea>
-            <p class="field-error" id="setExcludeNameGlobError" role="alert" hidden></p>
-            <label class="check"><input id="setIgnoreFileEnabled" type="checkbox" checked>读取目录里的 .ignore 文件（gitignore 子集）</label>
-            <label class="check"><input id="setIncrementalScan" type="checkbox" checked>启用增量扫描缓存（内容未变不重复计算哈希）</label>
-            <label for="setMediaSidecarMode">影视附属文件</label>
-            <select id="setMediaSidecarMode">
-              <option value="skip">跳过与视频同名的字幕 / 海报 / nfo（推荐）</option>
-              <option value="include">参与判重</option>
-            </select>
-            <p class="hint">增量缓存清单位置：设置 → 系统 · 存储与运行诊断 → 缓存。</p>
-          </div>
-          <div class="field field-wide">
-            <label class="check"><input id="setProtectEnabled" type="checkbox" checked>启用删除白名单（保护文件不可删除）</label>
-            <p class="hint">白名单是删除前的最后一道防线：命中的文件在结果里不可勾选，删除计划与执行前还会按当前设置再校验一次。</p>
-            <label for="setProtectExtensions">受保护后缀（逗号分隔，可留空）</label>
-            <input id="setProtectExtensions" type="text" placeholder=".srt,.ass,.nfo" autocomplete="off" spellcheck="false">
-            <p class="hint">默认保护外挂字幕/元数据类后缀；图片默认不在此列（海报由下面的“视频附属文件”规则保护）。</p>
-            <p class="field-error" id="setProtectExtensionsError" role="alert" hidden></p>
-            <label for="setProtectDirs">受保护目录（每行一个绝对路径，目录及其子目录都会被保护）</label>
-            <textarea id="setProtectDirs" rows="2" placeholder="/volume1/photo/重要"></textarea>
-            <p class="field-error" id="setProtectDirsError" role="alert" hidden></p>
-            <label for="setProtectNameRegex">受保护文件名（正则，每行一条，最多 50 条）</label>
-            <textarea id="setProtectNameRegex" rows="2" placeholder="^keep-.*$"></textarea>
-            <p class="field-error" id="setProtectNameRegexError" role="alert" hidden></p>
-            <label class="check"><input id="setProtectSidecarFiles" type="checkbox" checked>保护视频附属文件（同目录同源视频的字幕 / 海报 / nfo）</label>
-          </div>
-          <div class="field field-wide">
-            <label for="setDeleteRecycleMode">删除去向</label>
-            <select id="setDeleteRecycleMode">
-              <option value="share">共享文件夹回收站（#recycle，DSM 回收站可见）</option>
-              <option value="package">套件独立回收站（可按删除批次整组恢复）</option>
-            </select>
-            <p class="hint">套件独立回收站会移动到共享文件夹根下的 <code>#duplicate-cleaner-trash/</code>（同卷 rename，不复制数据），可在「扫描 → 删除与回收站」里恢复或清理。已有文件的去向在生成删除计划时确定。</p>
-            <label class="check"><input id="setMergeEnabled" type="checkbox">启用硬链接合并（不可逆，默认关闭）</label>
-            <p class="hint">合并把重复组的非保留项替换成指向保留项的硬链接，只省空间不删路径；合并后任一路径的内容修改会影响全部路径。只对精准重复组生效，需逐组确认，可在「回收站与合并」里恢复为独立副本。</p>
-          </div>
-        </div>
-      </details>
-
         <details class="advanced settings-group" id="settingsAutomationGroup">
           <summary><span class="settings-group-title">自动化 · 计划扫描与通知</span><span class="settings-summary" id="settingsAutomationSummary"></span></summary>
           <div class="form-grid">
             <div class="field field-wide">
-              <label class="check"><input id="setScheduledScanEnabled" type="checkbox">启用计划扫描（后台定时执行，可安排在低负载时段）</label>
+              <label class="check"><input id="setScheduledScanEnabled" type="checkbox">启用计划扫描（后台定时执行）</label>
               <label for="setScheduledScanRules">计划规则（每行一条，最多 10 条）</label>
               <textarea id="setScheduledScanRules" rows="3" placeholder="daily 03:30&#10;weekly mon,wed,fri 04:00&#10;interval 360"></textarea>
               <p class="field-error" id="setScheduledScanRulesError" role="alert" hidden></p>
-              <p class="hint">格式：<code>daily HH:MM</code>（每天）、<code>weekly mon,wed,fri HH:MM</code>（每周）、<code>interval 分钟</code>（最小 5 分钟）。到点时若已有扫描在跑、或 1 分钟负载超过阈值，本次跳过并记审计。</p>
+              <p class="hint">格式：<code>daily HH:MM</code>、<code>weekly mon,wed,fri HH:MM</code>、<code>interval 分钟</code>（最小 5 分钟）。到点时若已有扫描在跑，本次跳过并记审计。</p>
               <label for="setScheduledScanRoots">计划扫描目录（每行一个绝对路径；留空 = 复用上次完成的扫描范围）</label>
               <textarea id="setScheduledScanRoots" rows="2" placeholder="/volume1/photo"></textarea>
               <p class="field-error" id="setScheduledScanRootsError" role="alert" hidden></p>
-              <label for="setScheduledScanMaxLoad">负载阈值（1 分钟 loadavg，0 = 不检查）</label>
-              <input id="setScheduledScanMaxLoad" type="number" min="0" max="256" step="0.5" value="0">
               <p class="hint" id="schedulerStatusText"></p>
             </div>
             <div class="field field-wide">
               <label class="check"><input id="setNotifyEnabled" type="checkbox">启用通知（扫描完成/失败、字幕批次结束、批量失败、释放空间达阈值）</label>
               <label>通知渠道</label>
               <div class="check-grid">
-                <label class="check"><input id="setNotifyChannelDsm" type="checkbox">DSM 系统通知（@administrators）</label>
                 <label class="check"><input id="setNotifyChannelWebhook" type="checkbox">Webhook</label>
                 <label class="check"><input id="setNotifyChannelTelegram" type="checkbox">Telegram</label>
               </div>
-              <p class="hint" id="notifyChannelsHint"></p>
+              <p class="hint" id="notifyChannelsHint">DSM 系统通知仅对 Synology 自家套件开放（第三方套件声明该资源会安装失败），因此只提供 Webhook / Telegram。</p>
               <label>通知事件</label>
               <div class="check-grid">
                 <label class="check"><input id="setNotifyEventScanComplete" type="checkbox">扫描完成</label>
@@ -1698,14 +1553,9 @@
               <input id="setNotifyTelegramToken" type="password" autocomplete="new-password" placeholder="123456:ABC-DEF...">
               <label for="setNotifyTelegramChatId">Telegram chat_id</label>
               <input id="setNotifyTelegramChatId" type="text" placeholder="-1001234567890">
-              <label for="setNotifyFailThreshold">批量失败阈值（失败任务数，默认 20）</label>
-              <input id="setNotifyFailThreshold" type="number" min="1" max="100000" value="20">
               <label for="setNotifyFreedGb">释放空间阈值（GB，0 = 不通知）</label>
               <input id="setNotifyFreedGb" type="number" min="0" step="0.5" value="10">
-              <label for="setNotifyTimeout">发送超时（秒，2..30）</label>
-              <input id="setNotifyTimeout" type="number" min="2" max="30" value="5">
               <div class="setting-test-row">
-                <button type="button" class="btn btn-ghost btn-sm" id="notifyTestDsm">测试 DSM</button>
                 <button type="button" class="btn btn-ghost btn-sm" id="notifyTestWebhook">测试 Webhook</button>
                 <button type="button" class="btn btn-ghost btn-sm" id="notifyTestTelegram">测试 Telegram</button>
                 <span class="muted" id="notifyTestResult"></span>
@@ -1714,155 +1564,20 @@
           </div>
         </details>
 
-        <details class="advanced settings-group" id="settingsSimilarityDetails">
-          <summary><span class="settings-group-title">相似 · 内容相似默认值</span><span class="settings-summary" id="settingsSimilaritySummary"></span></summary>
+        <details class="advanced settings-group" id="settingsMediaGroup" open>
+          <summary><span class="settings-group-title">媒体与外部工具 · FFmpeg</span><span class="settings-summary" id="settingsMediaSummary"></span></summary>
           <div class="form-grid">
-            <div class="field">
-              <label for="setScanMode">默认扫描模式</label>
-              <select id="setScanMode">
-                <option value="exact">精准哈希（默认）</option>
-                <option value="similar">内容相似（哈希 + 相似）</option>
-              </select>
-              <p class="hint">决定扫描页默认选中的模式，可在扫描页临时切换。</p>
-            </div>
-            <div class="field">
-              <label for="setSimilarityThreshold">相似度阈值（0–100）</label>
-              <input id="setSimilarityThreshold" type="number" inputmode="numeric" min="0" max="100" step="1" value="85">
-              <p class="field-error" id="setSimilarityThresholdError" role="alert" hidden></p>
-            </div>
-            <div class="field">
-              <label for="setSimilarityConcurrency">相似特征并发数（1–4）</label>
-              <input id="setSimilarityConcurrency" type="number" inputmode="numeric" min="1" max="4" step="1" value="2">
-              <p class="field-error" id="setSimilarityConcurrencyError" role="alert" hidden></p>
-            </div>
-            <div class="field">
-              <label for="setSimilarityMaxMb">单文件相似上限（MB，1–1024）</label>
-              <input id="setSimilarityMaxMb" type="number" inputmode="numeric" min="1" max="1024" step="1" value="32">
-              <p class="field-error" id="setSimilarityMaxFileError" role="alert" hidden></p>
-            </div>
-            <div class="field">
-              <label class="check"><input id="setSimilarityCache" type="checkbox" checked>启用持久化特征缓存</label>
-              <label class="check"><input id="setSimilarityAllowBinary" type="checkbox">允许未知二进制参与相似计算（有风险）</label>
-            </div>
-            <div class="field field-wide">
-              <span class="field-label" id="setSimExtLabel">允许相似计算的默认文件类型</span>
-              <div id="setSimExtList" class="ext-chip-grid" role="group" aria-labelledby="setSimExtLabel"></div>
-              <p class="hint">取消勾选表示不默认计算该类型；全部使用推荐值时保留默认。</p>
-              <p class="field-error" id="setSimilarityExtError" role="alert" hidden></p>
-            </div>
-            <div class="field field-wide">
-              <label for="setSimilarityExcludeExt">相似计算排除后缀（可选）</label>
-              <input id="setSimilarityExcludeExt" type="text" placeholder=".pdf,.png" autocomplete="off" spellcheck="false">
-              <p class="hint">优先级高于允许列表；逗号分隔。</p>
-              <p class="field-error" id="setSimilarityExcludeExtError" role="alert" hidden></p>
-            </div>
-          </div>
-        </details>
-
-        <details class="advanced settings-group" id="settingsVideoDetails">
-          <summary><span class="settings-group-title">视频 · 视频视觉相似默认值</span><span class="settings-summary" id="settingsVideoSummary"></span><span class="badge badge-gray video-status-badge" id="setVideoStatusBadge">检测中…</span></summary>
-          <p class="hint" id="setVideoStatusHint">使用 FFmpeg 抽样帧比对；短视频（≤180 秒）可匹配，片段 vs 完整长视频不承诺。ASR 为可选本地命令，默认关闭。</p>
-          <label class="check video-enable-row"><input id="setVideoEnabled" type="checkbox">默认启用视频视觉相似（默认关闭）</label>
-          <p class="hint">视频视觉相似为实验功能：使用 FFmpeg 抽样帧，可能较慢；ASR 辅助不附带模型、不联网。</p>
-          <fieldset id="setVideoFields" class="video-fields" disabled>
-          <div class="form-grid">
-            <div class="field">
-              <label for="setVideoThreshold">视频相似度阈值（0–100）</label>
-              <input id="setVideoThreshold" type="number" inputmode="numeric" min="0" max="100" step="1" value="90">
-              <p class="field-error" id="setVideoThresholdError" role="alert" hidden></p>
-            </div>
-            <div class="field">
-              <label for="setVideoSampleFrames">抽样帧数（5–100）</label>
-              <input id="setVideoSampleFrames" type="number" inputmode="numeric" min="5" max="100" step="1" value="20">
-              <p class="field-error" id="setVideoFramesError" role="alert" hidden></p>
-            </div>
-            <div class="field">
-              <label for="setVideoMaxInterval">最大采样间隔（秒，60–600）</label>
-              <input id="setVideoMaxInterval" type="number" inputmode="numeric" min="60" max="600" step="1" value="300">
-              <p class="field-error" id="setVideoIntervalError" role="alert" hidden></p>
-            </div>
-            <div class="field">
-              <label for="setVideoConcurrency">视频并发数（1–2）</label>
-              <input id="setVideoConcurrency" type="number" inputmode="numeric" min="1" max="2" step="1" value="1">
-              <p class="field-error" id="setVideoConcurrencyError" role="alert" hidden></p>
-            </div>
             <div class="field field-wide">
               <label for="setVideoFfmpegPath">外部 FFmpeg 路径（可选，留空=内置/自动探测）</label>
               <input id="setVideoFfmpegPath" type="text" placeholder="/volume1/@appstore/ffmpeg/bin/ffmpeg" autocomplete="off" spellcheck="false">
               <p class="hint" id="setVideoFfmpegHint">当前解析：内置/自动探测</p>
               <p class="field-error" id="setVideoFfmpegPathError" role="alert" hidden></p>
-            </div>
-            <div class="field">
-              <label for="setVideoHwaccel">硬件加速模式</label>
-              <select id="setVideoHwaccel">
-                <option value="auto">自动（检测到时启用硬件加速）</option>
-                <option value="off">关闭（仅软件解码）</option>
-              </select>
-              <p class="hint" id="setVideoHwaccelHint">自动模式会使用检测到的硬件加速；不可用时回退软件解码。</p>
-              <p class="field-error" id="setVideoHwaccelError" role="alert" hidden></p>
-            </div>
-            <div class="field">
-              <label for="setVideoMaxMb">单视频大小上限（MB，1–102400）</label>
-              <input id="setVideoMaxMb" type="number" inputmode="numeric" min="1" max="102400" step="1" value="8192">
-              <p class="field-error" id="setVideoMaxFileError" role="alert" hidden></p>
-            </div>
-            <div class="field">
-              <label for="setVideoTimeout">单视频超时（秒，30–1800）</label>
-              <input id="setVideoTimeout" type="number" inputmode="numeric" min="30" max="1800" step="1" value="180">
-              <p class="field-error" id="setVideoTimeoutError" role="alert" hidden></p>
-            </div>
-            <div class="field">
-              <label class="check"><input id="setVideoCache" type="checkbox" checked>启用持久化视频指纹缓存</label>
+              <p class="hint">下载、转换、合成与视频抽样帧都用这个 FFmpeg；扫描页可对本轮扫描临时覆盖。</p>
             </div>
             <div class="field field-wide">
-              <label class="check"><input id="setVideoCenterCrop" type="checkbox" checked>启用边缘裁剪指纹（自动裁掉黑边/黑边上下，提升不同压制版本命中率）</label>
-              <label class="check"><input id="setVideoOffsetAlign" type="checkbox" checked>启用时间轴偏移对齐（片头/片尾剪切导致整体错位时仍可匹配）</label>
-              <label class="check"><input id="setVideoAudioSignature" type="checkbox">启用音频包络签名（可选，额外一次 ffmpeg 解码；默认关闭）</label>
-              <label for="setVideoAudioWeight">音频签名权重（0–0.5，仅在启用音频签名时生效）</label>
-              <input id="setVideoAudioWeight" type="number" min="0" max="0.5" step="0.05" value="0.2">
-              <p class="field-error" id="setVideoAudioWeightError" role="alert" hidden></p>
-              <p class="hint">音频签名只比较音量包络（不可还原内容），用于识别“换配音/无音轨”以及画面相同但音轨不同的版本；视觉与音频权重合计上限 0.5，阈值仍由上方相似度阈值决定。</p>
+              <span class="field-label" id="settingsStatusTitle">存储 / FFmpeg / ASR 状态（来自 /api/meta）</span>
+              <div class="settings-status-grid" id="settingsStatusSummary"></div>
             </div>
-            <div class="field field-wide">
-              <span class="field-label" id="setVideoExtLabel">允许视频相似的后缀</span>
-              <div id="setVideoExtList" class="ext-chip-grid" role="group" aria-labelledby="setVideoExtLabel"></div>
-              <p class="field-error" id="setVideoExtError" role="alert" hidden></p>
-            </div>
-          </div>
-          </fieldset>
-          <div class="asr-section" id="setVideoAsrSection">
-            <div class="section-subhead">
-              <h3>ASR 语音辅助（可选，默认关闭）</h3>
-              <span class="badge badge-gray asr-status-badge" id="setVideoAsrStatusBadge">检测中…</span>
-            </div>
-            <p class="hint" id="setVideoAsrStatusHint">ASR 仅调用 NAS 本地外部命令（不附带模型、不联网）；转录文本只参与相似度评分，不会在界面展示或写入结果。</p>
-            <label class="check asr-enable-row"><input id="setVideoAsrEnabled" type="checkbox">默认启用 ASR 辅助（默认关闭）</label>
-            <fieldset id="setVideoAsrFields" class="asr-fields" disabled>
-              <div class="form-grid">
-                <div class="field field-wide">
-                  <label for="setVideoAsrCommand">ASR 命令模板（支持 {audio} / {outdir} / {stem}）</label>
-                  <input id="setVideoAsrCommand" type="text" placeholder="whisper --model /path/model --output_format txt --output_dir {outdir} {audio}" autocomplete="off" spellcheck="false">
-                  <p class="hint">仅执行本地命令，不经 shell；留空表示未配置。未配置或失败时自动回退纯视觉分数，不阻塞视频扫描。</p>
-                  <p class="field-error" id="setVideoAsrCommandError" role="alert" hidden></p>
-                </div>
-                <div class="field">
-                  <label for="setVideoAsrWeight">文本分数权重（0–0.5）</label>
-                  <input id="setVideoAsrWeight" type="number" inputmode="decimal" min="0" max="0.5" step="0.05" value="0.15">
-                  <p class="field-error" id="setVideoAsrWeightError" role="alert" hidden></p>
-                </div>
-                <div class="field">
-                  <label for="setVideoAsrTimeout">ASR 单次超时（秒，30–1800）</label>
-                  <input id="setVideoAsrTimeout" type="number" inputmode="numeric" min="30" max="1800" step="1" value="300">
-                  <p class="field-error" id="setVideoAsrTimeoutError" role="alert" hidden></p>
-                </div>
-                <div class="field">
-                  <label for="setVideoAsrMaxSec">ASR 最大处理时长（秒，30–3600）</label>
-                  <input id="setVideoAsrMaxSec" type="number" inputmode="numeric" min="30" max="3600" step="1" value="600">
-                  <p class="field-error" id="setVideoAsrMaxSecError" role="alert" hidden></p>
-                </div>
-              </div>
-            </fieldset>
-            <p class="hint asr-note">未附带语音模型、不联网；转录内容不回传前端，不在结果中展示。</p>
           </div>
         </details>
 
@@ -1877,18 +1592,17 @@
             <div class="form-grid">
               <div class="field field-wide">
                 <label class="check"><input id="subtitleEnabled" type="checkbox">启用云端字幕（默认关闭）</label>
-                <p class="hint">仅管理员可用；开启后视频结果行和「字幕」页都会出现生成入口，可在「字幕」页按目录批量生成/翻译。未启用时按钮禁用，不影响查重。</p>
+                <p class="hint">仅管理员可用；开启并配置 ASR API Key 后，视频结果行和「字幕」页都会出现生成入口。未启用时按钮禁用，不影响查重。</p>
               </div>
               <div class="field">
                 <label for="subtitleAsrBaseUrl">ASR Base URL</label>
                 <input id="subtitleAsrBaseUrl" type="text" placeholder="https://api.openai.com/v1" autocomplete="off" spellcheck="false">
-                <p class="hint">可指向局域网自建 WhisperLiveKit（如 http://192.168.1.10:8000/v1），音频不出局域网；模型名以该服务为准。</p>
+                <p class="hint">可指向局域网自建 WhisperLiveKit（如 http://192.168.1.10:8000/v1），音频不出局域网。</p>
                 <p class="field-error" id="subtitleAsrBaseUrlError" role="alert" hidden></p>
               </div>
               <div class="field">
                 <label for="subtitleAsrModel">ASR 模型</label>
                 <input id="subtitleAsrModel" type="text" placeholder="whisper-1" autocomplete="off" spellcheck="false">
-                <p class="hint">需支持 verbose_json/segments（如 whisper-1）。</p>
                 <p class="field-error" id="subtitleAsrModelError" role="alert" hidden></p>
                 <div class="probe-actions">
                   <button type="button" class="btn btn-ghost btn-sm" id="subtitleAsrModelsBtn">获取模型列表</button>
@@ -1933,76 +1647,7 @@
                   <option value="uk">乌克兰文</option>
                   <option value="sv">瑞典文</option>
                 </select>
-                <p class="hint">语言码遵循 ISO 639-1（2–3 位）；以所配置 ASR 服务支持的语种为准。</p>
-              </div>
-              <div class="field">
-                <label for="subtitleAsrTimeout">ASR 超时（秒，30–1800）</label>
-                <input id="subtitleAsrTimeout" type="number" inputmode="numeric" min="30" max="1800" step="1" value="300">
-                <p class="field-error" id="subtitleAsrTimeoutError" role="alert" hidden></p>
-              </div>
-              <div class="field">
-                <label for="subtitleAsrChunk">音频分块（秒，60–1800）</label>
-                <input id="subtitleAsrChunk" type="number" inputmode="numeric" min="60" max="1800" step="1" value="600">
-                <p class="field-error" id="subtitleAsrChunkError" role="alert" hidden></p>
-              </div>
-              <div class="field">
-                <label for="subtitleAsrMaxAudioMb">单块音频上限（MB，1–100）</label>
-                <input id="subtitleAsrMaxAudioMb" type="number" inputmode="numeric" min="1" max="100" step="1" value="24">
-                <p class="hint">超过上限会自动继续切块。</p>
-                <p class="field-error" id="subtitleAsrMaxAudioMbError" role="alert" hidden></p>
-              </div>
-              <div class="field">
-                <label for="subtitleAudioSource">音频来源</label>
-                <select id="subtitleAudioSource">
-                  <option value="nas">NAS 本地解码抽音频（默认）</option>
-                  <option value="server">服务器解码（NAS 只流复制音轨，更快）</option>
-                </select>
-                <p class="hint">“服务器”模式：NAS 用 FFmpeg 流复制抽取音轨（不解码，大视频也很快），由 ASR 服务器解码转音频；仍只上传音频，不上传视频。</p>
-              </div>
-              <div class="field field-wide">
-                <label class="check"><input id="subtitleAudioPrefetch" type="checkbox" checked>分片音频预取（默认开启）</label>
-                <p class="hint">开启后识别当前分片时，后台线程先抽取下一分片音频，NAS 的 FFmpeg 与云端 ASR 重叠，单任务更快；关闭则恢复严格的“抽音频 → 上传 → 识别”串行。临时音频只写任务临时目录，任务结束自动删除。</p>
-              </div>
-              <div class="field">
-                <label for="setSubtitleConcurrency">字幕并发任务数（1–4，默认 1）</label>
-                <input id="setSubtitleConcurrency" type="number" inputmode="numeric" min="1" max="4" step="1" value="1">
-                <p class="hint">默认 1 为串行、最稳；可设 2–4 并行。保存后立即生效，无需重启套件。</p>
-                <p class="field-error" id="setSubtitleConcurrencyError" role="alert" hidden></p>
-              </div>
-              <div class="field field-wide">
-                <label class="check"><input id="setSubtitleAutoRetry" type="checkbox" checked>可恢复错误自动重试（超时 / 网络 / 云端服务 / 内部错误）</label>
-                <label for="setSubtitleAutoRetryMax">自动重试次数上限（0–3，默认 1）</label>
-                <input id="setSubtitleAutoRetryMax" type="number" inputmode="numeric" min="0" max="3" step="1" value="1">
-                <p class="field-error" id="setSubtitleAutoRetryMaxError" role="alert" hidden></p>
-                <label class="check"><input id="setSubtitleNoSpeechSkip" type="checkbox" checked>无语音视频标记为“已跳过”（不自动重试、不占队列）</label>
-                <label for="setSubtitleMaxLoad">负载阈值（1 分钟 loadavg，0 = 不限制；超过时字幕队列暂不取新任务）</label>
-                <input id="setSubtitleMaxLoad" type="number" min="0" max="256" step="0.5" value="0">
-                <p class="field-error" id="setSubtitleMaxLoadError" role="alert" hidden></p>
-                <label for="setSubtitleDirPriorities">目录优先级（每行一个绝对路径，越靠前越优先；同目录任务按此排队）</label>
-                <textarea id="setSubtitleDirPriorities" rows="2" placeholder="/volume1/media/movies"></textarea>
-                <p class="field-error" id="setSubtitleDirPrioritiesError" role="alert" hidden></p>
-                <label for="setSubtitleAudioTrack">默认音轨（auto 或 0–31 序号）</label>
-                <input id="setSubtitleAudioTrack" type="text" placeholder="auto" autocomplete="off" spellcheck="false">
-                <p class="field-error" id="setSubtitleAudioTrackError" role="alert" hidden></p>
-                <label for="setSubtitleAudioTrackLanguage">默认音轨语言标签（如 jpn / chi / eng，留空 = 按序号或自动）</label>
-                <input id="setSubtitleAudioTrackLanguage" type="text" placeholder="jpn" autocomplete="off" spellcheck="false">
-                <p class="field-error" id="setSubtitleAudioTrackLanguageError" role="alert" hidden></p>
-                <p class="hint">指定后只提取该音轨送 ASR，避免误识别配音轨；单任务可在提交时覆盖。</p>
-              </div>
-              <div class="field field-wide">
-                <label class="check"><input id="setSubtitleWatchEnabled" type="checkbox">启用视频目录监控（新增视频自动加入字幕队列并翻译）</label>
-                <label for="setSubtitleWatchDirs">监控目录（每行一个绝对路径）</label>
-                <textarea id="setSubtitleWatchDirs" rows="2" placeholder="/volume1/media/inbox"></textarea>
-                <p class="field-error" id="setSubtitleWatchDirsError" role="alert" hidden></p>
-                <label for="setSubtitleWatchInterval">扫描间隔（秒，60–86400，默认 300）</label>
-                <input id="setSubtitleWatchInterval" type="number" inputmode="numeric" min="60" max="86400" step="30" value="300">
-                <p class="field-error" id="setSubtitleWatchIntervalError" role="alert" hidden></p>
-                <p class="hint" id="subtitleWatchStatus"></p>
-                <button type="button" class="btn btn-ghost btn-sm" id="subtitleWatchScanBtn">立即扫描监控目录</button>
-              </div>
-              <div class="field field-wide">
-                <label class="check"><input id="subtitleTranslateEnabled" type="checkbox">生成译文（需要配置 LLM API Key）</label>
-                <p class="hint">翻译只处理字幕文本，不改时间轴；部分批次失败会回退原文并标记。</p>
+                <p class="hint">语言码遵循 ISO 639-1；以所配置 ASR 服务支持的语种为准。</p>
               </div>
               <div class="field">
                 <label for="subtitleLlmBaseUrl">LLM Base URL</label>
@@ -2026,93 +1671,41 @@
               <div class="field">
                 <label for="subtitleLlmApiKey">LLM API Key</label>
                 <input id="subtitleLlmApiKey" type="password" autocomplete="new-password" spellcheck="false" placeholder="未配置（留空保持原值）">
-                <p class="hint"><span class="badge badge-gray" id="subtitleLlmKeySetBadge">未配置</span> 留空表示保持原值；勾选下方“清除”可删除。</p>
+                <p class="hint"><span class="badge badge-gray" id="subtitleLlmKeySetBadge">未配置</span> 配置后字幕任务默认勾选「同时生成译文」；留空表示保持原值。</p>
                 <label class="check"><input id="subtitleClearLlmKey" type="checkbox">清除已保存的 LLM API Key</label>
                 <p class="field-error" id="subtitleLlmApiKeyError" role="alert" hidden></p>
               </div>
-              <div class="field">
-                <label for="subtitleTranslateTarget">翻译目标语言</label>
-                <select id="subtitleTranslateTarget">
-                  <option value="zh">中文</option>
-                  <option value="en">英文</option>
-                  <option value="ja">日文</option>
-                  <option value="ko">韩文</option>
-                  <option value="es">西班牙文</option>
-                  <option value="fr">法文</option>
-                  <option value="de">德文</option>
-                  <option value="it">意大利文</option>
-                  <option value="pt">葡萄牙文</option>
-                  <option value="ru">俄文</option>
-                  <option value="ar">阿拉伯文</option>
-                  <option value="hi">印地文</option>
-                  <option value="th">泰文</option>
-                  <option value="vi">越南文</option>
-                  <option value="id">印尼文</option>
-                  <option value="ms">马来文</option>
-                  <option value="tr">土耳其文</option>
-                  <option value="nl">荷兰文</option>
-                  <option value="pl">波兰文</option>
-                  <option value="uk">乌克兰文</option>
-                  <option value="sv">瑞典文</option>
-                </select>
-                <p class="hint">语言码遵循 ISO 639-1（2–3 位）；未列出的语言码通过 API 设置后也会保留。</p>
-              </div>
-              <div class="field">
-                <label for="subtitleTranslateTimeout">翻译超时（秒，30–900）</label>
-                <input id="subtitleTranslateTimeout" type="number" inputmode="numeric" min="30" max="900" step="1" value="120">
-                <p class="field-error" id="subtitleTranslateTimeoutError" role="alert" hidden></p>
-              </div>
-              <div class="field">
-                <label for="subtitleTranslateBatchSize">翻译批大小（1–40）</label>
-                <input id="subtitleTranslateBatchSize" type="number" inputmode="numeric" min="1" max="40" step="1" value="20">
-                <p class="field-error" id="subtitleTranslateBatchSizeError" role="alert" hidden></p>
-              </div>
               <div class="field field-wide">
                 <label class="check"><input id="subtitleLlmDisableThinking" type="checkbox">禁用 LLM“思考”（本地推理模型建议开启）</label>
-                <p class="hint">开启后翻译/测试请求附带 <code>chat_template_kwargs.enable_thinking=false</code>；实测本地 Qwen3.6 翻译 20 条由约 48 秒降到约 3 秒。OpenAI 官方接口可能不支持该参数，非本地推理模型请保持关闭；失败时回退原文并标记。</p>
-              </div>
-              <div class="field field-wide">
-                <label class="check"><input id="subtitleWriteVtt" type="checkbox">任务目录同时生成 VTT（默认关闭）</label>
-                <p class="hint">默认只生成 SRT；开启后任务目录额外生成 .vtt。写回视频目录始终只写 .srt、不覆盖已有文件。</p>
-              </div>
-              <div class="field field-wide">
-                <label for="setSubtitleOutputMode">目录批量字幕：输出方式</label>
-                <select id="setSubtitleOutputMode">
-                  <option value="alongside_video">写入视频同目录（推荐）</option>
-                  <option value="download_only">仅任务目录下载</option>
-                </select>
-                <p class="hint">写入视频同目录时只写 .srt、不覆盖已有文件；视频目录不可写时自动回退为任务目录下载。</p>
-              </div>
-              <div class="field field-wide">
-                <label for="setSubtitleTranslateOutputs">译文输出组合</label>
-                <select id="setSubtitleTranslateOutputs">
-                  <option value="both">译文 + 双语（默认，两个都写）</option>
-                  <option value="target_only">只写译文（&lt;lang&gt;.srt）</option>
-                  <option value="bilingual_only">只写双语（bilingual.&lt;lang&gt;.srt）</option>
-                </select>
-                <p class="hint">控制译文文件数量，减少多余文件；任务目录始终保留 original.srt（补翻译源文本）。已写出的旧文件不会删除，也从不覆盖已有文件。</p>
-                <p class="field-error" id="setSubtitleTranslateOutputsError" role="alert" hidden></p>
+                <p class="hint">开启后翻译/测试请求附带 <code>chat_template_kwargs.enable_thinking=false</code>；OpenAI 官方接口可能不支持，非本地推理模型请保持关闭。</p>
               </div>
               <div class="field">
-                <label class="check"><input id="setSubtitleSkipExisting" type="checkbox" checked>目录批量字幕默认跳过已有字幕</label>
-                <p class="hint">目标 srt 已存在时不重复识别、不覆盖已有文件。</p>
+                <label for="setSubtitleAudioTrack">默认音轨（auto 或 0–31 序号）</label>
+                <input id="setSubtitleAudioTrack" type="text" placeholder="auto" autocomplete="off" spellcheck="false">
+                <p class="field-error" id="setSubtitleAudioTrackError" role="alert" hidden></p>
               </div>
               <div class="field">
-                <label for="setSubtitleJobLimit">已完成字幕任务保留上限（20–1000）</label>
-                <input id="setSubtitleJobLimit" type="number" inputmode="numeric" min="20" max="1000" step="1" value="200">
-                <p class="hint">超出后按创建时间清理任务目录；写回视频目录的 srt 不删除。修改后需重启套件生效。</p>
-                <p class="field-error" id="setSubtitleJobLimitError" role="alert" hidden></p>
+                <label for="setSubtitleAudioTrackLanguage">默认音轨语言标签（如 jpn / chi / eng）</label>
+                <input id="setSubtitleAudioTrackLanguage" type="text" placeholder="jpn" autocomplete="off" spellcheck="false">
+                <p class="field-error" id="setSubtitleAudioTrackLanguageError" role="alert" hidden></p>
+                <p class="hint">指定后只提取该音轨送 ASR；单任务可在提交时覆盖。</p>
+              </div>
+              <div class="field field-wide">
+                <label class="check"><input id="setSubtitleWatchEnabled" type="checkbox">启用视频目录监控（新增视频自动加入字幕队列并翻译）</label>
+                <label for="setSubtitleWatchDirs">监控目录（每行一个绝对路径）</label>
+                <textarea id="setSubtitleWatchDirs" rows="2" placeholder="/volume1/media/inbox"></textarea>
+                <p class="field-error" id="setSubtitleWatchDirsError" role="alert" hidden></p>
+                <p class="hint" id="subtitleWatchStatus"></p>
+                <button type="button" class="btn btn-ghost btn-sm" id="subtitleWatchScanBtn">立即扫描监控目录</button>
               </div>
             </div>
           </fieldset>
         </details>
+
         <details class="advanced settings-group" id="settingsDownloadDetails">
           <summary><span class="settings-group-title">下载 · m3u8 / 直链 → MP4</span><span class="settings-summary" id="settingsDownloadSummary"></span></summary>
-          <p class="hint">下载页把直链或 HLS(m3u8) 分片下载到指定共享目录，并用内置 FFmpeg 合并为 MP4。只支持点播、未加密或 AES-128 的内容；DRM/直播明确不支持。请仅下载你有权保存的内容。</p>
+          <p class="hint">下载中心是内置功能，无需开启，始终可用（仅管理员）；本页只配置默认目录与站点访问凭据。</p>
           <div class="form-grid">
-            <div class="field field-wide">
-              <p class="hint">下载中心是内置功能，无需开启，始终可用（仅管理员）；本页只配置默认目录与下载行为。</p>
-            </div>
             <div class="field">
               <label for="setDownloadOutputDir">默认下载目录</label>
               <div class="subtitle-dir-row">
@@ -2123,76 +1716,9 @@
               <p class="field-error" id="setDownloadOutputDirError" role="alert" hidden></p>
             </div>
             <div class="field">
-              <label for="setDownloadSubdirMode">输出子目录</label>
-              <select id="setDownloadSubdirMode">
-                <option value="none">不分子目录（平铺）</option>
-                <option value="site">按站点</option>
-                <option value="date">按日期</option>
-                <option value="site_date">站点 + 日期</option>
-                <option value="custom">自定义模板</option>
-              </select>
-              <p class="hint">按站点 = 域名（去掉 www.）；按日期 = YYYY-MM-DD。</p>
-            </div>
-            <div class="field">
-              <label for="setDownloadSubdirTemplate">子目录模板（仅“自定义”生效）</label>
-              <input id="setDownloadSubdirTemplate" type="text" placeholder="{site}/{date}" autocomplete="off" spellcheck="false">
-              <p class="hint">可用占位符：{site} {date} {yyyy} {mm} {dd} {hour} {min} {title}。</p>
-              <p class="field-error" id="setDownloadSubdirTemplateError" role="alert" hidden></p>
-            </div>
-            <div class="field">
-              <label for="setDownloadConcurrency">同时下载任务数（1–4，默认 2）</label>
-              <input id="setDownloadConcurrency" type="number" inputmode="numeric" min="1" max="4" step="1" value="2">
-              <p class="hint">超出的任务排队执行；NAS 磁盘忙时建议 1–2。</p>
-              <p class="field-error" id="setDownloadConcurrencyError" role="alert" hidden></p>
-            </div>
-            <div class="field">
-              <label for="setDownloadSegmentConcurrency">单任务分片并发（1–16，默认 4）</label>
-              <input id="setDownloadSegmentConcurrency" type="number" inputmode="numeric" min="1" max="16" step="1" value="4">
-              <p class="field-error" id="setDownloadSegmentConcurrencyError" role="alert" hidden></p>
-            </div>
-            <div class="field">
-              <label for="setDownloadRetry">分片失败重试次数（0–10，默认 3）</label>
-              <input id="setDownloadRetry" type="number" inputmode="numeric" min="0" max="10" step="1" value="3">
-              <p class="field-error" id="setDownloadRetryError" role="alert" hidden></p>
-            </div>
-            <div class="field">
-              <label for="setDownloadTimeout">单次请求超时（秒，5–300，默认 30）</label>
-              <input id="setDownloadTimeout" type="number" inputmode="numeric" min="5" max="300" step="1" value="30">
-              <p class="field-error" id="setDownloadTimeoutError" role="alert" hidden></p>
-            </div>
-            <div class="field">
-              <label for="setDownloadRateLimit">全局限速（KB/s，0 = 不限）</label>
-              <input id="setDownloadRateLimit" type="number" inputmode="numeric" min="0" step="1" value="0">
-              <p class="hint">按运行中的任务均分；用于避免下载抢占 NAS 带宽。</p>
-              <p class="field-error" id="setDownloadRateLimitError" role="alert" hidden></p>
-            </div>
-            <div class="field">
-              <label for="setDownloadMaxHeight">清晰度上限</label>
-              <select id="setDownloadMaxHeight">
-                <option value="0">不限制（取最高）</option>
-                <option value="2160">2160p</option>
-                <option value="1080">1080p</option>
-                <option value="720">720p</option>
-                <option value="480">480p</option>
-              </select>
-              <p class="hint">多码率 m3u8 时按高度选；全部超限时退到最低一档。</p>
-            </div>
-            <div class="field">
-              <label for="setDownloadUserAgent">User-Agent</label>
-              <input id="setDownloadUserAgent" type="text" autocomplete="off" spellcheck="false">
-              <p class="hint">留空使用内置浏览器 UA；部分站点空 UA 会直接 403。</p>
-            </div>
-            <div class="field">
               <label for="setDownloadReferer">Referer（防盗链）</label>
               <input id="setDownloadReferer" type="text" placeholder="https://example.com/" autocomplete="off" spellcheck="false">
               <p class="field-error" id="setDownloadRefererError" role="alert" hidden></p>
-            </div>
-            <div class="field">
-              <label for="setDownloadCookie">Cookie（登录态 / 防盗链）</label>
-              <input id="setDownloadCookie" type="password" autocomplete="new-password" spellcheck="false" placeholder="未配置（留空保持原值）">
-              <p class="hint"><span class="badge badge-gray" id="setDownloadCookieSetBadge">未配置</span> 只写不读；不会写日志或审计。</p>
-              <label class="check"><input id="setDownloadClearCookie" type="checkbox">清除已保存的 Cookie</label>
-              <p class="field-error" id="setDownloadCookieError" role="alert" hidden></p>
             </div>
             <div class="field">
               <label for="setDownloadProxy">代理（http/https/socks5，可选）</label>
@@ -2201,83 +1727,25 @@
               <p class="field-error" id="setDownloadProxyError" role="alert" hidden></p>
             </div>
             <div class="field">
+              <label for="setDownloadCookie">Cookie（登录态 / 防盗链）</label>
+              <input id="setDownloadCookie" type="password" autocomplete="new-password" spellcheck="false" placeholder="未配置（留空保持原值）">
+              <p class="hint"><span class="badge badge-gray" id="setDownloadCookieSetBadge">未配置</span> 只写不读；不会写日志或审计。</p>
+              <label class="check"><input id="setDownloadClearCookie" type="checkbox">清除已保存的 Cookie</label>
+              <p class="field-error" id="setDownloadCookieError" role="alert" hidden></p>
+            </div>
+            <div class="field field-wide">
               <label class="check"><input id="setDownloadAllowPrivate" type="checkbox">允许下载内网地址</label>
               <p class="hint">默认拒绝 127.0.0.1 / 10.x / 192.168.x 等地址（SSRF 防护）；下载局域网源时才开启。</p>
-            </div>
-            <div class="field">
-              <label class="check"><input id="setDownloadKeepTemp" type="checkbox">保留下载临时文件</label>
-              <p class="hint">默认完成后删除任务临时目录；失败时无论是否勾选都会保留，便于重试续传。</p>
-            </div>
-            <div class="field">
-              <label for="setDownloadMinFreeGb">最少剩余空间（GB，默认 20）</label>
-              <input id="setDownloadMinFreeGb" type="number" inputmode="numeric" min="0" step="1" value="20">
-              <p class="field-error" id="setDownloadMinFreeGbError" role="alert" hidden></p>
-            </div>
-            <div class="field">
-              <label for="setDownloadVerifyTolerance">合并时长校验容差（秒，0 = 不校验）</label>
-              <input id="setDownloadVerifyTolerance" type="number" inputmode="numeric" min="0" max="600" step="1" value="5">
-              <p class="hint">与播放列表总时长比较，超出只标记警告，不算失败。</p>
-            </div>
-            <div class="field">
-              <label for="setDownloadJobLimit">已完成下载任务保留上限（10–5000）</label>
-              <input id="setDownloadJobLimit" type="number" inputmode="numeric" min="10" max="5000" step="1" value="500">
-              <p class="field-error" id="setDownloadJobLimitError" role="alert" hidden></p>
-            </div>
-            <div class="field field-wide">
-              <label class="check"><input id="setDownloadSkipExisting" type="checkbox" checked>目标文件已存在时跳过下载（去重）</label>
-              <p class="hint">按最终文件名判断；直链还会比对体积。开启后重复提交/重复订阅不会重复占空间。</p>
-              <label class="check"><input id="setDownloadAutoRetry" type="checkbox" checked>网络类错误自动重试</label>
-              <label for="setDownloadAutoRetryMax">自动重试次数上限（0–5，默认 2）</label>
-              <input id="setDownloadAutoRetryMax" type="number" inputmode="numeric" min="0" max="5" step="1" value="2">
-              <p class="hint">只对网络/分片错误生效；退避 = 次数 × 15 秒。DRM、地址非法、空间不足等不重试。</p>
-              <p class="field-error" id="setDownloadAutoRetryMaxError" role="alert" hidden></p>
-            </div>
-            <div class="field field-wide">
-              <label class="check"><input id="setDownloadOffpeakEnabled" type="checkbox">分时限速（低谷时段用另一档限速）</label>
-              <div class="form-grid">
-                <div class="field">
-                  <label for="setDownloadOffpeakStart">低谷开始（HH:MM）</label>
-                  <input id="setDownloadOffpeakStart" type="text" placeholder="01:00" autocomplete="off" spellcheck="false">
-                  <p class="field-error" id="setDownloadOffpeakStartError" role="alert" hidden></p>
-                </div>
-                <div class="field">
-                  <label for="setDownloadOffpeakEnd">低谷结束（HH:MM，可跨零点）</label>
-                  <input id="setDownloadOffpeakEnd" type="text" placeholder="08:00" autocomplete="off" spellcheck="false">
-                  <p class="field-error" id="setDownloadOffpeakEndError" role="alert" hidden></p>
-                </div>
-                <div class="field">
-                  <label for="setDownloadOffpeakRate">低谷限速（KB/s，0 = 不限）</label>
-                  <input id="setDownloadOffpeakRate" type="number" inputmode="numeric" min="0" step="1" value="0">
-                  <p class="field-error" id="setDownloadOffpeakRateError" role="alert" hidden></p>
-                </div>
-              </div>
-              <p class="hint">低谷窗口外使用上面的「全局限速」。窗口在任务开始时判定。</p>
-            </div>
-            <div class="field">
-              <label for="setDownloadNameTemplate">文件名模板</label>
-              <input id="setDownloadNameTemplate" type="text" placeholder="{title}" autocomplete="off" spellcheck="false">
-              <p class="hint">可用：{title} {site} {date} {yyyy} {mm} {dd} {height} {season} {episode} {ext}；不含目录分隔符。</p>
-              <p class="field-error" id="setDownloadNameTemplateError" role="alert" hidden></p>
-            </div>
-            <div class="field field-wide">
               <label class="check"><input id="setDownloadSubscribeEnabled" type="checkbox">启用订阅下载（定时检查 RSS/网页并自动入队）</label>
               <p class="hint">关闭时不自动轮询，但仍可在下载页对单个订阅「立即检查」。</p>
             </div>
-            <div class="field field-wide">
-              <label class="check"><input id="setDownloadAutoScan" type="checkbox">下载完成后自动入队扫描该目录</label>
-              <p class="hint">同一目录 10 分钟内只触发一次，避免批量下载时反复全量扫描。</p>
-              <label class="check"><input id="setDownloadAutoSubtitle" type="checkbox">下载完成后自动提交字幕任务</label>
-              <p class="hint">需要同时启用「云端字幕」并配置好 ASR；译文沿用当前字幕设置。</p>
-            </div>
           </div>
         </details>
+
         <details class="advanced settings-group" id="settingsConvertDetails">
           <summary><span class="settings-group-title">转换 · 视频 / 音频格式互转</span><span class="settings-summary" id="settingsConvertSummary"></span></summary>
-          <p class="hint">转换页用内置 FFmpeg 换容器/换编码或提取音频。「仅换封装」预设（MKV/MP4 copy）秒级完成且无损；重编码预设会很吃 CPU，NAS 上建议开启「仅空闲时段」并把并发设为 1。</p>
+          <p class="hint">转换页用内置 FFmpeg 换容器/换编码或提取音频；预设、质量、并发、覆盖策略都在转换页按任务选择。本页只配置默认输出位置。</p>
           <div class="form-grid">
-            <div class="field field-wide">
-              <p class="hint">格式转换是内置功能，无需开启，始终可用（仅管理员）；本页只配置默认输出位置与转码参数。</p>
-            </div>
             <div class="field">
               <label for="setConvertOutputMode">默认输出位置</label>
               <select id="setConvertOutputMode">
@@ -2300,118 +1768,12 @@
               <input id="setConvertOutputSubdir" type="text" placeholder="converted" autocomplete="off" spellcheck="false">
               <p class="field-error" id="setConvertOutputSubdirError" role="alert" hidden></p>
             </div>
-            <div class="field">
-              <label for="setConvertConcurrency">同时转换任务数（1–2，默认 1）</label>
-              <input id="setConvertConcurrency" type="number" inputmode="numeric" min="1" max="2" step="1" value="1">
-              <p class="hint">转码会占满 CPU；并发大于 1 只会互相拖慢，默认 1。</p>
-              <p class="field-error" id="setConvertConcurrencyError" role="alert" hidden></p>
-            </div>
-            <div class="field">
-              <label for="setConvertDefaultPreset">默认输出预设</label>
-              <select id="setConvertDefaultPreset">
-                <option value="mp4_h264">MP4 · H.264 + AAC</option>
-                <option value="mp4_h265">MP4 · H.265 + AAC</option>
-                <option value="mkv_h264">MKV · H.264 + AAC</option>
-                <option value="mkv_copy">MKV · 仅换封装</option>
-                <option value="mp4_copy">MP4 · 仅换封装</option>
-                <option value="webm_vp9">WEBM · VP9 + Opus</option>
-                <option value="mov_h264">MOV · H.264 + AAC</option>
-                <option value="ts_h264">TS · H.264 + AAC</option>
-                <option value="avi_mpeg4">AVI · MPEG-4 + MP3</option>
-                <option value="mp3">MP3</option>
-                <option value="m4a">M4A · AAC</option>
-                <option value="flac">FLAC</option>
-                <option value="wav">WAV · PCM 16bit</option>
-                <option value="ogg">OGG · Vorbis</option>
-                <option value="opus">OPUS</option>
-                <option value="audio_copy">原音轨提取（不重编码）</option>
-              </select>
-            </div>
-            <div class="field">
-              <label for="setConvertQuality">默认质量</label>
-              <select id="setConvertQuality">
-                <option value="high">高（文件更大）</option>
-                <option value="standard">标准</option>
-                <option value="small">小体积</option>
-              </select>
-            </div>
-            <div class="field">
-              <label for="setConvertSpeed">默认编码速度</label>
-              <select id="setConvertSpeed">
-                <option value="ultrafast">ultrafast</option>
-                <option value="superfast">superfast</option>
-                <option value="veryfast">veryfast（推荐）</option>
-                <option value="faster">faster</option>
-                <option value="medium">medium</option>
-              </select>
-            </div>
-            <div class="field">
-              <label for="setConvertMaxResolution">默认分辨率上限</label>
-              <select id="setConvertMaxResolution">
-                <option value="0">保持原样</option>
-                <option value="2160">2160p（4K）</option>
-                <option value="1080">1080p</option>
-                <option value="720">720p</option>
-                <option value="480">480p</option>
-              </select>
-            </div>
-            <div class="field">
-              <label for="setConvertOverwrite">同名文件策略</label>
-              <select id="setConvertOverwrite">
-                <option value="rename">自动改名（推荐）</option>
-                <option value="skip">跳过已存在</option>
-                <option value="overwrite">覆盖同名文件</option>
-              </select>
-              <p class="hint">覆盖只针对产物；源文件永远不会被原地覆盖。</p>
-            </div>
-            <div class="field">
-              <label for="setConvertNameTemplate">输出文件名模板</label>
-              <input id="setConvertNameTemplate" type="text" placeholder="{name}" autocomplete="off" spellcheck="false">
-              <p class="hint">可用：{name} {preset} {date}；不含目录分隔符。</p>
-              <p class="field-error" id="setConvertNameTemplateError" role="alert" hidden></p>
-            </div>
-            <div class="field">
-              <label for="setConvertJobLimit">已完成任务保留上限（10–5000）</label>
-              <input id="setConvertJobLimit" type="number" inputmode="numeric" min="10" max="5000" step="1" value="500">
-              <p class="field-error" id="setConvertJobLimitError" role="alert" hidden></p>
-            </div>
-            <div class="field">
-              <label for="setConvertMinFreeGb">最少剩余空间（GB，默认 20）</label>
-              <input id="setConvertMinFreeGb" type="number" inputmode="numeric" min="0" step="1" value="20">
-              <p class="field-error" id="setConvertMinFreeGbError" role="alert" hidden></p>
-            </div>
-            <div class="field field-wide">
-              <label class="check"><input id="setConvertKeepSource" type="checkbox" checked>默认保留源文件</label>
-              <label class="check"><input id="setConvertCopySubtitles" type="checkbox" checked>MKV 预设复制字幕轨</label>
-              <label class="check"><input id="setConvertKeepTemp" type="checkbox">失败时保留临时文件（.dcpart）</label>
-              <p class="hint">默认失败即清理；保留便于排查，但会一直占空间。删除源文件只能按任务勾选并二次确认，不能在这里设为默认。</p>
-            </div>
-            <div class="field field-wide">
-              <label class="check"><input id="setConvertOffpeakEnabled" type="checkbox">仅空闲时段执行（窗口外排队等待）</label>
-              <div class="form-grid">
-                <div class="field">
-                  <label for="setConvertOffpeakStart">开始（HH:MM）</label>
-                  <input id="setConvertOffpeakStart" type="text" placeholder="01:00" autocomplete="off" spellcheck="false">
-                  <p class="field-error" id="setConvertOffpeakStartError" role="alert" hidden></p>
-                </div>
-                <div class="field">
-                  <label for="setConvertOffpeakEnd">结束（HH:MM，可跨零点）</label>
-                  <input id="setConvertOffpeakEnd" type="text" placeholder="07:00" autocomplete="off" spellcheck="false">
-                  <p class="field-error" id="setConvertOffpeakEndError" role="alert" hidden></p>
-                </div>
-              </div>
-              <p class="hint">转码会与字幕/下载抢磁盘 IO；NAS 上建议只在夜间转换。</p>
-            </div>
-            <div class="field field-wide">
-              <label class="check"><input id="setConvertAutoScan" type="checkbox">转换完成后自动入队扫描该目录</label>
-              <label class="check"><input id="setConvertAutoSubtitle" type="checkbox">转换完成后自动提交字幕任务</label>
-              <p class="hint">需要同时启用「云端字幕」并配置好 ASR；同一目录 10 分钟内只触发一次扫描。</p>
-            </div>
           </div>
         </details>
+
         <details class="advanced settings-group" id="settingsMergeDetails">
           <summary><span class="settings-group-title">合成 · 视频 + 音频</span><span class="settings-summary" id="settingsMergeSummary"></span></summary>
-          <p class="hint">「合成」页把视频片段与音频片段按选择顺序拼接并混流。内置功能，无需开启；本页只配置默认输出位置与转码参数。</p>
+          <p class="hint">「合成」页把视频片段与音频片段按选择顺序拼接并混流；容器、合成方式、质量都在合成页按任务选择。本页只配置默认输出位置。</p>
           <div class="form-grid">
             <div class="field">
               <label for="setMergeOutputMode">默认输出位置</label>
@@ -2433,78 +1795,40 @@
               <label for="setMergeOutputSubdir">输出子目录名</label>
               <input id="setMergeOutputSubdir" type="text" placeholder="merged" autocomplete="off" spellcheck="false">
             </div>
-            <div class="field">
-              <label for="setMergeContainer">默认容器</label>
-              <select id="setMergeContainer">
-                <option value="mp4">MP4（通用）</option>
-                <option value="mkv">MKV（兼容任意编码）</option>
-              </select>
-            </div>
-            <div class="field">
-              <label for="setMergeMode">默认合成方式</label>
-              <select id="setMergeMode">
-                <option value="auto">自动（能直拷就直拷，否则转码）</option>
-                <option value="copy">仅直拷</option>
-                <option value="encode">统一转码</option>
-              </select>
-            </div>
-            <div class="field">
-              <label for="setMergeQuality">默认质量（转码时）</label>
-              <select id="setMergeQuality">
-                <option value="high">高</option>
-                <option value="standard">标准</option>
-                <option value="small">小体积</option>
-              </select>
-            </div>
-            <div class="field">
-              <label for="setMergeMaxResolution">分辨率上限（转码时）</label>
-              <select id="setMergeMaxResolution">
-                <option value="0">保持原样</option>
-                <option value="2160">2160p</option>
-                <option value="1080">1080p</option>
-                <option value="720">720p</option>
-                <option value="480">480p</option>
-              </select>
-            </div>
-            <div class="field">
-              <label for="setMergeNameTemplate">输出名模板</label>
-              <input id="setMergeNameTemplate" type="text" placeholder="{name}_merged" autocomplete="off" spellcheck="false">
-            </div>
-            <div class="field">
-              <label for="setMergeConcurrency">同时合成几个（1–2）</label>
-              <input id="setMergeConcurrency" type="number" inputmode="numeric" min="1" max="2" step="1" value="1">
-            </div>
-            <div class="field">
-              <label for="setMergeMinFreeGb">最少剩余空间（GB）</label>
-              <input id="setMergeMinFreeGb" type="number" inputmode="numeric" min="0" max="1000" step="1" value="1">
-            </div>
-            <div class="field">
-              <label for="setMergeJobLimit">保留任务数</label>
-              <input id="setMergeJobLimit" type="number" inputmode="numeric" min="20" max="1000" step="10" value="200">
-            </div>
-            <div class="field field-wide">
-              <label class="check"><input id="setMergeKeepSource" type="checkbox" checked>默认保留源文件</label>
-              <p class="hint">「合成成功后删除源文件」仍需在合成页逐次勾选并二次确认，不能靠默认值。</p>
-            </div>
           </div>
         </details>
-        <details class="advanced settings-group" id="settingsStorageGroup">
-          <summary><span class="settings-group-title">存储 · 回收站、时间安全与运行状态</span><span class="settings-summary" id="settingsStorageSummary"></span></summary>
+
+        <details class="advanced settings-group" id="settingsSecurityGroup">
+          <summary><span class="settings-group-title">安全 · 删除白名单、回收站与硬链接合并</span><span class="settings-summary" id="settingsSecuritySummary"></span></summary>
           <div class="form-grid">
-            <div class="field">
-              <label class="check"><input id="setRecycleDefault" type="checkbox" checked>删除默认移动到回收站</label>
-              <label class="check"><input id="setCreateRecycleDir" type="checkbox">共享文件夹无 #recycle 时自动创建</label>
-              <label class="check"><input id="setAllowCtime" type="checkbox">允许 ctime 降级作为创建时间（有风险）</label>
-              <p class="hint">关闭 ctime 降级时，创建时间未知的组需要人工指定保留项，更安全。</p>
+            <div class="field field-wide">
+              <label class="check"><input id="setProtectEnabled" type="checkbox" checked>启用删除白名单（保护文件不可删除）</label>
+              <p class="hint">白名单是删除前的最后一道防线：命中的文件在结果里不可勾选，删除计划与执行前还会按当前设置再校验一次。</p>
+              <label for="setProtectExtensions">受保护后缀（逗号分隔，可留空）</label>
+              <input id="setProtectExtensions" type="text" placeholder=".srt,.ass,.nfo" autocomplete="off" spellcheck="false">
+              <p class="hint">默认保护外挂字幕/元数据类后缀；图片默认不在此列（海报由下面的“视频附属文件”规则保护）。</p>
+              <p class="field-error" id="setProtectExtensionsError" role="alert" hidden></p>
+              <label for="setProtectDirs">受保护目录（每行一个绝对路径，目录及其子目录都会被保护）</label>
+              <textarea id="setProtectDirs" rows="2" placeholder="/volume1/photo/重要"></textarea>
+              <p class="field-error" id="setProtectDirsError" role="alert" hidden></p>
+              <label for="setProtectNameRegex">受保护文件名（正则，每行一条，最多 50 条）</label>
+              <textarea id="setProtectNameRegex" rows="2" placeholder="^keep-.*$"></textarea>
+              <p class="field-error" id="setProtectNameRegexError" role="alert" hidden></p>
+              <label class="check"><input id="setProtectSidecarFiles" type="checkbox" checked>保护视频附属文件（同目录同源视频的字幕 / 海报 / nfo）</label>
             </div>
             <div class="field field-wide">
-              <span class="field-label" id="settingsStatusTitle">存储 / FFmpeg / ASR 状态（来自 /api/meta）</span>
-              <div class="settings-status-grid" id="settingsStatusSummary"></div>
-              <p class="hint">只读状态；元数据与缓存由后端内置 SQLite/文件缓存管理，无需在此配置路径。</p>
+              <label for="setDeleteRecycleMode">删除去向</label>
+              <select id="setDeleteRecycleMode">
+                <option value="share">共享文件夹回收站（#recycle，DSM 回收站可见）</option>
+                <option value="package">套件独立回收站（可按删除批次整组恢复）</option>
+              </select>
+              <p class="hint">套件独立回收站会移动到共享文件夹根下的 <code>#duplicate-cleaner-trash/</code>（同卷 rename，不复制数据），可在「扫描 → 删除与回收站」里恢复或清理。已有文件的去向在生成删除计划时确定。</p>
+              <label class="check"><input id="setMergeEnabled" type="checkbox">启用硬链接合并（不可逆，默认关闭）</label>
+              <p class="hint">合并把重复组的非保留项替换成指向保留项的硬链接，只省空间不删路径；合并后任一路径的内容修改会影响全部路径。只对精准重复组生效，需逐组确认，可在「回收站与合并」里恢复为独立副本。</p>
             </div>
           </div>
         </details>
-        <details class="advanced settings-group" id="settingsDiagnosticsGroup">
+                <details class="advanced settings-group" id="settingsDiagnosticsGroup">
           <summary><span class="settings-group-title">系统 · 存储与运行诊断</span><span class="settings-summary" id="settingsDiagnosticsSummary"></span></summary>
           <p class="hint">来自后端 /api/diagnostics：只显示路径、大小、版本与“是否已配置”等状态，不显示任何密钥内容；本页不自动轮询，请手动刷新。</p>
         <section class="card storage-diagnostics-panel" id="storagePanel" aria-labelledby="storagePanelHeading">
@@ -2717,6 +2041,6 @@
   <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.6" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M12 10.8v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="12" cy="7.6" r="1.05" fill="currentColor"/></symbol>
 </svg>
 
-<script type="module" src="./app.js?v=1.1.0-0059"></script>
+<script type="module" src="./app.js?v=1.1.0-0060"></script>
 </body>
 </html>

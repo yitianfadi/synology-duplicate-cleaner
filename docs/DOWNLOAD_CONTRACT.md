@@ -164,7 +164,7 @@ DRM 解密、直播录制、内置浏览器/JS 渲染、BT/磁力、站点专用
 ## 12. 与扫描/字幕联动
 
 - `download_auto_scan`：任务完成后对产物目录 `start_scan`，同一目录 600 秒内最多一次，用户名为 `downloader`；
-- `download_auto_subtitle`：任务完成后以 `create_batch({paths:[产物]})` 提交字幕，`translate` 沿用 `subtitle_translate_enabled`；未启用字幕只记日志；
+- `download_auto_subtitle`：任务完成后以 `create_batch({paths:[产物]})` 提交字幕，`translate` 跟随是否配置了 LLM API Key（v0060 起不再看已废弃的 `subtitle_translate_enabled`）；未启用字幕只记日志；
 - 两个联动都只做「尽力而为」：失败只写日志，不影响下载任务状态。
 
 ## 13. 测试与验收

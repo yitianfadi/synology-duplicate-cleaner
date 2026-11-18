@@ -77,7 +77,7 @@
   按 `video_extensions` 过滤；按 `(size, mtime_ns)` 记录 `<var>/subtitle_watch_state.json`，
   已提交过的文件不重复提交；每轮最多入队 20 个；
 - 以 `user="watcher"` 调用批量提交（`source_watch=true`），翻译开关用
-  `subtitle_translate_enabled`，音轨用默认设置；`skip_existing` 已有的任务会被标记跳过；
+  LLM API Key（v0060 起不再看已废弃的 `subtitle_translate_enabled`），音轨用默认设置；`skip_existing` 已有的任务会被标记跳过；
 - `GET /api/subtitles/watch`（状态：enabled/dirs/interval/last_scan/result/watched_files）、
   `POST /api/subtitles/watch/scan`（立即扫描，force=true 即使监控关闭也执行一次）；
 - 限制：轮询实现（标准库无 inotify）；文件改动（size/mtime 变化）才会重新入队。

@@ -82,7 +82,9 @@ DEFAULT_SETTINGS = {
     "subtitle_audio_prefetch": True,
     # v0033：默认只生成 SRT；开启后任务目录额外生成 VTT（写回视频目录始终只写 srt）
     "subtitle_write_vtt": False,
-    "subtitle_translate_enabled": False,
+    # v0060：翻译不再由设置总开关控制——配了 LLM API Key 即可用，任务弹窗默认勾选。
+    # 该键保留仅为兼容旧配置/旧客户端，不再生效。
+    "subtitle_translate_enabled": True,
     "subtitle_llm_base_url": "https://api.openai.com/v1",
     "subtitle_llm_api_key": "",
     "subtitle_llm_model": "gpt-4.1-mini",
@@ -138,7 +140,8 @@ DEFAULT_SETTINGS = {
     "delete_recycle_mode": config.RECYCLE_MODE_DEFAULT,
     # --- v0046 通知系统 / 计划扫描（docs/NOTIFICATION_SCHEDULE_CONTRACT.md）---
     "notify_enabled": False,
-    "notify_channels": ["dsm"],
+    # v0060：DSM 系统通知仅 Synology 自家套件可用（sysnotify 资源属专属），默认 Webhook。
+    "notify_channels": ["webhook"],
     "notify_events": list(config.NOTIFY_EVENTS),
     "notify_webhook_url": "",
     "notify_telegram_bot_token": "",
@@ -881,8 +884,10 @@ def _normalize_value(key, value):
     if key == "notify_enabled":
         return _check_bool(key, value)
     if key == "notify_channels":
-        return _check_choice_list(key, value, config.NOTIFY_CHANNELS,
-                                  config.NOTIFY_QUEUE_MAX)
+        return _check_choice_list(
+            key, value,
+            config.NOTIFY_CHANNELS + config.NOTIFY_LEGACY_CHANNELS,
+            config.NOTIFY_QUEUE_MAX)
     if key == "notify_events":
         return _check_choice_list(key, value, config.NOTIFY_EVENTS)
     if key == "notify_webhook_url":

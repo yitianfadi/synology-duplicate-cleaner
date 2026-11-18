@@ -6,7 +6,7 @@
 
 | 我想…… | 先读 | 再查 |
 |---|---|---|
-| 了解功能、安装、跑起来 | [README](../README.md) | [发布说明](RELEASE_NOTES_v1.1.0-0059.md) |
+| 了解功能、安装、跑起来 | [README](../README.md) | [发布说明](RELEASE_NOTES_v1.1.0-0060.md) |
 | 部署 / 升级 / 排错 | [SPK_PACKAGING.md](SPK_PACKAGING.md) | [ARCHITECTURE.md](ARCHITECTURE.md) §9、`<var>/log/start.log` |
 | 看懂整体设计与数据流 | [ARCHITECTURE.md](ARCHITECTURE.md) §1–10 | [STORAGE_CONTRACT.md](STORAGE_CONTRACT.md) |
 | 看懂页面与交互 | [UI_PROTOTYPE.md](UI_PROTOTYPE.md) | [CONTRACT.md](CONTRACT.md) §10 |
@@ -76,7 +76,8 @@
 | 文档 | 内容 | 状态 |
 |---|---|---|
 | [REQUIREMENTS_V2_ASSESSMENT.md](REQUIREMENTS_V2_ASSESSMENT.md) | v2 需求 → 版本交付映射、关键取舍、明确不做、默认值、真机清单 | 现行（结论） |
-| [RELEASE_NOTES_v1.1.0-0059.md](RELEASE_NOTES_v1.1.0-0059.md) | 新增「合成」页（视频/音频按选择顺序拼接+混流，schema v11）；软件更名「重复文件清理与影音工具 / Duplicate Cleaner & Media Toolkit」（包 ID/数据目录不变） | 现行（已打包） |
+| [RELEASE_NOTES_v1.1.0-0060.md](RELEASE_NOTES_v1.1.0-0060.md) | 字幕默认译文；设置页精简为 9 组（约 150→44 项）；DSM 系统通知按 DSM 7 i18n 规范修复（安装后生效） | 现行（已打包） |
+| [RELEASE_NOTES_v1.1.0-0059.md](RELEASE_NOTES_v1.1.0-0059.md) | 新增「合成」页（视频/音频按选择顺序拼接+混流，schema v11）；软件更名「重复文件清理与影音工具 / Duplicate Cleaner & Media Toolkit」（包 ID/数据目录不变） | 历史 |
 | [RELEASE_NOTES_v1.1.0-0058.md](RELEASE_NOTES_v1.1.0-0058.md) | 下载/转换改为内置功能：去掉设置里的启用开关与 403 闸门，默认可用；兼容键保留不生效 | 历史 |
 | [RELEASE_NOTES_v1.1.0-0057.md](RELEASE_NOTES_v1.1.0-0057.md) | 退役「任务中心」：扫描历史/删除与回收站/字幕任务/操作日志拆入扫描、字幕、设置页内嵌标签；导航精简、深链 `?tab=`、轮询闸门调整 | 历史 |
 | [RELEASE_NOTES_v1.1.0-0056.md](RELEASE_NOTES_v1.1.0-0056.md) | 新增格式转换（16 预设、队列/进度/取消/重试、仅换封装、删除源二次确认、空闲时段、schema v10）；修 `.dcpart` 未显式 `-f` 导致合并/封装失败 | 历史 |

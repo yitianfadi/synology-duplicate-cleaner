@@ -55,7 +55,7 @@
 | key | 类型 | 默认 | 说明 |
 |---|---|---|---|
 | notify_enabled | bool | false | 总开关 |
-| notify_channels | string[] | ["dsm"] | `dsm` / `webhook` / `telegram` |
+| notify_channels | string[] | ["webhook"] | `webhook` / `telegram`（v0060 起移除 `dsm`） |
 | notify_events | string[] | 全部 | `scan_complete` / `scan_failed` / `subtitle_batch_done` / `failure_burst` / `freed_threshold` |
 | notify_webhook_url | string | "" | http(s)；POST JSON |
 | notify_telegram_bot_token | secret | "" | 保存后不回显；`clear_telegram_bot_token=true` 清空 |
@@ -65,9 +65,12 @@
 | notify_timeout_sec | int | 5 | 单渠道发送超时（2..30） |
 
 渠道可用性：
-- `dsm`：`/usr/syno/bin/synodsmnotify` 存在才可用（非 DSM 环境自动跳过）；
 - `webhook`：URL 非空；
 - `telegram`：Bot Token + chat_id 都非空。
+- `dsm`：**v0060 起移除**。DSM 7 的系统通知要求套件声明 `conf/resource` 的 `sysnotify`
+  资源，而该 worker 仅对 Synology 自家套件开放；第三方 SPK 声明后安装会直接失败
+  （Package Center 错误 4539「该套件使用 Synology 套件专属的资源」）。
+  已有的 `notify_channels: ["dsm"]` 配置会被静默忽略，不会报错。
 
 ### 2.2 发送语义
 
@@ -117,7 +120,10 @@
 - 低负载判断使用 `os.getloadavg()`（Windows 不可用时不检查）；DSM 上为 1 分钟负载。
 - 实时监控/计划任务依赖轮询（标准库无 inotify/cron 集成）；套件停机期间错过的时间点，
   下次启动后按规则的下一次时间执行（不会补跑全部历史时间点）。
-- DSM 通知需要 `synodsmnotify`（DSM 7 自带，setuid root）；套件用户无权限时发送失败并记录审计。
+- DSM 系统通知（v0060 移除）：DSM 7 的通知文案必须由套件通过 `conf/resource` 的
+  `sysnotify` 注册，而该资源 worker 仅对 Synology 自家套件开放；第三方 SPK 声明后
+  Package Center 会以错误 4539 拒绝安装（真机实测）。因此本套件只保留 Webhook / Telegram，
+  设置页不再显示 DSM 渠道与「测试 DSM」按钮。
 
 ## 5. 验收
 

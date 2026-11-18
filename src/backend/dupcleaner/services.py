@@ -174,7 +174,7 @@ def _make_download_complete(scan_manager, subtitle_service, settings_manager):
                 "paths": [path],
                 "confirm_cloud": True,
                 "translate": bool(
-                    settings.get("subtitle_translate_enabled")),
+                    str(settings.get("subtitle_llm_api_key") or "").strip()),
                 "output_mode": settings.get("subtitle_output_mode"),
                 "audio_track": settings.get("subtitle_audio_track") or None,
                 "audio_track_language":
@@ -225,7 +225,7 @@ def _make_convert_complete(scan_manager, subtitle_service, settings_manager):
                 "paths": [path],
                 "confirm_cloud": True,
                 "translate": bool(
-                    settings.get("subtitle_translate_enabled")),
+                    str(settings.get("subtitle_llm_api_key") or "").strip()),
                 "output_mode": settings.get("subtitle_output_mode"),
                 "audio_track": settings.get("subtitle_audio_track") or None,
                 "audio_track_language":

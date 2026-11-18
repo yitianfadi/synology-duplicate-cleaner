@@ -732,15 +732,16 @@ def check_backend():
     scheduler_src = read(scheduler_path) if os.path.isfile(scheduler_path) else ""
     services_src = read(os.path.join(backend, "dupcleaner", "services.py"))
     check("BE-NOTIFY",
-          "通知系统：DSM/Webhook/Telegram + 扫描/删除/字幕批次事件 + 密钥不回显（v0046）",
+          "通知系统：Webhook/Telegram + 扫描/删除/字幕批次事件 + 密钥不回显（v0046；v0060 移除 DSM 渠道）",
           os.path.isfile(notify_path)
           and "class NotificationService" in notify_src
           and "def scan_finished(" in notify_src
           and "def deletion_finished(" in notify_src
           and "def subtitle_batch_finished(" in notify_src
           and "def test_channel(" in notify_src
-          and "DSM_NOTIFY_PATH" in conf_src
-          and "NOTIFY_CHANNELS" in conf_src
+          and '"webhook", "telegram"' in conf_src
+          and "DSM_NOTIFY_PATH" not in conf_src
+          and "_run_dsm_notify" not in notify_src
           and "notify_telegram_bot_token" in settings_src
           and "notifier=notification_service" in services_src
           and "notification_service" in services_src
@@ -762,6 +763,14 @@ def check_backend():
           and "def _scheduler" in http_src
           and "def _scheduler_run_now" in http_src,
           "scheduler markers missing")
+    spk_dir = os.path.join(REPO, "spk")
+    spk_resource_src = read(os.path.join(spk_dir, "conf", "resource"))
+    check("SPK-NO-SYNOLOGY-RESOURCE",
+          "conf/resource 不声明 Synology 专属 worker（v0060：sysnotify 会让第三方包装载报 4539）",
+          '"sysnotify"' not in spk_resource_src
+          and not os.path.isdir(os.path.join(spk_dir, "ui", "texts"))
+          and '"port-config"' in spk_resource_src,
+          "Synology-exclusive resource declared in conf/resource")
 
     # ---- v0045：硬链接合并 + 套件独立回收站 ----
     merge_path = os.path.join(backend, "dupcleaner", "merge.py")
@@ -869,6 +878,9 @@ def check_frontend():
     app_path = os.path.join(web, "app.js")
     html = read(index_path) if os.path.isfile(index_path) else ""
     app = read(app_path) if os.path.isfile(app_path) else ""
+    # v0060：部分设置项从设置页移除、保留为后端固定默认，这里用它断言能力仍在
+    settings_src = read(os.path.join(backend, "dupcleaner", "settings.py"))
+    subtitles_src = read(os.path.join(backend, "dupcleaner", "subtitles.py"))
     check("FE-FILES", "前端 index.html/app.js/styles.css 存在",
           os.path.isfile(index_path) and os.path.isfile(app_path)
           and os.path.isfile(os.path.join(web, "styles.css")),
@@ -949,13 +961,13 @@ def check_frontend():
           endpoints_ok, "subtitle batch group endpoints missing")
 
     subtitle_settings_ok = (
-        all(marker in html for marker in
-            ("setSubtitleOutputMode", "setSubtitleSkipExisting", "setSubtitleJobLimit"))
-        and all(marker in app for marker in
-                ("subtitle_output_mode", "subtitle_skip_existing", "subtitle_job_limit")))
+        all(key in settings_src for key in
+            ("subtitle_output_mode", "subtitle_skip_existing", "subtitle_job_limit"))
+        and all(key in subtitles_src for key in
+                ("subtitle_output_mode", "subtitle_skip_existing")))
     check("FE-SUBTITLE-SETTINGS",
-          "设置页可配置目录批量字幕输出方式/默认跳过已有/任务保留上限",
-          subtitle_settings_ok, "subtitle batch settings UI missing")
+          "目录批量字幕输出方式/默认跳过已有/任务上限仍可用（v0060 起为固定默认，设置页不再展示）",
+          subtitle_settings_ok, "subtitle batch settings defaults missing")
     writeback_ok = all(marker in app for marker in
                        ("job.outputs", "SUBTITLE_WARNING_LABEL",
                         "已写回 ", "translation_partial",
@@ -994,27 +1006,24 @@ def check_frontend():
           "设置页提供“禁用 LLM 思考”开关（本地推理模型建议开启）",
           thinking_ui_ok, "disable-thinking setting UI missing")
     audio_ui_ok = (
-        'id="subtitleAudioSource"' in html
-        and "subtitle_audio_source" in app
-        and "subtitleAudioSource" in app
-        and "'server'" in app)
+        "subtitle_audio_source" in settings_src
+        and "subtitle_audio_source" in subtitles_src
+        and "SUBTITLE_AUDIO_SOURCES" in read(
+            os.path.join(backend, "dupcleaner", "config.py")))
     check("FE-SUBTITLE-AUDIO",
-          "设置页提供音频来源（NAS 解码 / 服务器解码）",
-          audio_ui_ok, "subtitle audio source setting UI missing")
+          "音频来源（NAS 解码 / 服务器解码）仍可用（v0060 起固定默认，设置页不再展示）",
+          audio_ui_ok, "subtitle audio source setting missing")
     vtt_ui_ok = (
-        'id="subtitleWriteVtt"' in html
-        and "subtitle_write_vtt" in app
-        and "subtitleWriteVtt" in app)
+        "subtitle_write_vtt" in settings_src
+        and "subtitle_write_vtt" in subtitles_src)
     check("FE-SUBTITLE-VTT",
-          "默认只生成 SRT，VTT 为可选设置（设置页勾选后才生成）",
+          "默认只生成 SRT，VTT 仍为可选底层能力（v0060 起固定关闭，设置页不再展示）",
           vtt_ui_ok, "subtitle vtt optional setting missing")
     concurrency_ui_ok = (
-        'id="setSubtitleConcurrency"' in html
-        and "subtitle_concurrency" in app
-        and "setSubtitleConcurrency" in app
-        and "保存后立即生效" in html)
+        "subtitle_concurrency" in settings_src
+        and "subtitle_concurrency" in subtitles_src)
     check("FE-SUBTITLE-CONCURRENCY",
-          "设置页提供字幕并发任务数（1–4，默认 1，保存后立即生效，v0037）",
+          "字幕并发任务数（默认 1、保存后动态调整 worker）仍可用（v0060 起固定默认）",
           concurrency_ui_ok, "subtitle concurrency setting UI missing")
     timeline_ui_ok = (
         "SUBTITLE_STEP_LABEL" in app
@@ -1099,33 +1108,37 @@ def check_frontend():
           "补翻译入口：批次组卡片/任务明细行/任务中心列表与详情 + 来源标签（v0035）",
           translate_ui_ok, "subtitle translate UI markers missing")
     translate_gate_ok = (
-        "字幕翻译未启用" in subtitle_page_src
+        "请先在设置中配置 LLM API Key" in subtitle_page_src
         and "LLM API Key" in subtitle_page_src
         and "translateBtn.disabled = true" in subtitle_page_src
         and "重新翻译" in subtitle_page_src)
     check("FE-SUBTITLE-TRANSLATE-GATE",
-          "补翻译能力门控与“部分译文回退→重新翻译”入口（v0035）",
+          "补翻译能力门控（v0060：只看总开关 + LLM Key）与“部分译文回退→重新翻译”入口",
           translate_gate_ok, "subtitle translate gate markers missing")
+    translate_default_ok = (
+        app.count("if (sub.llmKeySet) { translateCheck.checked = true; }") == 2
+        and "translateCheck.dataset.userTouched" in subtitle_page_src
+        and "translateEnabled: llmKeySet" in app)
+    check("FE-SUBTITLE-TRANSLATE-DEFAULT",
+          "v0060：已配置 LLM Key 时字幕弹窗默认勾选“同时生成译文”（单文件/批量）",
+          translate_default_ok, "translate default-checked markers missing")
     translate_outputs_ok = (
-        'id="setSubtitleTranslateOutputs"' in html
-        and 'id="setSubtitleTranslateOutputsError"' in html
-        and "subtitle_translate_outputs" in app
-        and "setSubtitleTranslateOutputs" in app
-        and "SUBTITLE_TRANSLATE_OUTPUTS" in app
+        "subtitle_translate_outputs" in settings_src
+        and "subtitle_translate_outputs" in subtitles_src
+        and "SUBTITLE_TRANSLATE_OUTPUTS" in read(
+            os.path.join(js_dir, "constants.js"))
         and "subtitle_translate_outputs: 'both'" in read(
             os.path.join(js_dir, "constants.js")))
     check("FE-SUBTITLE-TRANSLATE-OUTPUT",
-          "设置页提供译文输出组合（译文+双语/只写译文/只写双语，v0036）",
+          "译文输出组合（译文+双语/只写译文/只写双语）仍可用（v0060 起固定 both，设置页不再展示）",
           translate_outputs_ok, "subtitle translate outputs setting missing")
     prefetch_ui_ok = (
-        'id="subtitleAudioPrefetch"' in html
-        and "subtitleAudioPrefetch" in app
-        and "subtitle_audio_prefetch" in app
+        "subtitle_audio_prefetch" in settings_src
+        and "subtitle_audio_prefetch" in subtitles_src
         and "subtitle_audio_prefetch: true" in read(
-            os.path.join(js_dir, "constants.js"))
-        and "subtitleAudioPrefetch" in read(os.path.join(js_dir, "state.js")))
+            os.path.join(js_dir, "constants.js")))
     check("FE-SUBTITLE-AUDIO-PREFETCH",
-          "设置页提供分片音频预取开关（默认开启，v0040）",
+          "分片音频预取仍默认开启（v0060 起固定默认，设置页不再展示）",
           prefetch_ui_ok, "subtitle audio prefetch setting missing")
     language_ui_ok = (
         "SUBTITLE_LANGUAGE_RE" in app
@@ -1199,21 +1212,18 @@ def check_frontend():
 
     # ---- v0043：增量扫描 / 保留规则链 / 排除规则 ----
     check("FE-KEEP-RULES",
-          "扫描选项与设置页提供保留规则链：主规则 + 路径优先级 + 文件名优先级 + 字幕/音轨优先（v0043）",
-          "keepPrimaryRule" in html and "setKeepPrimaryRule" in html
+          "扫描选项提供保留规则链：主规则 + 路径优先级 + 文件名优先级 + 字幕/音轨优先（v0043；v0060 起设置页不再重复）",
+          "keepPrimaryRule" in html
           and "keepPathPriority" in html and "keepNamePriority" in html
           and "keepPreferSubtitle" in html and "keepPreferMultiAudio" in html
-          and "setKeepPathPriority" in html and "setKeepPreferMultiAudio" in html
           and "function composeKeepRules" in app
           and "function decomposeKeepRules" in app
           and "KEEP_RULE_LABEL" in app,
           "keep rule ui markers missing")
     check("FE-EXCLUDE-UI",
-          "扫描选项与设置页提供文件名正则/通配符/.ignore/影视附属文件选项（v0043）",
+          "扫描选项提供文件名正则/通配符/.ignore/影视附属文件选项（v0043；v0060 起设置页不再重复）",
           "excludeNameRegex" in html and "excludeNameGlob" in html
           and "ignoreFileEnabled" in html and "mediaSidecarMode" in html
-          and "setExcludeNameRegex" in html and "setExcludeNameGlob" in html
-          and "setIgnoreFileEnabled" in html and "setMediaSidecarMode" in html
           and "function readIncrementalOptions" in app,
           "exclude rule ui markers missing")
     check("FE-INCREMENTAL-UI",
@@ -1283,11 +1293,10 @@ def check_frontend():
           and "trash-card" in read(os.path.join(web, "styles.css")),
           "trash ui markers missing")
     check("FE-AUTOMATION-UI",
-          "设置页「自动化」：计划规则/负载阈值 + 通知渠道/事件/阈值 + 渠道测试按钮（v0046）",
+          "设置页「自动化」：计划规则/扫描目录 + 通知渠道/事件/凭据 + 渠道测试按钮（v0046；v0060 去掉纯参数）",
           "setScheduledScanEnabled" in html
           and "setScheduledScanRules" in html
           and "setScheduledScanRoots" in html
-          and "setScheduledScanMaxLoad" in html
           and "setNotifyEnabled" in html
           and "setNotifyChannelWebhook" in html
           and "setNotifyChannelTelegram" in html
@@ -1305,12 +1314,8 @@ def check_frontend():
           and "check-grid" in read(os.path.join(web, "styles.css")),
           "automation ui markers missing")
     check("FE-VIDEO-V2",
-          "视频设置：边缘裁剪/时间轴对齐/音频签名开关与权重 + 结果页置信度/方法/音频徽标（v0047）",
-          "setVideoCenterCrop" in html
-          and "setVideoOffsetAlign" in html
-          and "setVideoAudioSignature" in html
-          and "setVideoAudioWeight" in html
-          and "VIDEO_CONFIDENCE_LABEL" in app
+          "视频相似增强（v0047）：结果页置信度/方法/音频徽标；参数在扫描页选择（v0060 起设置页不重复）",
+          "VIDEO_CONFIDENCE_LABEL" in app
           and "VIDEO_CONFIDENCE_CLASS" in app
           and "video_confidence" in app
           and "边缘裁剪" in app
@@ -1322,13 +1327,8 @@ def check_frontend():
           read(os.path.join(web, "js", "constants.js")),
           "video v2 ui markers missing")
     check("FE-SUBTITLE-V2",
-          "字幕设置：自动重试/负载阈值/目录优先级/音轨/目录监控 + 失败清单导出/批量重试/置顶（v0048）",
-          "setSubtitleAutoRetry" in html
-          and "setSubtitleAutoRetryMax" in html
-          and "setSubtitleNoSpeechSkip" in html
-          and "setSubtitleMaxLoad" in html
-          and "setSubtitleDirPriorities" in html
-          and "setSubtitleAudioTrack" in html
+          "字幕增强：默认音轨/音轨语言/目录监控 + 失败清单导出/批量重试/置顶（v0048；v0060 去掉纯参数）",
+          "setSubtitleAudioTrack" in html
           and "setSubtitleWatchEnabled" in html
           and "subtitleFailuresList" in html
           and "subtitleFailuresExportBtn" in html
@@ -1859,7 +1859,7 @@ def check_frontend():
           "ffmpeg path setting markers missing")
     check("FE-HWACCEL-SETTING", "硬解下拉用 hwaccel_modes 渲染、hwaccel_supported 决定可用，并展示 effective/fallback",
           all(marker in html for marker in
-              ("videoHwaccel", "videoHwaccelHint", "setVideoHwaccel", "setVideoHwaccelHint"))
+              ("videoHwaccel", "videoHwaccelHint"))
           and all(marker in app for marker in
                   ("hwaccel_supported", "hwaccel_modes", "hwaccel_effective",
                    "hwaccel_fallback", "videotoolbox", "renderVideoHwaccelOptions")),

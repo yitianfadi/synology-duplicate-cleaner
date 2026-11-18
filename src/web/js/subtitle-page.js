@@ -172,12 +172,14 @@ function clearLastGroupId() {
 function capability() {
   var s = state.settings || {};
   var supported = Object.prototype.hasOwnProperty.call(s, 'subtitle_enabled');
+  var llmKeySet = supported && s.subtitle_llm_api_key_set === true;
   return {
     supported: supported,
     enabled: supported && s.subtitle_enabled === true,
     asrKeySet: supported && s.subtitle_asr_api_key_set === true,
-    llmKeySet: supported && s.subtitle_llm_api_key_set === true,
-    translateEnabled: supported && s.subtitle_translate_enabled === true,
+    llmKeySet: llmKeySet,
+    // v0060：翻译不再看设置总开关，配了 LLM Key 就可用
+    translateEnabled: llmKeySet,
     outputMode: s.subtitle_output_mode || 'alongside_video',
     skipExisting: s.subtitle_skip_existing !== false,
     asrLanguage: s.subtitle_asr_language || 'auto',
@@ -188,13 +190,12 @@ function capability() {
 // ---------------------------------------------------------------------------
 // v0035：补翻译（只做了 ASR、没翻译的历史任务）——仅上传字幕文本，不重新识别音频
 // ---------------------------------------------------------------------------
-/** 补翻译能力门控：总开关 + 翻译开关 + LLM Key 都就绪时才允许提交。 */
+/** 补翻译能力门控：总开关 + LLM Key 都就绪时才允许提交（v0060 起不再看翻译总开关）。 */
 function translateCapability() {
   var cap = capability();
   var reason = '';
   if (!cap.supported) { reason = '当前后端未提供云端字幕能力'; }
   else if (!cap.enabled) { reason = '请先在设置中启用云端字幕'; }
-  else if (!cap.translateEnabled) { reason = '字幕翻译未启用（请在设置中开启）'; }
   else if (!cap.llmKeySet) { reason = '请先在设置中配置 LLM API Key'; }
   cap.ok = !reason;
   cap.reason = reason;
@@ -256,8 +257,13 @@ function updateCapabilityUi() {
   }
   var translateCheck = q('subtitleTranslate');
   if (translateCheck) {
-    translateCheck.disabled = !(cap.llmKeySet && cap.translateEnabled);
-    if (!cap.llmKeySet || !cap.translateEnabled) { translateCheck.checked = false; }
+    translateCheck.disabled = !cap.llmKeySet;
+    if (!cap.llmKeySet) {
+      translateCheck.checked = false;
+    } else if (!translateCheck.dataset.userTouched) {
+      // v0060：配了 LLM Key 就默认勾选“同时生成译文”
+      translateCheck.checked = true;
+    }
   }
   var target = q('subtitleTargetLang');
   if (target && !target.dataset.userTouched) {
@@ -266,9 +272,7 @@ function updateCapabilityUi() {
   var mode = modeValue();
   var translateOn = !!(translateCheck && translateCheck.checked);
   if (target) {
-    target.disabled = !cap.llmKeySet
-      || (mode === 'asr' && !translateOn)
-      || !cap.translateEnabled;
+    target.disabled = !cap.llmKeySet || (mode === 'asr' && !translateOn);
   }
   var skip = q('subtitleSkipExisting');
   if (skip && !page.skipTouched) { skip.checked = cap.skipExisting; }
@@ -290,9 +294,6 @@ function modeRequirement() {
     return { ok: false, message: '请先在设置中启用云端字幕' };
   }
   if (mode === 'existing_srt') {
-    if (!cap.translateEnabled) {
-      return { ok: false, message: '字幕翻译未启用（请在设置中开启）' };
-    }
     if (!cap.llmKeySet) {
       return { ok: false, message: '请先在设置中配置 LLM API Key' };
     }
@@ -1997,6 +1998,7 @@ export function initSubtitlePage() {
   var translate = q('subtitleTranslate');
   if (translate) {
     translate.addEventListener('change', function () {
+      translate.dataset.userTouched = '1';
       var targetSel = q('subtitleTargetLang');
       if (targetSel) { targetSel.disabled = !translate.checked; }
       updateSubmitState();

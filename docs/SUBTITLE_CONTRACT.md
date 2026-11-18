@@ -18,7 +18,7 @@
 | subtitle_audio_prefetch | true | v0040：分片音频预取（默认开）。识别第 N 片时后台线程先抽第 N+1 片音频，NAS 的 FFmpeg 与云端 ASR 重叠；关闭后恢复“抽音频 → 上传 → 识别”严格串行 |
 | subtitle_write_vtt | false | v0033：默认只生成 SRT；`true` 时任务目录额外生成 `.vtt`（写回视频目录始终只写 `.srt`） |
 | subtitle_concurrency | 1 | v0034/v0037：同时执行的字幕任务数 1..4，默认 1（串行，最稳）；**保存设置后立即生效**（动态调整 worker，无需重启套件） |
-| subtitle_translate_enabled | false | 是否生成译文 |
+| subtitle_translate_enabled | true | v0060 起**已废弃、不再生效**：翻译改为“配了 `subtitle_llm_api_key` 即可用”，任务弹窗默认勾选；键仅保留兼容旧配置/旧客户端 |
 | subtitle_llm_base_url | https://api.openai.com/v1 | http/https |
 | subtitle_llm_api_key | "" | GET 不回传明文 |
 | subtitle_llm_model | gpt-4.1-mini | 任意 chat completions 模型 |
@@ -293,7 +293,7 @@ v0028 在 v1.3 单文件任务之上新增**目录批量生成 / 翻译**：独�
 - **资格**：源任务 `status=done` 且（`translate=false` 或 `translation_partial=true`）。
   - 已有完整译文 → 400 `TRANSLATION_EXISTS`；源任务未完成 → 400 `JOB_NOT_DONE`。
   - 部分译文回退（`translation_partial=true`）允许“重新翻译”：派生任务 `skip_existing=false`，任务目录重新生成译文；视频旁已有译文按“从不覆盖”规则保留。
-- **开关与凭据**：`subtitle_enabled` 必须开启；`subtitle_translate_enabled` 必须开启；`subtitle_llm_api_key` 必须已配置。否则分别返回 `SUBTITLE_DISABLED` / `TRANSLATE_DISABLED` / `TRANSLATE_NOT_CONFIGURED`。
+- **开关与凭据**：`subtitle_enabled` 必须开启；`subtitle_llm_api_key` 必须已配置（v0060 起 `subtitle_translate_enabled` 已废弃，不再返回 `TRANSLATE_DISABLED`）。否则分别返回 `SUBTITLE_DISABLED` / `TRANSLATE_NOT_CONFIGURED`。
 - **幂等**：同一源任务已有 `queued/running/translating` 的翻译任务时，重复请求返回 `created=false` 与已有任务（HTTP 200），不会重复入队。
 - **目标语言**：默认 `subtitle_translate_target`；接口 `target_lang` 可覆盖（不得为 `auto`）。
 - **队列与并发**：派生任务进同一 worker 队列，受 `subtitle_concurrency` 约束；`translating` 状态计入“执行中”。

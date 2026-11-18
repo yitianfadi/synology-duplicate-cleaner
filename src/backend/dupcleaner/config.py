@@ -7,9 +7,9 @@ import os
 import re
 
 APP_NAME = "DuplicateCleaner"
-APP_VERSION = "1.1.0-0059"
+APP_VERSION = "1.1.0-0060"
 DISPLAY_NAME = "重复文件清理与字幕"
-SPK_VERSION = "1.1.0-0059"
+SPK_VERSION = "1.1.0-0060"
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8787
@@ -166,7 +166,9 @@ RECYCLE_MODE_LABELS = {
 # ---------------------------------------------------------------------------
 # 通知系统 / 计划扫描（v0046，docs/NOTIFICATION_SCHEDULE_CONTRACT.md）
 # ---------------------------------------------------------------------------
-NOTIFY_CHANNELS = ("dsm", "webhook", "telegram")
+NOTIFY_CHANNELS = ("webhook", "telegram")
+# v0060：dsm 渠道已移除；旧配置/旧客户端仍可提交，校验放行但不投递。
+NOTIFY_LEGACY_CHANNELS = ("dsm",)
 NOTIFY_EVENTS = ("scan_complete", "scan_failed", "subtitle_batch_done",
                  "failure_burst", "freed_threshold",
                  "download_done", "download_failed",
@@ -182,7 +184,9 @@ NOTIFY_EVENT_LABELS = {
     "convert_done": u"转换完成",
     "convert_failed": u"转换失败",
 }
-DSM_NOTIFY_PATH = "/usr/syno/bin/synodsmnotify"
+# v0060：DSM 系统通知（synodsmnotify + sysnotify i18n 资源）仅对 Synology 自家套件开放，
+# 第三方 SPK 声明该资源会在安装时报 4539「该套件使用 Synology 套件专属的资源」。
+# 因此本套件只提供 Webhook / Telegram 两个渠道（见 docs/NOTIFICATION_SCHEDULE_CONTRACT.md）。
 NOTIFY_TIMEOUT_DEFAULT = 5
 NOTIFY_FAIL_THRESHOLD_DEFAULT = 20
 NOTIFY_FREED_THRESHOLD_DEFAULT = 10 * 1024 * 1024 * 1024  # 10 GiB

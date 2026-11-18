@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""v0046：通知系统（DSM / Webhook / Telegram + 事件触发）测试。"""
+"""v0046：通知系统（Webhook / Telegram + 事件触发）测试；v0060 移除 DSM 渠道。"""
 
 import json
 import time
@@ -23,6 +23,8 @@ class FakeTransport(object):
 
 
 class FakeDsmRunner(object):
+    """v0060 起 DSM 渠道已移除；保留占位便于历史测试引用。"""
+
     def __init__(self, ok=True, detail="synodsmnotify ok"):
         self.ok = ok
         self.detail = detail
@@ -37,11 +39,10 @@ class NotificationTestBase(unittest.TestCase):
     def setUp(self):
         self.harness = Harness()
         self.transport = FakeTransport()
-        self.dsm = FakeDsmRunner()
         self.service = NotificationService(
             self.harness.config, self.harness.services.store,
             self.harness.services.settings.get,
-            transport=self.transport, dsm_runner=self.dsm)
+            transport=self.transport)
         self.settings = self.harness.services.settings
         self.store = self.harness.services.store
 
@@ -120,11 +121,12 @@ class NotificationSendTest(NotificationTestBase):
         self.assertTrue(telegram["configured"])
         self.assertNotIn("secret-token", json.dumps(status))
 
-    def test_dsm_skipped_without_synodsmnotify(self):
+    def test_legacy_dsm_channel_is_ignored(self):
+        """v0060：DSM 渠道移除；旧配置里的 dsm 渠道不再投递。"""
         self.enable(notify_channels=["dsm"])
         status = self.service.status()
-        dsm = [item for item in status["channels"] if item["channel"] == "dsm"][0]
-        self.assertFalse(dsm["available"])
+        self.assertEqual([item["channel"] for item in status["channels"]],
+                         ["webhook", "telegram"])
         # 无可用渠道 → 不入队、不发送
         self.assertFalse(self.service.notify("scan_complete", "t", "m"))
 

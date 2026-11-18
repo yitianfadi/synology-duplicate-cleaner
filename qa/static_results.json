@@ -1,7 +1,7 @@
 {
-  "generated_at": "2026-11-17T23:10:51+0800",
+  "generated_at": "2026-11-18T23:00:13+0800",
   "summary": {
-    "PASS": 238,
+    "PASS": 240,
     "FAIL": 0,
     "UNVERIFIED": 0
   },
@@ -52,7 +52,7 @@
       "id": "BE-UNITTEST-LOG",
       "name": "unittest 结果",
       "status": "INFO",
-      "detail": "Ran 846 tests in 151.656s"
+      "detail": "Ran 847 tests in 186.799s"
     },
     {
       "id": "BE-NO-AUTODELETE",
@@ -362,13 +362,19 @@
     },
     {
       "id": "BE-NOTIFY",
-      "name": "通知系统：DSM/Webhook/Telegram + 扫描/删除/字幕批次事件 + 密钥不回显（v0046）",
+      "name": "通知系统：Webhook/Telegram + 扫描/删除/字幕批次事件 + 密钥不回显（v0046；v0060 移除 DSM 渠道）",
       "status": "PASS",
       "detail": ""
     },
     {
       "id": "BE-SCHEDULER",
       "name": "计划扫描：规则解析 + 到点触发 + 负载/忙碌跳过 + 状态持久化 + 字幕批次通知 watcher（v0046）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SPK-NO-SYNOLOGY-RESOURCE",
+      "name": "conf/resource 不声明 Synology 专属 worker（v0060：sysnotify 会让第三方包装载报 4539）",
       "status": "PASS",
       "detail": ""
     },
@@ -446,7 +452,7 @@
     },
     {
       "id": "FE-SUBTITLE-SETTINGS",
-      "name": "设置页可配置目录批量字幕输出方式/默认跳过已有/任务保留上限",
+      "name": "目录批量字幕输出方式/默认跳过已有/任务上限仍可用（v0060 起为固定默认，设置页不再展示）",
       "status": "PASS",
       "detail": ""
     },
@@ -482,19 +488,19 @@
     },
     {
       "id": "FE-SUBTITLE-AUDIO",
-      "name": "设置页提供音频来源（NAS 解码 / 服务器解码）",
+      "name": "音频来源（NAS 解码 / 服务器解码）仍可用（v0060 起固定默认，设置页不再展示）",
       "status": "PASS",
       "detail": ""
     },
     {
       "id": "FE-SUBTITLE-VTT",
-      "name": "默认只生成 SRT，VTT 为可选设置（设置页勾选后才生成）",
+      "name": "默认只生成 SRT，VTT 仍为可选底层能力（v0060 起固定关闭，设置页不再展示）",
       "status": "PASS",
       "detail": ""
     },
     {
       "id": "FE-SUBTITLE-CONCURRENCY",
-      "name": "设置页提供字幕并发任务数（1–4，默认 1，保存后立即生效，v0037）",
+      "name": "字幕并发任务数（默认 1、保存后动态调整 worker）仍可用（v0060 起固定默认）",
       "status": "PASS",
       "detail": ""
     },
@@ -548,19 +554,25 @@
     },
     {
       "id": "FE-SUBTITLE-TRANSLATE-GATE",
-      "name": "补翻译能力门控与“部分译文回退→重新翻译”入口（v0035）",
+      "name": "补翻译能力门控（v0060：只看总开关 + LLM Key）与“部分译文回退→重新翻译”入口",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "FE-SUBTITLE-TRANSLATE-DEFAULT",
+      "name": "v0060：已配置 LLM Key 时字幕弹窗默认勾选“同时生成译文”（单文件/批量）",
       "status": "PASS",
       "detail": ""
     },
     {
       "id": "FE-SUBTITLE-TRANSLATE-OUTPUT",
-      "name": "设置页提供译文输出组合（译文+双语/只写译文/只写双语，v0036）",
+      "name": "译文输出组合（译文+双语/只写译文/只写双语）仍可用（v0060 起固定 both，设置页不再展示）",
       "status": "PASS",
       "detail": ""
     },
     {
       "id": "FE-SUBTITLE-AUDIO-PREFETCH",
-      "name": "设置页提供分片音频预取开关（默认开启，v0040）",
+      "name": "分片音频预取仍默认开启（v0060 起固定默认，设置页不再展示）",
       "status": "PASS",
       "detail": ""
     },
@@ -614,13 +626,13 @@
     },
     {
       "id": "FE-KEEP-RULES",
-      "name": "扫描选项与设置页提供保留规则链：主规则 + 路径优先级 + 文件名优先级 + 字幕/音轨优先（v0043）",
+      "name": "扫描选项提供保留规则链：主规则 + 路径优先级 + 文件名优先级 + 字幕/音轨优先（v0043；v0060 起设置页不再重复）",
       "status": "PASS",
       "detail": ""
     },
     {
       "id": "FE-EXCLUDE-UI",
-      "name": "扫描选项与设置页提供文件名正则/通配符/.ignore/影视附属文件选项（v0043）",
+      "name": "扫描选项提供文件名正则/通配符/.ignore/影视附属文件选项（v0043；v0060 起设置页不再重复）",
       "status": "PASS",
       "detail": ""
     },
@@ -662,19 +674,19 @@
     },
     {
       "id": "FE-AUTOMATION-UI",
-      "name": "设置页「自动化」：计划规则/负载阈值 + 通知渠道/事件/阈值 + 渠道测试按钮（v0046）",
+      "name": "设置页「自动化」：计划规则/扫描目录 + 通知渠道/事件/凭据 + 渠道测试按钮（v0046；v0060 去掉纯参数）",
       "status": "PASS",
       "detail": ""
     },
     {
       "id": "FE-VIDEO-V2",
-      "name": "视频设置：边缘裁剪/时间轴对齐/音频签名开关与权重 + 结果页置信度/方法/音频徽标（v0047）",
+      "name": "视频相似增强（v0047）：结果页置信度/方法/音频徽标；参数在扫描页选择（v0060 起设置页不重复）",
       "status": "PASS",
       "detail": ""
     },
     {
       "id": "FE-SUBTITLE-V2",
-      "name": "字幕设置：自动重试/负载阈值/目录优先级/音轨/目录监控 + 失败清单导出/批量重试/置顶（v0048）",
+      "name": "字幕增强：默认音轨/音轨语言/目录监控 + 失败清单导出/批量重试/置顶（v0048；v0060 去掉纯参数）",
       "status": "PASS",
       "detail": ""
     },
@@ -1340,7 +1352,7 @@
     },
     {
       "id": "SPK-DIST",
-      "name": "构建产物存在（DuplicateCleaner-1.1.0-0059.spk）",
+      "name": "构建产物存在（DuplicateCleaner-1.1.0-0060.spk）",
       "status": "PASS",
       "detail": ""
     },
@@ -1352,7 +1364,7 @@
     },
     {
       "id": "SPK-VERSION",
-      "name": "SPK INFO.version 与当前源码 APP_VERSION（1.1.0-0059）一致",
+      "name": "SPK INFO.version 与当前源码 APP_VERSION（1.1.0-0060）一致",
       "status": "PASS",
       "detail": ""
     },

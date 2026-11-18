@@ -1751,44 +1751,6 @@ import { bindLogsEvents, loadLogs } from './js/logs-page.js';
     updateVideoAvailabilityUi();
   }
 
-  function fillVideoSettingsForm(settings) {
-    if (!settings) { settings = state.settings || DEFAULT_SETTINGS; }
-    var cap = state.video || videoCapability();
-    if (els.setVideoEnabled) {
-      els.setVideoEnabled.checked = settings.video_similarity_enabled === true && cap.available !== false;
-    }
-    setVideoNumberValue(els.setVideoThreshold, settings.video_similarity_threshold, 90, 0, 100);
-    setVideoNumberValue(els.setVideoSampleFrames, settings.video_sample_frames, 20, 5, 100);
-    setVideoNumberValue(els.setVideoMaxInterval, settings.video_max_sample_interval_sec, 300, 60, 600);
-    setVideoNumberValue(els.setVideoConcurrency, settings.video_concurrency, 1, 1, 2);
-    setVideoNumberValue(els.setVideoMaxMb, settings.video_max_file_mb, 8192, 1, 102400);
-    setVideoNumberValue(els.setVideoTimeout, settings.video_timeout_sec, 180, 30, 1800);
-    if (els.setVideoFfmpegPath) { els.setVideoFfmpegPath.value = settings.ffmpeg_path || ''; }
-    if (els.setVideoHwaccel) { renderVideoHwaccelOptions(els.setVideoHwaccel, settings.video_hwaccel || 'auto'); }
-    if (els.setVideoCache) { els.setVideoCache.checked = settings.video_cache !== false; }
-    // v0047：边缘裁剪 / 时间轴偏移 / 音频签名
-    if (els.setVideoCenterCrop) {
-      els.setVideoCenterCrop.checked = settings.video_center_crop_enabled !== false;
-    }
-    if (els.setVideoOffsetAlign) {
-      els.setVideoOffsetAlign.checked = settings.video_offset_align_enabled !== false;
-    }
-    if (els.setVideoAudioSignature) {
-      els.setVideoAudioSignature.checked = settings.video_audio_signature_enabled === true;
-    }
-    if (els.setVideoAudioWeight) {
-      var audioWeight = Number(settings.video_audio_weight);
-      els.setVideoAudioWeight.value = String(
-        isFinite(audioWeight) && audioWeight >= 0 ? audioWeight : 0.2);
-    }
-    updateSettingsVideoFieldsState();
-    var selected = (Array.isArray(settings.video_extensions) && settings.video_extensions.length)
-      ? settings.video_extensions : cap.extensions;
-    renderExtChips(els.setVideoExtList, cap.extensions, selected, null);
-    fillAsrSettingsForm(settings);
-    updateVideoAvailabilityUi();
-  }
-
   function readHwaccelSelect(select) {
     var value = String(select && select.value ? select.value : 'auto').toLowerCase();
     return VIDEO_HWACCEL_MODES.indexOf(value) === -1 ? 'auto' : value;
@@ -1830,48 +1792,6 @@ import { bindLogsEvents, loadLogs } from './js/logs-page.js';
     var ext = readExtChips(els.videoExtList);
     if (!ext.length) { errors.videoExt = '请至少选择一种视频后缀。'; } else { options.video_extensions = ext; }
     readAsrScanOptions(options, errors);
-  }
-
-  function readVideoSettings(settings, errors) {
-    var cap = state.video || videoCapability();
-    if (cap.supported === false) { return; }
-    settings.video_similarity_enabled = !!(els.setVideoEnabled && els.setVideoEnabled.checked) && cap.available !== false;
-    var threshold = readIntOption(els.setVideoThreshold, 0, 100, false, 0, '视频相似度阈值');
-    if (threshold.error) { errors.videoThreshold = threshold.error; } else { settings.video_similarity_threshold = threshold.value; }
-    var frames = readIntOption(els.setVideoSampleFrames, 5, 100, false, 0, '视频抽样帧数');
-    if (frames.error) { errors.videoFrames = frames.error; } else { settings.video_sample_frames = frames.value; }
-    var interval = readIntOption(els.setVideoMaxInterval, 60, 600, false, 0, '最大采样间隔（秒）');
-    if (interval.error) { errors.videoInterval = interval.error; } else { settings.video_max_sample_interval_sec = interval.value; }
-    var concurrency = readIntOption(els.setVideoConcurrency, 1, 2, false, 0, '视频并发数');
-    if (concurrency.error) { errors.videoConcurrency = concurrency.error; } else { settings.video_concurrency = concurrency.value; }
-    var maxFile = readIntOption(els.setVideoMaxMb, 1, 102400, false, 0, '单视频大小上限（MB）');
-    if (maxFile.error) { errors.videoMaxFile = maxFile.error; } else { settings.video_max_file_mb = maxFile.value; }
-    var timeout = readIntOption(els.setVideoTimeout, 30, 1800, false, 0, '单视频超时（秒）');
-    if (timeout.error) { errors.videoTimeout = timeout.error; } else { settings.video_timeout_sec = timeout.value; }
-    var ffmpegPath = readFfmpegPathInput(els.setVideoFfmpegPath);
-    if (ffmpegPath.error) { errors.videoFfmpegPath = ffmpegPath.error; }
-    else { settings.ffmpeg_path = ffmpegPath.value; }
-    settings.video_hwaccel = readHwaccelSelect(els.setVideoHwaccel);
-    settings.video_cache = !!(els.setVideoCache && els.setVideoCache.checked);
-    // v0047：边缘裁剪 / 时间轴偏移 / 音频签名
-    settings.video_center_crop_enabled = els.setVideoCenterCrop
-      ? !!els.setVideoCenterCrop.checked : true;
-    settings.video_offset_align_enabled = els.setVideoOffsetAlign
-      ? !!els.setVideoOffsetAlign.checked : true;
-    settings.video_audio_signature_enabled = !!(els.setVideoAudioSignature
-      && els.setVideoAudioSignature.checked);
-    var audioWeightRaw = String(els.setVideoAudioWeight
-      ? els.setVideoAudioWeight.value : '').trim();
-    var audioWeight = parseFloat(audioWeightRaw);
-    if (audioWeightRaw === '' || !isFinite(audioWeight)
-        || audioWeight < 0 || audioWeight > 0.5) {
-      errors.videoAudioWeight = '音频签名权重需在 0–0.5 之间。';
-    } else {
-      settings.video_audio_weight = Math.round(audioWeight * 100) / 100;
-    }
-    var ext = readExtChips(els.setVideoExtList);
-    if (!ext.length) { errors.videoExt = '请至少选择一种视频后缀。'; } else { settings.video_extensions = ext; }
-    readAsrSettings(settings, errors);
   }
 
   function videoScanEnabledForResults() {
@@ -2027,18 +1947,6 @@ import { bindLogsEvents, loadLogs } from './js/logs-page.js';
     updateAsrStatusUi();
   }
 
-  function fillAsrSettingsForm(settings) {
-    if (!settings) { settings = state.settings || DEFAULT_SETTINGS; }
-    var cap = asrCapability();
-    var enabled = cap.supported && settings.video_asr_enabled === true && cap.status !== 'unavailable';
-    if (els.setVideoAsrEnabled) { els.setVideoAsrEnabled.checked = enabled; }
-    if (els.setVideoAsrCommand) { els.setVideoAsrCommand.value = settings.video_asr_command || ''; }
-    setDecimalField(els.setVideoAsrWeight, settings.video_asr_weight, 0.15, 0, 0.5);
-    setVideoNumberValue(els.setVideoAsrTimeout, settings.video_asr_timeout_sec, 300, 30, 1800);
-    setVideoNumberValue(els.setVideoAsrMaxSec, settings.video_asr_max_sec, 600, 30, 3600);
-    updateAsrStatusUi();
-  }
-
   function readFloatOption(input, min, max, label) {
     var raw = String(input && input.value !== null && input.value !== undefined ? input.value : '').trim();
     if (!raw) { return { value: null, error: label + '不能为空。' }; }
@@ -2071,24 +1979,6 @@ import { bindLogsEvents, loadLogs } from './js/logs-page.js';
     if (maxSec.error) { errors.videoAsrMaxSec = maxSec.error; } else { options.video_asr_max_sec = maxSec.value; }
   }
 
-  function readAsrSettings(settings, errors) {
-    var cap = asrCapability();
-    if (!cap.supported) { return; }
-    settings.video_asr_enabled = !!(els.setVideoAsrEnabled && els.setVideoAsrEnabled.checked) && cap.status !== 'unavailable';
-    var command = els.setVideoAsrCommand ? els.setVideoAsrCommand.value.trim() : '';
-    if (command.length > 2000) {
-      errors.videoAsrCommand = 'ASR 命令模板最多 2000 个字符。';
-    } else {
-      settings.video_asr_command = command;
-    }
-    var weight = readFloatOption(els.setVideoAsrWeight, 0, 0.5, 'ASR 文本分数权重');
-    if (weight.error) { errors.videoAsrWeight = weight.error; } else { settings.video_asr_weight = weight.value; }
-    var timeout = readIntOption(els.setVideoAsrTimeout, 30, 1800, false, 0, 'ASR 单次超时（秒）');
-    if (timeout.error) { errors.videoAsrTimeout = timeout.error; } else { settings.video_asr_timeout_sec = timeout.value; }
-    var maxSec = readIntOption(els.setVideoAsrMaxSec, 30, 3600, false, 0, 'ASR 最大处理时长（秒）');
-    if (maxSec.error) { errors.videoAsrMaxSec = maxSec.error; } else { settings.video_asr_max_sec = maxSec.value; }
-  }
-
   function subtitleHasKey(obj, key) {
     return !!obj && Object.prototype.hasOwnProperty.call(obj, key);
   }
@@ -2100,13 +1990,15 @@ import { bindLogsEvents, loadLogs } from './js/logs-page.js';
       subtitleHasKey(raw, 'subtitle_asr_base_url') ||
       subtitleHasKey(raw, 'subtitle_asr_api_key_set')
     );
+    var llmKeySet = supported && raw.subtitle_llm_api_key_set === true;
     state.subtitle = {
       supported: supported,
       enabled: supported && raw.subtitle_enabled === true,
       asrKeySet: supported && raw.subtitle_asr_api_key_set === true,
-      llmKeySet: supported && raw.subtitle_llm_api_key_set === true,
+      llmKeySet: llmKeySet,
       asrLanguage: (raw && raw.subtitle_asr_language) || 'auto',
-      translateEnabled: supported && raw.subtitle_translate_enabled === true,
+      // v0060：翻译不再受设置总开关限制，配了 LLM API Key 就可用
+      translateEnabled: llmKeySet,
       targetLang: (raw && raw.subtitle_translate_target) || 'zh',
       writeVtt: supported && raw.subtitle_write_vtt === true
     };
@@ -2150,7 +2042,7 @@ import { bindLogsEvents, loadLogs } from './js/logs-page.js';
       } else if (!sub.asrKeySet) {
         hint = '已启用但未配置 ASR API Key：生成按钮保持禁用。API Key 只写不读，保存后仅显示“已配置”状态。';
       } else if (!sub.llmKeySet) {
-        hint = 'ASR 已配置；LLM API Key 未配置，弹窗中“生成译文”将不可用。音频会上传到所配置的第三方服务。';
+        hint = 'ASR 已配置；LLM API Key 未配置，弹窗中“生成译文”将不可用（配置后默认勾选）。音频会上传到所配置的第三方服务。';
       }
       setText(els.subtitleStatusHint, hint);
     }
@@ -2186,60 +2078,10 @@ import { bindLogsEvents, loadLogs } from './js/logs-page.js';
     if (els.subtitleAsrBaseUrl) { els.subtitleAsrBaseUrl.value = s.subtitle_asr_base_url || ''; }
     if (els.subtitleAsrModel) { els.subtitleAsrModel.value = s.subtitle_asr_model || ''; }
     if (els.subtitleAsrLanguage) { fillLanguageSelect(els.subtitleAsrLanguage, s.subtitle_asr_language, 'auto'); }
-    // v0032：音频来源 nas（默认，由 NAS 转音频后上传）| server（按段上传原视频给 ASR 服务端转音频）
-    if (els.subtitleAudioSource) {
-      els.subtitleAudioSource.value = s.subtitle_audio_source === 'server' ? 'server' : 'nas';
-    }
-    if (els.subtitleWriteVtt) {
-      els.subtitleWriteVtt.checked = s.subtitle_write_vtt === true;
-    }
-    // v0040：分片音频预取（默认开；显式 false 才关闭以兼容旧设置）
-    if (els.subtitleAudioPrefetch) {
-      els.subtitleAudioPrefetch.checked = s.subtitle_audio_prefetch !== false;
-    }
-    setVideoNumberValue(els.subtitleAsrTimeout, s.subtitle_asr_timeout_sec, 300, 30, 1800);
-    setVideoNumberValue(els.subtitleAsrChunk, s.subtitle_asr_chunk_sec, 600, 60, 1800);
-    setVideoNumberValue(els.subtitleAsrMaxAudioMb, s.subtitle_asr_max_audio_mb, 24, 1, 100);
-    if (els.subtitleTranslateEnabled) { els.subtitleTranslateEnabled.checked = s.subtitle_translate_enabled === true; }
     if (els.subtitleLlmBaseUrl) { els.subtitleLlmBaseUrl.value = s.subtitle_llm_base_url || ''; }
     if (els.subtitleLlmModel) { els.subtitleLlmModel.value = s.subtitle_llm_model || ''; }
-    if (els.subtitleTranslateTarget) { fillLanguageSelect(els.subtitleTranslateTarget, s.subtitle_translate_target, 'zh'); }
-    setVideoNumberValue(els.subtitleTranslateTimeout, s.subtitle_translate_timeout_sec, 120, 30, 900);
-    setVideoNumberValue(els.subtitleTranslateBatchSize, s.subtitle_translate_batch_size, 20, 1, 40);
     if (els.subtitleLlmDisableThinking) {
       els.subtitleLlmDisableThinking.checked = s.subtitle_llm_disable_thinking === true;
-    }
-    if (els.setSubtitleOutputMode) {
-      els.setSubtitleOutputMode.value = s.subtitle_output_mode === 'download_only'
-        ? 'download_only' : 'alongside_video';
-    }
-    if (els.setSubtitleSkipExisting) {
-      els.setSubtitleSkipExisting.checked = s.subtitle_skip_existing !== false;
-    }
-    // v0036：译文输出组合（both/target_only/bilingual_only，默认 both）
-    if (els.setSubtitleTranslateOutputs) {
-      var translateOutputs = s.subtitle_translate_outputs;
-      els.setSubtitleTranslateOutputs.value =
-        (translateOutputs === 'target_only' || translateOutputs === 'bilingual_only')
-          ? translateOutputs : 'both';
-    }
-    setVideoNumberValue(els.setSubtitleJobLimit, s.subtitle_job_limit, 200, 20, 1000);
-    // v0034/v0037：同时执行的字幕任务数（1..4，默认 1 串行；保存后立即生效，无需重启）
-    setVideoNumberValue(els.setSubtitleConcurrency, s.subtitle_concurrency, 1, 1, 4);
-    // v0048：自动重试 / 负载阈值 / 目录优先级 / 音轨 / 目录监控
-    if (els.setSubtitleAutoRetry) {
-      els.setSubtitleAutoRetry.checked = s.subtitle_auto_retry_enabled !== false;
-    }
-    setVideoNumberValue(els.setSubtitleAutoRetryMax, s.subtitle_auto_retry_max, 1, 0, 3);
-    if (els.setSubtitleNoSpeechSkip) {
-      els.setSubtitleNoSpeechSkip.checked = s.subtitle_no_speech_skip !== false;
-    }
-    if (els.setSubtitleMaxLoad) {
-      var maxLoad = Number(s.subtitle_max_load);
-      els.setSubtitleMaxLoad.value = String(isFinite(maxLoad) && maxLoad > 0 ? maxLoad : 0);
-    }
-    if (els.setSubtitleDirPriorities) {
-      els.setSubtitleDirPriorities.value = linesToText(s.subtitle_dir_priorities);
     }
     if (els.setSubtitleAudioTrack) {
       els.setSubtitleAudioTrack.value = s.subtitle_audio_track || '';
@@ -2253,7 +2095,6 @@ import { bindLogsEvents, loadLogs } from './js/logs-page.js';
     if (els.setSubtitleWatchDirs) {
       els.setSubtitleWatchDirs.value = linesToText(s.subtitle_watch_dirs);
     }
-    setVideoNumberValue(els.setSubtitleWatchInterval, s.subtitle_watch_interval_sec, 300, 60, 86400);
     if (els.subtitleAsrApiKey) { els.subtitleAsrApiKey.value = ''; }
     if (els.subtitleLlmApiKey) { els.subtitleLlmApiKey.value = ''; }
     if (els.subtitleClearAsrKey) { els.subtitleClearAsrKey.checked = false; }
@@ -2302,21 +2143,6 @@ import { bindLogsEvents, loadLogs } from './js/logs-page.js';
       settings.subtitle_asr_language = SUBTITLE_LANGUAGE_RE.test(asrLanguage)
         ? asrLanguage : 'auto';
     }
-    // v0032：音频来源只接受 nas / server，缺失或非法值一律回落到 nas（默认）；
-    // server 表示把原视频按段上传给 ASR 服务器转音频（更快，但会上传原视频）。
-    var audioSource = els.subtitleAudioSource
-      ? String(els.subtitleAudioSource.value || '').trim()
-      : '';
-    settings.subtitle_audio_source = audioSource === 'server' ? 'server' : 'nas';
-    settings.subtitle_write_vtt = !!(els.subtitleWriteVtt && els.subtitleWriteVtt.checked);
-    settings.subtitle_audio_prefetch = !!(els.subtitleAudioPrefetch && els.subtitleAudioPrefetch.checked);
-    var asrTimeout = readSubtitleInt(els.subtitleAsrTimeout, 30, 1800, 'ASR 超时', errors, 'subtitleAsrTimeout');
-    if (asrTimeout !== null) { settings.subtitle_asr_timeout_sec = asrTimeout; }
-    var asrChunk = readSubtitleInt(els.subtitleAsrChunk, 60, 1800, '音频分块', errors, 'subtitleAsrChunk');
-    if (asrChunk !== null) { settings.subtitle_asr_chunk_sec = asrChunk; }
-    var asrMaxAudio = readSubtitleInt(els.subtitleAsrMaxAudioMb, 1, 100, '单块音频上限', errors, 'subtitleAsrMaxAudioMb');
-    if (asrMaxAudio !== null) { settings.subtitle_asr_max_audio_mb = asrMaxAudio; }
-    settings.subtitle_translate_enabled = !!(els.subtitleTranslateEnabled && els.subtitleTranslateEnabled.checked);
     settings.subtitle_llm_base_url = normalizeSubtitleUrl(
       els.subtitleLlmBaseUrl ? els.subtitleLlmBaseUrl.value : '',
       'LLM Base URL', errors, 'subtitleLlmBaseUrl');
@@ -2324,52 +2150,8 @@ import { bindLogsEvents, loadLogs } from './js/logs-page.js';
     if (!llmModel) { errors.subtitleLlmModel = 'LLM 模型不能为空。'; }
     else if (llmModel.length > 200) { errors.subtitleLlmModel = 'LLM 模型名称过长。'; }
     else { settings.subtitle_llm_model = llmModel; }
-    if (els.subtitleTranslateTarget) {
-      var translateTarget = String(els.subtitleTranslateTarget.value || '').trim();
-      settings.subtitle_translate_target =
-        (SUBTITLE_LANGUAGE_RE.test(translateTarget)
-          && translateTarget.toLowerCase() !== 'auto')
-          ? translateTarget : 'zh';
-    }
-    var translateTimeout = readSubtitleInt(els.subtitleTranslateTimeout, 30, 900, '翻译超时', errors, 'subtitleTranslateTimeout');
-    if (translateTimeout !== null) { settings.subtitle_translate_timeout_sec = translateTimeout; }
-    var batchSize = readSubtitleInt(els.subtitleTranslateBatchSize, 1, 40, '翻译批大小', errors, 'subtitleTranslateBatchSize');
-    if (batchSize !== null) { settings.subtitle_translate_batch_size = batchSize; }
-    // v0030：本地推理模型可关闭“思考”（默认关，避免不兼容服务拒收）
-    settings.subtitle_llm_disable_thinking = !!(els.subtitleLlmDisableThinking && els.subtitleLlmDisableThinking.checked);
-    var jobLimit = readSubtitleInt(els.setSubtitleJobLimit, 20, 1000, '字幕任务保留上限', errors, 'setSubtitleJobLimit');
-    if (jobLimit !== null) { settings.subtitle_job_limit = jobLimit; }
-    // v0034/v0037：字幕并发任务数（1..4，默认 1；保存后立即生效，无需重启套件）
-    var subtitleConcurrency = readSubtitleInt(els.setSubtitleConcurrency, 1, 4, '字幕并发任务数', errors, 'setSubtitleConcurrency');
-    if (subtitleConcurrency !== null) { settings.subtitle_concurrency = subtitleConcurrency; }
-    // v0048：自动重试 / 负载阈值 / 目录优先级 / 音轨 / 目录监控
-    settings.subtitle_auto_retry_enabled = !!(els.setSubtitleAutoRetry
-      && els.setSubtitleAutoRetry.checked);
-    var autoRetryMax = readSubtitleInt(els.setSubtitleAutoRetryMax, 0, 3,
-      '自动重试次数上限', errors, 'setSubtitleAutoRetryMax');
-    if (autoRetryMax !== null) { settings.subtitle_auto_retry_max = autoRetryMax; }
-    settings.subtitle_no_speech_skip = !!(els.setSubtitleNoSpeechSkip
-      && els.setSubtitleNoSpeechSkip.checked);
-    var maxLoadRaw = String(els.setSubtitleMaxLoad ? els.setSubtitleMaxLoad.value : '0').trim();
-    var maxLoad = parseFloat(maxLoadRaw || '0');
-    if (!isFinite(maxLoad) || maxLoad < 0 || maxLoad > 256) {
-      errors.subtitleMaxLoad = '负载阈值需在 0–256 之间（0 = 不限制）。';
-    } else {
-      settings.subtitle_max_load = Math.round(maxLoad * 100) / 100;
-    }
-    var dirPriorities = textToLines(els.setSubtitleDirPriorities
-      ? els.setSubtitleDirPriorities.value : '');
-    var badDirPriority = '';
-    dirPriorities.forEach(function (item) {
-      if (!badDirPriority && !isAbsolutePath(item)) { badDirPriority = item; }
-    });
-    if (badDirPriority) {
-      errors.subtitleDirPriorities = '目录优先级必须是绝对路径：' + badDirPriority;
-    } else if (dirPriorities.length > 50) {
-      errors.subtitleDirPriorities = '目录优先级最多 50 条。';
-    } else {
-      settings.subtitle_dir_priorities = dirPriorities;
-    }
+    settings.subtitle_llm_disable_thinking = !!(els.subtitleLlmDisableThinking
+      && els.subtitleLlmDisableThinking.checked);
     var audioTrack = String(els.setSubtitleAudioTrack
       ? els.setSubtitleAudioTrack.value : '').trim().toLowerCase();
     if (!audioTrack || audioTrack === 'auto' || audioTrack === 'default') {
@@ -2401,26 +2183,6 @@ import { bindLogsEvents, loadLogs } from './js/logs-page.js';
     } else {
       settings.subtitle_watch_dirs = watchDirs;
     }
-    var watchInterval = readSubtitleInt(els.setSubtitleWatchInterval, 60, 86400,
-      '监控扫描间隔', errors, 'setSubtitleWatchInterval');
-    if (watchInterval !== null) { settings.subtitle_watch_interval_sec = watchInterval; }
-    if (els.setSubtitleOutputMode) {
-      settings.subtitle_output_mode = els.setSubtitleOutputMode.value === 'download_only'
-        ? 'download_only' : 'alongside_video';
-    }
-    if (els.setSubtitleSkipExisting) {
-      settings.subtitle_skip_existing = !!els.setSubtitleSkipExisting.checked;
-    }
-    // v0036：译文输出组合（both/target_only/bilingual_only，默认 both）
-    if (els.setSubtitleTranslateOutputs) {
-      var translateOutputsValue = String(
-        els.setSubtitleTranslateOutputs.value || '').trim();
-      var allowedTranslateOutputs = SUBTITLE_TRANSLATE_OUTPUTS.map(
-        function (item) { return item.value; });
-      settings.subtitle_translate_outputs =
-        allowedTranslateOutputs.indexOf(translateOutputsValue) !== -1
-          ? translateOutputsValue : 'both';
-    }
     var asrKey = els.subtitleAsrApiKey ? els.subtitleAsrApiKey.value.trim() : '';
     if (els.subtitleClearAsrKey && els.subtitleClearAsrKey.checked) {
       settings.subtitle_clear_asr_api_key = true;
@@ -2441,29 +2203,6 @@ import { bindLogsEvents, loadLogs } from './js/logs-page.js';
     if (els.setDownloadOutputDir) {
       els.setDownloadOutputDir.value = s.download_output_dir || '';
     }
-    if (els.setDownloadSubdirMode) {
-      var mode = String(s.download_subdir_mode || 'none');
-      if (['none', 'site', 'date', 'site_date', 'custom'].indexOf(mode) === -1) {
-        mode = 'none';
-      }
-      els.setDownloadSubdirMode.value = mode;
-    }
-    if (els.setDownloadSubdirTemplate) {
-      els.setDownloadSubdirTemplate.value =
-        s.download_subdir_template || '{site}/{date}';
-    }
-    setVideoNumberValue(els.setDownloadConcurrency, s.download_concurrency, 2, 1, 4);
-    setVideoNumberValue(els.setDownloadSegmentConcurrency,
-      s.download_segment_concurrency, 4, 1, 16);
-    setVideoNumberValue(els.setDownloadRetry, s.download_retry, 3, 0, 10);
-    setVideoNumberValue(els.setDownloadTimeout, s.download_timeout_sec, 30, 5, 300);
-    setVideoNumberValue(els.setDownloadRateLimit, s.download_rate_limit_kbps, 0, 0, 1048576);
-    if (els.setDownloadMaxHeight) {
-      els.setDownloadMaxHeight.value = String(parseInt(s.download_max_height, 10) || 0);
-    }
-    if (els.setDownloadUserAgent) {
-      els.setDownloadUserAgent.value = s.download_user_agent || '';
-    }
     if (els.setDownloadReferer) {
       els.setDownloadReferer.value = s.download_referer || '';
     }
@@ -2482,49 +2221,14 @@ import { bindLogsEvents, loadLogs } from './js/logs-page.js';
     if (els.setDownloadAllowPrivate) {
       els.setDownloadAllowPrivate.checked = s.download_allow_private === true;
     }
-    if (els.setDownloadKeepTemp) {
-      els.setDownloadKeepTemp.checked = s.download_keep_temp === true;
-    }
-    setVideoNumberValue(els.setDownloadMinFreeGb, s.download_min_free_gb, 20, 0, 102400);
-    setVideoNumberValue(els.setDownloadVerifyTolerance,
-      s.download_verify_tolerance_sec, 5, 0, 600);
-    setVideoNumberValue(els.setDownloadJobLimit, s.download_job_limit, 500, 10, 5000);
     if (els.setDownloadSubscribeEnabled) {
       els.setDownloadSubscribeEnabled.checked =
         s.download_subscribe_enabled === true;
     }
-    if (els.setDownloadAutoScan) {
-      els.setDownloadAutoScan.checked = s.download_auto_scan === true;
-    }
-    if (els.setDownloadAutoSubtitle) {
-      els.setDownloadAutoSubtitle.checked = s.download_auto_subtitle === true;
-    }
-    // v0053：去重 / 自动重试 / 分时限速 / 文件名模板
-    if (els.setDownloadSkipExisting) {
-      els.setDownloadSkipExisting.checked = s.download_skip_existing !== false;
-    }
-    if (els.setDownloadAutoRetry) {
-      els.setDownloadAutoRetry.checked = s.download_auto_retry !== false;
-    }
-    setVideoNumberValue(els.setDownloadAutoRetryMax, s.download_auto_retry_max, 2, 0, 5);
-    if (els.setDownloadOffpeakEnabled) {
-      els.setDownloadOffpeakEnabled.checked = s.download_offpeak_enabled === true;
-    }
-    if (els.setDownloadOffpeakStart) {
-      els.setDownloadOffpeakStart.value = s.download_offpeak_start || '01:00';
-    }
-    if (els.setDownloadOffpeakEnd) {
-      els.setDownloadOffpeakEnd.value = s.download_offpeak_end || '08:00';
-    }
-    setVideoNumberValue(els.setDownloadOffpeakRate,
-      s.download_offpeak_rate_limit_kbps, 0, 0, 1048576);
-    if (els.setDownloadNameTemplate) {
-      els.setDownloadNameTemplate.value = s.download_name_template || '{title}';
-    }
     if (els.settingsDownloadSummary) {
       setText(els.settingsDownloadSummary,
         '默认目录 ' + (s.download_output_dir || '未设置') +
-        ' · 同时 ' + (parseInt(s.download_concurrency, 10) || 2) + ' 个');
+        ' · 订阅' + (s.download_subscribe_enabled === true ? '开' : '关'));
     }
   }
 
@@ -2535,45 +2239,6 @@ import { bindLogsEvents, loadLogs } from './js/logs-page.js';
       errors.downloadOutputDir = '默认下载目录必须是绝对路径（或留空）。';
     }
     settings.download_output_dir = outputDir;
-    var subdirMode = String(els.setDownloadSubdirMode
-      ? els.setDownloadSubdirMode.value : 'none');
-    settings.download_subdir_mode =
-      ['none', 'site', 'date', 'site_date', 'custom'].indexOf(subdirMode) === -1
-        ? 'none' : subdirMode;
-    var template = String(els.setDownloadSubdirTemplate
-      ? els.setDownloadSubdirTemplate.value : '').trim();
-    if (template) {
-      if (template.indexOf('..') !== -1) {
-        errors.downloadSubdirTemplate = '模板不能包含 ..。';
-      } else if (/^[\\/]/.test(template) || /^[A-Za-z]:/.test(template)) {
-        errors.downloadSubdirTemplate = '模板必须是相对路径。';
-      }
-    }
-    settings.download_subdir_template = template;
-    var concurrency = readSubtitleInt(els.setDownloadConcurrency, 1, 4,
-      '同时下载任务数', errors, 'downloadConcurrency');
-    if (concurrency !== null) { settings.download_concurrency = concurrency; }
-    var segmentConcurrency = readSubtitleInt(els.setDownloadSegmentConcurrency,
-      1, 16, '单任务分片并发', errors, 'downloadSegmentConcurrency');
-    if (segmentConcurrency !== null) {
-      settings.download_segment_concurrency = segmentConcurrency;
-    }
-    var retry = readSubtitleInt(els.setDownloadRetry, 0, 10,
-      '分片失败重试次数', errors, 'downloadRetry');
-    if (retry !== null) { settings.download_retry = retry; }
-    var timeout = readSubtitleInt(els.setDownloadTimeout, 5, 300,
-      '单次请求超时', errors, 'downloadTimeout');
-    if (timeout !== null) { settings.download_timeout_sec = timeout; }
-    var rateLimit = readSubtitleInt(els.setDownloadRateLimit, 0, 1048576,
-      '全局限速', errors, 'downloadRateLimit');
-    if (rateLimit !== null) { settings.download_rate_limit_kbps = rateLimit; }
-    if (els.setDownloadMaxHeight) {
-      var maxHeight = parseInt(els.setDownloadMaxHeight.value, 10);
-      settings.download_max_height =
-        isFinite(maxHeight) && maxHeight > 0 ? maxHeight : 0;
-    }
-    settings.download_user_agent = String(els.setDownloadUserAgent
-      ? els.setDownloadUserAgent.value : '').trim();
     var referer = String(els.setDownloadReferer
       ? els.setDownloadReferer.value : '').trim();
     if (referer && !/^https?:\/\/[^\s]+$/i.test(referer)) {
@@ -2595,135 +2260,30 @@ import { bindLogsEvents, loadLogs } from './js/logs-page.js';
     settings.download_proxy = proxy;
     settings.download_allow_private = !!(els.setDownloadAllowPrivate
       && els.setDownloadAllowPrivate.checked);
-    settings.download_keep_temp = !!(els.setDownloadKeepTemp
-      && els.setDownloadKeepTemp.checked);
-    var minFree = readSubtitleInt(els.setDownloadMinFreeGb, 0, 102400,
-      '最少剩余空间', errors, 'downloadMinFreeGb');
-    if (minFree !== null) { settings.download_min_free_gb = minFree; }
-    var tolerance = readSubtitleInt(els.setDownloadVerifyTolerance, 0, 600,
-      '合并时长校验容差', errors, 'downloadVerifyTolerance');
-    if (tolerance !== null) {
-      settings.download_verify_tolerance_sec = tolerance;
-    }
-    var jobLimit = readSubtitleInt(els.setDownloadJobLimit, 10, 5000,
-      '已完成下载任务保留上限', errors, 'downloadJobLimit');
-    if (jobLimit !== null) { settings.download_job_limit = jobLimit; }
     settings.download_subscribe_enabled = !!(els.setDownloadSubscribeEnabled
       && els.setDownloadSubscribeEnabled.checked);
-    settings.download_auto_scan = !!(els.setDownloadAutoScan
-      && els.setDownloadAutoScan.checked);
-    settings.download_auto_subtitle = !!(els.setDownloadAutoSubtitle
-      && els.setDownloadAutoSubtitle.checked);
-    // v0053：去重 / 自动重试 / 分时限速 / 文件名模板
-    settings.download_skip_existing = !!(els.setDownloadSkipExisting
-      && els.setDownloadSkipExisting.checked);
-    settings.download_auto_retry = !!(els.setDownloadAutoRetry
-      && els.setDownloadAutoRetry.checked);
-    var autoRetryMax = readSubtitleInt(els.setDownloadAutoRetryMax, 0, 5,
-      '自动重试次数上限', errors, 'downloadAutoRetryMax');
-    if (autoRetryMax !== null) { settings.download_auto_retry_max = autoRetryMax; }
-    settings.download_offpeak_enabled = !!(els.setDownloadOffpeakEnabled
-      && els.setDownloadOffpeakEnabled.checked);
-    var hhmmRe = /^([01]\d|2[0-3]):[0-5]\d$/;
-    var offpeakStart = String(els.setDownloadOffpeakStart
-      ? els.setDownloadOffpeakStart.value : '').trim();
-    if (!hhmmRe.test(offpeakStart)) {
-      errors.downloadOffpeakStart = '低谷开始时间需为 HH:MM（如 01:00）。';
-    } else {
-      settings.download_offpeak_start = offpeakStart;
-    }
-    var offpeakEnd = String(els.setDownloadOffpeakEnd
-      ? els.setDownloadOffpeakEnd.value : '').trim();
-    if (!hhmmRe.test(offpeakEnd)) {
-      errors.downloadOffpeakEnd = '低谷结束时间需为 HH:MM（如 08:00）。';
-    } else {
-      settings.download_offpeak_end = offpeakEnd;
-    }
-    var offpeakRate = readSubtitleInt(els.setDownloadOffpeakRate, 0, 1048576,
-      '低谷限速', errors, 'downloadOffpeakRate');
-    if (offpeakRate !== null) {
-      settings.download_offpeak_rate_limit_kbps = offpeakRate;
-    }
-    var nameTemplate = String(els.setDownloadNameTemplate
-      ? els.setDownloadNameTemplate.value : '').trim();
-    if (!nameTemplate) {
-      errors.downloadNameTemplate = '文件名模板不能为空（例如 {title}）。';
-    } else if (/[\\/]/.test(nameTemplate)) {
-      errors.downloadNameTemplate = '文件名模板不能包含路径分隔符。';
-    } else {
-      settings.download_name_template = nameTemplate;
-    }
   }
 
+  // ---------- 格式转换设置（v0056；v0060 只保留输出位置） ----------
   // ---------- 格式转换设置（v0056） ----------
   function fillConvertSettingsForm(settings) {
     var s = settings || {};
-    if (els.setConvertOutputDir) {
-      els.setConvertOutputDir.value = s.convert_output_dir || '';
-    }
     if (els.setConvertOutputMode) {
       var mode = String(s.convert_output_mode || 'alongside');
-      if (['alongside', 'fixed', 'subdir'].indexOf(mode) === -1) {
-        mode = 'alongside';
-      }
+      if (['alongside', 'fixed', 'subdir'].indexOf(mode) === -1) { mode = 'alongside'; }
       els.setConvertOutputMode.value = mode;
+    }
+    if (els.setConvertOutputDir) {
+      els.setConvertOutputDir.value = s.convert_output_dir || '';
     }
     if (els.setConvertOutputSubdir) {
       els.setConvertOutputSubdir.value = s.convert_output_subdir || 'converted';
     }
-    setVideoNumberValue(els.setConvertConcurrency, s.convert_concurrency, 1, 1, 2);
-    if (els.setConvertDefaultPreset) {
-      els.setConvertDefaultPreset.value = s.convert_default_preset || 'mp4_h264';
-    }
-    if (els.setConvertQuality) {
-      els.setConvertQuality.value = s.convert_quality || 'standard';
-    }
-    if (els.setConvertSpeed) {
-      els.setConvertSpeed.value = s.convert_speed || 'veryfast';
-    }
-    if (els.setConvertMaxResolution) {
-      els.setConvertMaxResolution.value =
-        String(parseInt(s.convert_max_resolution, 10) || 0);
-    }
-    if (els.setConvertOverwrite) {
-      els.setConvertOverwrite.value = s.convert_overwrite || 'rename';
-    }
-    if (els.setConvertNameTemplate) {
-      els.setConvertNameTemplate.value = s.convert_name_template || '{name}';
-    }
-    if (els.setConvertKeepSource) {
-      els.setConvertKeepSource.checked = s.convert_keep_source !== false;
-    }
-    if (els.setConvertCopySubtitles) {
-      els.setConvertCopySubtitles.checked = s.convert_copy_subtitles !== false;
-    }
-    if (els.setConvertKeepTemp) {
-      els.setConvertKeepTemp.checked = s.convert_keep_temp === true;
-    }
-    setVideoNumberValue(els.setConvertJobLimit, s.convert_job_limit, 500, 10, 5000);
-    setVideoNumberValue(els.setConvertMinFreeGb, s.convert_min_free_gb, 20, 0, 102400);
-    if (els.setConvertOffpeakEnabled) {
-      els.setConvertOffpeakEnabled.checked = s.convert_offpeak_enabled === true;
-    }
-    if (els.setConvertOffpeakStart) {
-      els.setConvertOffpeakStart.value = s.convert_offpeak_start || '01:00';
-    }
-    if (els.setConvertOffpeakEnd) {
-      els.setConvertOffpeakEnd.value = s.convert_offpeak_end || '07:00';
-    }
-    if (els.setConvertAutoScan) {
-      els.setConvertAutoScan.checked = s.convert_auto_scan === true;
-    }
-    if (els.setConvertAutoSubtitle) {
-      els.setConvertAutoSubtitle.checked = s.convert_auto_subtitle === true;
-    }
     if (els.settingsConvertSummary) {
-      var where = s.convert_output_mode === 'fixed' ||
-        s.convert_output_mode === 'subdir'
-        ? (s.convert_output_dir || '未设置目录')
-        : '源目录';
-      setText(els.settingsConvertSummary, where + ' · 同时 ' +
-        (parseInt(s.convert_concurrency, 10) || 1) + ' 个');
+      var where = (s.convert_output_mode === 'fixed'
+        || s.convert_output_mode === 'subdir')
+        ? (s.convert_output_dir || '未设置目录') : '源目录';
+      setText(els.settingsConvertSummary, where + ' · 预设/质量在转换页选择');
     }
   }
 
@@ -2748,68 +2308,6 @@ import { bindLogsEvents, loadLogs } from './js/logs-page.js';
     } else {
       settings.convert_output_subdir = sub;
     }
-    var concurrency = readSubtitleInt(els.setConvertConcurrency, 1, 2,
-      '同时转换任务数', errors, 'convertConcurrency');
-    if (concurrency !== null) { settings.convert_concurrency = concurrency; }
-    if (els.setConvertDefaultPreset) {
-      settings.convert_default_preset = els.setConvertDefaultPreset.value;
-    }
-    if (els.setConvertQuality) {
-      settings.convert_quality = els.setConvertQuality.value;
-    }
-    if (els.setConvertSpeed) {
-      settings.convert_speed = els.setConvertSpeed.value;
-    }
-    if (els.setConvertMaxResolution) {
-      var resolution = parseInt(els.setConvertMaxResolution.value, 10);
-      settings.convert_max_resolution =
-        isFinite(resolution) && resolution > 0 ? resolution : 0;
-    }
-    if (els.setConvertOverwrite) {
-      settings.convert_overwrite = els.setConvertOverwrite.value;
-    }
-    var template = String(els.setConvertNameTemplate
-      ? els.setConvertNameTemplate.value : '').trim();
-    if (!template) {
-      errors.convertNameTemplate = '文件名模板不能为空（例如 {name}）。';
-    } else if (/[\\/]/.test(template)) {
-      errors.convertNameTemplate = '文件名模板不能包含路径分隔符。';
-    } else {
-      settings.convert_name_template = template;
-    }
-    settings.convert_keep_source = !!(els.setConvertKeepSource
-      && els.setConvertKeepSource.checked);
-    settings.convert_copy_subtitles = !!(els.setConvertCopySubtitles
-      && els.setConvertCopySubtitles.checked);
-    settings.convert_keep_temp = !!(els.setConvertKeepTemp
-      && els.setConvertKeepTemp.checked);
-    var jobLimit = readSubtitleInt(els.setConvertJobLimit, 10, 5000,
-      '已完成任务保留上限', errors, 'convertJobLimit');
-    if (jobLimit !== null) { settings.convert_job_limit = jobLimit; }
-    var minFree = readSubtitleInt(els.setConvertMinFreeGb, 0, 102400,
-      '最少剩余空间', errors, 'convertMinFreeGb');
-    if (minFree !== null) { settings.convert_min_free_gb = minFree; }
-    settings.convert_offpeak_enabled = !!(els.setConvertOffpeakEnabled
-      && els.setConvertOffpeakEnabled.checked);
-    var hhmm = /^([01]\d|2[0-3]):[0-5]\d$/;
-    var offpeakStart = String(els.setConvertOffpeakStart
-      ? els.setConvertOffpeakStart.value : '').trim();
-    if (!hhmm.test(offpeakStart)) {
-      errors.convertOffpeakStart = '开始时间需为 HH:MM（如 01:00）。';
-    } else {
-      settings.convert_offpeak_start = offpeakStart;
-    }
-    var offpeakEnd = String(els.setConvertOffpeakEnd
-      ? els.setConvertOffpeakEnd.value : '').trim();
-    if (!hhmm.test(offpeakEnd)) {
-      errors.convertOffpeakEnd = '结束时间需为 HH:MM（如 07:00）。';
-    } else {
-      settings.convert_offpeak_end = offpeakEnd;
-    }
-    settings.convert_auto_scan = !!(els.setConvertAutoScan
-      && els.setConvertAutoScan.checked);
-    settings.convert_auto_subtitle = !!(els.setConvertAutoSubtitle
-      && els.setConvertAutoSubtitle.checked);
   }
 
   function fillMergeSettingsForm(settings) {
@@ -2821,26 +2319,11 @@ import { bindLogsEvents, loadLogs } from './js/logs-page.js';
     if (els.setMergeOutputSubdir) {
       els.setMergeOutputSubdir.value = s.avmerge_output_subdir || 'merged';
     }
-    if (els.setMergeContainer) { els.setMergeContainer.value = s.avmerge_container || 'mp4'; }
-    if (els.setMergeMode) { els.setMergeMode.value = s.avmerge_mode || 'auto'; }
-    if (els.setMergeQuality) { els.setMergeQuality.value = s.avmerge_quality || 'standard'; }
-    if (els.setMergeMaxResolution) {
-      els.setMergeMaxResolution.value = String(s.avmerge_max_resolution || 0);
-    }
-    if (els.setMergeNameTemplate) {
-      els.setMergeNameTemplate.value = s.avmerge_name_template || '{name}_merged';
-    }
-    if (els.setMergeConcurrency) { els.setMergeConcurrency.value = s.avmerge_concurrency || 1; }
-    if (els.setMergeMinFreeGb) { els.setMergeMinFreeGb.value = s.avmerge_min_free_gb; }
-    if (els.setMergeJobLimit) { els.setMergeJobLimit.value = s.avmerge_job_limit || 200; }
-    if (els.setMergeKeepSource) {
-      els.setMergeKeepSource.checked = s.avmerge_keep_source !== false;
-    }
     if (els.settingsMergeSummary) {
       setText(els.settingsMergeSummary,
         (s.avmerge_output_mode === 'alongside' || !s.avmerge_output_mode
           ? '源目录' : (s.avmerge_output_dir || '未设置目录')) +
-        ' · ' + String(s.avmerge_container || 'mp4').toUpperCase());
+        ' · 容器/方式在合成页选择');
     }
   }
 
@@ -2851,24 +2334,6 @@ import { bindLogsEvents, loadLogs } from './js/logs-page.js';
       ? els.setMergeOutputDir.value : '').trim();
     settings.avmerge_output_subdir = String(els.setMergeOutputSubdir
       ? els.setMergeOutputSubdir.value : '').trim();
-    settings.avmerge_container = els.setMergeContainer
-      ? els.setMergeContainer.value : 'mp4';
-    settings.avmerge_mode = els.setMergeMode ? els.setMergeMode.value : 'auto';
-    settings.avmerge_quality = els.setMergeQuality
-      ? els.setMergeQuality.value : 'standard';
-    settings.avmerge_max_resolution = parseInt(
-      els.setMergeMaxResolution ? els.setMergeMaxResolution.value : '0', 10) || 0;
-    settings.avmerge_name_template = String(els.setMergeNameTemplate
-      ? els.setMergeNameTemplate.value : '').trim();
-    settings.avmerge_concurrency = parseInt(
-      els.setMergeConcurrency ? els.setMergeConcurrency.value : '1', 10) || 1;
-    settings.avmerge_min_free_gb = parseInt(
-      els.setMergeMinFreeGb ? els.setMergeMinFreeGb.value : '1', 10);
-    if (isNaN(settings.avmerge_min_free_gb)) { settings.avmerge_min_free_gb = 1; }
-    settings.avmerge_job_limit = parseInt(
-      els.setMergeJobLimit ? els.setMergeJobLimit.value : '200', 10) || 200;
-    settings.avmerge_keep_source = !!(els.setMergeKeepSource
-      && els.setMergeKeepSource.checked);
   }
 
   // ---------- 云端字幕：获取模型列表 / 测试连接（v0026） ----------
@@ -5377,7 +4842,8 @@ import { bindLogsEvents, loadLogs } from './js/logs-page.js';
     });
     var translateCheck = el('input', { attrs: { type: 'checkbox' } });
     if (!sub.llmKeySet) { translateCheck.disabled = true; }
-    if (sub.translateEnabled && sub.llmKeySet) { translateCheck.checked = true; }
+    // v0060：配了 LLM Key 就默认勾选“同时生成译文”
+    if (sub.llmKeySet) { translateCheck.checked = true; }
     var targetSelect = buildSubtitleLanguageSelect({
       ariaLabel: '翻译目标语言', value: sub.targetLang || 'zh'
     });
@@ -7449,10 +6915,12 @@ import { bindLogsEvents, loadLogs } from './js/logs-page.js';
     });
     var translateCheck = el('input', { attrs: { type: 'checkbox' } });
     if (!sub.llmKeySet) { translateCheck.disabled = true; }
+    // v0060：配了 LLM Key 就默认勾选“同时生成译文”
+    if (sub.llmKeySet) { translateCheck.checked = true; }
     var targetSelect = buildSubtitleLanguageSelect({
       ariaLabel: '批量翻译目标语言', value: sub.targetLang || 'zh'
     });
-    targetSelect.disabled = true;
+    targetSelect.disabled = !translateCheck.checked;
     translateCheck.addEventListener('change', function () { targetSelect.disabled = !translateCheck.checked; });
     var confirmCheck = el('input', { attrs: { type: 'checkbox' } });
     var errorBox = el('div', { className: 'modal-error', attrs: { role: 'alert' }, hidden: true });
@@ -8276,62 +7744,16 @@ import { bindLogsEvents, loadLogs } from './js/logs-page.js';
   }
 
   function updateSettingsSummaries() {
-    if (els.settingsScanSummary) {
-      var scanBits = [els.setHashAlgo ? settingsOptionText(els.setHashAlgo, 'SHA-256') : 'SHA-256'];
-      if (els.setKeepMode) { scanBits.push(KEEP_MODE_LABEL[els.setKeepMode.value] || els.setKeepMode.value || '—'); }
-      var rate = els.setHashRate ? Number(els.setHashRate.value) || 0 : 0;
-      scanBits.push(rate > 0 ? '限速 ' + rate + ' MB/s' : '不限速');
-      if (els.setIncrementalScan) {
-        scanBits.push(els.setIncrementalScan.checked ? '增量缓存开' : '增量缓存关');
-      }
-      var extraSettingsRules = composeKeepRules('setKeep');
-      if (extraSettingsRules.length) { scanBits.push('高级保留规则 ' + extraSettingsRules.length + ' 条'); }
-      if (els.setProtectEnabled && els.setProtectEnabled.checked) {
-        var protectCount = textToLines(els.setProtectExtensions
-          ? els.setProtectExtensions.value : '').length
-          + textToLines(els.setProtectDirs ? els.setProtectDirs.value : '').length
-          + textToLines(els.setProtectNameRegex
-            ? els.setProtectNameRegex.value : '').length;
-        scanBits.push('删除白名单 ' + protectCount + ' 项配置'
-          + (els.setProtectSidecarFiles && els.setProtectSidecarFiles.checked
-            ? '（含视频附属文件）' : ''));
+    if (els.settingsMediaSummary) {
+      var cap = state.video || videoCapability();
+      var mediaBits = [];
+      if (cap.available) {
+        mediaBits.push(cap.configuredPath ? '外部 FFmpeg' : '内置/自动探测 FFmpeg');
+        if (cap.ffmpegVersion) { mediaBits.push('v' + cap.ffmpegVersion); }
       } else {
-        scanBits.push('删除白名单关闭');
+        mediaBits.push('FFmpeg 不可用');
       }
-      scanBits.push(els.setDeleteRecycleMode
-        ? (RECYCLE_MODE_LABEL[els.setDeleteRecycleMode.value] || '回收站')
-        : '回收站');
-      scanBits.push(els.setMergeEnabled && els.setMergeEnabled.checked
-        ? '硬链接合并开' : '硬链接合并关');
-      setText(els.settingsScanSummary, scanBits.join(' · '));
-    }
-    if (els.settingsSimilaritySummary) {
-      var simBits = [els.setScanMode && els.setScanMode.value === 'similar' ? '默认相似模式' : '默认精准模式'];
-      if (els.setSimilarityThreshold) { simBits.push('阈值 ' + els.setSimilarityThreshold.value + '%'); }
-      if (els.setSimilarityConcurrency) { simBits.push('并发 ' + els.setSimilarityConcurrency.value); }
-      setText(els.settingsSimilaritySummary, simBits.join(' · '));
-    }
-    if (els.settingsVideoSummary) {
-      var vcap = state.video || videoCapability();
-      var videoBits = [els.setVideoEnabled && els.setVideoEnabled.checked ? '默认开启' : '默认关闭'];
-      videoBits.push(vcap.available ? 'FFmpeg ' + (vcap.ffmpegVersion || '可用') : 'FFmpeg 不可用');
-      if (vcap.available) {
-        if (vcap.configuredPath) { videoBits.push('外部 FFmpeg'); }
-        var videoEffective = videoHwaccelEffectiveFor(vcap.hwaccelMode || 'auto', vcap);
-        videoBits.push('硬解 ' + videoHwaccelLabel(videoEffective.label));
-        if (vcap.hwaccelFallback) { videoBits.push('显式模式不支持，回退软件'); }
-      }
-      var v2Bits = [];
-      if (els.setVideoCenterCrop && els.setVideoCenterCrop.checked) { v2Bits.push('边缘裁剪'); }
-      if (els.setVideoOffsetAlign && els.setVideoOffsetAlign.checked) { v2Bits.push('时间轴对齐'); }
-      if (els.setVideoAudioSignature && els.setVideoAudioSignature.checked) {
-        var audioWeightValue = Number(els.setVideoAudioWeight
-          ? els.setVideoAudioWeight.value : 0);
-        v2Bits.push('音频辅助 ' + (isFinite(audioWeightValue)
-          ? Math.round(audioWeightValue * 100) : 0) + '%');
-      }
-      if (v2Bits.length) { videoBits.push(v2Bits.join(' / ')); }
-      setText(els.settingsVideoSummary, videoBits.join(' · '));
+      setText(els.settingsMediaSummary, mediaBits.join(' · '));
     }
     if (els.settingsSubtitleSummary) {
       var sub = state.subtitle || subtitleCapability();
@@ -8339,16 +7761,10 @@ import { bindLogsEvents, loadLogs } from './js/logs-page.js';
       if (!sub.supported) { subBits.push('后端未提供'); }
       else {
         subBits.push(sub.enabled ? '已启用' : '默认关闭');
-        if (sub.enabled) { subBits.push(sub.asrKeySet ? 'ASR Key 已配置' : 'ASR Key 未配置'); }
-      }
-      // v0048：自动重试 / 负载阈值 / 目录监控
-      subBits.push(els.setSubtitleAutoRetry && els.setSubtitleAutoRetry.checked
-        ? '自动重试 ≤' + (els.setSubtitleAutoRetryMax
-          ? els.setSubtitleAutoRetryMax.value : '0') + ' 次'
-        : '自动重试关');
-      var subLoad = Number(els.setSubtitleMaxLoad ? els.setSubtitleMaxLoad.value : 0);
-      if (isFinite(subLoad) && subLoad > 0) {
-        subBits.push('负载阈值 ' + subLoad);
+        if (sub.enabled) {
+          subBits.push(sub.asrKeySet ? 'ASR Key 已配置' : 'ASR Key 未配置');
+          subBits.push(sub.llmKeySet ? 'LLM Key 已配置（默认翻译）' : '未配 LLM Key（不翻译）');
+        }
       }
       if (els.setSubtitleWatchEnabled && els.setSubtitleWatchEnabled.checked) {
         subBits.push('目录监控开（' + textToLines(els.setSubtitleWatchDirs
@@ -8364,7 +7780,6 @@ import { bindLogsEvents, loadLogs } from './js/logs-page.js';
         : '计划扫描关');
       if (els.setNotifyEnabled && els.setNotifyEnabled.checked) {
         var channels = [];
-        if (els.setNotifyChannelDsm && els.setNotifyChannelDsm.checked) { channels.push('DSM'); }
         if (els.setNotifyChannelWebhook && els.setNotifyChannelWebhook.checked) { channels.push('Webhook'); }
         if (els.setNotifyChannelTelegram && els.setNotifyChannelTelegram.checked) { channels.push('Telegram'); }
         autoBits.push('通知开（' + (channels.length ? channels.join('/') : '未选渠道') + '）');
@@ -8373,19 +7788,33 @@ import { bindLogsEvents, loadLogs } from './js/logs-page.js';
       }
       setText(els.settingsAutomationSummary, autoBits.join(' · '));
     }
-    if (els.settingsStorageSummary) {
-      var storageBits = [els.setRecycleDefault && els.setRecycleDefault.checked ? '默认回收站' : '默认永久删除'];
-      storageBits.push(els.setAllowCtime && els.setAllowCtime.checked ? '允许 ctime 降级' : 'ctime 降级关闭');
-      if (state.meta && state.meta.app_version) { storageBits.push('v' + state.meta.app_version); }
-      setText(els.settingsStorageSummary, storageBits.join(' · '));
+    if (els.settingsSecuritySummary) {
+      var secBits = [];
+      if (els.setProtectEnabled && els.setProtectEnabled.checked) {
+        var protectCount = textToLines(els.setProtectExtensions
+          ? els.setProtectExtensions.value : '').length
+          + textToLines(els.setProtectDirs ? els.setProtectDirs.value : '').length
+          + textToLines(els.setProtectNameRegex
+            ? els.setProtectNameRegex.value : '').length;
+        secBits.push('删除白名单 ' + protectCount + ' 项配置'
+          + (els.setProtectSidecarFiles && els.setProtectSidecarFiles.checked
+            ? '（含视频附属文件）' : ''));
+      } else {
+        secBits.push('删除白名单关闭');
+      }
+      secBits.push(els.setDeleteRecycleMode
+        ? (RECYCLE_MODE_LABEL[els.setDeleteRecycleMode.value] || '回收站')
+        : '回收站');
+      secBits.push(els.setMergeEnabled && els.setMergeEnabled.checked
+        ? '硬链接合并开' : '硬链接合并关');
+      setText(els.settingsSecuritySummary, secBits.join(' · '));
     }
     if (els.settingsOverview) {
       setText(els.settingsOverview,
-        '共 6 组设置：扫描 / 自动化 / 相似 / 视频 / 云端字幕 / 存储 · 修改后点击底部“保存设置”生效');
+        '共 9 组设置：媒体 / 自动化 / 云端字幕 / 下载 / 转换 / 合成 / 安全 / 系统诊断 / 权限体检 · 修改后点击底部“保存设置”生效');
     }
   }
 
-  // ==================== v0046 计划扫描 / 通知 ====================
   function fillAutomationSettings(settings) {
     settings = settings || {};
     if (els.setScheduledScanEnabled) {
@@ -8397,15 +7826,9 @@ import { bindLogsEvents, loadLogs } from './js/logs-page.js';
     if (els.setScheduledScanRoots) {
       els.setScheduledScanRoots.value = linesToText(settings.scheduled_scan_roots);
     }
-    if (els.setScheduledScanMaxLoad) {
-      var load = Number(settings.scheduled_scan_max_load);
-      els.setScheduledScanMaxLoad.value =
-        String(isFinite(load) && load > 0 ? load : 0);
-    }
     if (els.setNotifyEnabled) { els.setNotifyEnabled.checked = settings.notify_enabled === true; }
     var channels = Array.isArray(settings.notify_channels)
       ? settings.notify_channels : DEFAULT_SETTINGS.notify_channels;
-    if (els.setNotifyChannelDsm) { els.setNotifyChannelDsm.checked = channels.indexOf('dsm') !== -1; }
     if (els.setNotifyChannelWebhook) { els.setNotifyChannelWebhook.checked = channels.indexOf('webhook') !== -1; }
     if (els.setNotifyChannelTelegram) { els.setNotifyChannelTelegram.checked = channels.indexOf('telegram') !== -1; }
     var events = Array.isArray(settings.notify_events)
@@ -8419,15 +7842,9 @@ import { bindLogsEvents, loadLogs } from './js/logs-page.js';
     // 安全：Bot Token 永不回填明文
     if (els.setNotifyTelegramToken) { els.setNotifyTelegramToken.value = ''; }
     if (els.setNotifyTelegramChatId) { els.setNotifyTelegramChatId.value = settings.notify_telegram_chat_id || ''; }
-    if (els.setNotifyFailThreshold) {
-      els.setNotifyFailThreshold.value = String(parseInt(settings.notify_fail_threshold, 10) || 20);
-    }
     if (els.setNotifyFreedGb) {
       var bytes = Number(settings.notify_freed_bytes_threshold) || 0;
       els.setNotifyFreedGb.value = String(Math.round(bytes / 1073741824 * 100) / 100);
-    }
-    if (els.setNotifyTimeout) {
-      els.setNotifyTimeout.value = String(parseInt(settings.notify_timeout_sec, 10) || 5);
     }
     updateSettingsSummaries();
   }
@@ -8466,16 +7883,8 @@ import { bindLogsEvents, loadLogs } from './js/logs-page.js';
     } else {
       settings.scheduled_scan_roots = roots;
     }
-    var maxLoad = parseFloat(els.setScheduledScanMaxLoad
-      ? els.setScheduledScanMaxLoad.value : '0');
-    if (!isFinite(maxLoad) || maxLoad < 0 || maxLoad > 256) {
-      errors.scheduledScanMaxLoad = '负载阈值需在 0..256 之间（0 = 不检查）。';
-    } else {
-      settings.scheduled_scan_max_load = Math.round(maxLoad * 100) / 100;
-    }
     settings.notify_enabled = !!(els.setNotifyEnabled && els.setNotifyEnabled.checked);
     var channels = [];
-    if (els.setNotifyChannelDsm && els.setNotifyChannelDsm.checked) { channels.push('dsm'); }
     if (els.setNotifyChannelWebhook && els.setNotifyChannelWebhook.checked) { channels.push('webhook'); }
     if (els.setNotifyChannelTelegram && els.setNotifyChannelTelegram.checked) { channels.push('telegram'); }
     settings.notify_channels = channels;
@@ -8498,24 +7907,11 @@ import { bindLogsEvents, loadLogs } from './js/logs-page.js';
     if (els.setNotifyTelegramChatId) {
       settings.notify_telegram_chat_id = els.setNotifyTelegramChatId.value.trim();
     }
-    var failThreshold = parseInt(els.setNotifyFailThreshold
-      ? els.setNotifyFailThreshold.value : '', 10);
-    if (!isFinite(failThreshold) || failThreshold < 1 || failThreshold > 100000) {
-      errors.notifyFailThreshold = '批量失败阈值需在 1..100000 之间。';
-    } else {
-      settings.notify_fail_threshold = failThreshold;
-    }
     var freedGb = parseFloat(els.setNotifyFreedGb ? els.setNotifyFreedGb.value : '0');
     if (!isFinite(freedGb) || freedGb < 0) {
       errors.notifyFreedGb = '释放空间阈值必须是非负数字（GB）。';
     } else {
       settings.notify_freed_bytes_threshold = Math.round(freedGb * 1073741824);
-    }
-    var timeout = parseInt(els.setNotifyTimeout ? els.setNotifyTimeout.value : '', 10);
-    if (!isFinite(timeout) || timeout < 2 || timeout > 30) {
-      errors.notifyTimeoutSec = '通知发送超时需在 2..30 秒之间。';
-    } else {
-      settings.notify_timeout_sec = timeout;
     }
   }
 
@@ -8630,33 +8026,8 @@ import { bindLogsEvents, loadLogs } from './js/logs-page.js';
 
   function fillSettingsForm(settings) {
     if (!settings) { return; }
-    els.setHashAlgo.value = settings.hash_algo === 'md5' ? 'md5' : 'sha256';
-    els.setKeepMode.value = ['latest', 'earliest', 'pinned'].indexOf(settings.keep_mode) !== -1 ? settings.keep_mode : 'latest';
-    els.setPinnedPath.value = settings.pinned_path || '';
-    els.setMinSizeMb.value = bytesToMbValue(settings.min_size_bytes);
-    els.setMaxSizeMb.value = bytesToMbValue(settings.max_size_bytes);
-    els.setIncludeExt.value = extListToText(settings.include_extensions);
-    els.setExcludeExt.value = extListToText(settings.exclude_extensions);
-    els.setIgnoreCase.checked = settings.ignore_case_ext !== false;
-    els.setSkipEmpty.checked = settings.skip_empty !== false;
-    els.setSkipHidden.checked = settings.skip_hidden !== false;
-    els.setSkipSymlinks.checked = true;
-    els.setQuickSampleKb.value = settings.quick_sample_kb === undefined || settings.quick_sample_kb === null ? 64 : settings.quick_sample_kb;
-    els.setConcurrency.value = settings.concurrency === undefined || settings.concurrency === null ? 2 : settings.concurrency;
-    els.setHashRate.value = settings.hash_rate_mbps === undefined || settings.hash_rate_mbps === null ? 0 : settings.hash_rate_mbps;
-    els.setMaxFiles.value = settings.max_files === undefined || settings.max_files === null ? 500000 : settings.max_files;
-    els.setRecycleDefault.checked = settings.recycle_default !== false;
-    els.setCreateRecycleDir.checked = settings.create_recycle_dir === true;
-    els.setAllowCtime.checked = settings.allow_ctime_fallback === true;
-    // v0043：增量扫描 / 保留规则链 / 排除规则
-    if (els.setIncrementalScan) { els.setIncrementalScan.checked = settings.incremental_scan !== false; }
-    if (els.setExcludeNameRegex) { els.setExcludeNameRegex.value = linesToText(settings.exclude_name_regex); }
-    if (els.setExcludeNameGlob) { els.setExcludeNameGlob.value = linesToText(settings.exclude_name_glob); }
-    if (els.setIgnoreFileEnabled) { els.setIgnoreFileEnabled.checked = settings.ignore_file_enabled !== false; }
-    if (els.setMediaSidecarMode) {
-      els.setMediaSidecarMode.value = settings.media_sidecar_mode === 'include' ? 'include' : 'skip';
-    }
-    fillKeepRuleControls('setKeep', settings.keep_rules);
+    // v0060：扫描/相似/视频默认值已移到扫描页；设置页只保留“必须配置”的项
+    if (els.setVideoFfmpegPath) { els.setVideoFfmpegPath.value = settings.ffmpeg_path || ''; }
     // v0044：删除白名单
     if (els.setProtectEnabled) { els.setProtectEnabled.checked = settings.protect_enabled !== false; }
     if (els.setProtectExtensions) {
@@ -8675,37 +8046,14 @@ import { bindLogsEvents, loadLogs } from './js/logs-page.js';
       els.setDeleteRecycleMode.value =
         settings.delete_recycle_mode === 'package' ? 'package' : 'share';
     }
-    // v0046：计划扫描 / 通知
     fillAutomationSettings(settings);
-    if (els.setScanMode) { els.setScanMode.value = settings.scan_mode === 'similar' ? 'similar' : 'exact'; }
-    if (els.setSimilarityThreshold) {
-      var threshold = parseInt(settings.similarity_threshold, 10);
-      els.setSimilarityThreshold.value = String(clamp(isFinite(threshold) ? threshold : 85, 0, 100));
-    }
-    if (els.setSimilarityConcurrency) {
-      var simConc = parseInt(settings.similarity_concurrency, 10);
-      els.setSimilarityConcurrency.value = String(clamp(isFinite(simConc) ? simConc : 2, 1, 4));
-    }
-    if (els.setSimilarityMaxMb) {
-      var simMaxMb = parseInt(settings.similarity_max_file_mb, 10);
-      els.setSimilarityMaxMb.value = String(clamp(isFinite(simMaxMb) ? simMaxMb : 32, 1, 1024));
-    }
-    if (els.setSimilarityCache) { els.setSimilarityCache.checked = settings.similarity_cache !== false; }
-    if (els.setSimilarityAllowBinary) { els.setSimilarityAllowBinary.checked = settings.similarity_allow_binary === true; }
-    if (els.setSimExtList) {
-      var simMeta = state.similarity || similarityCapability();
-      var selectedExt = (Array.isArray(settings.similarity_extensions) && settings.similarity_extensions.length)
-        ? settings.similarity_extensions : simMeta.extensions;
-      renderExtChips(els.setSimExtList, simMeta.extensions, selectedExt, null);
-    }
-    if (els.setSimilarityExcludeExt) { els.setSimilarityExcludeExt.value = extListToText(settings.similarity_exclude_extensions); }
-    fillVideoSettingsForm(settings);
     fillSubtitleSettingsForm(settings);
     fillDownloadSettingsForm(settings);
     fillConvertSettingsForm(settings);
     fillMergeSettingsForm(settings);
     clearSettingsErrors();
     updateSettingsSummaries();
+    updateVideoFfmpegHints();
     renderSettingsStatusSummary();
   }
 
@@ -8759,92 +8107,10 @@ import { bindLogsEvents, loadLogs } from './js/logs-page.js';
   function readSettingsForm() {
     var errors = {};
     var settings = {};
-    settings.hash_algo = els.setHashAlgo.value === 'md5' ? 'md5' : 'sha256';
-    settings.keep_mode = els.setKeepMode.value === 'earliest' ? 'earliest' : (els.setKeepMode.value === 'pinned' ? 'pinned' : 'latest');
-    settings.pinned_path = els.setPinnedPath.value.trim();
-    settings.skip_empty = !!els.setSkipEmpty.checked;
-    settings.skip_hidden = !!els.setSkipHidden.checked;
-    settings.skip_symlinks = true;
-    settings.ignore_case_ext = !!els.setIgnoreCase.checked;
-    settings.recycle_default = !!els.setRecycleDefault.checked;
-    settings.create_recycle_dir = !!els.setCreateRecycleDir.checked;
-    settings.allow_ctime_fallback = !!els.setAllowCtime.checked;
-
-    var include = normalizeExtList(els.setIncludeExt.value);
-    if (include.error) { errors.includeExt = include.error; } else { settings.include_extensions = include.list; }
-    var exclude = normalizeExtList(els.setExcludeExt.value);
-    if (exclude.error) { errors.excludeExt = exclude.error; } else { settings.exclude_extensions = exclude.list; }
-
-    function readMb(input, key, label) {
-      var raw = String(input.value === null || input.value === undefined ? '' : input.value).trim();
-      if (!raw) { return 0; }
-      if (!/^\d+(\.\d+)?$/.test(raw)) { errors[key] = label + '请输入有效的非负数字，可带小数。'; return null; }
-      var num = parseFloat(raw);
-      if (!isFinite(num) || num < 0) { errors[key] = label + '请输入有效的非负数字。'; return null; }
-      return Math.round(num * 1048576);
-    }
-    var minBytes = readMb(els.setMinSizeMb, 'minSizeMb', '最小文件大小');
-    var maxBytes = readMb(els.setMaxSizeMb, 'maxSizeMb', '最大文件大小');
-    if (minBytes !== null) { settings.min_size_bytes = minBytes; }
-    if (maxBytes !== null) { settings.max_size_bytes = maxBytes; }
-    if (minBytes !== null && maxBytes !== null && maxBytes > 0 && minBytes > maxBytes) {
-      errors.maxSizeMb = '最大值必须大于或等于最小值。';
-    }
-
-    var quick = readIntOption(els.setQuickSampleKb, 4, 1024, false, 0, '快速指纹采样（KB）');
-    if (quick.error) { errors.quickSample = quick.error; } else { settings.quick_sample_kb = quick.value; }
-    var concurrency = readIntOption(els.setConcurrency, 1, 8, false, 0, '哈希并发数');
-    if (concurrency.error) { errors.concurrency = concurrency.error; } else { settings.concurrency = concurrency.value; }
-    var rate = readIntOption(els.setHashRate, 0, 2000, true, 0, '全量哈希限速（MB/s）');
-    if (rate.error) { errors.hashRate = rate.error; } else { settings.hash_rate_mbps = rate.value; }
-    var maxFiles = readIntOption(els.setMaxFiles, 1, 10000000, false, 0, '最大扫描文件数');
-    if (maxFiles.error) { errors.maxFiles = maxFiles.error; } else { settings.max_files = maxFiles.value; }
-
-    if (settings.keep_mode === 'pinned' && !settings.pinned_path) {
-      errors.pinned = '选择“指定路径”策略时请填写保留路径。';
-    }
-
-    var simSupported = !(state.meta && state.similarity && state.similarity.supported === false);
-    if (simSupported) {
-      settings.scan_mode = els.setScanMode && els.setScanMode.value === 'similar' ? 'similar' : 'exact';
-      var simThreshold = readIntOption(els.setSimilarityThreshold, 0, 100, false, 0, '相似度阈值');
-      if (simThreshold.error) { errors.similarityThreshold = simThreshold.error; } else { settings.similarity_threshold = simThreshold.value; }
-      var simConc = readIntOption(els.setSimilarityConcurrency, 1, 4, false, 0, '相似特征并发数');
-      if (simConc.error) { errors.similarityConcurrency = simConc.error; } else { settings.similarity_concurrency = simConc.value; }
-      var simMax = readIntOption(els.setSimilarityMaxMb, 1, 1024, false, 0, '单文件相似上限（MB）');
-      if (simMax.error) { errors.similarityMaxFile = simMax.error; } else { settings.similarity_max_file_mb = simMax.value; }
-      var simExt = readExtChips(els.setSimExtList);
-      if (!simExt.length) { errors.similarityExt = '请至少选择一种允许相似计算的默认文件类型。'; }
-      else { settings.similarity_extensions = simExt; }
-      var simExclude = normalizeExtList(els.setSimilarityExcludeExt.value);
-      if (simExclude.error) { errors.similarityExcludeExt = simExclude.error; }
-      else { settings.similarity_exclude_extensions = simExclude.list; }
-      settings.similarity_cache = !!(els.setSimilarityCache && els.setSimilarityCache.checked);
-      settings.similarity_allow_binary = !!(els.setSimilarityAllowBinary && els.setSimilarityAllowBinary.checked);
-    }
-    readVideoSettings(settings, errors);
-    readSubtitleSettings(settings, errors);
-    readDownloadSettings(settings, errors);
-    readConvertSettings(settings, errors);
-    readMergeSettings(settings);
-    // v0043：增量扫描 / 保留规则链 / 排除规则
-    settings.incremental_scan = els.setIncrementalScan ? !!els.setIncrementalScan.checked : true;
-    settings.keep_rules = composeKeepRules('setKeep');
-    var setRegexList = textToLines(els.setExcludeNameRegex ? els.setExcludeNameRegex.value : '');
-    var setGlobList = textToLines(els.setExcludeNameGlob ? els.setExcludeNameGlob.value : '');
-    if (setRegexList.length > 50) {
-      errors.excludeNameRegex = '文件名正则最多 50 条。';
-    } else {
-      settings.exclude_name_regex = setRegexList;
-    }
-    if (setGlobList.length > 50) {
-      errors.excludeNameGlob = '文件名通配符最多 50 条。';
-    } else {
-      settings.exclude_name_glob = setGlobList;
-    }
-    settings.ignore_file_enabled = els.setIgnoreFileEnabled ? !!els.setIgnoreFileEnabled.checked : true;
-    settings.media_sidecar_mode = els.setMediaSidecarMode && els.setMediaSidecarMode.value === 'include'
-      ? 'include' : 'skip';
+    // v0060：只提交设置页保留的项；其余键保持后端默认值/旧值不变
+    var ffmpegPath = readFfmpegPathInput(els.setVideoFfmpegPath);
+    if (ffmpegPath.error) { errors.videoFfmpegPath = ffmpegPath.error; }
+    else { settings.ffmpeg_path = ffmpegPath.value; }
     // v0044：删除白名单
     settings.protect_enabled = els.setProtectEnabled ? !!els.setProtectEnabled.checked : true;
     var protectExt = normalizeExtList(els.setProtectExtensions ? els.setProtectExtensions.value : '');
@@ -8879,6 +8145,10 @@ import { bindLogsEvents, loadLogs } from './js/logs-page.js';
       && els.setDeleteRecycleMode.value === 'package') ? 'package' : 'share';
     // v0046：计划扫描 / 通知
     readAutomationSettings(settings, errors);
+    readSubtitleSettings(settings, errors);
+    readDownloadSettings(settings, errors);
+    readConvertSettings(settings, errors);
+    readMergeSettings(settings);
     return { settings: settings, errors: errors, valid: Object.keys(errors).length === 0 };
   }
 
@@ -9044,14 +8314,6 @@ import { bindLogsEvents, loadLogs } from './js/logs-page.js';
     if (els.subtitleEnabled) {
       els.subtitleEnabled.addEventListener('change', function () { clearSettingsErrors(); updateSubtitleAvailabilityUi(); });
     }
-    if (els.subtitleTranslateEnabled) {
-      els.subtitleTranslateEnabled.addEventListener('change', function () {
-        if (els.subtitleTranslateEnabled.checked && !subtitleCapability().llmKeySet) {
-          toast('尚未配置 LLM API Key：可保存设置后再启用译文生成。', 'info', 4200);
-        }
-        clearSettingsErrors();
-      });
-    }
     if (els.subtitleClearAsrKey) {
       els.subtitleClearAsrKey.addEventListener('change', function () {
         if (els.subtitleAsrApiKey) {
@@ -9071,8 +8333,8 @@ import { bindLogsEvents, loadLogs } from './js/logs-page.js';
       });
     }
     bindSubtitleProbeEvents();
-    // v0046：通知渠道测试按钮
-    [['notifyTestDsm', 'dsm'], ['notifyTestWebhook', 'webhook'],
+    // v0046：通知渠道测试按钮（v0060 起只保留 Webhook / Telegram）
+    [['notifyTestWebhook', 'webhook'],
      ['notifyTestTelegram', 'telegram']].forEach(function (pair) {
       var button = byId(pair[0]);
       if (button) {

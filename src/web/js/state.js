@@ -129,13 +129,14 @@ export var IDS = ('loginView loginForm loginUsername loginPassword loginOtp logi
   'setVideoAsrEnabled setVideoAsrFields setVideoAsrCommand setVideoAsrCommandError setVideoAsrWeight ' +
   'setVideoAsrWeightError setVideoAsrTimeout setVideoAsrTimeoutError setVideoAsrMaxSec setVideoAsrMaxSecError ' +
   'settingsSubtitleDetails subtitleStatusBadge subtitleStatusHint subtitleFields subtitleEnabled subtitleAsrBaseUrl ' +
-  'settingsOverview settingsScanGroup settingsScanSummary settingsSimilaritySummary settingsVideoSummary ' +
+  'settingsOverview settingsMediaGroup settingsMediaSummary settingsSecurityGroup settingsSecuritySummary ' +
+  'settingsScanGroup settingsScanSummary settingsSimilaritySummary settingsVideoSummary ' +
   'settingsSubtitleSummary settingsStorageGroup settingsStorageSummary settingsStatusSummary ' +
   'batchSubtitleBtn subtitleJobsPanel subtitleJobsHeading subtitleJobsStatus subtitleJobsRefreshBtn ' +
   'subtitleJobsLoading subtitleJobsError subtitleJobsEmpty subtitleJobsList ' +
   'subtitleAsrBaseUrlError subtitleAsrModel subtitleAsrModelError subtitleAsrApiKey subtitleAsrApiKeyError ' +
   'subtitleAsrKeySetBadge subtitleClearAsrKey subtitleAsrLanguage subtitleAsrTimeout subtitleAsrTimeoutError ' +
-  'subtitleAsrChunk subtitleAsrChunkError subtitleAsrMaxAudioMb subtitleAsrMaxAudioMbError subtitleTranslateEnabled ' +
+  'subtitleAsrChunk subtitleAsrChunkError subtitleAsrMaxAudioMb subtitleAsrMaxAudioMbError ' +
   'subtitleAudioSource subtitleWriteVtt subtitleAudioPrefetch ' +
   'subtitleLlmBaseUrl subtitleLlmBaseUrlError subtitleLlmModel subtitleLlmModelError subtitleLlmApiKey ' +
   'subtitleLlmApiKeyError subtitleLlmKeySetBadge subtitleClearLlmKey subtitleTranslateTarget subtitleTranslateTimeout ' +
@@ -203,13 +204,13 @@ export var IDS = ('loginView loginForm loginUsername loginPassword loginOtp logi
   'setScheduledScanEnabled setScheduledScanRules setScheduledScanRoots ' +
   'setScheduledScanMaxLoad setScheduledScanRulesError ' +
   'setScheduledScanRootsError ' +
-  'setNotifyEnabled setNotifyChannelDsm setNotifyChannelWebhook ' +
+  'setNotifyEnabled setNotifyChannelWebhook ' +
   'setNotifyChannelTelegram setNotifyEventScanComplete ' +
   'setNotifyEventScanFailed setNotifyEventSubtitleBatchDone ' +
   'setNotifyEventFailureBurst setNotifyEventFreedThreshold ' +
   'setNotifyWebhookUrl setNotifyTelegramToken setNotifyTelegramChatId ' +
   'setNotifyFailThreshold setNotifyFreedGb setNotifyTimeout ' +
-  'notifyChannelsHint notifyTestDsm notifyTestWebhook notifyTestTelegram ' +
+  'notifyChannelsHint notifyTestWebhook notifyTestTelegram ' +
   'notifyTestResult ' +
   'trashList trashLoading trashError trashEmpty ' +
   'trashRefreshBtn trashRecycleMode trashMergeList trashMergeLoading ' +

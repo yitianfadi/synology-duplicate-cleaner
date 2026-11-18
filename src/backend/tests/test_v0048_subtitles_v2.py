@@ -151,14 +151,17 @@ class FailureRetryTest(unittest.TestCase):
         result = self.service.retry_failures("admin")
         self.assertEqual(result["requeued"], 1)
         self.assertEqual(no_audio.status, subtitles.STATUS_FAILED)
-        self.assertEqual(timeout.status, subtitles.STATUS_QUEUED)
+        # worker 可能已经立刻取走重排队任务，queued / running 都算通过
+        self.assertIn(timeout.status,
+                      (subtitles.STATUS_QUEUED, subtitles.STATUS_RUNNING))
         reasons = [item.get("reason") for item in result["skipped"]]
         self.assertIn("NOT_RETRYABLE", reasons)
         # force 重试 no_audio
         result = self.service.retry_failures("admin", job_ids=[no_audio.job_id],
                                              force=True)
         self.assertEqual(result["requeued"], 1)
-        self.assertEqual(no_audio.status, subtitles.STATUS_QUEUED)
+        self.assertIn(no_audio.status,
+                      (subtitles.STATUS_QUEUED, subtitles.STATUS_RUNNING))
 
     def test_priority_top(self):
         with self.service._lock:

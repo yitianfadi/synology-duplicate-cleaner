@@ -143,7 +143,7 @@ export var VIDEO_CONFIDENCE_CLASS = {
 };
 // v0046：通知渠道 / 事件标签（与后端 config 对应）
 export var NOTIFY_CHANNEL_LABEL = {
-  dsm: 'DSM 系统通知', webhook: 'Webhook', telegram: 'Telegram'
+  webhook: 'Webhook', telegram: 'Telegram'
 };
 export var NOTIFY_EVENT_LABEL = {
   scan_complete: '扫描完成', scan_failed: '扫描失败',
@@ -292,7 +292,8 @@ export var DEFAULT_SETTINGS = {
   subtitle_audio_prefetch: true,
   // v0033：默认只生成 SRT；开启后任务目录额外生成 VTT
   subtitle_write_vtt: false,
-  subtitle_translate_enabled: false,
+  // v0060：兼容键，不再生效（翻译改为“配了 LLM Key 即可用”，任务弹窗默认勾选）
+  subtitle_translate_enabled: true,
   subtitle_llm_base_url: 'https://api.openai.com/v1',
   subtitle_llm_api_key: '',
   subtitle_llm_model: 'gpt-4.1-mini',
@@ -339,7 +340,7 @@ export var DEFAULT_SETTINGS = {
   delete_recycle_mode: 'share',
   // v0046：通知系统 / 计划扫描
   notify_enabled: false,
-  notify_channels: ['dsm'],
+  notify_channels: ['webhook'],
   notify_events: ['scan_complete', 'scan_failed', 'subtitle_batch_done',
     'failure_burst', 'freed_threshold'],
   notify_webhook_url: '',

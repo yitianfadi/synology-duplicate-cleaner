@@ -2446,15 +2446,17 @@ class SubtitleService(object):
         if source == SOURCE_EXISTING_SRT:
             if not translate:
                 raise invalid(u"只翻译已有字幕时 translate 必须为 true")
-            if not settings.get("subtitle_translate_enabled"):
-                raise SubtitleError("TRANSLATE_DISABLED", u"字幕翻译功能未启用")
             if find_source_srt(path) is None:
                 raise SubtitleError(
                     "SOURCE_SRT_MISSING",
                     u"视频同目录未找到 %s.srt，无法只翻译"
                     % os.path.splitext(os.path.basename(path))[0])
-        elif translate and not settings.get("subtitle_translate_enabled"):
-            raise SubtitleError("TRANSLATE_DISABLED", u"字幕翻译功能未启用")
+        if translate and not str(settings.get("subtitle_llm_api_key")
+                                 or "").strip():
+            # v0060：翻译不再由设置总开关控制，改为“配了 LLM Key 就可用”。
+            raise SubtitleError(
+                "TRANSLATE_NOT_CONFIGURED",
+                u"未配置字幕翻译模型密钥，请先在设置中填写")
         target_lang = (payload.get("target_lang")
                        or settings.get("subtitle_translate_target") or "zh")
         if translate:
@@ -3734,8 +3736,6 @@ class SubtitleService(object):
         settings = self._settings() or {}
         if not settings.get("subtitle_enabled"):
             raise SubtitleError("SUBTITLE_DISABLED", u"云端字幕功能未启用")
-        if not settings.get("subtitle_translate_enabled"):
-            raise SubtitleError("TRANSLATE_DISABLED", u"字幕翻译功能未启用")
         if not str(settings.get("subtitle_llm_api_key") or "").strip():
             raise SubtitleError(
                 "TRANSLATE_NOT_CONFIGURED",

@@ -5,8 +5,9 @@
 - 轮询（标准库无 inotify）：每 30 秒检查一次是否到扫描间隔；
 - 只处理“设置里 video_extensions 内的视频”，按 (size, mtime_ns) 记录状态，已入队/处理过的不重复提交；
 - 已启用 `skip_existing` 时，已有字幕的任务由字幕服务标记 skipped，不会重复消耗云端额度；
-- 任务以 `user="watcher"` 提交，`source_watch=true` 供 UI 标识；翻译开关使用当前
-  `subtitle_translate_enabled`，音轨默认使用 `subtitle_audio_track` / `..._language`。
+- 任务以 `user="watcher"` 提交，`source_watch=true` 供 UI 标识；翻译默认跟随
+  “是否配置了 LLM API Key”（v0060 起不再看已废弃的 `subtitle_translate_enabled`），
+  音轨默认使用 `subtitle_audio_track` / `..._language`。
 - 状态持久化 `<var>/subtitle_watch_state.json`（最多 5000 条，超限按时间裁剪）。
 """
 
@@ -202,7 +203,8 @@ class SubtitleWatchService(object):
             "paths": paths,
             "confirm_cloud": True,
             "source_watch": True,
-            "translate": settings.get("subtitle_translate_enabled") is True,
+            "translate": bool(
+                str(settings.get("subtitle_llm_api_key") or "").strip()),
             "audio_track": settings.get("subtitle_audio_track") or None,
             "audio_track_language": settings.get("subtitle_audio_track_language") or None,
             "output_mode": settings.get("subtitle_output_mode"),

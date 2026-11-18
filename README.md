@@ -2,8 +2,8 @@
 
 一款为 Synology DSM 7.x 编写的重复文件清理与影音工具：提供**哈希精准匹配**、**图片/文档内容相似**与**视频视觉相似**三种扫描模式，默认只保留**创建时间最晚**的一份；先出报告，人工核对、两次确认后才删除，默认移入群晖回收站，并持久化操作日志。图片/文档相似结果必须人工复核、禁止一键批量删除；视频相似组默认不勾选，允许手动全选批量删除。另附字幕（云端 ASR/LLM）、下载（直链/HLS）、格式转换与音视频合成四个独立模块。
 
-> **当前代码版本：1.1.0-0059（已打包 / 未发布）**（2026-11-17）—— 新增「合成」页：把视频片段与音频片段按选择顺序拼接、混流为一个文件（内置功能，无启用开关）；软件显示名改为「重复文件清理与影音工具 / Duplicate Cleaner & Media Toolkit」（包 ID 与数据目录不变）。
-> 最近一次正式发布仍为 [v1.1.0-0050](https://github.com/yitianfadi/synology-duplicate-cleaner/releases/tag/v1.1.0-0050)；v0051–v0059 的说明见 [发布说明](docs/RELEASE_NOTES_v1.1.0-0059.md)。
+> **当前代码版本：1.1.0-0060（已打包 / 未发布）**（2026-11-18）—— 字幕任务默认勾选「同时生成译文」；设置页精简为「必须配置」的 9 组（扫描/相似/视频等纯参数移到扫描页或固定默认）；DSM 系统通知按 DSM 7 的 i18n 规范修复（安装本包后生效）。
+> 最近一次正式发布仍为 [v1.1.0-0050](https://github.com/yitianfadi/synology-duplicate-cleaner/releases/tag/v1.1.0-0050)；v0051–v0059 见 [v0059 发布说明](docs/RELEASE_NOTES_v1.1.0-0059.md)，v0060 见 [v0060 发布说明](docs/RELEASE_NOTES_v1.1.0-0060.md)。
 
 > ## ⚠️ 风险提示
 > **删除文件存在数据丢失风险，重要数据建议先备份；本工具仅基于哈希判定重复，无法保证业务文件适用性，请核对扫描结果再操作。**
@@ -37,7 +37,7 @@
 **自动化**
 
 - **计划扫描（v0046）**：`daily 03:30` / `weekly mon,wed 04:00` / `interval 360` 规则后台触发；可设 1 分钟负载阈值，负载超标或已有扫描在跑时跳过本次
-- **通知（v0046）**：扫描完成/失败、字幕批次结束、失败数超阈值、单次释放空间达阈值时推送 **DSM 系统通知 / Webhook / Telegram**；可逐渠道发送测试，Token 不回显
+- **通知（v0046）**：扫描完成/失败、字幕批次结束、失败数超阈值、单次释放空间达阈值时推送 **Webhook / Telegram**；可逐渠道发送测试，Token 不回显。DSM 系统通知仅对 Synology 自家套件开放，v0060 起不再提供。
 
 **字幕**
 
@@ -102,7 +102,7 @@
 ```bash
 python build/fetch_ffmpeg.py   # 首次构建：下载两个架构的静态 FFmpeg 到 vendor/ffmpeg/
 python build/build_spk.py
-# 生成 dist/DuplicateCleaner-1.1.0-0059.spk
+# 生成 dist/DuplicateCleaner-1.1.0-0060.spk
 ```
 
 构建机需要 Python 3.8+；FFmpeg 二进制不提交到 Git，首次构建需运行 `build/fetch_ffmpeg.py`。重新生成图标需要 Pillow（仓库已带 PNG，可 `--no-icons`）。
@@ -110,7 +110,7 @@ python build/build_spk.py
 ### 2. 安装到 DSM
 
 1. DSM 套件中心先安装 **Python3**（3.8+）。
-2. 套件中心 → 手动安装 → 选择 `dist/DuplicateCleaner-1.1.0-0059.spk`。
+2. 套件中心 → 手动安装 → 选择 `dist/DuplicateCleaner-1.1.0-0060.spk`。
 3. 启动套件；从 DSM 主菜单打开“重复文件清理与字幕”，或访问 `http://<NAS>:8787/`。
 4. 使用 administrators 组账号登录。
 5. 按页面黄色“权限提示”给 `duplicatecleaner` 系统内部用户授权目标共享文件夹（读取；删除副本需读取/写入）。
@@ -159,7 +159,7 @@ python qa/bench_search.py
 - 契约：[前后端接口](docs/CONTRACT.md) · [内容相似](docs/SIMILARITY_CONTRACT.md) · [视频相似](docs/VIDEO_CONTRACT.md) · [存储层](docs/STORAGE_CONTRACT.md)
 - 字幕：[云端字幕](docs/SUBTITLE_CONTRACT.md) · [目录批量字幕](docs/SUBTITLE_BATCH_CONTRACT.md) · [字幕 ASR v2](docs/SUBTITLE_ASR_V2_CONTRACT.md)
 - 下载：[下载中心契约](docs/DOWNLOAD_CONTRACT.md) · [架构 §21](docs/ARCHITECTURE.md)
-- 交付与验收：[v2 需求交付与取舍](docs/REQUIREMENTS_V2_ASSESSMENT.md) · [发布说明 1.1.0-0059](docs/RELEASE_NOTES_v1.1.0-0059.md) · [QA 验收报告](qa/REPORT.md)
+- 交付与验收：[v2 需求交付与取舍](docs/REQUIREMENTS_V2_ASSESSMENT.md) · [发布说明 1.1.0-0059](docs/RELEASE_NOTES_v1.1.0-0059.md) · [发布说明 1.1.0-0060](docs/RELEASE_NOTES_v1.1.0-0060.md) · [QA 验收报告](qa/REPORT.md)
 
 ## 仓库结构
 
@@ -222,7 +222,7 @@ dist/               构建产物（.spk 与 SHA256）
 - 单批最多 500 个视频、单次提交或枚举最多 20000 个，已完成任务保留上限 200 条；超过上限的旧任务会被清理
 - 自动重试只覆盖超时/网络/云端/内部错误（无语音、权限、码流不重试）；目录监控为轮询实现（无 inotify），按大小 + mtime 判断新增；负载阈值用 1 分钟 loadavg（Windows 调试环境视为不限制）
 - 计划扫描为后台轮询（标准库无 cron）：触发时已有扫描、负载超阈值或无可用目录则跳过且不补跑；套件停止或 NAS 休眠期间不触发
-- 通知：DSM 系统通知需 `synodsmnotify`（非 DSM 环境自动跳过）；Webhook/Telegram 需 NAS 能出网；Bot Token 不回显、不写日志
+- 通知：只支持 Webhook / Telegram（需 NAS 能出网）；DSM 系统通知的 `sysnotify` 资源仅 Synology 自家套件可用，v0060 起移除；Bot Token 不回显、不写日志
 - 权限体检只做只读检测并给 DSM 操作指引，不自动提权；日志检索最多扫描 500 个日志文件、单文件读取 512KB
 - 批次组取消运行中的任务会等待当前 ASR 分片/翻译请求结束（显示「取消中」），不会立即 kill；强制删除会先取消再删除，删除后不可恢复（含临时分片与产物）
 

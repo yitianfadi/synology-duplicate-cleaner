@@ -179,7 +179,7 @@ v0034 新增 `status`：`all`（默认）/`active`（= running+translating）/`q
   - `path` 仍传视频路径；后端解析 `<stem>.srt`，**提交时**不存在则拒绝（400 `SOURCE_SRT_MISSING`；批次提交时为 `rejected` 项）；任务执行时源文件被删除/不可读则任务 `failed`（`SOURCE_SRT_MISSING`）。
   - **不启动 FFmpeg、不调用 ASR**；`parse_srt` → LLM 翻译 → 写 `<stem>.<target>.srt` 与 `<stem>.bilingual.<target>.srt`。
   - `translate` 必须为 `true`（默认 true），否则 400 `INVALID_ARGUMENT`。
-  - `subtitle_translate_enabled` 必须已开启，否则 `TRANSLATE_DISABLED`。
+  - `subtitle_enabled` 必须已开启；`subtitle_llm_api_key` 必须已配置，否则 `TRANSLATE_NOT_CONFIGURED`（v0060 起 `subtitle_translate_enabled` 已废弃，不再拦截）。
   - 目标译文文件均已存在且 `skip_existing=true` → `done` + `skipped=true`。
 
 ## 6. 输出落盘
@@ -308,8 +308,8 @@ CREATE TABLE IF NOT EXISTS subtitle_batches (
 | BATCH_TOO_LARGE | 400 | 路径数超 `SUBTITLE_BATCH_GROUP_MAX_ITEMS`（v0032：默认 20000；批次内自动拆成 ≤500） |
 | SOURCE_SRT_MISSING | 400 | 只翻译但视频旁无 `<stem>.srt` |
 | OUTPUT_NOT_WRITABLE | 400 | 视频旁目录不可写（任务级 warning，不作为接口错误抛出） |
-| TRANSLATE_DISABLED | 400 | `subtitle_translate_enabled=false`（v0035 补翻译同样适用） |
-| TRANSLATE_NOT_CONFIGURED | 400 | 补翻译时 `subtitle_llm_api_key` 为空 |
+| TRANSLATE_DISABLED | 400 | 历史错误码；v0060 起 `subtitle_translate_enabled` 已废弃，不再返回 |
+| TRANSLATE_NOT_CONFIGURED | 400 | 需要翻译但 `subtitle_llm_api_key` 为空（v0060：翻译只看 LLM Key） |
 | TRANSLATION_EXISTS | 400 | 源任务已有完整译文，无需补翻译 |
 | JOB_NOT_DONE | 400 | 源任务未完成，不能补翻译 |
 
