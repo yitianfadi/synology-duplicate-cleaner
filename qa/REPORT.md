@@ -4,7 +4,7 @@
 |---|---|
 | 项目 | 重复文件清理与字幕 / DuplicateCleaner（DSM 7 SPK） |
 | 套件 ID | `DuplicateCleaner` |
-| 当前版本 | 1.1.0-0064（已打包，未发布） |
+| 当前版本 | 1.1.0-0065（已打包，未发布） |
 | 最近更新 | 2026-11-19 |
 | 验收主机 | Windows 本地 |
 | 验收结论 | PASS（发布基线） |
@@ -15,25 +15,25 @@
 
 ## 1. 当前基线
 
-最新一次全量验收为 1.1.0-0064（已打包，SPK 结构/同步检查全绿）。
+最新一次全量验收为 1.1.0-0065（已打包，SPK 结构/同步检查全绿）。
 
 | 套件 | 命令 | 结果 |
 |---|---|---|
-| 后端单元测试 | `cd src/backend && python -m unittest discover -s tests` | **880 OK（6 skipped）** |
-| 静态检查 | `python qa/static_checks.py` | **251 PASS / 0 FAIL / 0 UNVERIFIED** |
-| 端到端 | `python qa/e2e_test.py` | **262 PASS / 0 FAIL / 1 UNVERIFIED**（Windows symlink 历史项；含 DL-00…DL-20、CV-00…CV-20、MG-00…MG-07、RESTART-08、SET-08…SET-10） |
+| 后端单元测试 | `cd src/backend && python -m unittest discover -s tests` | **895 OK（6 skipped）** |
+| 静态检查 | `python qa/static_checks.py` | **257 PASS / 0 FAIL / 0 UNVERIFIED** |
+| 端到端 | `python qa/e2e_test.py` | **263 PASS / 0 FAIL / 1 UNVERIFIED**（Windows symlink 历史项；含 DL-00…DL-20、CV-00…CV-21、MG-00…MG-07、RESTART-08、SET-08…SET-10） |
 | 前端模块图 | `node qa/check_web_modules.mjs` | **37/37 PASS**（v0063 已选列表分页） |
 | 无头浏览器冒烟 | `python qa/web_smoke.py` | 8/8 PASS（最近一次 static 内联执行） |
 | 真实 Chromium 探针 | `.uiprobe/probe_v0043..v0050.mjs`、`.uiprobe/ui_probe.py` | v0043–v0050 全通过；v0057/v0058/v0059 用 `ui_probe.py`（登录 → 逐页点击扫描/字幕/下载/转换/合成/设置 → 校验面板、无“未启用”、无 console 错误）通过；v0064 复跑通过（下载页 `errors=none`、无 console 错误） |
 
 | 产物项 | 值 |
 |---|---|
-| 文件 | `dist/DuplicateCleaner-1.1.0-0064.spk` |
-| 大小 | 39,249,920 B |
-| SHA256 | `310ac009a930572c62dc8127e3f1bc0b3c9f0efdca5f4cfb0a7d9b968790a492` |
-| package.tgz MD5 | `00f6abaf764b34408ab707b990956c8c`（= INFO.checksum） |
+| 文件 | `dist/DuplicateCleaner-1.1.0-0065.spk` |
+| 大小 | 99,481,600 B |
+| SHA256 | `c892957b302b4295b7198bbb742fa58d6e1d6c2586029df89f2e053d75265264` |
+| package.tgz MD5 | `3b9f8c2c01e3561110d071c44204a0dc`（= INFO.checksum） |
 | SQLite schema | v11（v10 convert_jobs；v11 avmerge_jobs；v0052–v0055/v0057/v0058/v0060–v0064 无迁移） |
-| 版本同步 | 1.1.0-0064 同步 8 处（static `SPK-BUILD-VERSION`/`SPK-SYNC` 通过） |
+| 版本同步 | 1.1.0-0065 同步 8 处（static `SPK-BUILD-VERSION`/`SPK-SYNC` 通过） |
 
 判定口径：
 
@@ -312,6 +312,7 @@ REQ 编号沿用 v1.0 基线，状态按当前版本事实更新。
 | v0062 | 2026-11-19 | 转换批量提交自动分批（每批 ≤200）+ 活动任务上限 500→2000 | 866（skip 6） | 247 | 260/0/1 | 分批提交/上限迁移断言（CV-20） | `d57a9e3b…529e3ca1` |
 | v0063 | 2026-11-19 | 转换「已选文件」分页显示（默认 60/页 + 搜索），选择集仍全量 | 866（skip 6） | 248 | 260/0/1 | 分页纯函数探针（WEB-MOD-CONVERT-PAGER）+ FE-CONVERT-LIST-PAGER | `71f84b35…35a47e` |
 | v0064 | 2026-11-19 | 网页解析：压缩响应解压（gzip 带头/无头）+ 按解析标题命名下载产物 | 880（skip 6） | 251 | 262/0/1 | 压缩页面解析 + `titles` 命名（DL-19/DL-20） | `310ac009…8790a492` |
+| v0065 | 2026-11-19 | 转换硬件编解码：内置 FFmpeg 8.1（VAAPI）+ 随包 libva/iHD/i965 + videodriver 组 + 3 个硬件预设与 CPU 回退 | 895（skip 6） | 257 | 263/0/1 | 硬件状态探测（CV-21）+ 参数金标/回退（15 例单测） | `c892957b…5265264` |
 
 说明：
 
@@ -342,6 +343,7 @@ REQ 编号沿用 v1.0 基线，状态按当前版本事实更新。
 - v0062：转换单请求上限仍为 200（`CONVERT_BATCH_MAX_ITEMS`），前端按 `capabilities.limits.batch_max_items` **自动分批连续提交**（显示「x/y 批」进度，只把真正入队的文件移出已选列表，被拒文件保留并提示原因），整目录（枚举上限 2000）可一次提完；`convert_job_limit` 默认 500→2000（旧默认值经 `settings_migrated_v0062` 一次性迁移，写审计）；新增 static `FE-CONVERT-BATCH`/`BE-CONVERT-LIMITS`、e2e `CV-20`。
 - v0063：转换页「已选文件」改为**分页渲染**——选择集 `state.convert.selected` 仍全量（提交不受影响），列表只渲染当前页（默认 60，可选 60/120/240），新增按名称/路径筛选、上一页/下一页、摘要（总数/总大小/当前区间/按后缀计数）；`paginate()` 为导出纯函数并在模块探针里验证页数/末页/越界夹紧/空集；取消勾选导致页数减少时页码自动夹紧；新增 static `FE-CONVERT-LIST-PAGER`，模块图 37/37。
 - v0064：修「网页解析不到地址」——实测站点对 `Accept-Encoding: identity` 也回压缩正文却不带 `Content-Encoding`，后端按 UTF‑8 解成乱码后什么都没匹配到；文本类请求改为协商 `gzip, deflate`，`read_raw` 按 `Content-Encoding` 解压（gzip/x-gzip/deflate/裸 deflate），无头但正文是 gzip 魔数时也解，并返回**重定向后的最终地址**、按 charset 解码页面。同时按解析标题命名：`pageparse.clean_title` 去掉「正在播放」前缀与站名后缀，`POST /api/downloads` 新增 `titles: {url: title}`，任务名与文件名用清洗后的片名（不再一律 `index.mp4`）；前端记录 `titleMap` 并提示“文件名将使用标题…”。新增 static `BE-DOWNLOAD-ACCEPT-ENCODING`/`BE-DOWNLOAD-TITLE-NAMING`/`FE-DOWNLOAD-TITLE-NAMING`、单测 `test_v0064_download_titles.py`（14 例）、e2e `DL-19`/`DL-20`。
+- v0065：转换支持 Intel 核显硬件编解码（VAAPI）。DS920+ 实测：`libx264 medium` 1080p ≈1.0×、i965 硬编 2.02×、iHD 硬编 H.264 3.49×、HEVC 硬编 2.24×、**HEVC 硬解 + H.264 硬编全 GPU 9.07×**。实现：x86_64 内置 FFmpeg 换 BtbN n8.1（`--enable-vaapi --enable-libvpl`）；随包 `target/lib/vaapi/`（libva 2.22 + libigdgmm + iHD/i965 驱动，BtbN 对 libva 是运行时 dlopen，必须自带）；`spk/conf/privilege` 加 `join-groupname: videodriver`；新增 `hwaccel.py` 探测、`FFmpegTool.probe_vaapi()`、3 个硬件预设（CQP）、`convert_hwaccel` 设置键与失败自动回退 CPU（审计 `convert_hw_fallback`、快照 `hw_fallback`）；新增 static `BE-CONVERT-HWACCEL`/`BE-CONVERT-HW-PRESETS`/`SPK-PRIVILEGE-VIDEODRIVER`/`SPK-FFMPEG-VAAPI`/`SPK-VAAPI-BUNDLE`/`FE-CONVERT-HW`、单测 `test_v0065_convert_hw.py`（15 例）、e2e `CV-21`。SPK 体积 39 MB → 99.5 MB（仅 x86_64 变大，aarch64 保持 4.1）。
 
 ### 6.2 原报告记录异常（保留说明，不再重复展开）
 
@@ -385,9 +387,9 @@ python build/build_spk.py --no-icons --out-dir $env:TEMP\qa-build1
 |---|---|---|
 | e2e 结果 | `qa/e2e_results.json` | 逐条 `id`/结论/说明 |
 | static 结果 | `qa/static_results.json` | 逐条 `id`/结论 |
-| SPK | `dist/DuplicateCleaner-1.1.0-0064.spk` | 39,249,920 B；SHA256 `310ac009a930572c62dc8127e3f1bc0b3c9f0efdca5f4cfb0a7d9b968790a492`；package.tgz MD5 `00f6abaf764b34408ab707b990956c8c` |
-| 校验文件 | `dist/DuplicateCleaner-1.1.0-0064.spk.sha256` | 与产物 SHA256 一致 |
-| 上一版 SPK | `dist/DuplicateCleaner-1.1.0-0063.spk` | 39,249,920 B；SHA256 `71f84b35…35a47e` |
+| SPK | `dist/DuplicateCleaner-1.1.0-0065.spk` | 99,481,600 B；SHA256 `c892957b302b4295b7198bbb742fa58d6e1d6c2586029df89f2e053d75265264`；package.tgz MD5 `3b9f8c2c01e3561110d071c44204a0dc` |
+| 校验文件 | `dist/DuplicateCleaner-1.1.0-0065.spk.sha256` | 与产物 SHA256 一致 |
+| 上一版 SPK | `dist/DuplicateCleaner-1.1.0-0064.spk` | 39,249,920 B；SHA256 `310ac009…8790a492` |
 | 探针脚本/截图 | `.uiprobe/probe_v0043..v0050.mjs`、`.uiprobe/*.png` | 真实 Chromium |
 | 契约 | `docs/*_CONTRACT.md` | 逐版本接口与行为 |
 

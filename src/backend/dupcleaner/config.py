@@ -7,9 +7,9 @@ import os
 import re
 
 APP_NAME = "DuplicateCleaner"
-APP_VERSION = "1.1.0-0064"
+APP_VERSION = "1.1.0-0065"
 DISPLAY_NAME = "重复文件清理与字幕"
-SPK_VERSION = "1.1.0-0064"
+SPK_VERSION = "1.1.0-0065"
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8787
@@ -563,6 +563,26 @@ CONVERT_AUDIO_BITRATE_MAX_KBPS = 512
 CONVERT_AUDIO_BITRATE_DEFAULT = 192
 # 输出文件名模板：{name} {preset} {date}（扩展名由预设决定，模板里不写）。
 CONVERT_NAME_TEMPLATE_DEFAULT = "{name}"
+# ---------------------------------------------------------------------------
+# v0065 硬件编解码（docs/CONVERT_CONTRACT.md §14）
+# ---------------------------------------------------------------------------
+# 设备节点（DS920+ 等：/dev/dri/renderD128）；card0 只作为最后兜底。
+VAAPI_DEVICE_CANDIDATES = ("/dev/dri/renderD128", "/dev/dri/card0")
+# 随包 libva/驱动在 target/lib/vaapi，由 DUP_FFMPEG_PATH 推导；这里是系统里
+# 已有的兜底驱动目录（只放驱动，不放库目录——库目录里有旧 libc 会顶掉 glibc）。
+VAAPI_FALLBACK_DRIVER_DIRS = (
+    "/volume1/@appstore/CodecPack/pack/lib/libva/dri",
+    "/volume1/@appstore/EmbyServer/lib/dri",
+    "/var/packages/CodecPack/target/lib/libva/dri",
+)
+# VAAPI 用 CQP 量化参数（不是 CRF）：数值越小画质越好、体积越大。
+VAAPI_QP = {
+    "h264": {"high": 20, "standard": 24, "small": 28},
+    "hevc": {"high": 22, "standard": 26, "small": 30},
+}
+# 硬件加速开关（auto=有可用 VAAPI 就用；off=只用 CPU）。
+CONVERT_HWACCEL_MODES = ("auto", "off")
+CONVERT_HWACCEL_DEFAULT = "auto"
 CONVERT_NAME_TEMPLATE_MAX = 200
 CONVERT_NAME_TEMPLATE_TOKENS = ("name", "preset", "date")
 # 进度落库最小间隔（秒）：不逐帧写 SQLite。

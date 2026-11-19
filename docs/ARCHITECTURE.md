@@ -1,7 +1,7 @@
 # 整体方案架构
 
 > 项目：**重复文件清理与字幕（Duplicate Cleaner & Subtitles）** · 群晖 DSM 7.x SPK 套件
-> 版本：1.1.0-0064
+> 版本：1.1.0-0065
 > 原则：**先扫描、出报告、人工确认、二次确认、可回收、全程审计**。任何情况下都不自动静默删除。
 
 ## 1. 目标与边界
@@ -672,6 +672,7 @@ Linux 的 `st_ctime` 是 **inode 状态变更时间**，不是创建时间，复
 - **队列**：与下载中心同构——单调度线程每 0.3s 按 `convert_concurrency` 取 FIFO；**没有 paused**，因为 FFmpeg 不能断点续转，暂停只能做成"队列暂停"骗人；`running` 在重启后回到 `queued` 从头再来。
 - **空闲时段**：`convert_offpeak_enabled` 打开时，窗口外调度器直接不取任务，任务停在 `queued`；窗口判定用本地时间、支持跨零点（与下载分时限速同一套 `_in_window`）。
 - **落盘**：产物先写 `<目标>.dcpart` → 探测校验（体积/流/时长）→ `os.replace` 原子改名；失败默认删除 `.dcpart`（`convert_keep_temp` 可保留排查）。
+- **硬件编解码（v0065）**：`hwaccel.py` 探测 `/dev/dri/renderD128` + 随包 `lib/vaapi`（libva 2.22 / libigdgmm / iHD / i965），拼 `LIBVA_DRIVER_NAME`/`LIBVA_DRIVERS_PATH`/`LD_LIBRARY_PATH` 交给 `FFmpegTool.run_stream(env_extra=…)`；`probe_vaapi()` 用一次最小 `-init_hw_device vaapi` 确认可用（缓存）。3 个硬件预设走 `-vaapi_device` + CQP（`-qp`）；源编码在驱动能力表内时全 GPU（`-hwaccel vaapi -hwaccel_output_format vaapi`），否则软解 + `hwupload`；失败自动回退同容器 CPU 预设（审计 `convert_hw_fallback`）。实测 DS920+：H.264 硬编 3.49×、HEVC 硬解→H.264 硬编 9.07×。
 - **覆盖与删除**：默认 `rename`（`名称 (2).ext`）；源=目标时强制改名，绝不原地覆盖；`delete_source` 必须 `confirm="DELETE SOURCE"` 且校验通过后才删，并记审计。
 - **`.dcpart` 的坑（v0056 一并修下载）**：FFmpeg 按输出扩展名推断容器，`.dcpart` 会让它报 `Unable to choose an output format`；转换所有预设显式 `-f <muxer>`，下载的 `_merge`/`_remux` 也补 `-f mp4`，并有 static `BE-DOWNLOAD-PART-FORMAT` 兜底。
 - **持久化**：SQLite schema v10 只新增 `convert_jobs`（`payload_json` 文档式），进度落库节流 2s，与下载一致。

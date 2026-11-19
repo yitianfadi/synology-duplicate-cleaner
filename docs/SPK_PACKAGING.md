@@ -1,7 +1,7 @@
 # 打包、部署与运维（DSM 7 SPK）
 
-> 套件名：`DuplicateCleaner` · 版本：`1.1.0-0064` · 架构：`noarch`（Python 代码；内置 x86_64/aarch64 FFmpeg 二进制，运行时按 `uname -m` 选择）
-> 产物：`dist/DuplicateCleaner-1.1.0-0064.spk` + SHA256 校验文件
+> 套件名：`DuplicateCleaner` · 版本：`1.1.0-0065` · 架构：`noarch`（Python 代码；内置 x86_64/aarch64 FFmpeg 二进制，运行时按 `uname -m` 选择）
+> 产物：`dist/DuplicateCleaner-1.1.0-0065.spk` + SHA256 校验文件
 
 ## 1. 运行依赖与前置条件
 
@@ -13,7 +13,7 @@
 | 文件系统 | Btrfs / EXT4 | 创建时间依赖 `statx` 的 btime；两类文件系统在 DSM 7 内核下均支持（EXT4 需 inode 256） |
 | 浏览器 | 支持 ES2019 | DSM 7 自带 Chrome/Firefox；无 CDN 依赖 |
 | 可选 Pillow | 非必需 | 相似模式的 JPEG/WebP 感知哈希优先使用 Pillow；未安装时自动降级为字节特征并标记低置信。PNG 使用标准库解码，无需 Pillow |
-| FFmpeg | SPK 内置静态二进制 | `x86_64` / `aarch64` 两套已打包进 `bin/ffmpeg-*`；启动脚本按 `uname -m` 设置 `DUP_FFMPEG_PATH`；无需用户安装 |
+| FFmpeg | SPK 内置静态二进制 | x86_64 为 **FFmpeg 8.1（BtbN 构建，带 VAAPI/QSV）**，aarch64 为 4.1；启动脚本按 `uname -m` 设置 `DUP_FFMPEG_PATH`；另含 `lib/vaapi/`（libva + iHD/i965 驱动），见 §6.1 |
 | 构建机 | Python 3.8+ | `build/build_spk.py` 跨平台；首次构建先运行 `build/fetch_ffmpeg.py`；生成图标需要 Pillow（可选，仓库已含 PNG） |
 
 > 安装 Python3 的路径不必手动指定：启动脚本会依次探测
@@ -51,8 +51,8 @@ python build/build_spk.py
 产物：
 
 ```
-dist/DuplicateCleaner-1.1.0-0064.spk
-dist/DuplicateCleaner-1.1.0-0064.spk.sha256
+dist/DuplicateCleaner-1.1.0-0065.spk
+dist/DuplicateCleaner-1.1.0-0065.spk.sha256
 ```
 
 构建脚本做了：
@@ -80,7 +80,7 @@ rm -rf build/stage/package/app/tests build/stage/package/app/**/__pycache__
 cp -a src/web/. build/stage/package/web/
 cp -a spk/ui/. build/stage/package/ui/
 cp -a spk/port_conf/. build/stage/package/port_conf/
-echo "1.1.0-0064" > build/stage/package/VERSION
+echo "1.1.0-0065" > build/stage/package/VERSION
 # 2) package.tgz
 tar -czf build/stage/package.tgz -C build/stage/package .
 # 3) 外层
@@ -92,7 +92,7 @@ sed -i '/^checksum=/d' build/stage/spk/INFO
 echo "checksum=\"$MD5\"" >> build/stage/spk/INFO
 chmod 755 build/stage/spk/scripts/*
 # 4) 未压缩外层 tar
-tar -cf dist/DuplicateCleaner-1.1.0-0064.spk -C build/stage/spk .
+tar -cf dist/DuplicateCleaner-1.1.0-0065.spk -C build/stage/spk .
 ```
 
 > 注意：手工构建时 `ui/index.html` 里的 `__DUP_BACKEND_SCHEME__` 需要替换为 `http` 或 `https`；`ui` 必须在 package.tgz 里。
@@ -100,9 +100,9 @@ tar -cf dist/DuplicateCleaner-1.1.0-0064.spk -C build/stage/spk .
 ### 3.3 构建后自检
 
 ```bash
-tar -tf dist/DuplicateCleaner-1.1.0-0064.spk
+tar -tf dist/DuplicateCleaner-1.1.0-0065.spk
 # 应包含 INFO、package.tgz、PACKAGE_ICON.PNG、conf/*、scripts/*
-mkdir -p /tmp/dupcheck && tar -xf dist/DuplicateCleaner-1.1.0-0064.spk -C /tmp/dupcheck
+mkdir -p /tmp/dupcheck && tar -xf dist/DuplicateCleaner-1.1.0-0065.spk -C /tmp/dupcheck
 tar -tzf /tmp/dupcheck/package.tgz | head -50
 grep -E '^(package|version|os_min_ver|dsmuidir|dsmappname|adminport)=' /tmp/dupcheck/INFO
 python -m json.tool /tmp/dupcheck/conf/privilege
@@ -116,7 +116,7 @@ Windows 自带 `tar.exe`（bsdtar）也可执行 `tar -tf`、`tar -xf`。
 ### 4.1 上传安装
 
 1. DSM → **套件中心** → **手动安装**（右上角“手动安装”按钮）。
-2. 选择 `DuplicateCleaner-1.1.0-0064.spk`。
+2. 选择 `DuplicateCleaner-1.1.0-0065.spk`。
 3. 阅读风险提示/许可证；如 DSM 提示“未知发布者”，确认信任来源后继续。
    - DSM 7.2+ 若禁止未签名第三方套件，需在 **套件中心 → 设置 → 常规 → 信任层级** 调整为允许（或对套件签名，见 §9）。
 4. 安装前确认已安装 **Python3**；未安装会被 `preinst` 拒绝并提示。
@@ -190,9 +190,14 @@ sudo synopkg stop DuplicateCleaner
 {
   "defaults": { "run-as": "package" },
   "username": "duplicatecleaner",
-  "groupname": "duplicatecleaner"
+  "groupname": "duplicatecleaner",
+  "join-groupname": "videodriver"
 }
 ```
+
+`join-groupname: videodriver`（v0065）让套件用户拿到 `/dev/dri/renderD128`
+（`root:videodriver 660`）的读写权限，这是 VAAPI 硬解/硬编的前提；Emby/Jellyfin
+也是同样做法。该组是 DSM 系统组（`/etc.defaults/group` 里已存在），装包时生效。
 
 安装后套件以系统内部用户 **`duplicatecleaner`** 运行。首次使用前必须授权共享文件夹：
 
@@ -210,6 +215,34 @@ sudo synopkg stop DuplicateCleaner
 `<共享文件夹>/#recycle/@duplicate-cleaner/...`。没有授权时目录选择器/扫描会提示权限不足，
 不会静默跳过或删除。若回收站提示不可用，请确认 `duplicatecleaner` 对 `#recycle` 也有写入权限（授权时应用到子文件夹/文件），
 或先改用永久删除（需二次确认）。
+
+### 6.1 VAAPI 硬件编解码（v0065）
+
+`package.tgz` 里额外有：
+
+```
+lib/vaapi/libva.so.2             # libva 2.22（MIT）
+lib/vaapi/libva-drm.so.2
+lib/vaapi/libigdgmm.so.12        # iHD 依赖的 GMM（MIT）
+lib/vaapi/dri/iHD_drv_video.so   # HEVC/VP9 硬解 + H.264/HEVC 硬编
+lib/vaapi/dri/i965_drv_video.so  # 老驱动兜底
+lib/vaapi/README-VAAPI.txt
+```
+
+- 为什么随包：BtbN 8.1 对 libva 用 **implib（运行时 dlopen）**，系统里没有
+  `libva.so.2` 时启用 VAAPI 会直接断言退出；iHD 还需要 `libigdgmm.so.12`。
+- 为什么不用 Emby 的目录：`/volume1/@appstore/EmbyServer/lib` 里有旧 `libc.so.6`，
+  整个塞进 `LD_LIBRARY_PATH` 会让 FFmpeg 报 `GLIBC_2.28 not found`。
+- 运行时由 `dupcleaner/hwaccel.py` 自动拼 `LIBVA_DRIVER_NAME` /
+  `LIBVA_DRIVERS_PATH` / `LD_LIBRARY_PATH`，套件用户已在 `videodriver` 组里。
+- 源码不提交二进制（`vendor/vaapi/` 在 `.gitignore`）：构建机从任意已装
+  Emby/CodecPack 的机器复制 `libva*.so.2` / `libigdgmm.so.12` / `iHD_drv_video.so` /
+  `i965_drv_video.so` 到 `vendor/vaapi/`（`dri/` 子目录），或从 intel/libva、
+  intel/gmmlib、intel/media-driver、intel/intel-vaapi-driver 的发布物获取；
+  `build/build_spk.py` 会写 `lib/vaapi/README-VAAPI.txt` 记录来源。
+- x86_64 的 FFmpeg 8.1 归档（约 146 MB）从
+  `https://github.com/BtbN/FFmpeg-Builds/releases`（`ffmpeg-n8.1-latest-linux64-gpl-8.1.tar.xz`）
+  解出 `bin/ffmpeg`，放到 `vendor/ffmpeg/ffmpeg-x86_64`；国内可用 npmmirror/gh-proxy 镜像。
 
 其他安全收敛：
 
@@ -288,8 +321,8 @@ python build/build_spk.py --scheme https
 - 无论是否签名，安装前都应校验 `dist/*.spk.sha256`：
 
 ```powershell
-Get-FileHash dist\DuplicateCleaner-1.1.0-0064.spk -Algorithm SHA256
-Get-Content dist\DuplicateCleaner-1.1.0-0064.spk.sha256
+Get-FileHash dist\DuplicateCleaner-1.1.0-0065.spk -Algorithm SHA256
+Get-Content dist\DuplicateCleaner-1.1.0-0065.spk.sha256
 ```
 
 ## 10. 升级与卸载

@@ -3257,13 +3257,29 @@ def run():
         resp = client.get("/api/convert/capabilities")
         caps = jd(resp)
         presets = caps.get("presets") or []
-        check("CV-01", "v0056 能力探测返回 FFmpeg 状态与 16 个预设",
-              resp.status == 200 and len(presets) == 16
+        check("CV-01", "v0056 能力探测返回 FFmpeg 状态与 19 个预设（v0065 含 3 个硬件预设）",
+              resp.status == 200 and len(presets) == 19
               and isinstance(caps.get("ffmpeg"), dict)
               and isinstance(caps.get("offpeak"), dict)
               and isinstance(caps.get("defaults"), dict),
               "status=%s presets=%s"
               % (resp.status, len(presets)))
+
+        # v0065：硬件编解码状态（测试机没有 /dev/dri，应如实报不可用并给原因）
+        cv_hw = caps.get("hardware") or {}
+        cv_hw_presets = [item for item in presets if item.get("hw")]
+        check("CV-21", "v0065 能力探测暴露硬件状态，无核显时硬件预设置灰并给原因",
+              isinstance(cv_hw, dict)
+              and isinstance(cv_hw.get("available"), bool)
+              and len(cv_hw_presets) == 3
+              and all(item.get("hw") and item.get("label") for item in
+                      cv_hw_presets)
+              and (cv_hw.get("available") is True
+                   or (all(not item.get("available") for item in cv_hw_presets)
+                       and all(item.get("reason") for item in cv_hw_presets)
+                       and bool(cv_hw.get("reason")))),
+              "hardware=%s presets=%s"
+              % (cv_hw, [(i.get("id"), i.get("available")) for i in cv_hw_presets]))
 
         # v0061：默认「覆盖进回收站 + 转换成功后删源」+ 后缀多选元数据
         cv_defaults = caps.get("defaults") or {}

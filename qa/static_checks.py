@@ -1640,6 +1640,36 @@ def check_frontend():
               "export function paginate", "filteredSelection",
               "pageSize: 60", "paginate(matched, cs.page, cs.pageSize)")),
           "convert list pager markers missing")
+    # v0065：VAAPI 硬件编解码（自包含 libva/驱动 + 硬件预设 + 自动回退）
+    hwaccel_path = os.path.join(backend, "dupcleaner", "hwaccel.py")
+    hwaccel_src = read(hwaccel_path) if os.path.isfile(hwaccel_path) else ""
+    hw_video_src = read(os.path.join(backend, "dupcleaner",
+                                     "video_similarity.py"))
+    check("BE-CONVERT-HWACCEL",
+          "VAAPI 探测：设备/驱动/随包目录 + LIBVA 环境变量 + 编解码能力表",
+          bool(hwaccel_src)
+          and all(marker in hwaccel_src for marker in (
+              "def detect", "def env", "DRIVER_CODECS", "DRIVER_ENCODERS",
+              "LIBVA_DRIVER_NAME", "LIBVA_DRIVERS_PATH", "libigdgmm.so.12"))
+          and ('VAAPI_DEVICE_CANDIDATES' in convert_config_src)
+          and ("def probe_vaapi" in hw_video_src),
+          "vaapi detection markers missing")
+    check("BE-CONVERT-HW-PRESETS",
+          "硬件预设（h264/hevc vaapi）+ CQP 质量 + 失败自动回退 CPU",
+          all(marker in convert_src for marker in (
+              '"mp4_h264_hw"', '"mp4_h265_hw"', '"mkv_h264_hw"',
+              "HW_FALLBACK", '"-rc_mode", "CQP"', "hwaccel.env()"))
+          and ("VAAPI_QP" in convert_config_src)
+          and ("convert_hwaccel" in convert_settings_src),
+          "hardware preset markers missing")
+    check("SPK-PRIVILEGE-VIDEODRIVER",
+          "套件用户加入 videodriver 组（否则打不开 /dev/dri/renderD128）",
+          "videodriver" in read(os.path.join(REPO, "spk", "conf", "privilege")),
+          "privilege join-groupname missing")
+    check("FE-CONVERT-HW",
+          "前端设置默认值含硬件开关，预设标签标注硬件",
+          ("convert_hwaccel" in app) and (u"硬件，快" in convert_src),
+          "convert hardware markers missing")
     check("FE-CONVERT-NAV", "主导航含转换入口，VIEWS/VIEW_HEADINGS 已注册",
           ('data-nav="convert"' in html)
           and ("convertHeading" in app)
@@ -2497,12 +2527,36 @@ def check_dist():
                     if name not in ("bin/ffmpeg-x86_64", "bin/ffmpeg-aarch64",
                                     "bin/LICENSE-FFMPEG-GPLv3.txt"):
                         whitelist_bad.append(name)
+                elif name.startswith("lib/vaapi/"):
+                    # v0065：VAAPI 运行库 + Intel 驱动（二进制，仅 x86_64 使用）
+                    if not name.endswith((".so", ".so.2", ".so.12",
+                                          "README-VAAPI.txt")):
+                        whitelist_bad.append(name)
                 elif name == "THIRD_PARTY_NOTICES.txt":
                     continue
                 else:
                     whitelist_bad.append(name)
             check("SPK-PKG-WHITELIST", "package.tgz 内容符合白名单（app 仅 .py，无临时/输出文件）",
                   not whitelist_bad, "unexpected=%s" % whitelist_bad[:20])
+            # v0065：x86_64 内置 FFmpeg 升级为 8.1（带 VAAPI）并随包 libva/驱动
+            try:
+                ffmpeg_size = pkg.getmember("bin/ffmpeg-x86_64").size
+            except KeyError:
+                ffmpeg_size = 0
+            check("SPK-FFMPEG-VAAPI",
+                  "内置 x86_64 FFmpeg 为带 VAAPI 的 8.x 构建（体积 > 100 MB）",
+                  ffmpeg_size > 100 * 1024 * 1024,
+                  "size=%s" % ffmpeg_size)
+            required_vaapi = {
+                "lib/vaapi/libva.so.2", "lib/vaapi/libva-drm.so.2",
+                "lib/vaapi/libigdgmm.so.12",
+                "lib/vaapi/dri/iHD_drv_video.so",
+                "lib/vaapi/dri/i965_drv_video.so",
+            }
+            check("SPK-VAAPI-BUNDLE",
+                  "package.tgz 含 VAAPI 运行库与 iHD/i965 驱动（自包含）",
+                  required_vaapi.issubset(pkg_names),
+                  "missing=%s" % sorted(required_vaapi - pkg_names))
             ui_index = pkg.extractfile(pkg.getmember("ui/index.html")).read().decode(
                 "utf-8", "replace")
             check("SPK-PKG-UI-PLACEHOLDER", "打包后 ui/index.html 占位符已被替换",

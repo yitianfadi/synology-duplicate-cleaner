@@ -3,5 +3,6 @@
     "run-as": "package"
   },
   "username": "duplicatecleaner",
-  "groupname": "duplicatecleaner"
+  "groupname": "duplicatecleaner",
+  "join-groupname": "videodriver"
 }

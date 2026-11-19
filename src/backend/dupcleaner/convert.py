@@ -36,7 +36,7 @@ import threading
 import time
 import uuid
 
-from . import config
+from . import config, hwaccel
 from .errors import ApiError, invalid, not_found
 from .fsutil import (check_path_safety, extension_of, has_symlink_component,
                      is_dir_nofollow, is_hidden_name, is_regular_file,
@@ -221,6 +221,25 @@ PRESETS = (
      "ext": ".avi", "v_encoder": "mpeg4", "a_encoder": "libmp3lame",
      "copy": False, "copy_subs": False,
      "hint": u"极老设备（体积大、画质一般）"},
+    # -------- v0065：硬件编码（Intel 核显 VAAPI） --------
+    {"id": "mp4_h264_hw", "group": "video",
+     "label": u"MP4 · H.264 + AAC（硬件，快）",
+     "ext": ".mp4", "v_encoder": "h264_vaapi", "a_encoder": "aac",
+     "copy": False, "copy_subs": False, "faststart": True,
+     "hw": True, "hw_codec": "h264",
+     "hint": u"核显硬编：比 CPU 快约 2–4 倍，画质略逊 x264"},
+    {"id": "mp4_h265_hw", "group": "video",
+     "label": u"MP4 · H.265 + AAC（硬件，快）",
+     "ext": ".mp4", "v_encoder": "hevc_vaapi", "a_encoder": "aac",
+     "copy": False, "copy_subs": False, "faststart": True,
+     "hw": True, "hw_codec": "hevc", "extra_args": ["-tag:v", "hvc1"],
+     "hint": u"核显硬编 HEVC：远快于 libx265，同画质省空间"},
+    {"id": "mkv_h264_hw", "group": "video",
+     "label": u"MKV · H.264 + AAC（硬件，快）",
+     "ext": ".mkv", "v_encoder": "h264_vaapi", "a_encoder": "aac",
+     "copy": False, "copy_subs": True,
+     "hw": True, "hw_codec": "h264",
+     "hint": u"核显硬编 + 复制字幕轨；多音轨只取第一条"},
     # -------- 音频（视频也可提取） --------
     {"id": "mp3", "group": "audio", "label": u"MP3",
      "ext": ".mp3", "v_encoder": None, "a_encoder": "libmp3lame",
@@ -249,6 +268,12 @@ PRESETS = (
 )
 
 PRESET_MAP = {preset["id"]: preset for preset in PRESETS}
+# v0065：硬件预设失败时回退到同容器/同编码的 CPU 预设（输出扩展名不变）。
+HW_FALLBACK = {
+    "mp4_h264_hw": "mp4_h264",
+    "mp4_h265_hw": "mp4_h265",
+    "mkv_h264_hw": "mkv_h264",
+}
 PRESET_IDS = tuple(preset["id"] for preset in PRESETS)
 VIDEO_PRESETS = tuple(p for p in PRESETS if p["group"] == "video")
 AUDIO_PRESETS = tuple(p for p in PRESETS if p["group"] == "audio")
@@ -289,7 +314,9 @@ _MP4_COPY_AUDIO = ("aac", "mp3", "ac3", "eac3", "alac")
 # 必须显式 `-f <muxer>`（下载中心的合并也有同样问题，v0056 一并修掉）。
 _MUXERS = {
     "mp4_h264": "mp4", "mp4_h265": "mp4", "mp4_copy": "mp4",
+    "mp4_h264_hw": "mp4", "mp4_h265_hw": "mp4",
     "mkv_h264": "matroska", "mkv_copy": "matroska", "audio_copy": "matroska",
+    "mkv_h264_hw": "matroska",
     "webm_vp9": "webm", "mov_h264": "mov", "ts_h264": "mpegts",
     "avi_mpeg4": "avi", "mp3": "mp3", "m4a": "ipod", "flac": "flac",
     "wav": "wav", "ogg": "ogg", "opus": "opus",
@@ -435,15 +462,31 @@ def check_compat(preset, info, encoders=None):
     return None
 
 
-def build_args(preset, info, options, source_path, output_path):
-    """构造一次转换的 FFmpeg 参数数组（无 shell，顺序固定，便于金标测试）。"""
+def build_args(preset, info, options, source_path, output_path, hw=None):
+    """构造一次转换的 FFmpeg 参数数组（无 shell，顺序固定，便于金标测试）。
+
+    `hw`（v0065）只在硬件预设时传入：`{"device": "/dev/dri/renderD128",
+    "decode": True}`；`decode` 表示源编码能否硬解（否则软解 + hwupload）。
+    """
     quality = (options.get("quality")
                or config.CONVERT_QUALITY_DEFAULT)
     speed = options.get("speed") or config.CONVERT_SPEED_DEFAULT
     max_resolution = int(options.get("max_resolution") or 0)
     channels = options.get("channels") or ""
-    args = ["-nostdin", "-hide_banner", "-loglevel", "error",
-            "-progress", "pipe:1", "-nostats", "-i", source_path]
+    hardware = bool(preset.get("hw"))
+    device = (hw or {}).get("device") or ""
+    hw_decode = bool(hardware and (hw or {}).get("decode"))
+    if hardware and not device:
+        raise ConvertError("HWACCEL_UNAVAILABLE",
+                           u"硬件编码需要 VAAPI 设备，但当前未探测到")
+    prefix = ["-nostdin", "-hide_banner", "-loglevel", "error",
+              "-progress", "pipe:1", "-nostats"]
+    if hardware:
+        prefix += ["-vaapi_device", device]
+        if hw_decode:
+            prefix += ["-hwaccel", "vaapi", "-hwaccel_device", device,
+                       "-hwaccel_output_format", "vaapi"]
+    args = prefix + ["-i", source_path]
     args += ["-map_metadata", "0", "-map_chapters", "0"]
     if preset["group"] == "audio":
         args += ["-map", "0:a:0", "-vn", "-sn", "-dn"]
@@ -462,17 +505,33 @@ def build_args(preset, info, options, source_path, output_path):
             if preset["copy_subs"]:
                 args += ["-c:s", "copy"]
         else:
-            args += ["-c:v", preset["v_encoder"]]
-            args += list(_VIDEO_QUALITY_ARGS.get(
-                preset["v_encoder"], {}).get(quality) or [])
-            if preset["v_encoder"] in ("libx264", "libx265"):
-                args += ["-preset", speed]
-            if preset["v_encoder"] == "libvpx-vp9":
-                args += ["-b:v", "0", "-row-mt", "1", "-cpu-used", "2"]
-            args += ["-pix_fmt", "yuv420p"]
-            if max_resolution:
-                # 只缩小不放大：min(H, ih)；过滤表达式里的逗号需要转义
-                args += ["-vf", "scale=-2:min(%d\\,ih)" % max_resolution]
+            if hardware:
+                # VAAPI 走 CQP（-qp），不是 CRF；数值越小画质越好
+                qp = config.VAAPI_QP.get(
+                    preset.get("hw_codec") or "h264", {}).get(quality, 24)
+                args += ["-c:v", preset["v_encoder"], "-rc_mode", "CQP",
+                         "-qp", str(qp), "-b:v", "0"]
+                if hw_decode:
+                    scale = ("scale_vaapi=w=-2:h=%d:format=nv12"
+                             % max_resolution) if max_resolution \
+                        else "scale_vaapi=format=nv12"
+                else:
+                    scale = ("scale=-2:min(%d\\,ih),format=nv12,hwupload"
+                             % max_resolution) if max_resolution \
+                        else "format=nv12,hwupload"
+                args += ["-vf", scale]
+            else:
+                args += ["-c:v", preset["v_encoder"]]
+                args += list(_VIDEO_QUALITY_ARGS.get(
+                    preset["v_encoder"], {}).get(quality) or [])
+                if preset["v_encoder"] in ("libx264", "libx265"):
+                    args += ["-preset", speed]
+                if preset["v_encoder"] == "libvpx-vp9":
+                    args += ["-b:v", "0", "-row-mt", "1", "-cpu-used", "2"]
+                args += ["-pix_fmt", "yuv420p"]
+                if max_resolution:
+                    # 只缩小不放大：min(H, ih)；过滤表达式里的逗号需要转义
+                    args += ["-vf", "scale=-2:min(%d\\,ih)" % max_resolution]
             if info.get("has_audio"):
                 args += ["-c:a", preset["a_encoder"]]
                 args += list(_AUDIO_QUALITY_ARGS.get(
@@ -509,14 +568,22 @@ def estimate_bytes(preset, info, options, source_bytes):
     return int(source_bytes * factor)
 
 
-def preset_view(preset, encoders=None):
-    """预设对外视图（含可用性）。"""
+def preset_view(preset, encoders=None, hardware=None):
+    """预设对外视图（含可用性）。
+
+    `hardware`（v0065）：`hwaccel.detect()` 的结果；硬件预设没有可用 VAAPI 时
+    标记不可用并给出原因（前端直接置灰）。
+    """
     reason = ""
     if encoders is not None and encoders:
         for encoder in (preset.get("v_encoder"), preset.get("a_encoder")):
             if encoder and encoder not in encoders:
                 reason = u"当前 FFmpeg 不支持 %s" % encoder
                 break
+    if not reason and preset.get("hw"):
+        info = hardware or {}
+        if not info.get("available"):
+            reason = info.get("reason") or u"没有可用的硬件编码器（VAAPI）"
     return {
         "id": preset["id"],
         "group": preset["group"],
@@ -525,6 +592,7 @@ def preset_view(preset, encoders=None):
         "hint": preset.get("hint") or u"",
         "copy": bool(preset.get("copy")),
         "copy_subtitles": bool(preset.get("copy_subs")),
+        "hw": bool(preset.get("hw")),
         "available": not reason,
         "reason": reason,
     }
@@ -567,6 +635,8 @@ class ConvertJob(object):
         # [{"original", "trash_path", "size"}]，成功后登记回收站 manifest 用。
         self.overwritten_path = ""
         self.trashed_paths = []
+        # v0065：硬件编码失败后自动回退 CPU（UI 上标注，便于排障）
+        self.hw_fallback = False
         self.verify = {}
         self.created_epoch = float(created_epoch or time.time())
         self.started_epoch = 0.0
@@ -702,6 +772,7 @@ class ConvertJob(object):
             "verify": dict(self.verify or {}),
             "part_kept": bool(self.part_kept),
             "deleted_source": bool(self.deleted_source),
+            "hw_fallback": bool(self.hw_fallback),
             "overwritten_path": self.overwritten_path,
             "trashed_count": len(self.trashed_paths or []),
             "estimate_bytes": estimate_bytes(
@@ -766,6 +837,7 @@ class ConvertJob(object):
             "part_kept": bool(self.part_kept),
             "attempts": self.attempts,
             "deleted_source": bool(self.deleted_source),
+            "hw_fallback": bool(self.hw_fallback),
             "overwritten_path": self.overwritten_path,
             "trashed_paths": self.trashed_paths,
             "verify": self.verify,
@@ -790,7 +862,8 @@ class ConvertJob(object):
                       "output_dir", "output_name", "output_path",
                       "output_size", "out_time", "speed", "fps",
                       "part_path", "part_kept", "attempts",
-                      "deleted_source", "overwritten_path", "trashed_paths",
+                      "deleted_source", "hw_fallback", "overwritten_path",
+                      "trashed_paths",
                       "verify", "started_epoch",
                       "finished_epoch", "updated_epoch", "timeline"):
             if field in record:
@@ -987,6 +1060,42 @@ class ConvertService(object):
             self._persist(job, force=True)
 
     # -- 执行 -----------------------------------------------------------
+    def _job_hardware(self, preset, info):
+        """v0065：给本次任务算 VAAPI 参数；非硬件预设返回 None。"""
+        if not preset.get("hw"):
+            return None
+        state = self._hardware_state(
+            self._ffmpeg, self._settings_snapshot(),
+            frozenset(self._ffmpeg.encoders() or ()))
+        if not state.get("available"):
+            raise ConvertError(
+                "HWACCEL_UNAVAILABLE",
+                state.get("reason") or u"硬件编码不可用")
+        return {
+            "device": state["device"],
+            "driver": state["driver"],
+            "decode": hwaccel.codec_supported(info.get("video_codec"), state),
+        }
+
+    def _run_convert(self, job, args, on_line, timeout, hw):
+        """执行一次 FFmpeg 转换，返回 (code, stderr)；硬件任务带 VAAPI 环境。"""
+        kwargs = {"timeout": timeout,
+                  "stop_check": lambda: job._cancel.is_set()}
+        if hw:
+            kwargs["env_extra"] = hwaccel.env()
+        try:
+            return self._ffmpeg.run_stream(args, on_line, **kwargs)
+        except VideoStopped:
+            raise _JobCancelled()
+        except VideoTimeout:
+            raise ConvertError(
+                "CONVERT_TIMEOUT",
+                u"转换超时（超过 %d 秒，已终止）" % int(timeout))
+        except VideoSkip as exc:
+            raise ConvertError("FFMPEG_UNAVAILABLE",
+                               u"无法执行 FFmpeg：%s"
+                               % (exc.detail or exc.reason))
+
     def _execute(self, job):
         job.attempts = int(job.attempts or 0) + 1
         job._cancel.clear()
@@ -1026,26 +1135,35 @@ class ConvertService(object):
         job.part_path = part
         self._check_cancelled(job)
         self._step_start(job, "convert")
-        args = build_args(preset, info, job.options, job.source_path, part)
+        hw = self._job_hardware(preset, info)
+        args = build_args(preset, info, job.options, job.source_path, part,
+                          hw=hw)
         timeout = self._timeout_for(job, info)
 
         def on_line(line):
             self._on_progress(job, line)
 
-        try:
-            code, stderr = self._ffmpeg.run_stream(
-                args, on_line, timeout=timeout,
-                stop_check=lambda: job._cancel.is_set())
-        except VideoStopped:
-            raise _JobCancelled()
-        except VideoTimeout:
-            raise ConvertError(
-                "CONVERT_TIMEOUT",
-                u"转换超时（超过 %d 秒，已终止）" % int(timeout))
-        except VideoSkip as exc:
-            raise ConvertError("FFMPEG_UNAVAILABLE",
-                               u"无法执行 FFmpeg：%s"
-                               % (exc.detail or exc.reason))
+        code, stderr = self._run_convert(job, args, on_line, timeout, hw)
+        if code != 0 and hw and preset["id"] in HW_FALLBACK:
+            # v0065：硬件编码失败（驱动/格式不支持等）→ 自动回退同容器 CPU 预设
+            first_line = _one_line((stderr or b"").decode("utf-8", "replace"))
+            logger.warning(u"硬件编码失败，回退 CPU: %s (%s)",
+                           job.job_id, first_line)
+            cpu_preset = PRESET_MAP.get(HW_FALLBACK[preset["id"]])
+            if cpu_preset is not None:
+                job.hw_fallback = True
+                job.message = u"硬件编码失败，已回退 CPU 编码"
+                try:
+                    self.store.audit(
+                        "convert_hw_fallback", job.user,
+                        {"job_id": job.job_id, "preset": preset["id"],
+                         "error": first_line})
+                except Exception:
+                    logger.debug(u"审计硬件回退失败: %s", job.job_id)
+                args = build_args(cpu_preset, info, job.options,
+                                  job.source_path, part)
+                code, stderr = self._run_convert(job, args, on_line, timeout,
+                                                 None)
         if code != 0:
             message = _one_line((stderr or b"").decode("utf-8", "replace"))
             raise ConvertError("CONVERT_FAILED",
@@ -1499,19 +1617,55 @@ class ConvertService(object):
                 result.append(ext)
         return result or list(all_exts)
 
+    def _hardware_state(self, tool, settings, enc_set):
+        """v0065：硬件编码可用性（设备 + 驱动 + 设置开关 + FFmpeg 编码器）。
+
+        返回的 dict 直接进 `capabilities()["hardware"]`；硬件预设在
+        `preset_view()` 里据此置灰。
+        """
+        mode = (settings.get("convert_hwaccel")
+                or config.CONVERT_HWACCEL_DEFAULT)
+        info = hwaccel.detect()
+        if mode == "off":
+            info = dict(info)
+            info["available"] = False
+            info["reason"] = u"已在设置里关闭硬件加速（convert_hwaccel=off）"
+        elif info.get("available") and tool is not None:
+            probe = tool.probe_vaapi()
+            if not probe.get("ok"):
+                info = dict(info)
+                info["available"] = False
+                info["reason"] = probe.get("message") or u"VAAPI 初始化失败"
+        encoders = []
+        if info.get("available"):
+            encoders = [name for name in sorted(
+                hwaccel.DRIVER_ENCODERS.get(info["driver"], ()))
+                if not enc_set or name in enc_set]
+            if not encoders:
+                info = dict(info)
+                info["available"] = False
+                info["reason"] = u"内置 FFmpeg 缺少 VAAPI 编码器"
+        state = dict(info)
+        state["mode"] = mode
+        state["encoders"] = encoders
+        state["codecs"] = sorted(
+            hwaccel.DRIVER_CODECS.get(info.get("driver") or "", ()))
+        return state
+
     def capabilities(self):
         tool = self._ffmpeg
         available = bool(tool.available())
         encoders = tool.encoders() if available else []
         enc_set = frozenset(encoders)
+        settings = self._settings_snapshot()
+        hardware = self._hardware_state(tool, settings, enc_set)
         presets = []
         for preset in PRESETS:
-            item = preset_view(preset, enc_set or None)
+            item = preset_view(preset, enc_set or None, hardware)
             if not available:
                 item["available"] = False
                 item["reason"] = u"未找到 FFmpeg（可在设置里指定路径）"
             presets.append(item)
-        settings = self._settings_snapshot()
         video_exts = [str(x).lower() for x in
                       (settings.get("video_extensions")
                        or config.DEFAULT_VIDEO_EXTENSIONS)]
@@ -1570,6 +1724,7 @@ class ConvertService(object):
                 "max": config.CONVERT_SOURCE_EXTENSIONS_MAX,
             },
             # v0062：前端按 batch_max_items 自动分批提交（后端单次上限不变）
+            "hardware": hardware,
             "limits": {
                 "batch_max_items": config.CONVERT_BATCH_MAX_ITEMS,
                 "enumerate_max_items": config.CONVERT_ENUMERATE_MAX_ITEMS,

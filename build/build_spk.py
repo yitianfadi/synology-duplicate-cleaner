@@ -3,7 +3,7 @@
 """构建群晖 DSM 7 SPK 套件（跨平台，无需 DSM 工具链）。
 
 用法：
-    python build/build_spk.py                 # 默认 HTTP 后端，生成 dist/DuplicateCleaner-1.1.0-0064.spk
+    python build/build_spk.py                 # 默认 HTTP 后端，生成 dist/DuplicateCleaner-1.1.0-0065.spk
     python build/build_spk.py --scheme https  # 后端启用 TLS 时，让 DSM 入口跳转 https://nas:8787/
     python build/build_spk.py --no-icons      # 不重新生成图标（使用仓库内已生成 PNG）
 
@@ -34,7 +34,7 @@ from pathlib import Path
 from typing import Optional
 
 ROOT = Path(__file__).resolve().parent.parent
-VERSION = "1.1.0-0064"
+VERSION = "1.1.0-0065"
 PKG_NAME = "DuplicateCleaner"
 SPK_FILENAME = "%s-%s.spk" % (PKG_NAME, VERSION)
 
@@ -48,6 +48,7 @@ REQUIRED_APP = [
 EXCLUDE_NAMES = {"__pycache__", ".DS_Store", "Thumbs.db", "desktop.ini", ".pytest_cache", "test_output.txt"}
 EXCLUDE_SUFFIXES = {".pyc", ".pyo", ".log", ".swp"}
 FFMPEG_VENDOR = ROOT / "vendor" / "ffmpeg"
+VAAPI_VENDOR = ROOT / "vendor" / "vaapi"
 FFMPEG_BINS = {
     "ffmpeg-x86_64": FFMPEG_VENDOR / "ffmpeg-x86_64",
     "ffmpeg-aarch64": FFMPEG_VENDOR / "ffmpeg-aarch64",
@@ -138,6 +139,40 @@ def add_tree(tar: tarfile.TarFile, root: Path, top: str, exec_all: bool = False)
             add_tar_file(tar, p, arc, mode)
 
 
+def stage_vaapi(target: Path) -> None:
+    """v0065：把 VAAPI 运行库与 Intel 驱动打进 target/lib/vaapi。
+
+    BtbN 的静态 FFmpeg 对 libva 用「implib（运行时 dlopen）」，所以 libva.so.2
+    必须随包提供；驱动目录同时作为 LIBVA_DRIVERS_PATH，避免依赖 NAS 上是否装了
+    Emby/CodecPack。仅 x86_64 需要（aarch64 机型没有这些设备）。
+    """
+    srcdir = VAAPI_VENDOR
+    if not srcdir.is_dir():
+        return
+    libdir = target / "lib" / "vaapi"
+    dridir = libdir / "dri"
+    dridir.mkdir(parents=True, exist_ok=True)
+    for name in ("libva.so.2", "libva-drm.so.2", "libigdgmm.so.12"):
+        src = srcdir / name
+        if src.is_file():
+            shutil.copy2(str(src), str(libdir / name))
+    for name in ("iHD_drv_video.so", "i965_drv_video.so"):
+        src = srcdir / "dri" / name
+        if src.is_file():
+            shutil.copy2(str(src), str(dridir / name))
+    notices = [
+        "DuplicateCleaner bundles VAAPI user-space libraries for x86_64:",
+        "  libva 2.22 + libva-drm (MIT, https://github.com/intel/libva)",
+        "  libigdgmm 22.3 (MIT, https://github.com/intel/gmmlib)",
+        "  iHD media driver (MIT, https://github.com/intel/media-driver)",
+        "  i965 media driver (MIT, https://github.com/intel/intel-vaapi-driver)",
+        "Used for hardware video decode/encode on Intel iGPUs (DSM packages:",
+        "CodecPack / EmbyServer ship compatible builds; see docs/SPK_PACKAGING.md).",
+    ]
+    (libdir / "README-VAAPI.txt").write_text(
+        "\n".join(notices) + "\n", encoding="utf-8")
+
+
 def stage_ffmpeg(target: Path) -> None:
     """把两个架构的静态 FFmpeg 和第三方声明放进 package.tgz。"""
     bindir = target / "bin"
@@ -150,10 +185,13 @@ def stage_ffmpeg(target: Path) -> None:
         except OSError:
             pass
     notices = [
-        "DuplicateCleaner bundles FFmpeg 4.1 static binaries for x86_64 and aarch64.",
-        "Source: https://registry.npmmirror.com/@ffmpeg-installer/linux-x64 and linux-arm64 (ffmpeg-installer).",
+        "DuplicateCleaner bundles FFmpeg static binaries:",
+        "  x86_64: FFmpeg n8.1 (BtbN build, --enable-vaapi --enable-libvpl)",
+        "  aarch64: FFmpeg 4.1 (ffmpeg-installer build, no hardware codecs)",
+        "Sources: https://github.com/BtbN/FFmpeg-Builds/releases and",
+        "         https://registry.npmmirror.com/@ffmpeg-installer/linux-arm64",
         "FFmpeg is licensed under the GNU General Public License v3; see bin/LICENSE-FFMPEG-GPLv3.txt.",
-        "The bundled binaries are used only for local video frame extraction.",
+        "The bundled binaries are used only for local video processing.",
     ]
     gpl = FFMPEG_VENDOR / "GPL-3.0.txt"
     if gpl.exists():
@@ -181,6 +219,7 @@ def build_package_tgz(stage: Path) -> Path:
     copy_tree(ROOT / "spk" / "ui", target / "ui", normalize_text=True)
     copy_tree(ROOT / "spk" / "port_conf", target / "port_conf", normalize_text=True)
     stage_ffmpeg(target)
+    stage_vaapi(target)
 
     # 把 DSM 桌面入口里的协议/主机占位符替换为构建参数。
     scheme = "https" if ARGS.scheme == "https" else "http"
@@ -207,6 +246,11 @@ def build_package_tgz(stage: Path) -> Path:
                     p = target / "bin" / name
                     if p.exists():
                         add_tar_file(tar, p, "bin/" + name, 0o644)
+                # v0065：VAAPI 运行库与 Intel 驱动（target/lib/vaapi）
+                vaapi_dir = target / "lib" / "vaapi"
+                if vaapi_dir.is_dir():
+                    add_tar_dir(tar, "lib")
+                    add_tree(tar, vaapi_dir, "lib/vaapi")
                 add_tar_file(tar, target / "THIRD_PARTY_NOTICES.txt", "THIRD_PARTY_NOTICES.txt", 0o644)
                 add_tar_file(tar, target / "VERSION", "VERSION", 0o644)
     log("package.tgz: %.1f KB" % (pkg.stat().st_size / 1024.0))

@@ -1,7 +1,7 @@
 {
-  "generated_at": "2026-11-19T20:16:53+0800",
+  "generated_at": "2026-11-19T22:19:15+0800",
   "summary": {
-    "PASS": 251,
+    "PASS": 257,
     "FAIL": 0,
     "UNVERIFIED": 0
   },
@@ -28,7 +28,7 @@
       "id": "BE-FILE-COUNT",
       "name": "后端 Python 文件数",
       "status": "INFO",
-      "detail": "87"
+      "detail": "89"
     },
     {
       "id": "BE-SRC-HYGIENE",
@@ -52,7 +52,7 @@
       "id": "BE-UNITTEST-LOG",
       "name": "unittest 结果",
       "status": "INFO",
-      "detail": "Ran 880 tests in 161.824s"
+      "detail": "Ran 895 tests in 155.840s"
     },
     {
       "id": "BE-NO-AUTODELETE",
@@ -871,6 +871,30 @@
       "detail": ""
     },
     {
+      "id": "BE-CONVERT-HWACCEL",
+      "name": "VAAPI 探测：设备/驱动/随包目录 + LIBVA 环境变量 + 编解码能力表",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "BE-CONVERT-HW-PRESETS",
+      "name": "硬件预设（h264/hevc vaapi）+ CQP 质量 + 失败自动回退 CPU",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SPK-PRIVILEGE-VIDEODRIVER",
+      "name": "套件用户加入 videodriver 组（否则打不开 /dev/dri/renderD128）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "FE-CONVERT-HW",
+      "name": "前端设置默认值含硬件开关，预设标签标注硬件",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
       "id": "FE-CONVERT-NAV",
       "name": "主导航含转换入口，VIEWS/VIEW_HEADINGS 已注册",
       "status": "PASS",
@@ -1418,7 +1442,7 @@
     },
     {
       "id": "SPK-DIST",
-      "name": "构建产物存在（DuplicateCleaner-1.1.0-0064.spk）",
+      "name": "构建产物存在（DuplicateCleaner-1.1.0-0065.spk）",
       "status": "PASS",
       "detail": ""
     },
@@ -1430,7 +1454,7 @@
     },
     {
       "id": "SPK-VERSION",
-      "name": "SPK INFO.version 与当前源码 APP_VERSION（1.1.0-0064）一致",
+      "name": "SPK INFO.version 与当前源码 APP_VERSION（1.1.0-0065）一致",
       "status": "PASS",
       "detail": ""
     },
@@ -1473,6 +1497,18 @@
     {
       "id": "SPK-PKG-WHITELIST",
       "name": "package.tgz 内容符合白名单（app 仅 .py，无临时/输出文件）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SPK-FFMPEG-VAAPI",
+      "name": "内置 x86_64 FFmpeg 为带 VAAPI 的 8.x 构建（体积 > 100 MB）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SPK-VAAPI-BUNDLE",
+      "name": "package.tgz 含 VAAPI 运行库与 iHD/i965 驱动（自包含）",
       "status": "PASS",
       "detail": ""
     },

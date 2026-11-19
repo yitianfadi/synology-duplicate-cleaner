@@ -76,7 +76,8 @@
 | 文档 | 内容 | 状态 |
 |---|---|---|
 | [REQUIREMENTS_V2_ASSESSMENT.md](REQUIREMENTS_V2_ASSESSMENT.md) | v2 需求 → 版本交付映射、关键取舍、明确不做、默认值、真机清单 | 现行（结论） |
-| [RELEASE_NOTES_v1.1.0-0064.md](RELEASE_NOTES_v1.1.0-0064.md) | 网页解析修复：文本请求协商 gzip + 按 `Content-Encoding`/魔数解压（站点对 identity 回压缩体却不带头 → 解析不到地址）；解析标题清洗后用作任务名与文件名（`titles` 字段，默认模板 `{title}`） | 现行（已打包） |
+| [RELEASE_NOTES_v1.1.0-0065.md](RELEASE_NOTES_v1.1.0-0065.md) | 转换硬件编解码（VAAPI）：内置 FFmpeg 换 8.1、随包 libva + iHD/i965 驱动、`privilege` 加入 videodriver、3 个硬件预设、失败自动回退 CPU；实测 H.264 硬编 3.5×、HEVC 全 GPU 9× | 现行（已打包） |
+| [RELEASE_NOTES_v1.1.0-0064.md](RELEASE_NOTES_v1.1.0-0064.md) | 网页解析修复：文本请求协商 gzip + 按 `Content-Encoding`/魔数解压（站点对 identity 回压缩体却不带头 → 解析不到地址）；解析标题清洗后用作任务名与文件名（`titles` 字段，默认模板 `{title}`） | 历史（未单独发版，并入 0065） |
 | [RELEASE_NOTES_v1.1.0-0063.md](RELEASE_NOTES_v1.1.0-0063.md) | 转换页「已选文件」分页显示（默认 60/页 + 搜索 + 上一页/下一页，选择集仍全量）；同时包含 v0062 自动分批提交与 v0061 后缀多选/覆盖进回收站/默认删源 | 历史（未单独发版，并入 0064） |
 | [RELEASE_NOTES_v1.1.0-0062.md](RELEASE_NOTES_v1.1.0-0062.md) | 转换批量提交自动分批（每批 ≤200）、活动任务上限 500→2000 | 历史（未单独发版，并入 0063） |
 | [RELEASE_NOTES_v1.1.0-0061.md](RELEASE_NOTES_v1.1.0-0061.md) | 转换页源后缀多选；同名目标覆盖并把旧产物移入套件回收站（不再加 `(2)`）；转换成功后默认删除源文件、失败一律清理临时文件 | 历史（未单独发版，并入 0062） |

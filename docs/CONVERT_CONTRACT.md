@@ -230,8 +230,9 @@ CREATE INDEX idx_convert_jobs_status ON convert_jobs(status, created_epoch);
 
 ## 11. 非目标
 
-见 §1；另外不做：GPU 硬编、字幕烧录、HDR tonemap、转换后自动替换 Jellyfin 元数据、
-定时批量转换（用空闲时段 + 队列即可）。
+见 §1；另外不做：字幕烧录、HDR tonemap、转换后自动替换 Jellyfin 元数据、
+定时批量转换（用空闲时段 + 队列即可）。GPU 硬编自 v0065 起**支持 Intel VAAPI**
+（见 §14），仍不做 NVIDIA NVENC / Apple VideoToolbox。
 
 ## 12. 与扫描/字幕/下载联动
 
@@ -252,3 +253,48 @@ CREATE INDEX idx_convert_jobs_status ON convert_jobs(status, created_epoch);
   默认值元数据、真实转码覆盖进回收站、分批/排队/枚举上限）；
 - 验收：MP4→MKV copy 秒级且时长一致；AVI→MP4 H.264 可播放；MKV→MP3 可播放；
   取消 2 秒内生效且不留 `.dcpart`；重启后队列恢复；设置保存不 400。
+
+## 14. 硬件编解码（v0065）
+
+### 14.1 能力与门槛
+
+- 硬件路径 = Intel iGPU + **VAAPI**；DS920+（Gemini Lake / UHD 600）实测：
+  `libx264 medium` 1080p ≈1.0×、i965 硬编 H.264 2.02×、iHD 硬编 H.264 3.49×、
+  iHD 硬编 HEVC 2.24×、iHD 硬解 HEVC + 硬编 H.264（全 GPU）**9.07×**。
+- 三道门槛：`/dev/dri/renderD128` 属 `root:videodriver 660`（`spk/conf/privilege`
+  的 `join-groupname: videodriver`）；驱动目录必须显式给 `LIBVA_DRIVERS_PATH`；
+  内置 FFmpeg（BtbN 静态 8.1）对 libva 用 implib 运行时 dlopen，`libva.so.2` /
+  `libva-drm.so.2` / iHD 依赖的 `libigdgmm.so.12` 必须随包（`target/lib/vaapi`）。
+
+### 14.2 预设
+
+| id | 编码器 | 说明 |
+|---|---|---|
+| `mp4_h264_hw` | `h264_vaapi` | MP4·H.264（硬件），`-rc_mode CQP -qp 20/24/28` |
+| `mp4_h265_hw` | `hevc_vaapi` | MP4·H.265（硬件），`-qp 22/26/30`，`-tag:v hvc1` |
+| `mkv_h264_hw` | `h264_vaapi` | MKV·H.264（硬件）+ 复制字幕轨 |
+
+- 解码策略：源编码在驱动能力表（iHD: h264/hevc/vp9；i965: h264/vp8/vp9）→
+  全 GPU：`-hwaccel vaapi -hwaccel_device <dev> -hwaccel_output_format vaapi`，
+  缩放用 `scale_vaapi=w=-2:h=N:format=nv12`；否则软解 + `format=nv12,hwupload`。
+- 质量用 CQP（`-qp`），不是 CRF；`config.VAAPI_QP` 是唯一事实来源。
+- `convert_hwaccel`（`auto`/`off`）控制是否启用；`off` 时硬件预设置灰。
+
+### 14.3 探测与回退
+
+- `dupcleaner/hwaccel.py`：设备 → 驱动（iHD 优先，缺 `libigdgmm.so.12` 退 i965）→
+  环境变量；带缓存与 `reset_cache()`。`FFmpegTool.probe_vaapi()` 跑一次最小
+  `-init_hw_device vaapi[:dev]` 确认可用（缓存）。
+- `GET /api/convert/capabilities` 新增 `hardware: {available, device, driver,
+  drivers_path, libs_path, reason, mode, encoders, codecs}`；硬件预设不可用时
+  `available=false` + `reason`。
+- 执行失败（驱动/像素格式不支持等）→ 自动回退同容器 CPU 预设重跑一次
+  （`HW_FALLBACK`），写审计 `convert_hw_fallback`，任务快照 `hw_fallback=true`。
+
+### 14.4 测试
+
+- 单元 `tests/test_v0065_convert_hw.py`（15 例）：参数金标（全 GPU / 软解硬编 /
+  缩放 / CQP / 无 `-pix_fmt`）、预设置灰、探测与环境变量、CPU 回退；
+- 静态 `BE-CONVERT-HWACCEL` / `BE-CONVERT-HW-PRESETS` / `SPK-PRIVILEGE-VIDEODRIVER` /
+  `SPK-FFMPEG-VAAPI` / `SPK-VAAPI-BUNDLE` / `FE-CONVERT-HW`；
+- e2e `CV-21`：无核显环境下硬件预设置灰并给出原因。

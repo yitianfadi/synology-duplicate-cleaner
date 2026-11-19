@@ -2,8 +2,8 @@
 
 一款为 Synology DSM 7.x 编写的重复文件清理与影音工具：提供**哈希精准匹配**、**图片/文档内容相似**与**视频视觉相似**三种扫描模式，默认只保留**创建时间最晚**的一份；先出报告，人工核对、两次确认后才删除，默认移入群晖回收站，并持久化操作日志。图片/文档相似结果必须人工复核、禁止一键批量删除；视频相似组默认不勾选，允许手动全选批量删除。另附字幕（云端 ASR/LLM）、下载（直链/HLS）、格式转换与音视频合成四个独立模块。
 
-> **当前代码版本：1.1.0-0064（已打包 / 未发布）**（2026-11-19）—— 网页解析修复「站点回了压缩正文却不带 `Content-Encoding`」导致的“解析不到地址”；解析出的页面标题会清洗成片名，用作下载任务名与产物文件名（不再叫 `index.mp4`）。
-> 最近一次正式发布仍为 [v1.1.0-0060](https://github.com/yitianfadi/synology-duplicate-cleaner/releases/tag/v1.1.0-0060)（覆盖 v0052–v0060）；v0061–v0064 见 [v0064 发布说明](docs/RELEASE_NOTES_v1.1.0-0064.md)。
+> **当前代码版本：1.1.0-0065（已打包 / 未发布）**（2026-11-19）—— 转换支持 **Intel 核显硬件编解码（VAAPI）**：内置 FFmpeg 升到 8.1 并随包 libva + iHD/i965 驱动，套件用户加入 `videodriver` 组；实测 1080p H.264 硬编 3.5×、HEVC 硬解 → H.264 硬编全 GPU 链路 9×（CPU 约 1×），硬件失败自动回退 CPU。
+> 最近一次正式发布仍为 [v1.1.0-0060](https://github.com/yitianfadi/synology-duplicate-cleaner/releases/tag/v1.1.0-0060)（覆盖 v0052–v0060）；v0061–v0065 见 [v0065 发布说明](docs/RELEASE_NOTES_v1.1.0-0065.md)。
 
 > ## ⚠️ 风险提示
 > **删除文件存在数据丢失风险，重要数据建议先备份；本工具仅基于哈希判定重复，无法保证业务文件适用性，请核对扫描结果再操作。**
@@ -102,7 +102,7 @@
 ```bash
 python build/fetch_ffmpeg.py   # 首次构建：下载两个架构的静态 FFmpeg 到 vendor/ffmpeg/
 python build/build_spk.py
-# 生成 dist/DuplicateCleaner-1.1.0-0064.spk
+# 生成 dist/DuplicateCleaner-1.1.0-0065.spk
 ```
 
 构建机需要 Python 3.8+；FFmpeg 二进制不提交到 Git，首次构建需运行 `build/fetch_ffmpeg.py`。重新生成图标需要 Pillow（仓库已带 PNG，可 `--no-icons`）。
@@ -110,7 +110,7 @@ python build/build_spk.py
 ### 2. 安装到 DSM
 
 1. DSM 套件中心先安装 **Python3**（3.8+）。
-2. 套件中心 → 手动安装 → 选择 `dist/DuplicateCleaner-1.1.0-0064.spk`。
+2. 套件中心 → 手动安装 → 选择 `dist/DuplicateCleaner-1.1.0-0065.spk`。
 3. 启动套件；从 DSM 主菜单打开“重复文件清理与字幕”，或访问 `http://<NAS>:8787/`。
 4. 使用 administrators 组账号登录。
 5. 按页面黄色“权限提示”给 `duplicatecleaner` 系统内部用户授权目标共享文件夹（读取；删除副本需读取/写入）。
@@ -159,7 +159,7 @@ python qa/bench_search.py
 - 契约：[前后端接口](docs/CONTRACT.md) · [内容相似](docs/SIMILARITY_CONTRACT.md) · [视频相似](docs/VIDEO_CONTRACT.md) · [存储层](docs/STORAGE_CONTRACT.md)
 - 字幕：[云端字幕](docs/SUBTITLE_CONTRACT.md) · [目录批量字幕](docs/SUBTITLE_BATCH_CONTRACT.md) · [字幕 ASR v2](docs/SUBTITLE_ASR_V2_CONTRACT.md)
 - 下载：[下载中心契约](docs/DOWNLOAD_CONTRACT.md) · [架构 §21](docs/ARCHITECTURE.md)
-- 交付与验收：[v2 需求交付与取舍](docs/REQUIREMENTS_V2_ASSESSMENT.md) · [发布说明 1.1.0-0059](docs/RELEASE_NOTES_v1.1.0-0059.md) · [发布说明 1.1.0-0064](docs/RELEASE_NOTES_v1.1.0-0064.md) · [QA 验收报告](qa/REPORT.md)
+- 交付与验收：[v2 需求交付与取舍](docs/REQUIREMENTS_V2_ASSESSMENT.md) · [发布说明 1.1.0-0059](docs/RELEASE_NOTES_v1.1.0-0059.md) · [发布说明 1.1.0-0065](docs/RELEASE_NOTES_v1.1.0-0065.md) · [QA 验收报告](qa/REPORT.md)
 
 ## 仓库结构
 

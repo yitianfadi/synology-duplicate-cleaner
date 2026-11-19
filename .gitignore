@@ -10,3 +10,5 @@ Thumbs.db
 
 # Bundled FFmpeg binaries are fetched by build/fetch_ffmpeg.py, not committed.
 vendor/ffmpeg/
+# v0065：VAAPI 运行库与 Intel 驱动（见 docs/SPK_PACKAGING.md §6.1）
+vendor/vaapi/

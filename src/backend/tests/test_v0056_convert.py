@@ -48,7 +48,8 @@ def _probe_info(text=PROBE_TEXT):
 class PresetTableTest(unittest.TestCase):
     def test_ids_unique_and_lookup(self):
         self.assertEqual(len(convert.PRESET_IDS), len(set(convert.PRESET_IDS)))
-        self.assertEqual(len(convert.PRESET_IDS), 16)
+        # v0065：16 个 CPU 预设 + 3 个 VAAPI 硬件预设
+        self.assertEqual(len(convert.PRESET_IDS), 19)
         self.assertEqual(len(convert.PRESETS), len(convert.PRESET_MAP))
         for preset in convert.PRESETS:
             self.assertIn(preset["group"], ("video", "audio"))
@@ -72,6 +73,12 @@ class PresetTableTest(unittest.TestCase):
     def test_quality_tables_cover_encoders(self):
         for preset in convert.PRESETS:
             if preset["copy"]:
+                continue
+            if preset.get("hw"):
+                # v0065：硬件预设不查 CRF 表，改用 VAAPI_QP（CQP）三档
+                for level in config.CONVERT_QUALITIES:
+                    self.assertIn(level, config.VAAPI_QP[preset["hw_codec"]],
+                                  preset["id"])
                 continue
             quality = convert._VIDEO_QUALITY_ARGS.get(preset["v_encoder"])
             audio_quality = convert._AUDIO_QUALITY_ARGS.get(preset["a_encoder"])
@@ -162,9 +169,14 @@ class BuildArgsTest(unittest.TestCase):
                         "max_resolution": 0, "channels": ""}
 
     def _args(self, preset_id, options=None):
-        return convert.build_args(convert.PRESET_MAP[preset_id],
-                                  self.info, options or self.options,
-                                  "/src/a.mp4", "/out/a.mp4")
+        preset = convert.PRESET_MAP[preset_id]
+        hw = None
+        if preset.get("hw"):
+            # v0065：硬件预设必须带设备（真实运行时由 hwaccel.detect 提供）
+            hw = {"device": "/dev/dri/renderD128", "decode": False}
+        return convert.build_args(preset, self.info,
+                                  options or self.options,
+                                  "/src/a.mp4", "/out/a.mp4", hw=hw)
 
     def test_mp4_h264(self):
         args = self._args("mp4_h264")
@@ -795,8 +807,15 @@ class ConvertServiceTest(unittest.TestCase):
     def test_capabilities(self):
         caps = self.service.capabilities()
         self.assertTrue(caps["ffmpeg"]["available"])
-        self.assertEqual(len(caps["presets"]), 16)
-        self.assertTrue(all(item["available"] for item in caps["presets"]))
+        self.assertEqual(len(caps["presets"]), 19)
+        # v0065：无 /dev/dri 的环境里硬件预设不可用，其余仍应可用
+        cpu_presets = [item for item in caps["presets"] if not item["hw"]]
+        hw_presets = [item for item in caps["presets"] if item["hw"]]
+        self.assertEqual(len(hw_presets), 3)
+        self.assertTrue(all(item["available"] for item in cpu_presets))
+        if not caps["hardware"]["available"]:
+            self.assertTrue(all(not item["available"] for item in hw_presets))
+            self.assertTrue(all(item["reason"] for item in hw_presets))
         self.assertEqual(caps["defaults"]["quality"], "standard")
         # v0061：后缀多选 + 默认删源
         exts = caps["source_extensions"]

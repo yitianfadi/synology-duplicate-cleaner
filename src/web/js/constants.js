@@ -407,6 +407,8 @@ export var DEFAULT_SETTINGS = {
   convert_max_resolution: 0,
   convert_job_limit: 2000,
   convert_min_free_gb: 20,
+  // v0065：硬件编码开关（auto=有可用 VAAPI 就用；off=只用 CPU）
+  convert_hwaccel: 'auto',
   convert_keep_temp: false,
   convert_offpeak_enabled: false,
   convert_offpeak_start: '01:00',

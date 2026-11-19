@@ -234,6 +234,8 @@ DEFAULT_SETTINGS = {
     "convert_max_resolution": config.CONVERT_MAX_RESOLUTION_DEFAULT,
     "convert_job_limit": config.CONVERT_JOB_LIMIT_DEFAULT,
     "convert_min_free_gb": config.CONVERT_MIN_FREE_GB_DEFAULT,
+    # v0065：硬件编码开关（auto=有可用 VAAPI 就用；off=只用 CPU）。
+    "convert_hwaccel": config.CONVERT_HWACCEL_DEFAULT,
     # v0061：失败一律清 .dcpart（避免占空间）；该键降级为兼容键，不再生效。
     "convert_keep_temp": False,
     # 仅空闲时段执行：窗口外排队等待，不自动开跑。
@@ -1063,6 +1065,12 @@ def _normalize_value(key, value):
         if value not in config.CONVERT_OVERWRITE_MODES:
             _err(u"convert_overwrite 只能是 %s"
                  % "/".join(config.CONVERT_OVERWRITE_MODES), {"key": key})
+        return value
+    if key == "convert_hwaccel":
+        # v0065：auto=有可用 VAAPI 就用；off=只用 CPU（排障/省电用）。
+        if value not in config.CONVERT_HWACCEL_MODES:
+            _err(u"convert_hwaccel 只能是 %s"
+                 % "/".join(config.CONVERT_HWACCEL_MODES), {"key": key})
         return value
     if key == "convert_source_extensions":
         # v0061：转换页「源文件后缀」筛选。空数组 = 全部支持后缀；

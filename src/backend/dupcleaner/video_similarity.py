@@ -846,6 +846,8 @@ class FFmpegTool(object):
         # v0056：格式转换用的编码器能力缓存（同样随 ffmpeg_path 变化失效）。
         self._encoders = None
         self._settings_path_seen = _SETTINGS_PATH_UNSET
+        # v0065：VAAPI 可用性探测缓存（driver/device/驱动路径变化后失效）
+        self._vaapi = None
 
     # -- settings 路径变化检测 -----------------------------------------
     def _settings_path(self):
@@ -941,14 +943,16 @@ class FFmpegTool(object):
     def available(self):
         return bool(self.resolve())
 
-    def run(self, args, timeout, stop_check=None):
+    def run(self, args, timeout, stop_check=None, env_extra=None):
         """执行一次 FFmpeg（v0051 下载中心用于合并/封装），返回 (code, out, err)。
 
         注意：stdout 必须由调用方保证很小（合并不写 stdout），大输出请落文件。
+        v0065：`env_extra` 供 VAAPI 硬件编码传 LIBVA_* / LD_LIBRARY_PATH。
         """
-        return self._run(list(args), timeout, stop_check)
+        return self._run(list(args), timeout, stop_check, env_extra=env_extra)
 
-    def run_stream(self, args, on_line, timeout, stop_check=None):
+    def run_stream(self, args, on_line, timeout, stop_check=None,
+                   env_extra=None):
         """v0056：边执行边逐行读 stdout（配合 `-progress pipe:1`）。
 
         返回 (returncode, stderr_bytes)。FFmpeg 把进度写 stdout、日志写 stderr，
@@ -961,7 +965,8 @@ class FFmpegTool(object):
         try:
             process = subprocess.Popen(
                 command, stdin=subprocess.DEVNULL,
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                env=self._spawn_env(env_extra))
         except OSError as exc:
             raise VideoSkip("error", u"无法启动 ffmpeg: %s" % exc)
         events = queue.Queue()
@@ -1036,14 +1041,61 @@ class FFmpegTool(object):
                     pass
         return process.returncode, b"".join(stderr_chunks)
 
-    def _run(self, args, timeout, stop_check=None):
+    def _spawn_env(self, env_extra=None):
+        """v0065：拼子进程环境；VAAPI 相关变量只在与调用方给出的合并。"""
+        if not env_extra:
+            return None
+        environ = dict(os.environ)
+        environ.update(env_extra)
+        return environ
+
+    def probe_vaapi(self, device=None, env_extra=None):
+        """v0065：跑一次最小 VAAPI 初始化，确认硬件真的可用（带缓存）。"""
+        from . import hwaccel  # 延迟导入，避免与转换模块循环依赖
+
+        info = hwaccel.detect()
+        if device:
+            info["device"] = device
+        key = (info.get("driver") or "", info.get("device") or "",
+               info.get("drivers_path") or "")
+        with self._lock:
+            if self._vaapi is not None and self._vaapi.get("key") == key:
+                return dict(self._vaapi)
+        if not info.get("available") or not info.get("device"):
+            result = {"ok": False, "key": key,
+                      "message": info.get("reason") or u"VAAPI 不可用"}
+            with self._lock:
+                self._vaapi = dict(result)
+            return dict(result)
+        extra = env_extra if env_extra is not None else hwaccel.env(info)
+        args = ["-hide_banner", "-loglevel", "error",
+                "-init_hw_device", "vaapi=va:%s" % info["device"],
+                "-f", "lavfi", "-i", "nullsrc=s=64x64:d=1",
+                "-frames:v", "1", "-f", "null", "-"]
+        try:
+            code, _out, err = self._run(args, timeout=20.0, env_extra=extra)
+        except (VideoSkip, VideoTimeout, VideoStopped) as exc:
+            code, err = 1, str(exc).encode("utf-8", "replace")
+        if code == 0:
+            result = {"ok": True, "key": key, "message": u"VAAPI 可用（%s）"
+                      % info.get("driver")}
+        else:
+            message = (err.decode("utf-8", "replace") or u"").strip()[-300:]
+            result = {"ok": False, "key": key,
+                      "message": u"VAAPI 初始化失败：%s" % (message or u"未知错误")}
+        with self._lock:
+            self._vaapi = dict(result)
+        return dict(result)
+
+    def _run(self, args, timeout, stop_check=None, env_extra=None):
         command = list(self.resolve() or []) + list(args)
         if not command:
             raise VideoSkip("error", u"未找到 ffmpeg")
         try:
             process = subprocess.Popen(command, stdin=subprocess.DEVNULL,
                                        stdout=subprocess.PIPE,
-                                       stderr=subprocess.PIPE)
+                                       stderr=subprocess.PIPE,
+                                       env=self._spawn_env(env_extra))
         except OSError as exc:
             raise VideoSkip("error", u"无法启动 ffmpeg: %s" % exc)
         deadline = time.monotonic() + max(1.0, float(timeout))
