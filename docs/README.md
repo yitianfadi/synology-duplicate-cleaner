@@ -68,7 +68,7 @@
 |---|---|---|
 | [TASK_CENTER_V2_CONTRACT.md](TASK_CENTER_V2_CONTRACT.md) | 任务检索筛选、批量操作、权限只读体检、日志检索与导出（v0049） | 版本增量 |
 | [SUBTITLE_BATCH_CONTRACT.md](SUBTITLE_BATCH_CONTRACT.md) §23 + [ARCHITECTURE.md](ARCHITECTURE.md) §20 | 批次组异步取消、取消剩余、强制删除、明细自动加载、已取消页签（v0050） | 版本增量 |
-| [DOWNLOAD_CONTRACT.md](DOWNLOAD_CONTRACT.md) + [ARCHITECTURE.md](ARCHITECTURE.md) §21 | 直链/HLS 下载、AES-128 本地化解密、合并 MP4、批量组、队列与并发、设置键（v0051）；播放网页解析与 cURL 登录态暂存（v0052）；去重/自动重试/分时限速/命名模板/优先级/导出/空间看板/通知（v0053）；DASH 清单与订阅下载、连接复用（v0054） | 版本增量 |
+| [DOWNLOAD_CONTRACT.md](DOWNLOAD_CONTRACT.md) + [ARCHITECTURE.md](ARCHITECTURE.md) §21 | 直链/HLS 下载、AES-128 本地化解密、合并 MP4、批量组、队列与并发、设置键（v0051）；播放网页解析与 cURL 登录态暂存（v0052）；去重/自动重试/分时限速/命名模板/优先级/导出/空间看板/通知（v0053）；DASH 清单与订阅下载、连接复用（v0054）；压缩响应解压与按标题命名（v0064） | 版本增量 |
 | [CONVERT_CONTRACT.md](CONVERT_CONTRACT.md) + [ARCHITECTURE.md](ARCHITECTURE.md) §22 | 格式转换：16 个预设（换容器/换编码/提取音频/仅换封装）、队列与进度、源后缀多选、同名覆盖进回收站、默认删源、自动分批提交、已选列表分页、空闲时段、schema v10（v0056 / v0061–v0063） | 现行 |
 
 ### 2.6 交付、验收与历史
@@ -76,7 +76,8 @@
 | 文档 | 内容 | 状态 |
 |---|---|---|
 | [REQUIREMENTS_V2_ASSESSMENT.md](REQUIREMENTS_V2_ASSESSMENT.md) | v2 需求 → 版本交付映射、关键取舍、明确不做、默认值、真机清单 | 现行（结论） |
-| [RELEASE_NOTES_v1.1.0-0063.md](RELEASE_NOTES_v1.1.0-0063.md) | 转换页「已选文件」分页显示（默认 60/页 + 搜索 + 上一页/下一页，选择集仍全量）；同时包含 v0062 自动分批提交与 v0061 后缀多选/覆盖进回收站/默认删源 | 现行（已打包） |
+| [RELEASE_NOTES_v1.1.0-0064.md](RELEASE_NOTES_v1.1.0-0064.md) | 网页解析修复：文本请求协商 gzip + 按 `Content-Encoding`/魔数解压（站点对 identity 回压缩体却不带头 → 解析不到地址）；解析标题清洗后用作任务名与文件名（`titles` 字段，默认模板 `{title}`） | 现行（已打包） |
+| [RELEASE_NOTES_v1.1.0-0063.md](RELEASE_NOTES_v1.1.0-0063.md) | 转换页「已选文件」分页显示（默认 60/页 + 搜索 + 上一页/下一页，选择集仍全量）；同时包含 v0062 自动分批提交与 v0061 后缀多选/覆盖进回收站/默认删源 | 历史（未单独发版，并入 0064） |
 | [RELEASE_NOTES_v1.1.0-0062.md](RELEASE_NOTES_v1.1.0-0062.md) | 转换批量提交自动分批（每批 ≤200）、活动任务上限 500→2000 | 历史（未单独发版，并入 0063） |
 | [RELEASE_NOTES_v1.1.0-0061.md](RELEASE_NOTES_v1.1.0-0061.md) | 转换页源后缀多选；同名目标覆盖并把旧产物移入套件回收站（不再加 `(2)`）；转换成功后默认删除源文件、失败一律清理临时文件 | 历史（未单独发版，并入 0062） |
 | [RELEASE_NOTES_v1.1.0-0060.md](RELEASE_NOTES_v1.1.0-0060.md) | 字幕默认译文；设置页精简为 9 组（约 150→44 项）；移除 DSM 系统通知渠道（sysnotify 属 Synology 专属资源） | 历史 |
@@ -107,3 +108,4 @@
 | 2026-11-10 | 建立本文档索引；压缩 `qa/REPORT.md` 与 `REQUIREMENTS_V2_ASSESSMENT.md`；重写会话交接 `SESSION_SUMMARY.md`；合并 README 功能/限制条目；归档并删除只对 `1.1.0-0003` 有效的旧 `qa/SIMILARITY_REPORT.md` |
 | 2026-11-15 | 新增下载中心、网页解析、下载增强、DASH/订阅：`DOWNLOAD_CONTRACT.md`（§1–§17）+ `ARCHITECTURE.md` §21–§21.3 + `CONTRACT.md` §12；索引状态列更新（v0051–v0054） |
 | 2026-11-15 | v0055 修 bug：`download_subscribe_enabled` 漏加后端 `DEFAULT_SETTINGS`/校验分支，前端整体提交设置时整单 400；新增静态检查 `BE-SETTINGS-KEYS`/`BE-SETTINGS-NORMALIZE`、单元 `tests/test_v0054_settings_keys.py`、e2e `SET-08/09/10` 兜底 |
+| 2026-11-19 | v0064：`DOWNLOAD_CONTRACT.md` §3/§14/§15.4 补压缩响应解压与 `titles` 按标题命名；新增 `RELEASE_NOTES_v1.1.0-0064.md`；索引状态列更新 |

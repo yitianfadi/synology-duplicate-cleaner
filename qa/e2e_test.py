@@ -15,6 +15,7 @@
 from __future__ import print_function
 
 import csv
+import gzip
 import hashlib
 import http.client
 import http.server
@@ -2872,6 +2873,8 @@ def run():
         served = {"/media/movie.bin": payload_bytes}
         served["/live/index.m3u8"] = (
             b"#EXTM3U\n#EXT-X-TARGETDURATION:4\n#EXTINF:4.0,\nseg0.ts\n")
+        # v0064：压缩响应（Content-Encoding 带头 / 不带头）——模拟实测站点行为
+        compressed = {}
 
         class _CdnHandler(http.server.BaseHTTPRequestHandler):
             protocol_version = "HTTP/1.1"
@@ -2880,7 +2883,23 @@ def run():
                 pass
 
             def do_GET(self):
-                body = served.get(self.path.split("?")[0])
+                key = self.path.split("?")[0]
+                packed = compressed.get(key)
+                if packed is not None:
+                    body, encoding = packed
+                    self.send_response(200)
+                    self.send_header("Content-Type",
+                                     "text/html; charset=utf-8")
+                    self.send_header("Content-Length", str(len(body)))
+                    if encoding:
+                        self.send_header("Content-Encoding", encoding)
+                    self.end_headers()
+                    try:
+                        self.wfile.write(body)
+                    except OSError:
+                        pass
+                    return
+                body = served.get(key)
                 if body is None:
                     self.send_response(404)
                     self.send_header("Content-Length", "0")
@@ -3145,6 +3164,56 @@ def run():
                        (jd(resp).get("items") or [])]
                 check("DL-18", "删除后订阅列表不再包含该订阅",
                       sub_id not in ids, "ids=%s" % ids)
+
+            # DL-19：v0064 压缩响应（gzip 带头 / 不带头）也要能解析出地址
+            gz_title = u"正在播放_QA 压缩片- 某视频网_站点长尾标题"
+            gz_page = (u"<html><head><title>%s</title></head><body>"
+                       u'<script>var player_aaaa={"flag":"play",'
+                       u'"url":"%s/p/index.m3u8"}</script></body></html>'
+                       % (gz_title, cdn_base)).encode("utf-8")
+            compressed["/p/gzip.html"] = (gzip.compress(gz_page), "gzip")
+            compressed["/p/rawgzip.html"] = (gzip.compress(gz_page), None)
+            gz_results = []
+            for gz_path in ("/p/gzip.html", "/p/rawgzip.html"):
+                resp = client.post_json("/api/downloads/parse",
+                                        {"url": cdn_base + gz_path})
+                data = jd(resp)
+                cands = [item for item in data.get("candidates") or []
+                         if item.get("url", "").endswith("/p/index.m3u8")]
+                gz_results.append((gz_path, data.get("title"), bool(cands)))
+            check("DL-19",
+                  "v0064 压缩页面（gzip 带头/无头）解析出地址并清洗标题",
+                  all(ok for _p, _t, ok in gz_results)
+                  and all(t == u"QA 压缩片" for _p, t, _ok in gz_results),
+                  "results=%s" % (gz_results,))
+
+            # DL-20：v0064 按解析标题命名（任务名 + 产物文件名）
+            title_media = b"TITLED-PAYLOAD-" * 512
+            served["/media/titled.mp4"] = title_media
+            title_url = cdn_base + "/media/titled.mp4"
+            resp = client.post_json("/api/downloads", {
+                "urls": [title_url],
+                "titles": {title_url: u"正在播放_QA 标题命名- 某视频网"},
+            })
+            titled_id = ((jd(resp).get("jobs") or [{}])[0]).get("job_id")
+            titled_detail = {}
+            deadline = time.time() + 30
+            while time.time() < deadline and titled_id:
+                r5 = client.get("/api/downloads/%s" % quote(titled_id))
+                titled_detail = jd(r5).get("job") or {}
+                if titled_detail.get("status") in ("done", "failed",
+                                                   "cancelled"):
+                    break
+                time.sleep(0.2)
+            check("DL-20", "v0064 解析标题用于任务名与文件名",
+                  titled_detail.get("status") == "done"
+                  and titled_detail.get("title") == u"QA 标题命名"
+                  and titled_detail.get("output_name") == u"QA 标题命名.mp4",
+                  "status=%s title=%s name=%s error=%s"
+                  % (titled_detail.get("status"),
+                     titled_detail.get("title"),
+                     titled_detail.get("output_name"),
+                     titled_detail.get("error_message")))
 
         finally:
             try:

@@ -81,8 +81,10 @@ class PageParseTest(unittest.TestCase):
             html, "https://example.com/"), [])
 
     def test_title_and_empty(self):
-        self.assertEqual(pageparse.extract_title(PAGE_HTML),
-                         u"示例播放页 - 测试")
+        # v0064：og:title 优先（站点卡片通常最干净），再回退 <title>/<h1>
+        self.assertEqual(pageparse.extract_title(PAGE_HTML), u"示例")
+        self.assertEqual(pageparse.extract_title(
+            u"<title>\u7247\u540d - \u67d0\u89c6\u9891\u7f51</title>"), u"\u7247\u540d")
         self.assertEqual(pageparse.extract_title(u"<html></html>"), u"")
         self.assertEqual(pageparse.extract_candidates(
             u"<html>nothing</html>", "https://x.test/"), [])
@@ -161,7 +163,7 @@ class ParseServiceTest(unittest.TestCase):
         result = self.h.service.parse_target(
             "admin", {"url": self.cdn.url("/p/page.html")})
         self.assertTrue(result["ok"])
-        self.assertIn(u"示例播放页", result["title"])
+        self.assertEqual(result["title"], u"示例")
         urls = [item["url"] for item in result["candidates"]]
         self.assertIn(base + "/data-src.m3u8", urls)
         hls_item = [item for item in result["candidates"]

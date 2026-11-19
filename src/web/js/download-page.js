@@ -441,6 +441,7 @@ function applyParseResult(res, options) {
   var ds = downloadState();
   ds.parseCandidates = (res && res.candidates) || [];
   ds.parseSession = (res && res.parse_session) || '';
+  ds.parseTitle = ((res && res.title) || '').trim();
   ds.parseSeq += 1;
   parseError('');
   renderCandidates();
@@ -529,6 +530,15 @@ function selectedCandidateUrls() {
   return urls;
 }
 
+// v0064：解析出的页面标题按地址记下来，提交时随任务带走（文件名用它）
+function rememberTitle(url, title) {
+  var ds = downloadState();
+  var clean = (title || '').trim();
+  if (!url || !clean) { return; }
+  if (!ds.titleMap) { ds.titleMap = {}; }
+  ds.titleMap[url] = clean;
+}
+
 function applyCandidates() {
   var urls = selectedCandidateUrls();
   if (!urls.length) {
@@ -536,6 +546,7 @@ function applyCandidates() {
     return;
   }
   if (!els.downloadUrls) { return; }
+  var ds = downloadState();
   var existing = String(els.downloadUrls.value || '').split(/\r?\n/)
     .map(function (line) { return line.trim(); })
     .filter(Boolean);
@@ -545,10 +556,12 @@ function applyCandidates() {
       existing.push(url);
       added += 1;
     }
+    rememberTitle(url, ds.parseTitle);
   });
   els.downloadUrls.value = existing.join('\n');
+  var named = ds.parseTitle ? ('；文件名将使用标题「' + ds.parseTitle + '」') : '';
   setText(els.downloadApplyHint,
-    '已加入 ' + added + ' 个地址（共 ' + existing.length + ' 行）');
+    '已加入 ' + added + ' 个地址（共 ' + existing.length + ' 行）' + named);
   toast('已加入 ' + added + ' 个下载地址', 'success');
   updateSubmitHint();
 }
@@ -573,6 +586,7 @@ function clearCandidates() {
   var ds = downloadState();
   ds.parseCandidates = [];
   ds.parseSession = '';
+  ds.parseTitle = '';
   clear(els.downloadCandidatesList);
   setHidden(els.downloadParseResult, true);
   setHidden(els.downloadParseEmpty, true);
@@ -602,12 +616,25 @@ async function submitDownloads() {
     var submitOptions = readOptions();
     if (ds.parseSession) { submitOptions.parse_session = ds.parseSession; }
     var payload = { urls: urls, options: submitOptions };
+    // v0064：带上解析得到的标题（只带本批地址，按地址精确匹配）
+    var titles = {};
+    var hasTitle = false;
+    urls.forEach(function (url) {
+      var title = (ds.titleMap || {})[url];
+      if (title) {
+        titles[url] = title;
+        hasTitle = true;
+      }
+    });
+    if (hasTitle) { payload.titles = titles; }
     var res = await api('/api/downloads', {
       method: 'POST', body: payload, timeout: 30000
     });
     var created = (res && res.jobs) || [];
     toast('已提交 ' + created.length + ' 个下载任务', 'success');
     els.downloadUrls.value = '';
+    ds.titleMap = {};
+    ds.parseTitle = '';
     refreshDownloadQueue();
   } catch (err) {
     setText(els.downloadSubmitError, errorMessage(err, '提交失败。'));

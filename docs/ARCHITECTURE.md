@@ -1,7 +1,7 @@
 # 整体方案架构
 
 > 项目：**重复文件清理与字幕（Duplicate Cleaner & Subtitles）** · 群晖 DSM 7.x SPK 套件
-> 版本：1.1.0-0063
+> 版本：1.1.0-0064
 > 原则：**先扫描、出报告、人工确认、二次确认、可回收、全程审计**。任何情况下都不自动静默删除。
 
 ## 1. 目标与边界
@@ -644,6 +644,8 @@ Linux 的 `st_ctime` 是 **inode 状态变更时间**，不是创建时间，复
 - `DownloadService.parse_target`：抓页面（≤4MB，按 Content-Type/meta charset 解码，utf-8→gb18030 回退）→ 提取 → 对前 5 个 m3u8 候选做一次 `Range 64KB` 校验 → 返回候选。
 - cURL 解析出的 Referer/Cookie/UA 不进响应：存 `parse_session`（TTL 900s、上限 32），提交任务时用 token 合并进任务选项快照。
 - 前端：下载页「解析播放网页」卡片 + 候选勾选 → 追加到地址框，再走原有提交。
+- **v0064 压缩响应**：`_HttpClient.read_raw` 对文本类请求声明 `gzip, deflate`，按 `Content-Encoding` 解压（gzip/x-gzip/deflate + 裸 deflate），无头但正文是 gzip 魔数时也解；返回**重定向后的最终地址**供相对路径补全。背景：实测站点对 `identity` 回压缩体却不带 `Content-Encoding`，解成乱码后表现为「解析不到地址」。
+- **v0064 按标题命名**：`pageparse.clean_title` 把 `<title>`/`og:title` 清洗成片名（切片丢站名、取最长段、去「正在播放」「在线观看」前后缀）；`POST /api/downloads` 接受 `titles: {url: title}`，`_titles_for` 只认本批地址并写入任务 `title`，`_render_name` 的 `{title}` 因此是片名而不是 `index`。
 
 ### 21.2 下载增强（v0053）
 

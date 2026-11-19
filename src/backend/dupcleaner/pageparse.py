@@ -42,9 +42,28 @@ _TAG_RE = re.compile(r"<\s*(video|audio|source|link)\b([^>]*)>",
 _IFRAME_RE = re.compile(r"<\s*(?:iframe|frame)\b([^>]*)>", re.IGNORECASE)
 _META_TAG_RE = re.compile(r"<\s*meta\b([^>]*)>", re.IGNORECASE)
 _TITLE_RE = re.compile(r"<title[^>]*>(.*?)</title>", re.IGNORECASE | re.DOTALL)
+_H1_RE = re.compile(r"<h1[^>]*>(.*?)</h1>", re.IGNORECASE | re.DOTALL)
 _JSONLD_RE = re.compile(
     r"""<script[^>]+type\s*=\s*["']application/ld\+json["'][^>]*>"""
     r"""(.*?)</script>""", re.IGNORECASE | re.DOTALL)
+
+# v0064：标题清洗。站点标题常见形态：
+#   「正在播放_<片名>- <站名>_<站名长尾>」，要还原成 <片名> 当文件名。
+_TITLE_META_KEYS = ("og:title", "twitter:title", "title")
+_TITLE_SPLIT_RE = re.compile(u"[_|｜丨]+|\\s*[-–—]\\s+|\\s+[-–—]\\s*")
+_TITLE_PREFIX_RE = re.compile(
+    u"^(?:正在播放|正在直播|在线播放|在线观看|立即播放|视频播放|播放中|播放)"
+    u"\\s*[:：_\\-–—|｜·]*\\s*")
+_TITLE_SUFFIX_RE = re.compile(
+    u"(?:\\s*[-–—_|｜]\\s*)?(?:免费)?(?:高清|超清|蓝光)?"
+    u"(?:在线观看|在线播放|手机观看|完整版|全集|迅雷下载|下载|观看)$")
+_TITLE_EDGE_CHARS = u" -_|｜丨·:：,，.。;；、"
+_TITLE_NOISE_SEGMENTS = (u"正在播放", u"在线播放", u"正在直播", u"播放中",
+                         u"在线观看", u"视频", u"首页", u"立即播放",
+                         u"视频播放", u"播放")
+_TITLE_SITE_WORDS = (u"视频", u"影视", u"影院", u"电影网", u"网站", u"网",
+                     u"站", u"在线", u"直播", u"下载", u"APP", u"app",
+                     u"官网", u"首页", u"免费", u"高清")
 
 # 引号内的媒体地址（允许查询串；不跨引号/尖括号）
 _QUOTED_MEDIA_RE = re.compile(
@@ -123,15 +142,72 @@ def _chr(hex_text):
         return u""
 
 
-def extract_title(page_html):
-    """页面 `<title>`（去掉标签与多余空白）。"""
-    text = normalize_text(page_html)
-    match = _TITLE_RE.search(text)
-    if not match:
+def _is_site_segment(text):
+    """判断一段标题切片是不是「站名 / 导航词」，判真则从标题里丢掉。"""
+    seg = (text or u"").strip()
+    if not seg:
+        return True
+    if seg in _TITLE_NOISE_SEGMENTS:
+        return True
+    if len(seg) <= 40 and any(word in seg for word in _TITLE_SITE_WORDS):
+        return True
+    return False
+
+
+def clean_title(text):
+    """把站点标题清洗成可当文件名的片名（v0064）。
+
+    规则：去标签/实体 → 按 `_ | ｜ -` 等切成片段 → 丢掉「正在播放」「视频网站」
+    这类站名片段 → 取剩下最长的一段 → 去掉首部「正在播放」与尾部「在线观看」
+    之类后缀。清洗后为空则返回空串（调用方回退到 URL 名）。
+    """
+    raw = normalize_text(text or u"")
+    raw = re.sub(r"<[^>]+>", u" ", raw)
+    raw = re.sub(r"\s+", u" ", raw).strip()
+    if not raw:
         return u""
-    title = re.sub(r"<[^>]+>", u"", match.group(1))
-    title = re.sub(r"\s+", u" ", html_module.unescape(title)).strip()
-    return title[:200]
+    segments = [item.strip(_TITLE_EDGE_CHARS)
+                for item in _TITLE_SPLIT_RE.split(raw)]
+    segments = [item for item in segments if item]
+    if not segments:
+        return u""
+    kept = [item for item in segments if not _is_site_segment(item)]
+    chosen = max(kept or segments, key=len)
+    chosen = _TITLE_PREFIX_RE.sub(u"", chosen).strip(_TITLE_EDGE_CHARS)
+    for _ in range(3):
+        trimmed = _TITLE_SUFFIX_RE.sub(u"", chosen)
+        trimmed = trimmed.strip(_TITLE_EDGE_CHARS).strip()
+        if trimmed == chosen:
+            break
+        chosen = trimmed
+    chosen = re.sub(r"\s+", u" ", chosen).strip(_TITLE_EDGE_CHARS).strip()
+    return chosen[:200]
+
+
+def extract_title(page_html):
+    """页面标题（v0064：优先 og:title / twitter:title，再 `<title>` / `<h1>`）。
+
+    返回值已经过 `clean_title` 清洗，可直接当文件名用；找不到时返回空串。
+    """
+    text = normalize_text(page_html)
+    if not text:
+        return u""
+    for match in _META_TAG_RE.finditer(text):
+        attrs = _parse_attrs(match.group(1))
+        key = (attrs.get("property") or attrs.get("name") or u"").lower()
+        if key not in _TITLE_META_KEYS:
+            continue
+        title = clean_title(attrs.get("content") or u"")
+        if title:
+            return title
+    for pattern in (_TITLE_RE, _H1_RE):
+        match = pattern.search(text)
+        if not match:
+            continue
+        title = clean_title(match.group(1))
+        if title:
+            return title
+    return u""
 
 
 def decode_body(data, content_type=None):

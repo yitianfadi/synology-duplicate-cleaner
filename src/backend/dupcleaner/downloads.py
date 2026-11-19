@@ -41,6 +41,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
+import zlib
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from . import config, dash, hls, pageparse
@@ -170,6 +171,46 @@ def _sanitize_error(text, cookie=""):
     if len(out) > _MAX_ERROR_CHARS:
         out = out[:_MAX_ERROR_CHARS] + u"…"
     return out
+
+
+def _gunzip(data, limit=0):
+    """gzip 解压（带体积上限，防止解压炸弹）。失败返回原数据。"""
+    try:
+        inflater = zlib.decompressobj(16 + zlib.MAX_WBITS)
+        if limit:
+            out = inflater.decompress(data, int(limit) + 1)
+        else:
+            out = inflater.decompress(data) + inflater.flush()
+        return out
+    except zlib.error:
+        return data
+
+
+def decompress_body(data, encoding, limit=0):
+    """按 `Content-Encoding` 解压响应体（v0064）。
+
+    有些站点（实测 CDN 反代）会把 `Accept-Encoding: identity` 的请求也回成
+    brotli/gzip，却不带 `Content-Encoding` 头；带头的正常压缩也在这里处理。
+    认不出的编码原样返回，由调用方按“页面不可读”处理。
+    """
+    body = data or b""
+    if not body:
+        return body
+    kind = (encoding or u"").strip().lower()
+    if kind in ("gzip", "x-gzip"):
+        return _gunzip(body, limit)
+    if kind in ("deflate", "zlib"):
+        try:
+            return zlib.decompress(body)
+        except zlib.error:
+            try:
+                return zlib.decompress(body, -zlib.MAX_WBITS)
+            except zlib.error:
+                return body
+    if not kind and body[:2] == b"\x1f\x8b":
+        # 没有头但正文是 gzip：按魔数嗅探
+        return _gunzip(body, limit)
+    return body
 
 
 def _looks_private(ip_text):
@@ -518,11 +559,11 @@ class _HttpClient(object):
             handlers.append(urllib.request.ProxyHandler({}))
         return urllib.request.build_opener(*handlers)
 
-    def _headers(self, byte_range=None):
+    def _headers(self, byte_range=None, accept_encoding="identity"):
         headers = {
             "User-Agent": self.user_agent,
             "Accept": "*/*",
-            "Accept-Encoding": "identity",
+            "Accept-Encoding": accept_encoding or "identity",
             "Connection": "close",
         }
         if self.referer:
@@ -542,15 +583,19 @@ class _HttpClient(object):
                 headers["Range"] = "bytes=%d-%d" % (int(start), int(end))
         return headers
 
-    def open(self, url, byte_range=None, timeout=None, reuse=False):
+    def open(self, url, byte_range=None, timeout=None, reuse=False,
+             accept_encoding="identity"):
         assert_url_allowed(url, allow_private=self.allow_private)
         limit = float(timeout or self.timeout)
         if reuse:
+            # 媒体分片走连接复用：始终要求 identity，避免内容被二次编码
             pooled = self._open_pooled(url, self._headers(byte_range), limit)
             if pooled is not None:
                 return pooled
         request = urllib.request.Request(
-            url, headers=self._headers(byte_range), method="GET")
+            url,
+            headers=self._headers(byte_range, accept_encoding=accept_encoding),
+            method="GET")
         try:
             return self._opener.open(request, timeout=limit)
         except urllib.error.HTTPError as exc:
@@ -569,9 +614,19 @@ class _HttpClient(object):
         except (socket.timeout, TimeoutError):
             raise DownloadError("HTTP_STATUS", u"请求超时")
 
-    def read_text(self, url, limit=_MAX_PLAYLIST_BYTES):
-        response = self.open(url)
+    def read_raw(self, url, limit=_MAX_PLAYLIST_BYTES, accept_encoding=None):
+        """取一段文本类响应（v0064）：支持 gzip/deflate，返回 bytes。
+
+        文本类请求（播放列表 / 网页）主动声明 gzip：体积小、且能避开
+        「回了压缩正文却不带 Content-Encoding」的站点（按 gzip 协商后可解压）。
+        返回的第三个值是 **跟随重定向后的最终地址**，相对路径要按它解析。
+        """
+        response = self.open(
+            url, accept_encoding=accept_encoding
+            or config.DOWNLOAD_TEXT_ACCEPT_ENCODING)
         try:
+            headers = response.headers
+            final_url = response.geturl() or url
             chunks = []
             total = 0
             while True:
@@ -582,17 +637,27 @@ class _HttpClient(object):
                 total += len(block)
                 if total > limit:
                     raise DownloadError("PLAYLIST_INVALID",
-                                        u"播放列表过大（超过 %s）"
+                                        u"内容过大（超过 %s）"
                                         % _human_bytes(limit))
                 if self.limiter:
                     self.limiter.wait(len(block))
-            data = b"".join(chunks)
+            raw = b"".join(chunks)
         finally:
             try:
                 response.close()
             except Exception:
                 pass
-        return data.decode("utf-8", "replace"), response.headers, url
+        data = decompress_body(
+            raw, headers.get("Content-Encoding") if headers else u"", limit)
+        if len(data) > limit:
+            raise DownloadError("PLAYLIST_INVALID",
+                                u"内容过大（解压后超过 %s）"
+                                % _human_bytes(limit))
+        return data, headers, final_url
+
+    def read_text(self, url, limit=_MAX_PLAYLIST_BYTES):
+        data, headers, final_url = self.read_raw(url, limit=limit)
+        return data.decode("utf-8", "replace"), headers, final_url
 
 
 # ----------------------------------------------------------------------
@@ -1307,8 +1372,13 @@ class DownloadService(object):
         """先取 64KB 判断是播放列表还是直链；返回 (kind, body, playlist, url)。"""
         response = client.open(job.url, byte_range=(0, 65535))
         try:
-            head = response.read(65536)
+            raw_head = response.read(65536)
+            head = raw_head
             content_type = (response.headers.get("Content-Type") or "").lower()
+            # v0064：个别站点即使要 identity 也回压缩体；带头时先解压再判断
+            encoding = (response.headers.get("Content-Encoding") or "").lower()
+            if encoding in ("gzip", "x-gzip", "deflate"):
+                head = decompress_body(raw_head, encoding)
             disposition = (response.headers.get(
                 "Content-Disposition") or u"")
             final_url = response.geturl() or job.url
@@ -1317,14 +1387,14 @@ class DownloadService(object):
                 raise DownloadError("HTTP_STATUS", u"服务器返回空内容")
             if hls.is_playlist(head):
                 body = head.decode("utf-8", "replace")
-                if len(head) >= 65536:
+                if len(raw_head) >= 65536:
                     body, _headers, final_url = client.read_text(final_url)
                 playlist = self._parse_playlist(job, client, body, final_url)
                 return "hls", u"", playlist, final_url
             # v0054：DASH（.mpd）
             if self._looks_like_mpd(head, final_url, content_type):
                 body = head.decode("utf-8", "replace")
-                if len(head) >= 65536:
+                if len(raw_head) >= 65536:
                     body, _headers, final_url = client.read_text(
                         final_url, limit=config.DOWNLOAD_PAGE_MAX_BYTES)
                 playlist = self._parse_dash(job, body, final_url)
@@ -2123,10 +2193,11 @@ class DownloadService(object):
                 proxy=settings.get("download_proxy") or u"",
                 allow_private=allow_private)
             try:
-                raw_body, resp_headers, final_url = client.read_text(
+                raw_body, resp_headers, final_url = client.read_raw(
                     page_url, limit=config.DOWNLOAD_PAGE_MAX_BYTES)
             except DownloadError as exc:
                 raise ApiError(exc.code, exc.message, details=exc.details)
+            # v0064：body 保持 bytes，交给 decode_body 按 Content-Type/meta 解码
             body = pageparse.decode_body(
                 raw_body, resp_headers.get("Content-Type") if resp_headers
                 else u"")
@@ -2230,10 +2301,13 @@ class DownloadService(object):
         merged = list(candidates)
         for frame in frames:
             try:
-                frame_body, _headers, frame_url = client.read_text(
+                frame_raw, frame_headers, frame_url = client.read_raw(
                     frame, limit=config.DOWNLOAD_PAGE_MAX_BYTES)
             except DownloadError:
                 continue
+            frame_body = pageparse.decode_body(
+                frame_raw, frame_headers.get("Content-Type")
+                if frame_headers else u"")
             if hls.is_playlist(frame_body):
                 # iframe 里直接是播放列表：作为候选保留
                 if frame_url not in seen:
@@ -2408,6 +2482,8 @@ class DownloadService(object):
             session = self._peek_parse_session(
                 raw_options.get("parse_session"))
         options = self._options_for(settings, raw_options)
+        # v0064：{地址: 页面标题} —— 解析出来的标题用来给任务/文件命名
+        title_map = self._titles_for(payload.get("titles"), cleaned)
         if session:
             options["referer"] = (options.get("referer")
                                   or session.get("referer") or u"")
@@ -2433,7 +2509,8 @@ class DownloadService(object):
             for url in cleaned:
                 job = DownloadJob(make_job_id(), url, group_id=group["group_id"],
                                   options=dict(options), user=user)
-                job.title = job.options.get("title") or u""
+                job.title = (title_map.get(url)
+                             or job.options.get("title") or u"")
                 job.message = u"排队中"
                 self._jobs[job.job_id] = job
                 self._queue.append(job.job_id)
@@ -2449,6 +2526,29 @@ class DownloadService(object):
             "group": self._group_view(group),
             "jobs": [job.snapshot() for job in created],
         }
+
+    def _titles_for(self, raw, urls):
+        """v0064：把 `{地址: 页面标题}` 清洗成可用的任务标题。
+
+        只认本次提交里的地址；标题统一走 `pageparse.clean_title` 去站点噪声，
+        再按文件名规则去掉非法字符，空标题直接忽略（回退到 URL 名）。
+        """
+        if not isinstance(raw, dict):
+            return {}
+        allowed = set(urls or ())
+        out = {}
+        limit = int(config.DOWNLOAD_BATCH_MAX_ITEMS)
+        for key, value in list(raw.items())[:limit]:
+            if not isinstance(key, str) or not isinstance(value, str):
+                continue
+            url = key.strip()
+            if url not in allowed:
+                continue
+            title = pageparse.clean_title(value)
+            if not title:
+                continue
+            out[url] = _safe_name(title, u"", _NAME_MAX)
+        return out
 
     def _options_for(self, settings, overrides):
         if not isinstance(overrides, dict):

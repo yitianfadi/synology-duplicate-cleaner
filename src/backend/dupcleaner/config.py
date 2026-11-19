@@ -7,9 +7,9 @@ import os
 import re
 
 APP_NAME = "DuplicateCleaner"
-APP_VERSION = "1.1.0-0063"
+APP_VERSION = "1.1.0-0064"
 DISPLAY_NAME = "重复文件清理与字幕"
-SPK_VERSION = "1.1.0-0063"
+SPK_VERSION = "1.1.0-0064"
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8787
@@ -464,6 +464,10 @@ DOWNLOAD_SEGMENT_DETAIL_LIMIT = 500
 # v0052：播放网页解析（docs/DOWNLOAD_CONTRACT.md §14）
 # 解析页面时抓取的最大字节数（超过按前 4MB 提取，足够覆盖内联配置）。
 DOWNLOAD_PAGE_MAX_BYTES = 4 * 1024 * 1024
+# v0064：文本类请求（网页 / 播放列表 / RSS）主动声明 gzip。
+# 实测有站点对 `Accept-Encoding: identity` 的请求也返回压缩正文却不带
+# `Content-Encoding`，导致解析到的是乱码；按 gzip 协商 + 解压才稳定。
+DOWNLOAD_TEXT_ACCEPT_ENCODING = "gzip, deflate"
 # 从 curl 命令解析出的 Cookie/Referer 只在服务端暂存，供随后的下载任务使用。
 # 单次解析的有效期与最多保留条数（避免长期留存登录态）。
 DOWNLOAD_PARSE_SESSION_TTL_SEC = 900

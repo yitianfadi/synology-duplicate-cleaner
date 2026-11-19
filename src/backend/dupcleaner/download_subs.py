@@ -25,7 +25,7 @@ import time
 import urllib.parse
 import xml.etree.ElementTree as ElementTree
 
-from . import config
+from . import config, pageparse
 
 logger = logging.getLogger("dupcleaner.download_subs")
 
@@ -403,7 +403,7 @@ class DownloadSubscriptionService(object):
         options = self.downloads._options_for(settings, {})
         client = self.downloads._client(_RssJob(url, options))
         try:
-            body, _headers, _final = client.read_text(
+            raw, raw_headers, _final = client.read_raw(
                 url, limit=config.DOWNLOAD_PAGE_MAX_BYTES)
         except Exception as exc:
             message = getattr(exc, "message", str(exc))
@@ -414,6 +414,8 @@ class DownloadSubscriptionService(object):
                 client.close()
             except Exception:
                 pass
+        body = pageparse.decode_body(
+            raw, raw_headers.get("Content-Type") if raw_headers else u"")
         return rss_items(body)
 
 

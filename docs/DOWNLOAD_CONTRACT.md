@@ -36,7 +36,7 @@
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| POST | `/api/downloads` | 创建任务（202）。body：`{urls: [], group_title?, options?}` |
+| POST | `/api/downloads` | 创建任务（202）。body：`{urls: [], group_title?, options?, titles?}` |
 | POST | `/api/downloads/parse` | 解析播放网页（v0052）。body：`{url}` / `{html}` / `{curl}`，返回候选列表（不建任务） |
 | GET | `/api/downloads` | 列表：`?status=queued,running&group_id=&offset=&limit=&q=` |
 | GET | `/api/downloads/queue` | 队列快照：`active/queued/paused/recent` + `counts` + `concurrency` |
@@ -54,6 +54,9 @@
 {
   "urls": ["https://example.com/v/index.m3u8", "https://example.com/a.mp4"],
   "group_title": "可选组名",
+  "titles": {
+    "https://example.com/v/index.m3u8": "解析得到的页面标题"
+  },
   "options": {
     "title": "", "output_dir": "/volume2/video/downloads",
     "subdir_mode": "none|site|date|site_date|custom",
@@ -67,6 +70,7 @@
 ```
 
 - `urls` 去重、上限 `DOWNLOAD_BATCH_MAX_ITEMS=200`；
+- `titles`（v0064，可选）：`{地址: 页面标题}`，只认本次 `urls` 里的地址；标题先走 `pageparse.clean_title` 清洗（去「正在播放」前缀与站名后缀）、再过文件名非法字符过滤，写入任务 `title`，供 `{title}` 模板与文件名使用。缺失/对不上/清洗后为空都回退原行为（URL 名）；
 - 未提供的字段取**提交时**的设置快照（之后改设置不影响已排队任务）；
 - `output_dir` 必须是共享文件夹内的目录；留空用 `download_output_dir`，两者都空 → `OUTPUT_DIR_INVALID`。
 
@@ -186,6 +190,8 @@ DRM 解密、直播录制、内置浏览器/JS 渲染、BT/磁力、站点专用
 
 缺省时 `url` 与 `curl` 都为空 → `INVALID_ARGUMENT`；抓取失败 → `HTTP_STATUS` / `URL_*`。
 
+**响应压缩（v0064）**：文本类请求（网页 / 播放列表 / RSS）统一发 `config.DOWNLOAD_TEXT_ACCEPT_ENCODING = "gzip, deflate"`，读到正文后按 `Content-Encoding` 解压（gzip / x-gzip / deflate，deflate 兼容裸流）；**没有 `Content-Encoding` 但正文以 gzip 魔数 `1f 8b` 开头时也按 gzip 解**——实测有站点对 `identity` 请求回压缩体却不带头，此前会解成乱码、表现为“解析不到地址”。解压后仍受 4 MB 上限约束；页面按 `Content-Type`/`meta charset` 解码（utf-8 → gb18030 回退）。媒体分片下载仍用 `identity` + 连接复用，不受影响。
+
 ### 14.2 提取规则
 
 `pageparse.extract_candidates(html, page_url)` 纯函数，按顺序合并、去重（同一绝对地址只留一次）：
@@ -226,7 +232,7 @@ DRM 解密、直播录制、内置浏览器/JS 渲染、BT/磁力、站点专用
 
 ```json
 {
-  "ok": true, "page_url": "…", "title": "页面标题",
+  "ok": true, "page_url": "…", "title": "清洗后的页面标题",
   "summary": "HLS 2 · 直链 4",
   "candidates": [{"url": "…", "kind": "hls|dash|file|embed", "ext": ".m3u8",
                   "source": "video-tag|link-preload|meta|json-ld|script|direct",
@@ -237,19 +243,25 @@ DRM 解密、直播录制、内置浏览器/JS 渲染、BT/磁力、站点专用
 }
 ```
 
+`title` 已由 `pageparse.extract_title` 清洗（v0064）：优先 `og:title` / `twitter:title`，其次 `<title>`、`<h1>`；按 `_ | ｜ -` 切片后丢掉「正在播放」「视频网站」这类站名片段、取最长一段，再去掉首部「正在播放」与尾部「在线观看/完整版/全集/下载」等后缀。清洗后为空则返回空串。前端把它随地址放进创建请求的 `titles`，任务名与文件名都用它。
+
 未找到任何候选时返回 200 + 空数组 + `hint`（不报错，前端提示改用源码/cURL）。
 
 ### 14.6 前端
 
 下载页顶部「解析播放网页」卡片：网页地址 + 「解析网页」；折叠「手动粘贴」放网页源码与 cURL（解析粘贴内容）；候选列表每行 = 勾选框 + 类型徽标 + 地址 + 校验徽标 + 来源说明；「全选 / 清空 / 加入下载列表」把勾选地址追加到下方地址框（自动去重），随后的提交会带上 `parse_session`。
 
+v0064 起：结果标题显示在候选列表标题上；「加入下载列表」把标题按地址记进 `titleMap` 并提示“文件名将使用标题「…」”，提交时只带本批地址的标题（`payload.titles`），提交成功即清空。文件名模板默认 `{title}`，因此产物名就是清洗后的片名。
+
 ### 14.7 非目标
 
-不执行 JavaScript、不内置浏览器、不解决 Cloudflare 五秒盾、不做站点专用提取器；JS 渲染页请用「粘贴源码」或「Copy as cURL」兜底。
+不执行 JavaScript、不内置浏览器、不解决 Cloudflare 五秒盾、不做站点专用提取器；JS 渲染页请用「粘贴源码」或「Copy as cURL」兜底。正文只回 brotli（不理会 gzip 协商）的站点仍解不出来——Python 标准库没有 brotli，用 cURL 形态解析即可。
 
 ### 14.8 测试
 
 `tests/test_v0052_pageparse.py`（19 例）：五类来源提取、相对/协议相对/转义/实体地址、embed 标记、去重与排序、忽略协议、标题/空页、编码回退（gb18030）、cURL 三种写法；服务级：真实页面抓取 + m3u8 校验、直接 m3u8 摘要、粘贴源码、cURL 登录态随任务下发、未启用/内网/缺参错误。
+
+`tests/test_v0064_download_titles.py`（14 例，v0064）：标题清洗/优先级、gzip（带头/无头）/deflate/无压缩、压缩页面走完整解析链路、`titles` 命名与模板 token、未知/非法标题回退。
 ## 15. 下载增强（v0053）
 
 ### 15.1 下载前去重（`download_skip_existing`，默认开）
@@ -275,6 +287,7 @@ DRM 解密、直播录制、内置浏览器/JS 渲染、BT/磁力、站点专用
 ### 15.4 文件名模板（`download_name_template`，默认 `{title}`）
 
 - 占位符：`{title} {site} {date} {yyyy} {mm} {dd} {height} {season} {episode} {ext}`；
+- `{title}` 来源优先级（v0064）：创建请求 `titles[url]`（解析得到的页面标题）> `options.title` > `Content-Disposition` 文件名 > URL 文件名；都没有则 `download-<时间戳>`；
 - `{height}` 来自所选清晰度（主列表变体高度）；`{season}/{episode}` 从标题识别 `S01E02` 或 `第2季 第3集`，识别不到为空；
 - 不允许路径分隔符（目录用 `download_subdir_template`）；渲染结果做文件名清洗并保证带上扩展名；同名文件按 `名称 (2)` 递增。
 

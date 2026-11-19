@@ -4,8 +4,8 @@
 |---|---|
 | 项目 | 重复文件清理与字幕 / DuplicateCleaner（DSM 7 SPK） |
 | 套件 ID | `DuplicateCleaner` |
-| 当前版本 | 1.1.0-0059（已打包，未发布） |
-| 最近更新 | 2026-11-17 |
+| 当前版本 | 1.1.0-0064（已打包，未发布） |
+| 最近更新 | 2026-11-19 |
 | 验收主机 | Windows 本地 |
 | 验收结论 | PASS（发布基线） |
 | 覆盖说明 | v0050 已于 2026-11-10 在 DSM 真机完成 1.1.0-0042 → 1.1.0-0050 覆盖升级；v0043–v0050 功能项仍待逐条真机验证 |
@@ -15,25 +15,25 @@
 
 ## 1. 当前基线
 
-最新一次全量验收为 1.1.0-0059（已打包，SPK 结构/同步检查全绿）。
+最新一次全量验收为 1.1.0-0064（已打包，SPK 结构/同步检查全绿）。
 
 | 套件 | 命令 | 结果 |
 |---|---|---|
-| 后端单元测试 | `cd src/backend && python -m unittest discover -s tests` | **846 OK（6 skipped）** |
-| 静态检查 | `python qa/static_checks.py` | **238 PASS / 0 FAIL / 0 UNVERIFIED** |
-| 端到端 | `python qa/e2e_test.py` | **253 PASS / 0 FAIL / 1 UNVERIFIED**（Windows symlink 历史项；含 DL-00…DL-18、CV-00…CV-14、MG-00…MG-07、RESTART-08、SET-08…SET-10） |
-| 前端模块图 | `node qa/check_web_modules.mjs` | **36/36 PASS**（v0059 新增合成页） |
+| 后端单元测试 | `cd src/backend && python -m unittest discover -s tests` | **880 OK（6 skipped）** |
+| 静态检查 | `python qa/static_checks.py` | **251 PASS / 0 FAIL / 0 UNVERIFIED** |
+| 端到端 | `python qa/e2e_test.py` | **262 PASS / 0 FAIL / 1 UNVERIFIED**（Windows symlink 历史项；含 DL-00…DL-20、CV-00…CV-20、MG-00…MG-07、RESTART-08、SET-08…SET-10） |
+| 前端模块图 | `node qa/check_web_modules.mjs` | **37/37 PASS**（v0063 已选列表分页） |
 | 无头浏览器冒烟 | `python qa/web_smoke.py` | 8/8 PASS（最近一次 static 内联执行） |
-| 真实 Chromium 探针 | `.uiprobe/probe_v0043..v0050.mjs`、`.uiprobe/ui_probe.py` | v0043–v0050 全通过；v0057/v0058/v0059 用 `ui_probe.py`（登录 → 逐页点击扫描/字幕/下载/转换/合成/设置 → 校验面板、无“未启用”、无 console 错误）通过 |
+| 真实 Chromium 探针 | `.uiprobe/probe_v0043..v0050.mjs`、`.uiprobe/ui_probe.py` | v0043–v0050 全通过；v0057/v0058/v0059 用 `ui_probe.py`（登录 → 逐页点击扫描/字幕/下载/转换/合成/设置 → 校验面板、无“未启用”、无 console 错误）通过；v0064 复跑通过（下载页 `errors=none`、无 console 错误） |
 
 | 产物项 | 值 |
 |---|---|
-| 文件 | `dist/DuplicateCleaner-1.1.0-0059.spk` |
-| 大小 | 39,260,160 B |
-| SHA256 | `322f63fa4e04c6dc5b55046cb133b32511342bddca7dbe617ed23b5abcc6d763` |
-| package.tgz MD5 | `cd949e11282bce5cf19b67ec5a388c9a`（= INFO.checksum，39,206,373 B） |
-| SQLite schema | v11（v10 convert_jobs；v11 avmerge_jobs；v0052–v0055/v0057/v0058 无迁移） |
-| 版本同步 | 1.1.0-0059 同步 8 处（static `SPK-BUILD-VERSION`/`SPK-SYNC` 通过） |
+| 文件 | `dist/DuplicateCleaner-1.1.0-0064.spk` |
+| 大小 | 39,249,920 B |
+| SHA256 | `310ac009a930572c62dc8127e3f1bc0b3c9f0efdca5f4cfb0a7d9b968790a492` |
+| package.tgz MD5 | `00f6abaf764b34408ab707b990956c8c`（= INFO.checksum） |
+| SQLite schema | v11（v10 convert_jobs；v11 avmerge_jobs；v0052–v0055/v0057/v0058/v0060–v0064 无迁移） |
+| 版本同步 | 1.1.0-0064 同步 8 处（static `SPK-BUILD-VERSION`/`SPK-SYNC` 通过） |
 
 判定口径：
 
@@ -311,6 +311,7 @@ REQ 编号沿用 v1.0 基线，状态按当前版本事实更新。
 | v0061 | 2026-11-19 | 转换：源后缀多选 + 同名覆盖进套件回收站 + 默认删源/失败清理 | 863（skip 6） | 245 | 259/0/1 | 转换页后缀多选/默认同名策略/删源勾选断言 | `c9640a98…adebabc` |
 | v0062 | 2026-11-19 | 转换批量提交自动分批（每批 ≤200）+ 活动任务上限 500→2000 | 866（skip 6） | 247 | 260/0/1 | 分批提交/上限迁移断言（CV-20） | `d57a9e3b…529e3ca1` |
 | v0063 | 2026-11-19 | 转换「已选文件」分页显示（默认 60/页 + 搜索），选择集仍全量 | 866（skip 6） | 248 | 260/0/1 | 分页纯函数探针（WEB-MOD-CONVERT-PAGER）+ FE-CONVERT-LIST-PAGER | `71f84b35…35a47e` |
+| v0064 | 2026-11-19 | 网页解析：压缩响应解压（gzip 带头/无头）+ 按解析标题命名下载产物 | 880（skip 6） | 251 | 262/0/1 | 压缩页面解析 + `titles` 命名（DL-19/DL-20） | `310ac009…8790a492` |
 
 说明：
 
@@ -340,6 +341,7 @@ REQ 编号沿用 v1.0 基线，状态按当前版本事实更新。
 - v0061：转换三处默认行为调整——① 源文件后缀可多选（`/api/convert/enumerate` 的 `extensions` 严格校验 + 新设置 `convert_source_extensions`，空数组=全部）② 同名目标默认 `trash`：覆盖并把旧产物移入套件回收站 `#duplicate-cleaner-trash`（`TrashManager.destination_for`/`record_job`，落地失败还原或降级加序号），旧默认 `rename` 一次性迁移 ③ 默认删源（`convert_delete_source=true`）、不再弹二次确认、失败/取消/超时一律清 `.dcpart`（`convert_keep_temp`/`convert_keep_source` 降级为兼容键）；新增 static `BE-CONVERT-TRASH-OVERWRITE`/`BE-CONVERT-DELETE-DEFAULT`/`BE-CONVERT-EXT-FILTER`/`FE-CONVERT-EXTS`/`FE-CONVERT-DELETE-DEFAULT`、e2e `CV-15`…`CV-19`、单测 `test_v0061_convert_defaults.py`；`TrashManager._check_id` 放宽到 `SAFE_ID_RE`（拒绝 `..`）。
 - v0062：转换单请求上限仍为 200（`CONVERT_BATCH_MAX_ITEMS`），前端按 `capabilities.limits.batch_max_items` **自动分批连续提交**（显示「x/y 批」进度，只把真正入队的文件移出已选列表，被拒文件保留并提示原因），整目录（枚举上限 2000）可一次提完；`convert_job_limit` 默认 500→2000（旧默认值经 `settings_migrated_v0062` 一次性迁移，写审计）；新增 static `FE-CONVERT-BATCH`/`BE-CONVERT-LIMITS`、e2e `CV-20`。
 - v0063：转换页「已选文件」改为**分页渲染**——选择集 `state.convert.selected` 仍全量（提交不受影响），列表只渲染当前页（默认 60，可选 60/120/240），新增按名称/路径筛选、上一页/下一页、摘要（总数/总大小/当前区间/按后缀计数）；`paginate()` 为导出纯函数并在模块探针里验证页数/末页/越界夹紧/空集；取消勾选导致页数减少时页码自动夹紧；新增 static `FE-CONVERT-LIST-PAGER`，模块图 37/37。
+- v0064：修「网页解析不到地址」——实测站点对 `Accept-Encoding: identity` 也回压缩正文却不带 `Content-Encoding`，后端按 UTF‑8 解成乱码后什么都没匹配到；文本类请求改为协商 `gzip, deflate`，`read_raw` 按 `Content-Encoding` 解压（gzip/x-gzip/deflate/裸 deflate），无头但正文是 gzip 魔数时也解，并返回**重定向后的最终地址**、按 charset 解码页面。同时按解析标题命名：`pageparse.clean_title` 去掉「正在播放」前缀与站名后缀，`POST /api/downloads` 新增 `titles: {url: title}`，任务名与文件名用清洗后的片名（不再一律 `index.mp4`）；前端记录 `titleMap` 并提示“文件名将使用标题…”。新增 static `BE-DOWNLOAD-ACCEPT-ENCODING`/`BE-DOWNLOAD-TITLE-NAMING`/`FE-DOWNLOAD-TITLE-NAMING`、单测 `test_v0064_download_titles.py`（14 例）、e2e `DL-19`/`DL-20`。
 
 ### 6.2 原报告记录异常（保留说明，不再重复展开）
 
@@ -383,9 +385,9 @@ python build/build_spk.py --no-icons --out-dir $env:TEMP\qa-build1
 |---|---|---|
 | e2e 结果 | `qa/e2e_results.json` | 逐条 `id`/结论/说明 |
 | static 结果 | `qa/static_results.json` | 逐条 `id`/结论 |
-| SPK | `dist/DuplicateCleaner-1.1.0-0063.spk` | 39,249,920 B；SHA256 `71f84b353dfdfffbb47bd2032fc0a31c4ce8f5f8fbb8a61c5aa7e53dc335a47e`；package.tgz MD5 `3c9ada68d3be056a8c577ba199d94d9a` |
-| 校验文件 | `dist/DuplicateCleaner-1.1.0-0063.spk.sha256` | 与产物 SHA256 一致 |
-| 上一版 SPK | `dist/DuplicateCleaner-1.1.0-0062.spk` | 39,249,920 B；SHA256 `d57a9e3b…529e3ca1` |
+| SPK | `dist/DuplicateCleaner-1.1.0-0064.spk` | 39,249,920 B；SHA256 `310ac009a930572c62dc8127e3f1bc0b3c9f0efdca5f4cfb0a7d9b968790a492`；package.tgz MD5 `00f6abaf764b34408ab707b990956c8c` |
+| 校验文件 | `dist/DuplicateCleaner-1.1.0-0064.spk.sha256` | 与产物 SHA256 一致 |
+| 上一版 SPK | `dist/DuplicateCleaner-1.1.0-0063.spk` | 39,249,920 B；SHA256 `71f84b35…35a47e` |
 | 探针脚本/截图 | `.uiprobe/probe_v0043..v0050.mjs`、`.uiprobe/*.png` | 真实 Chromium |
 | 契约 | `docs/*_CONTRACT.md` | 逐版本接口与行为 |
 

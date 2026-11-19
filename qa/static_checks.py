@@ -908,6 +908,8 @@ def check_frontend():
     for module_path in module_paths:
         if os.path.isfile(module_path):
             js_texts.append(read(module_path))
+    download_page = read(os.path.join(js_dir, "download-page.js")) \
+        if os.path.isfile(os.path.join(js_dir, "download-page.js")) else ""
     app = "\n".join(js_texts)  # 内容断言以聚合后的前端 JS 文本为准
 
     if os.path.isfile(app_path):
@@ -1828,6 +1830,33 @@ def check_frontend():
           and ("checkSubscription" in app)
           and ("setDownloadSubscribeEnabled" in html),
           "subscription UI markers missing")
+    # ---- v0064 网页解析压缩响应 + 按标题命名（docs/DOWNLOAD_CONTRACT.md §14）----
+    check("BE-DOWNLOAD-ACCEPT-ENCODING",
+          "文本类请求声明 gzip 并按 Content-Encoding 解压（含无头的压缩正文）",
+          ("DOWNLOAD_TEXT_ACCEPT_ENCODING" in config_src)
+          and ("def decompress_body" in downloads_src)
+          and ("def read_raw" in downloads_src)
+          and ("import zlib" in downloads_src)
+          and ("16 + zlib.MAX_WBITS" in downloads_src)
+          and ("Accept-Encoding" in downloads_src)
+          and ("read_raw(" in downloads_src),
+          "accept-encoding markers missing")
+    check("BE-DOWNLOAD-TITLE-NAMING",
+          "解析标题清洗（去站名/正在播放）并按地址给任务命名",
+          ("def clean_title" in pageparse_src)
+          and ("def _is_site_segment" in pageparse_src)
+          and ("_TITLE_SITE_WORDS" in pageparse_src)
+          and ("def _titles_for" in downloads_src)
+          and ("pageparse.clean_title" in downloads_src)
+          and ("title_map.get(url)" in downloads_src),
+          "title naming markers missing")
+    check("FE-DOWNLOAD-TITLE-NAMING",
+          "下载页把解析标题随地址提交（任务名/文件名用标题）",
+          ("rememberTitle" in download_page)
+          and ("ds.parseTitle" in download_page)
+          and ("payload.titles" in download_page)
+          and ("titleMap" in download_page),
+          "download title naming markers missing")
 
     two_step = (("delete-plan" in app) and ("/api/scans/' + encodePath(state.scan.id) + '/delete" in app
                 or "/delete'" in app))

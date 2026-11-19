@@ -32,6 +32,8 @@ export var state = {
     lastError: '', submitting: false,
     // v0052：网页解析（候选地址 + 服务端暂存的登录态 token）
     parseCandidates: [], parseSession: '', parseBusy: false, parseSeq: 0,
+    // v0064：解析出的页面标题（按地址记住，提交时给任务/文件命名）
+    parseTitle: '', titleMap: {},
     // v0053：空间看板
     storage: null,
     // v0054：订阅列表
