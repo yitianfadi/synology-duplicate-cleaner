@@ -309,6 +309,8 @@ REQ 编号沿用 v1.0 基线，状态按当前版本事实更新。
 | v0059 | 2026-11-17 | 音视频合成（有序拼接 + 混流，schema v11）+ 更名「影音工具」 | 846（skip 6） | 238 | 253/0/1 | 追加合成页有序列表/提交/FFmpeg 徽标断言 | `322f63fa…c6d763` |
 | v0060 | 2026-11-18 | 字幕默认译文 + 设置页瘦身（约 150→44 项）+ 移除 DSM 通知渠道（synology 专属资源） | 847（skip 6） | 240 | 254/0/1 | 设置页 9 组/保存无控制台异常；渠道移除断言 | `e80e9fab…a7a57` |
 | v0061 | 2026-11-19 | 转换：源后缀多选 + 同名覆盖进套件回收站 + 默认删源/失败清理 | 863（skip 6） | 245 | 259/0/1 | 转换页后缀多选/默认同名策略/删源勾选断言 | `c9640a98…adebabc` |
+| v0062 | 2026-11-19 | 转换批量提交自动分批（每批 ≤200）+ 活动任务上限 500→2000 | 866（skip 6） | 247 | 260/0/1 | 分批提交/上限迁移断言（CV-20） | `d57a9e3b…529e3ca1` |
+| v0063 | 2026-11-19 | 转换「已选文件」分页显示（默认 60/页 + 搜索），选择集仍全量 | 866（skip 6） | 248 | 260/0/1 | 分页纯函数探针（WEB-MOD-CONVERT-PAGER）+ FE-CONVERT-LIST-PAGER | `71f84b35…35a47e` |
 
 说明：
 
@@ -336,6 +338,8 @@ REQ 编号沿用 v1.0 基线，状态按当前版本事实更新。
 - v0059：新增「合成」页（导航第 5 项）：视频/音频各自有序列表 → 按选择顺序拼接 + 混流；`copy`/`encode`/`auto` 两条路径，音频以视频时长为准 apad/截断；schema 升 v11（纯新增 `avmerge_jobs`）；新增 `AV_MERGE_CONTRACT.md`、static `BE-AVMERGE-*`/`FE-MERGE-UI`、e2e `MG-00`…`MG-07`（含真实 FFmpeg 合成）；同时把显示名改为「重复文件清理与影音工具 / Duplicate Cleaner & Media Toolkit」（包 ID/数据目录不变）。
 - v0060：字幕任务在配置 LLM Key 后默认勾选「同时生成译文」（`subtitle_translate_enabled` 废弃，缺 Key 返回 `TRANSLATE_NOT_CONFIGURED`）；设置页由约 150 项精简为 44 项（删除扫描/相似/视频/存储四组重复项，下载/转换/合成只留输出位置，字幕只留凭据/音轨/监控，通知只留渠道/事件/凭据），后端键与 API 全保留；**移除 DSM 系统通知渠道**——DSM 7 的 `sysnotify` 资源仅 Synology 自家套件可用，第三方 SPK 声明后安装报 4539，故只保留 Webhook/Telegram；新增 static `SPK-NO-SYNOLOGY-RESOURCE`、e2e `SUB-23B`。
 - v0061：转换三处默认行为调整——① 源文件后缀可多选（`/api/convert/enumerate` 的 `extensions` 严格校验 + 新设置 `convert_source_extensions`，空数组=全部）② 同名目标默认 `trash`：覆盖并把旧产物移入套件回收站 `#duplicate-cleaner-trash`（`TrashManager.destination_for`/`record_job`，落地失败还原或降级加序号），旧默认 `rename` 一次性迁移 ③ 默认删源（`convert_delete_source=true`）、不再弹二次确认、失败/取消/超时一律清 `.dcpart`（`convert_keep_temp`/`convert_keep_source` 降级为兼容键）；新增 static `BE-CONVERT-TRASH-OVERWRITE`/`BE-CONVERT-DELETE-DEFAULT`/`BE-CONVERT-EXT-FILTER`/`FE-CONVERT-EXTS`/`FE-CONVERT-DELETE-DEFAULT`、e2e `CV-15`…`CV-19`、单测 `test_v0061_convert_defaults.py`；`TrashManager._check_id` 放宽到 `SAFE_ID_RE`（拒绝 `..`）。
+- v0062：转换单请求上限仍为 200（`CONVERT_BATCH_MAX_ITEMS`），前端按 `capabilities.limits.batch_max_items` **自动分批连续提交**（显示「x/y 批」进度，只把真正入队的文件移出已选列表，被拒文件保留并提示原因），整目录（枚举上限 2000）可一次提完；`convert_job_limit` 默认 500→2000（旧默认值经 `settings_migrated_v0062` 一次性迁移，写审计）；新增 static `FE-CONVERT-BATCH`/`BE-CONVERT-LIMITS`、e2e `CV-20`。
+- v0063：转换页「已选文件」改为**分页渲染**——选择集 `state.convert.selected` 仍全量（提交不受影响），列表只渲染当前页（默认 60，可选 60/120/240），新增按名称/路径筛选、上一页/下一页、摘要（总数/总大小/当前区间/按后缀计数）；`paginate()` 为导出纯函数并在模块探针里验证页数/末页/越界夹紧/空集；取消勾选导致页数减少时页码自动夹紧；新增 static `FE-CONVERT-LIST-PAGER`，模块图 37/37。
 
 ### 6.2 原报告记录异常（保留说明，不再重复展开）
 
@@ -379,9 +383,9 @@ python build/build_spk.py --no-icons --out-dir $env:TEMP\qa-build1
 |---|---|---|
 | e2e 结果 | `qa/e2e_results.json` | 逐条 `id`/结论/说明 |
 | static 结果 | `qa/static_results.json` | 逐条 `id`/结论 |
-| SPK | `dist/DuplicateCleaner-1.1.0-0061.spk` | 39,249,920 B；SHA256 `c9640a980926dda063133e524276431989e6ae7372fb1cf67a117ab56adebabc`；package.tgz MD5 `d195cff627128b262b3befff1e5bedf0` |
-| 校验文件 | `dist/DuplicateCleaner-1.1.0-0061.spk.sha256` | 与产物 SHA256 一致 |
-| 上一版 SPK | `dist/DuplicateCleaner-1.1.0-0060.spk` | 39,239,680 B；SHA256 `e80e9fab…5fa7a57` |
+| SPK | `dist/DuplicateCleaner-1.1.0-0063.spk` | 39,249,920 B；SHA256 `71f84b353dfdfffbb47bd2032fc0a31c4ce8f5f8fbb8a61c5aa7e53dc335a47e`；package.tgz MD5 `3c9ada68d3be056a8c577ba199d94d9a` |
+| 校验文件 | `dist/DuplicateCleaner-1.1.0-0063.spk.sha256` | 与产物 SHA256 一致 |
+| 上一版 SPK | `dist/DuplicateCleaner-1.1.0-0062.spk` | 39,249,920 B；SHA256 `d57a9e3b…529e3ca1` |
 | 探针脚本/截图 | `.uiprobe/probe_v0043..v0050.mjs`、`.uiprobe/*.png` | 真实 Chromium |
 | 契约 | `docs/*_CONTRACT.md` | 逐版本接口与行为 |
 

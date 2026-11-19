@@ -6,7 +6,7 @@
 
 | 我想…… | 先读 | 再查 |
 |---|---|---|
-| 了解功能、安装、跑起来 | [README](../README.md) | [发布说明](RELEASE_NOTES_v1.1.0-0061.md) |
+| 了解功能、安装、跑起来 | [README](../README.md) | [发布说明](RELEASE_NOTES_v1.1.0-0063.md) |
 | 部署 / 升级 / 排错 | [SPK_PACKAGING.md](SPK_PACKAGING.md) | [ARCHITECTURE.md](ARCHITECTURE.md) §9、`<var>/log/start.log` |
 | 看懂整体设计与数据流 | [ARCHITECTURE.md](ARCHITECTURE.md) §1–10 | [STORAGE_CONTRACT.md](STORAGE_CONTRACT.md) |
 | 看懂页面与交互 | [UI_PROTOTYPE.md](UI_PROTOTYPE.md) | [CONTRACT.md](CONTRACT.md) §10 |
@@ -69,14 +69,16 @@
 | [TASK_CENTER_V2_CONTRACT.md](TASK_CENTER_V2_CONTRACT.md) | 任务检索筛选、批量操作、权限只读体检、日志检索与导出（v0049） | 版本增量 |
 | [SUBTITLE_BATCH_CONTRACT.md](SUBTITLE_BATCH_CONTRACT.md) §23 + [ARCHITECTURE.md](ARCHITECTURE.md) §20 | 批次组异步取消、取消剩余、强制删除、明细自动加载、已取消页签（v0050） | 版本增量 |
 | [DOWNLOAD_CONTRACT.md](DOWNLOAD_CONTRACT.md) + [ARCHITECTURE.md](ARCHITECTURE.md) §21 | 直链/HLS 下载、AES-128 本地化解密、合并 MP4、批量组、队列与并发、设置键（v0051）；播放网页解析与 cURL 登录态暂存（v0052）；去重/自动重试/分时限速/命名模板/优先级/导出/空间看板/通知（v0053）；DASH 清单与订阅下载、连接复用（v0054） | 版本增量 |
-| [CONVERT_CONTRACT.md](CONVERT_CONTRACT.md) + [ARCHITECTURE.md](ARCHITECTURE.md) §22 | 格式转换：16 个预设（换容器/换编码/提取音频/仅换封装）、队列与进度、源后缀多选、同名覆盖进回收站、默认删源、空闲时段、schema v10（v0056 / v0061） | 现行 |
+| [CONVERT_CONTRACT.md](CONVERT_CONTRACT.md) + [ARCHITECTURE.md](ARCHITECTURE.md) §22 | 格式转换：16 个预设（换容器/换编码/提取音频/仅换封装）、队列与进度、源后缀多选、同名覆盖进回收站、默认删源、自动分批提交、已选列表分页、空闲时段、schema v10（v0056 / v0061–v0063） | 现行 |
 
 ### 2.6 交付、验收与历史
 
 | 文档 | 内容 | 状态 |
 |---|---|---|
 | [REQUIREMENTS_V2_ASSESSMENT.md](REQUIREMENTS_V2_ASSESSMENT.md) | v2 需求 → 版本交付映射、关键取舍、明确不做、默认值、真机清单 | 现行（结论） |
-| [RELEASE_NOTES_v1.1.0-0061.md](RELEASE_NOTES_v1.1.0-0061.md) | 转换页源后缀多选；同名目标覆盖并把旧产物移入套件回收站（不再加 `(2)`）；转换成功后默认删除源文件、失败一律清理临时文件 | 现行（已打包） |
+| [RELEASE_NOTES_v1.1.0-0063.md](RELEASE_NOTES_v1.1.0-0063.md) | 转换页「已选文件」分页显示（默认 60/页 + 搜索 + 上一页/下一页，选择集仍全量）；同时包含 v0062 自动分批提交与 v0061 后缀多选/覆盖进回收站/默认删源 | 现行（已打包） |
+| [RELEASE_NOTES_v1.1.0-0062.md](RELEASE_NOTES_v1.1.0-0062.md) | 转换批量提交自动分批（每批 ≤200）、活动任务上限 500→2000 | 历史（未单独发版，并入 0063） |
+| [RELEASE_NOTES_v1.1.0-0061.md](RELEASE_NOTES_v1.1.0-0061.md) | 转换页源后缀多选；同名目标覆盖并把旧产物移入套件回收站（不再加 `(2)`）；转换成功后默认删除源文件、失败一律清理临时文件 | 历史（未单独发版，并入 0062） |
 | [RELEASE_NOTES_v1.1.0-0060.md](RELEASE_NOTES_v1.1.0-0060.md) | 字幕默认译文；设置页精简为 9 组（约 150→44 项）；移除 DSM 系统通知渠道（sysnotify 属 Synology 专属资源） | 历史 |
 | [RELEASE_NOTES_v1.1.0-0059.md](RELEASE_NOTES_v1.1.0-0059.md) | 新增「合成」页（视频/音频按选择顺序拼接+混流，schema v11）；软件更名「重复文件清理与影音工具 / Duplicate Cleaner & Media Toolkit」（包 ID/数据目录不变） | 历史 |
 | [RELEASE_NOTES_v1.1.0-0058.md](RELEASE_NOTES_v1.1.0-0058.md) | 下载/转换改为内置功能：去掉设置里的启用开关与 403 闸门，默认可用；兼容键保留不生效 | 历史 |

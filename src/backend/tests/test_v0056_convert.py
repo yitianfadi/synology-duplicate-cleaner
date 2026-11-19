@@ -806,6 +806,14 @@ class ConvertServiceTest(unittest.TestCase):
         self.assertTrue(caps["defaults"]["delete_source"])
         self.assertEqual(caps["defaults"]["overwrite"], "trash")
         self.assertIn("trash", caps["overwrite_modes"])
+        # v0062：前端按 batch_max_items 自动分批；活动任务上限默认 2000
+        limits = caps["limits"]
+        self.assertEqual(limits["batch_max_items"],
+                         config.CONVERT_BATCH_MAX_ITEMS)
+        self.assertEqual(limits["batch_max_items"], 200)
+        self.assertEqual(limits["job_limit"], 2000)
+        self.assertEqual(limits["enumerate_max_items"],
+                         config.CONVERT_ENUMERATE_MAX_ITEMS)
 
     def test_offpeak_blocks_dispatch(self):
         now = time.localtime()

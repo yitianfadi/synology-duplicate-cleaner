@@ -1,7 +1,7 @@
 {
-  "generated_at": "2026-11-19T13:58:53+0800",
+  "generated_at": "2026-11-19T15:04:14+0800",
   "summary": {
-    "PASS": 245,
+    "PASS": 248,
     "FAIL": 0,
     "UNVERIFIED": 0
   },
@@ -52,7 +52,7 @@
       "id": "BE-UNITTEST-LOG",
       "name": "unittest 结果",
       "status": "INFO",
-      "detail": "Ran 863 tests in 151.637s"
+      "detail": "Ran 866 tests in 151.118s"
     },
     {
       "id": "BE-NO-AUTODELETE",
@@ -853,6 +853,24 @@
       "detail": ""
     },
     {
+      "id": "FE-CONVERT-BATCH",
+      "name": "转换提交自动分批（chunkPaths + 分批进度），不再被 200 上限整单拦下",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "BE-CONVERT-LIMITS",
+      "name": "capabilities 暴露提交/排队/枚举上限，活动任务上限默认 2000",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "FE-CONVERT-LIST-PAGER",
+      "name": "已选列表分页渲染（默认 60/页 + 搜索 + 上一页/下一页），不再一次渲染全部候选",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
       "id": "FE-CONVERT-NAV",
       "name": "主导航含转换入口，VIEWS/VIEW_HEADINGS 已注册",
       "status": "PASS",
@@ -1382,7 +1400,7 @@
     },
     {
       "id": "SPK-DIST",
-      "name": "构建产物存在（DuplicateCleaner-1.1.0-0061.spk）",
+      "name": "构建产物存在（DuplicateCleaner-1.1.0-0063.spk）",
       "status": "PASS",
       "detail": ""
     },
@@ -1394,7 +1412,7 @@
     },
     {
       "id": "SPK-VERSION",
-      "name": "SPK INFO.version 与当前源码 APP_VERSION（1.1.0-0061）一致",
+      "name": "SPK INFO.version 与当前源码 APP_VERSION（1.1.0-0063）一致",
       "status": "PASS",
       "detail": ""
     },

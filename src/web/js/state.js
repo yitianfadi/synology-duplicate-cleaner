@@ -43,7 +43,9 @@ export var state = {
     snapshot: null, timer: null, loading: false, loaded: false,
     lastError: '', submitting: false, enumerating: false,
     // v0061：源文件后缀多选（exts 为当前勾选集合，savingExt 防抖持久化标记）
-    exts: new Set(), extsTouched: false, extSaving: null
+    exts: new Set(), extsTouched: false, extSaving: null,
+    // v0063：已选列表分页渲染（选择集始终是全量，提交也按全量分批）
+    page: 0, pageSize: 60, query: ''
   },
   // 当前扫描
   scan: { id: null, data: null, stats: null, timer: null, abort: null, polling: false, errors: 0, handled: false },
@@ -264,6 +266,9 @@ export var IDS = ('loginView loginForm loginUsername loginPassword loginOtp logi
   'convertEnumerateError convertEnumerateLoading convertCandidatesPanel ' +
   'convertCandidatesSummary convertCandidatesList convertSelectAllBtn ' +
   'convertSelectNoneBtn convertManualDetails convertPaths ' +
+  'convertSelectionInfo convertSelectionQuery convertSelectionQueryClear ' +
+  'convertSelectionPrev convertSelectionNext convertSelectionPage ' +
+  'convertSelectionPageSize convertSelectionEmpty ' +
   'convertAddManualBtn convertPresetGroup convertPreset ' +
   'convertPresetDesc convertPresetHint convertQuality convertSpeed ' +
   'convertMaxResolution convertChannels convertOutputMode ' +

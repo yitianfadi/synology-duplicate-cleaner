@@ -78,6 +78,23 @@ class ConvertDefaultsMigrationTest(unittest.TestCase):
         self.assertFalse(manager.get()["convert_keep_source"])
         self.assertTrue(manager.get()["convert_delete_source"])
 
+    def test_legacy_job_limit_migrated_to_2000(self):
+        # v0062：旧默认 convert_job_limit=500 一次性迁到 2000
+        self._seed(convert_job_limit=500)
+        manager = SettingsManager(self.store)
+        self.assertEqual(manager.get()["convert_job_limit"], 2000)
+        self.assertEqual(
+            str(self.store.db.schema_meta_get(
+                SettingsManager.MIGRATION_0062_KEY)), "1")
+
+    def test_custom_job_limit_is_kept(self):
+        self._seed(convert_job_limit=1200)
+        manager = SettingsManager(self.store)
+        self.assertEqual(manager.get()["convert_job_limit"], 1200)
+
+    def test_job_limit_default(self):
+        self.assertEqual(default_settings()["convert_job_limit"], 2000)
+
 
 class ConvertSourceExtensionsTest(unittest.TestCase):
     def test_accepts_supported_list(self):

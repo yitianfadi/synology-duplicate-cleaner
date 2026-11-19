@@ -453,6 +453,37 @@ async function main() {
         && constantsMod.DEFAULT_SETTINGS.convert_delete_source === true
         && Array.isArray(constantsMod.DEFAULT_SETTINGS.convert_source_extensions)
         && constantsMod.DEFAULT_SETTINGS.convert_source_extensions.length === 0);
+      // v0063：已选列表分页（纯函数，只渲染当前页）
+      const pager = convertMod.paginate;
+      let pagerOk = typeof pager === 'function';
+      let pagerDetail = '';
+      let pagerError = '';
+      if (pagerOk) {
+        try {
+          const items = Array.from({ length: 130 }, function (_v, i) {
+            return { name: 'f' + i + '.mkv' };
+          });
+          const first = pager(items, 0, 60);
+          const second = pager(items, 1, 60);
+          const last = pager(items, 2, 60);
+          const clamped = pager(items, 99, 60);
+          const empty = pager([], 5, 60);
+          pagerOk = first.items.length === 60 && first.pages === 3
+            && first.start === 1 && first.end === 60
+            && second.items.length === 60 && second.start === 61
+            && last.items.length === 10 && last.start === 121
+            && clamped.page === 2 && clamped.items.length === 10
+            && empty.total === 0 && empty.pages === 1 && empty.items.length === 0;
+          pagerDetail = 'pages=' + first.pages + ' last=' + last.items.length +
+            ' clamped=' + clamped.page;
+        } catch (err) {
+          pagerOk = false;
+          pagerError = String(err && err.message);
+        }
+      }
+      record('WEB-MOD-CONVERT-PAGER',
+        'v0063 已选列表分页：只取当前页、页数/末页/越界夹紧正确',
+        pagerOk, pagerDetail || pagerError);
   }
 
   const failed = results.filter(function (item) { return item.status !== 'PASS'; });

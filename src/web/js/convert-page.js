@@ -405,22 +405,102 @@ function removeSelected(path) {
   renderSelection();
 }
 
+// ---------------------------------------------------------------------
+// v0063：已选列表分页渲染
+// 选择集（cs.selected）始终是全量的；这里只决定「当前页显示哪几十行」。
+// 一次列出 2000 个文件时不再造 2000 个 DOM 行。
+// ---------------------------------------------------------------------
+var LIST_EMPTY_TEXT = {
+  none: '还没有选择文件：先用「列出文件」或下方粘贴路径。',
+  filtered: '没有匹配的文件，试试换关键字或点「清除筛选」。'
+};
+
+/** 纯函数：按页切分并夹紧越界页；导出便于模块探针测试。 */
+export function paginate(items, page, pageSize) {
+  var list = items || [];
+  var size = Math.max(1, parseInt(pageSize, 10) || 60);
+  var total = list.length;
+  var pages = Math.max(1, Math.ceil(total / size));
+  var current = parseInt(page, 10) || 0;
+  if (current < 0) { current = 0; }
+  if (current > pages - 1) { current = pages - 1; }
+  var start = current * size;
+  var end = Math.min(start + size, total);
+  return {
+    items: list.slice(start, end),
+    total: total,
+    pages: pages,
+    page: current,
+    pageSize: size,
+    start: total ? start + 1 : 0,
+    end: end
+  };
+}
+
+function queryMatched(item, query) {
+  if (!query) { return true; }
+  var needle = query.toLowerCase();
+  var name = String(item.name || '').toLowerCase();
+  var path = String(item.path || '').toLowerCase();
+  return name.indexOf(needle) !== -1 || path.indexOf(needle) !== -1;
+}
+
+function filteredSelection() {
+  var cs = convertState();
+  var all = Array.from(cs.selected.values());
+  if (!cs.query) { return all; }
+  return all.filter(function (item) { return queryMatched(item, cs.query); });
+}
+
+function extensionSummary(items) {
+  var counts = {};
+  items.forEach(function (item) {
+    var name = String(item.name || item.path || '');
+    var dot = name.lastIndexOf('.');
+    var ext = dot > 0 ? name.slice(dot).toLowerCase() : '';
+    if (!ext) { return; }
+    counts[ext] = (counts[ext] || 0) + 1;
+  });
+  return Object.keys(counts).sort().map(function (ext) {
+    return ext + ' ' + counts[ext];
+  }).join(' · ');
+}
+
 function renderSelection() {
   var cs = convertState();
   var list = els.convertCandidatesList;
   if (!list) { return; }
   clear(list);
-  var items = Array.from(cs.selected.values());
-  setHidden(els.convertCandidatesPanel, items.length === 0);
-  if (!items.length) {
+  var all = Array.from(cs.selected.values());
+  setHidden(els.convertCandidatesPanel, all.length === 0);
+  if (!all.length) {
     setText(els.convertCandidatesSummary, '');
+    setText(els.convertSelectionInfo, '');
+    setText(els.convertSelectionPage, '');
+    if (els.convertSelectionEmpty) {
+      setText(els.convertSelectionEmpty, LIST_EMPTY_TEXT.none);
+      setHidden(els.convertSelectionEmpty, false);
+    }
     if (els.convertSelectNoneBtn) { els.convertSelectNoneBtn.disabled = true; }
     updateSubmitHint();
     return;
   }
+  var matched = filteredSelection();
+  var view = paginate(matched, cs.page, cs.pageSize);
+  cs.page = view.page;
   var total = 0;
-  items.forEach(function (item) {
-    total += item.size || 0;
+  all.forEach(function (item) { total += item.size || 0; });
+
+  if (!matched.length) {
+    if (els.convertSelectionEmpty) {
+      setText(els.convertSelectionEmpty, LIST_EMPTY_TEXT.filtered);
+      setHidden(els.convertSelectionEmpty, false);
+    }
+  } else if (els.convertSelectionEmpty) {
+    setHidden(els.convertSelectionEmpty, true);
+  }
+
+  view.items.forEach(function (item) {
     var checkbox = el('input', {
       attrs: { type: 'checkbox', checked: true },
       on: {
@@ -440,13 +520,48 @@ function renderSelection() {
     ]);
     list.appendChild(row);
   });
-  setText(els.convertCandidatesSummary,
-    items.length + ' 个文件' + (total ? ' · 共 ' + fmtBytes(total) : ''));
+
+  var info = '已选 ' + all.length + ' 个文件' +
+    (total ? ' · 共 ' + fmtBytes(total) : '');
+  if (cs.query) {
+    info += ' · 筛选命中 ' + matched.length + ' 个';
+  }
+  info += matched.length
+    ? ' · 显示 ' + view.start + '–' + view.end
+    : ' · 当前筛选无结果';
+  var byExt = extensionSummary(all);
+  if (byExt) { info += ' · ' + byExt; }
+  setText(els.convertSelectionInfo, info);
+
+  setText(els.convertSelectionPage, '第 ' + (view.page + 1) + '/' +
+    view.pages + ' 页');
+  if (els.convertSelectionPrev) {
+    els.convertSelectionPrev.disabled = view.page <= 0;
+  }
+  if (els.convertSelectionNext) {
+    els.convertSelectionNext.disabled = view.page >= view.pages - 1;
+  }
+  if (els.convertSelectionPageSize) {
+    els.convertSelectionPageSize.value = String(cs.pageSize);
+  }
   if (els.convertSelectAllBtn) {
     els.convertSelectAllBtn.disabled = cs.candidates.length === 0;
   }
   if (els.convertSelectNoneBtn) { els.convertSelectNoneBtn.disabled = false; }
   updateSubmitHint();
+}
+
+function goToPage(page) {
+  var cs = convertState();
+  cs.page = page;
+  renderSelection();
+}
+
+function resetSelectionView() {
+  var cs = convertState();
+  cs.page = 0;
+  cs.query = '';
+  if (els.convertSelectionQuery) { els.convertSelectionQuery.value = ''; }
 }
 
 function updateSubmitHint() {
@@ -458,10 +573,13 @@ function updateSubmitHint() {
     setText(els.convertSubmitHint, '还没有选择文件');
     return;
   }
+  var size = batchSize();
+  var batches = size > 0 ? Math.ceil(count / size) : 1;
   setText(els.convertSubmitHint,
     '已选 ' + count + ' 个文件' +
     (preset ? ' → ' + preset.label : '') +
-    (preset && preset.copy ? '（仅换封装，秒级）' : '（需要重编码）'));
+    (preset && preset.copy ? '（仅换封装，秒级）' : '（需要重编码）') +
+    (batches > 1 ? ' · 自动分 ' + batches + ' 批提交' : ''));
 }
 
 async function enumerateFiles() {
@@ -492,6 +610,8 @@ async function enumerateFiles() {
     var items = (res && res.items) || [];
     clear(cs.candidates);
     items.forEach(function (item) { cs.candidates.push(item); });
+    // v0063：新一次列出从第一页、无筛选开始
+    resetSelectionView();
     addSelected(items);
     var skipped = (res && res.skipped) || {};
     var skippedBits = [];
@@ -527,6 +647,8 @@ function addManualPaths() {
     setConvertError('请先粘贴至少一个路径（每行一个）。');
     return;
   }
+  // v0063：手动加入后回到第一页、清掉筛选，方便立刻看到新加入的行
+  resetSelectionView();
   var added = addSelected(lines.map(function (path) {
     return { path: path, name: path.split(/[\\/]/).pop(), size: 0 };
   }));
@@ -562,6 +684,21 @@ function readOptions() {
   return options;
 }
 
+// v0062：后端单次提交上限（默认 200），超出时前端自动分批连续提交。
+function batchSize() {
+  var caps = convertState().caps || {};
+  var size = Number((caps.limits || {}).batch_max_items) || 0;
+  return size > 0 ? size : 200;
+}
+
+function chunkPaths(paths, size) {
+  var chunks = [];
+  for (var i = 0; i < paths.length; i += size) {
+    chunks.push(paths.slice(i, i + size));
+  }
+  return chunks;
+}
+
 async function submitConvert() {
   var cs = convertState();
   if (cs.submitting) { return; }
@@ -575,28 +712,68 @@ async function submitConvert() {
   var willDelete = els.convertDeleteSource
     ? !!els.convertDeleteSource.checked : true;
   var confirmText = willDelete ? 'DELETE SOURCE' : '';
+  var size = batchSize();
+  var chunks = chunkPaths(paths, size);
   cs.submitting = true;
-  setText(els.convertSubmitHint, '正在提交…');
+  var submitted = 0;
+  var rejected = [];
+  setText(els.convertSubmitHint, chunks.length > 1
+    ? '正在分批提交…（0/' + chunks.length + ' 批，共 ' + paths.length + ' 个）'
+    : '正在提交…');
   try {
-    var res = await api('/api/convert', {
-      method: 'POST',
-      body: {
-        paths: paths,
-        preset: selectedPreset(),
-        options: readOptions(),
-        confirm: confirmText
-      },
-      timeout: 60000
-    });
-    var count = (res && res.count) || 0;
-    toast('已提交 ' + count + ' 个转换任务' +
-      (willDelete ? '（转换成功后会删除源文件）' : ''), 'success');
-    cs.selected.clear();
-    cs.candidates.length = 0;
+    for (var index = 0; index < chunks.length; index += 1) {
+      if (chunks.length > 1) {
+        setText(els.convertSubmitHint,
+          '正在分批提交…（' + index + '/' + chunks.length + ' 批，已提交 ' +
+          submitted + '/' + paths.length + ' 个）');
+      }
+      var res = await api('/api/convert', {
+        method: 'POST',
+        body: {
+          paths: chunks[index],
+          preset: selectedPreset(),
+          options: readOptions(),
+          confirm: confirmText
+        },
+        timeout: 120000
+      });
+      // 用返回的任务列表精确判断哪些路径真的入队了（可能有个别被拒）
+      var accepted = {};
+      ((res && res.jobs) || []).forEach(function (job) {
+        accepted[job.source_path] = true;
+      });
+      chunks[index].forEach(function (path) {
+        if (accepted[path]) { cs.selected.delete(path); }
+      });
+      submitted += Object.keys(accepted).length;
+      ((res && res.rejected) || []).forEach(function (item) {
+        rejected.push(item);
+      });
+    }
+    toast('已提交 ' + submitted + ' 个转换任务' +
+      (chunks.length > 1 ? '（分 ' + chunks.length + ' 批）' : '') +
+      (willDelete ? '，转换成功后会删除源文件' : ''), 'success');
+    if (!cs.selected.size) {
+      cs.candidates.length = 0;
+      resetSelectionView();
+    }
     renderSelection();
     refreshConvertQueue();
+    if (rejected.length) {
+      setSubmitError('有 ' + rejected.length + ' 个文件未提交：' +
+        rejected.slice(0, 3).map(function (item) {
+          return (item.path || '') + '（' + (item.message || '不可用') + '）';
+        }).join('；') + (rejected.length > 3 ? ' 等' : ''));
+    }
   } catch (err) {
-    setSubmitError(errorMessage(err, '提交失败。'));
+    var message = errorMessage(err, '提交失败。');
+    if (submitted) {
+      message = '已提交 ' + submitted + ' 个，之后失败：' + message +
+        '。未提交的文件仍保留在「已选文件」里，可再次提交。';
+      renderSelection();
+      refreshConvertQueue();
+    }
+    setSubmitError(message);
     setText(els.convertSubmitHint, '');
   } finally {
     cs.submitting = false;
@@ -895,6 +1072,7 @@ export function initConvertPage() {
   if (els.convertSelectAllBtn) {
     els.convertSelectAllBtn.addEventListener('click', function () {
       var cs = convertState();
+      cs.page = 0;
       addSelected(cs.candidates);
       toast('已全选 ' + cs.selected.size + ' 个文件', 'info');
     });
@@ -902,6 +1080,44 @@ export function initConvertPage() {
   if (els.convertSelectNoneBtn) {
     els.convertSelectNoneBtn.addEventListener('click', function () {
       convertState().selected.clear();
+      resetSelectionView();
+      renderSelection();
+    });
+  }
+  // v0063：分页 / 筛选
+  if (els.convertSelectionQuery) {
+    els.convertSelectionQuery.addEventListener('input', function () {
+      var cs = convertState();
+      cs.query = String(els.convertSelectionQuery.value || '').trim();
+      cs.page = 0;
+      renderSelection();
+    });
+  }
+  if (els.convertSelectionQueryClear) {
+    els.convertSelectionQueryClear.addEventListener('click', function () {
+      var cs = convertState();
+      cs.query = '';
+      cs.page = 0;
+      if (els.convertSelectionQuery) { els.convertSelectionQuery.value = ''; }
+      renderSelection();
+    });
+  }
+  if (els.convertSelectionPrev) {
+    els.convertSelectionPrev.addEventListener('click', function () {
+      goToPage(convertState().page - 1);
+    });
+  }
+  if (els.convertSelectionNext) {
+    els.convertSelectionNext.addEventListener('click', function () {
+      goToPage(convertState().page + 1);
+    });
+  }
+  if (els.convertSelectionPageSize) {
+    els.convertSelectionPageSize.addEventListener('change', function () {
+      var cs = convertState();
+      var size = parseInt(els.convertSelectionPageSize.value, 10) || 60;
+      cs.pageSize = Math.max(1, size);
+      cs.page = 0;
       renderSelection();
     });
   }

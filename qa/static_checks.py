@@ -1610,6 +1610,34 @@ def check_frontend():
           and ("convertDeleteSource.checked" in app)
           and (u"转换成功后删除源文件？" not in app),
           "convert delete-source default markers missing")
+    # v0062：单次提交上限 200，前端按 batch_max_items 自动分批
+    check("FE-CONVERT-BATCH",
+          "转换提交自动分批（chunkPaths + 分批进度），不再被 200 上限整单拦下",
+          all(marker in app for marker in (
+              "function batchSize", "function chunkPaths", "batch_max_items",
+              u"正在分批提交", u"自动分 ' + batches + ' 批提交"))
+          and (u"单次最多提交" not in app),
+          "convert auto-batch markers missing")
+    check("BE-CONVERT-LIMITS",
+          "capabilities 暴露提交/排队/枚举上限，活动任务上限默认 2000",
+          all(marker in convert_src for marker in
+              ("batch_max_items", "enumerate_max_items", "job_limit"))
+          and ('CONVERT_JOB_LIMIT_DEFAULT = 2000' in convert_config_src)
+          and ('CONVERT_BATCH_MAX_ITEMS = 200' in convert_config_src),
+          "convert limits markers missing")
+    # v0063：已选列表分页渲染（选择集仍全量，只渲染当前页）
+    check("FE-CONVERT-LIST-PAGER",
+          "已选列表分页渲染（默认 60/页 + 搜索 + 上一页/下一页），不再一次渲染全部候选",
+          all(marker in html for marker in (
+              "convertSelectionInfo", "convertSelectionQuery",
+              "convertSelectionQueryClear", "convertSelectionPrev",
+              "convertSelectionNext", "convertSelectionPage",
+              "convertSelectionPageSize", "convertSelectionEmpty",
+              u"列表只显示当前页"))
+          and all(marker in app for marker in (
+              "export function paginate", "filteredSelection",
+              "pageSize: 60", "paginate(matched, cs.page, cs.pageSize)")),
+          "convert list pager markers missing")
     check("FE-CONVERT-NAV", "主导航含转换入口，VIEWS/VIEW_HEADINGS 已注册",
           ('data-nav="convert"' in html)
           and ("convertHeading" in app)

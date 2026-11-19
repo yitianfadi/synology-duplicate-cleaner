@@ -405,7 +405,7 @@ export var DEFAULT_SETTINGS = {
   convert_source_extensions: [],
   convert_copy_subtitles: true,
   convert_max_resolution: 0,
-  convert_job_limit: 500,
+  convert_job_limit: 2000,
   convert_min_free_gb: 20,
   convert_keep_temp: false,
   convert_offpeak_enabled: false,

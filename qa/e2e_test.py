@@ -3211,6 +3211,18 @@ def run():
               "defaults=%s exts=%s" % (cv_defaults.get("overwrite"),
                                        repr(cv_exts)[:160]))
 
+        # v0062：单次提交上限 200 保留，前端按 batch_max_items 自动分批；活动任务上限 2000
+        cv_limits = caps.get("limits") or {}
+        settings_resp = client.get("/api/settings")
+        cv_settings = (jd(settings_resp).get("settings") or {})
+        check("CV-20", "v0062 分批提交上限与活动任务上限（200 分批 / 2000 排队）",
+              cv_limits.get("batch_max_items") == 200
+              and cv_limits.get("job_limit") == 2000
+              and cv_limits.get("enumerate_max_items") == 2000
+              and cv_settings.get("convert_job_limit") == 2000,
+              "limits=%s job_limit=%s"
+              % (cv_limits, cv_settings.get("convert_job_limit")))
+
         resp = client.post_json("/api/convert/enumerate",
                                 {"path": convert_dir, "recursive": True})
         enum = jd(resp)

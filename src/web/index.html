@@ -6,8 +6,8 @@
 <meta name="color-scheme" content="light">
 <meta name="referrer" content="same-origin">
 <title>重复文件清理与影音工具 · Duplicate Cleaner &amp; Media Toolkit</title>
-<link rel="icon" href="./assets/favicon.svg?v=1.1.0-0061" type="image/svg+xml">
-<link rel="stylesheet" href="./styles.css?v=1.1.0-0061">
+<link rel="icon" href="./assets/favicon.svg?v=1.1.0-0063" type="image/svg+xml">
+<link rel="stylesheet" href="./styles.css?v=1.1.0-0063">
 </head>
 <body>
 <a class="skip-link" href="#main">跳到主要内容</a>
@@ -1239,11 +1239,27 @@
             <h3>已选文件</h3>
             <span class="muted">取消勾选可从列表移除</span>
           </div>
+          <p class="muted" id="convertSelectionInfo"></p>
+          <div class="subtitle-dir-row">
+            <input id="convertSelectionQuery" type="search" placeholder="按文件名或路径筛选…" autocomplete="off" spellcheck="false">
+            <button type="button" class="btn btn-ghost" id="convertSelectionQueryClear">清除筛选</button>
+          </div>
           <div class="subtitle-submit-row">
             <button type="button" class="btn btn-link btn-sm" id="convertSelectAllBtn">全选本次列出</button>
             <button type="button" class="btn btn-link btn-sm" id="convertSelectNoneBtn">清空</button>
+            <button type="button" class="btn btn-link btn-sm" id="convertSelectionPrev">上一页</button>
+            <span class="muted" id="convertSelectionPage">第 1/1 页</span>
+            <button type="button" class="btn btn-link btn-sm" id="convertSelectionNext">下一页</button>
+            <label class="inline-label" for="convertSelectionPageSize">每页</label>
+            <select id="convertSelectionPageSize" class="select-compact">
+              <option value="60">60</option>
+              <option value="120">120</option>
+              <option value="240">240</option>
+            </select>
           </div>
+          <p class="hint">列表只显示当前页；未显示的文件同样会被提交。</p>
           <div id="convertCandidatesList" class="download-candidates"></div>
+          <p class="muted" id="convertSelectionEmpty" hidden></p>
         </div>
         <details class="advanced" id="convertManualDetails">
           <summary>手动粘贴路径（每行一个）</summary>
@@ -2051,6 +2067,6 @@
   <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.6" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M12 10.8v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="12" cy="7.6" r="1.05" fill="currentColor"/></symbol>
 </svg>
 
-<script type="module" src="./app.js?v=1.1.0-0061"></script>
+<script type="module" src="./app.js?v=1.1.0-0063"></script>
 </body>
 </html>

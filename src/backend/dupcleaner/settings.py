@@ -1225,8 +1225,9 @@ def merge_settings(current, patch):
 class SettingsManager(object):
     """线程安全的设置读写 + 落盘。"""
 
-    # v0061：一次性设置迁移的标记（存在 DB 的 schema_meta 表里，避免重复迁移）。
+    # v0061/v0062：一次性设置迁移的标记（存在 DB 的 schema_meta 表里，避免重复迁移）。
     MIGRATION_0061_KEY = "settings_migrated_v0061"
+    MIGRATION_0062_KEY = "settings_migrated_v0062"
 
     def __init__(self, store):
         self._store = store
@@ -1246,7 +1247,7 @@ class SettingsManager(object):
         except ApiError:
             # 磁盘上的设置被破坏时回到默认值，避免后端无法启动
             return default_settings()
-        return self._migrate_0061(settings)
+        return self._migrate_0062(self._migrate_0061(settings))
 
     def _migrate_0061(self, settings):
         """v0061：把旧的默认值迁到新默认值（只做一次）。
@@ -1275,6 +1276,36 @@ class SettingsManager(object):
                 logger.exception(u"设置迁移落盘失败")
         try:
             self._store.db.schema_meta_set(self.MIGRATION_0061_KEY, "1")
+        except Exception:
+            pass
+        return settings
+
+    def _migrate_0062(self, settings):
+        """v0062：活动任务上限默认 500 → 2000（只迁旧默认值，只做一次）。
+
+        前端改为自动分批提交后，整目录（枚举上限 2000）应能一次提完；
+        旧配置里的 500 是历史默认值，迁到 2000；用户自己设过的其它值不动。
+        """
+        try:
+            done = self._store.db.schema_meta_get(self.MIGRATION_0062_KEY)
+        except Exception:
+            logger.exception(u"读取设置迁移标记失败，跳过迁移")
+            return settings
+        if done:
+            return settings
+        changed = {}
+        if settings.get("convert_job_limit") == 500:
+            settings["convert_job_limit"] = config.CONVERT_JOB_LIMIT_DEFAULT
+            changed["convert_job_limit"] = config.CONVERT_JOB_LIMIT_DEFAULT
+        if changed:
+            try:
+                self._store.save_settings(settings)
+                self._store.audit("settings_migrate", "system",
+                                  {"version": "1.1.0-0062", "changed": changed})
+            except Exception:
+                logger.exception(u"设置迁移落盘失败")
+        try:
+            self._store.db.schema_meta_set(self.MIGRATION_0062_KEY, "1")
         except Exception:
             pass
         return settings

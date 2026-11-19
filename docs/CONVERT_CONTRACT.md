@@ -68,7 +68,7 @@
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| GET | `/api/convert/capabilities` | ffmpeg 版本/路径、16 个预设（含 `available`/`reason`）、默认值、并发、空闲时段、计数、`source_extensions`（video/audio/all/selected） |
+| GET | `/api/convert/capabilities` | ffmpeg 版本/路径、16 个预设（含 `available`/`reason`）、默认值、并发、空闲时段、计数、`source_extensions`（video/audio/all/selected）、`limits`（`batch_max_items`/`enumerate_max_items`/`job_limit`/`job_limit_max`） |
 | GET | `/api/convert?status=&offset=&limit=&q=` | 任务列表（`status` 逗号分隔、`q` 匹配源路径/产物名/预设） |
 | POST | `/api/convert` | 提交；`{paths:[], preset, options:{}, confirm}` → 202 |
 | POST | `/api/convert/enumerate` | `{path, recursive, extensions?}` → 候选文件 + `skipped` 统计。`extensions` 为后缀数组（v0061：可多选子集；只接受登记过的音视频后缀，空数组/非法后缀 → 400；不传则用设置 `convert_source_extensions`，为空表示全部支持后缀） |
@@ -105,6 +105,10 @@
 
 - 状态：`queued / running / done / failed / cancelled`（没有 paused：FFmpeg 不能续转）。
 - 队列：FIFO（按 `created_epoch`），并发上限 `convert_concurrency`（1–2，默认 1）。
+- 提交上限：单请求 `CONVERT_BATCH_MAX_ITEMS = 200` 个文件（超了 400）；v0062 起前端按
+  `capabilities.limits.batch_max_items` 自动分批连续提交，整目录可一次提完。
+- 活动任务上限 `convert_job_limit`（10–5000，v0062 默认 2000）：活动数 + 本次提交数超限 → 409
+  `JOB_LIMIT_REACHED`；分批提交时若中途撞上限，已成功的批次保留、剩余文件仍在「已选」里。
 - 空闲时段：`convert_offpeak_enabled=true` 时，窗口外的任务保持 `queued`，调度器不取；
   窗口按本地时间、支持跨零点。窗口内才开跑。
 - 进度：FFmpeg `-progress pipe:1` 的 `out_time_us` / 源时长 → 5–95%，完成 100%；
@@ -151,7 +155,7 @@ CREATE INDEX idx_convert_jobs_status ON convert_jobs(status, created_epoch);
 | `convert_keep_source` | `true` | **兼容键**（v0061 起不再生效） |
 | `convert_copy_subtitles` | `true` | bool（MKV 预设复制字幕轨） |
 | `convert_max_resolution` | `0` | 0/2160/1080/720/480 |
-| `convert_job_limit` | `500` | 10–5000 |
+| `convert_job_limit` | `2000` | 10–5000（v0062：默认由 500 提到 2000，旧默认值一次性迁移） |
 | `convert_min_free_gb` | `20` | 0–102400 |
 | `convert_keep_temp` | `false` | **兼容键**（v0061 起失败一律清 `.dcpart`） |
 | `convert_offpeak_enabled` | `false` | bool |
@@ -201,8 +205,13 @@ CREATE INDEX idx_convert_jobs_status ON convert_jobs(status, created_epoch);
 
 - 导航「转换」→ `#/convert`；`VIEWS`/`VIEW_HEADINGS` 注册 `convert`/`convertHeading`。
 - 模块 `js/convert-page.js`：能力探测、源文件后缀多选（v0061，勾选即保存）、目录枚举、
-  手动粘贴路径、已选列表、预设/质量/分辨率、输出位置、提交、队列轮询（2s）、
-  取消/重试/删除/批量、CSV 导出。
+  手动粘贴路径、已选列表、预设/质量/分辨率、输出位置、**自动分批提交（v0062，
+  每批 ≤ `limits.batch_max_items`，显示「x/y 批」进度，只把真正入队的文件移出已选列表）**、
+  队列轮询（2s）、取消/重试/删除/批量、CSV 导出。
+- **已选列表分页渲染（v0063）**：选择集 `state.convert.selected` 始终是全量（提交不受分页影响），
+  列表只渲染当前页（默认 60 条，可选 60/120/240），并提供按名称/路径筛选、上一页/下一页、
+  摘要（总数/总大小/当前区间/按后缀计数）。取消勾选导致页数减少时页码自动夹紧；
+  重新枚举或提交清空后回到第一页。`paginate()` 为导出纯函数，供模块探针测试。
 - 删源项默认勾选且不再弹二次确认（v0061）；取消勾选即保留源文件。
 - 只用 `el()`/`textContent`，不写 `innerHTML`；进度条宽度用 `node.style.width`。
 - 预设卡明确区分「仅换封装（秒级、无损）」与「需要重新编码（CPU 高）」。
@@ -236,10 +245,10 @@ CREATE INDEX idx_convert_jobs_status ON convert_jobs(status, created_epoch);
 - 单元：`src/backend/tests/test_v0056_convert.py`（预设金标、探测/进度解析、兼容性、
   命名/覆盖/跳过/覆盖进回收站、取消/重试、持久化、失败清理、多后缀枚举、真 FFmpeg 转码）、
   `tests/test_v0061_convert_defaults.py`（默认值迁移 + 后缀校验）；
-- 静态：`BE-CONVERT-MODULE/PRESETS/ARGS/SAFETY/TRASH-OVERWRITE/DELETE-DEFAULT/EXT-FILTER/SCHEMA`、
-  `FE-CONVERT-UI/NAV/PROGRESS/EXTS/DELETE-DEFAULT`、`BE-SETTINGS-KEYS/NORMALIZE`；
-- e2e：`CV-00`…`CV-19`（未启用 403、能力、枚举、多后缀子集、非法/空后缀、未知预设、
+- 静态：`BE-CONVERT-MODULE/PRESETS/ARGS/SAFETY/TRASH-OVERWRITE/DELETE-DEFAULT/EXT-FILTER/LIMITS/SCHEMA`、
+  `FE-CONVERT-UI/NAV/PROGRESS/EXTS/DELETE-DEFAULT/BATCH/LIST-PAGER`、`BE-SETTINGS-KEYS/NORMALIZE`；
+- e2e：`CV-00`…`CV-20`（未启用 403、能力、枚举、多后缀子集、非法/空后缀、未知预设、
   删源确认、提交、队列、详情、筛选、取消/重试/删除、CSV、批量取消、真实仅换封装、
-  默认值元数据、真实转码覆盖进回收站）；
+  默认值元数据、真实转码覆盖进回收站、分批/排队/枚举上限）；
 - 验收：MP4→MKV copy 秒级且时长一致；AVI→MP4 H.264 可播放；MKV→MP3 可播放；
   取消 2 秒内生效且不留 `.dcpart`；重启后队列恢复；设置保存不 400。

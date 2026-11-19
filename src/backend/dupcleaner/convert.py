@@ -1569,6 +1569,14 @@ class ConvertService(object):
                 "selected": selected,
                 "max": config.CONVERT_SOURCE_EXTENSIONS_MAX,
             },
+            # v0062：前端按 batch_max_items 自动分批提交（后端单次上限不变）
+            "limits": {
+                "batch_max_items": config.CONVERT_BATCH_MAX_ITEMS,
+                "enumerate_max_items": config.CONVERT_ENUMERATE_MAX_ITEMS,
+                "job_limit": settings.get("convert_job_limit")
+                or config.CONVERT_JOB_LIMIT_DEFAULT,
+                "job_limit_max": config.CONVERT_JOB_LIMIT_MAX,
+            },
             "concurrency": self._concurrency(),
             "counts": self.counts(),
             "offpeak": self._offpeak_state(settings),
