@@ -291,11 +291,13 @@ def build_services(runtime_config):
         runtime_config, store, settings_manager.get, download_service)
     download_subs_service.start()
     # v0056：格式转换（视频/音频互转 + 仅换封装；完成后可选自动扫描/字幕）
+    # v0061：overwrite=trash 需要把被覆盖的旧产物移入套件回收站，故注入 trash_manager。
     convert_service = ConvertService(
         runtime_config, store, share_service, settings_manager.get,
         on_complete=_make_convert_complete(
             scan_manager, subtitle_service, settings_manager),
-        notifier=notification_service)
+        notifier=notification_service,
+        trash_manager=trash_manager)
     convert_service.start()
     # v0059：音视频合成（视频/音频按选择顺序拼接 + 混流；无启用开关）
     avmerge_service = AVMergeService(

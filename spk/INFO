@@ -1,5 +1,5 @@
 package="DuplicateCleaner"
-version="1.1.0-0060"
+version="1.1.0-0061"
 os_min_ver="7.0-40000"
 description="Exact-hash and content-similarity duplicate finder with a review-first, recoverable cleanup workflow for Synology DSM 7. Also downloads direct links and HLS (m3u8) videos, converts media formats, and merges video/audio clips in selection order into one file."
 description_chs="支持哈希精准匹配、图片/文档内容相似与视频视觉相似（FFmpeg 抽样帧指纹）的重复文件扫描与安全清理工具；先报告、人工确认后再删除，支持回收站、限速、特征/视频指纹缓存与持久日志；支持 OpenAI 兼容云端 ASR/LLM 字幕生成与翻译。图片/文档相似组必须人工复核、禁止一键批量删除；视频相似组默认不勾选，允许手动全选批量删除。支持直链/m3u8 视频批量下载并合并为 MP4，支持视频/音频格式互转，并可按选择顺序把视频片段与音频片段拼接、混流为一个文件。"

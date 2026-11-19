@@ -1,6 +1,6 @@
-# 格式转换契约（v0056）
+# 格式转换契约（v0056，v0061 修订）
 
-> 状态：**现行**（v0056 起）。实现：`src/backend/dupcleaner/convert.py` + `src/web/js/convert-page.js`。
+> 状态：**现行**（v0056 起，v0061 调整默认值）。实现：`src/backend/dupcleaner/convert.py` + `src/web/js/convert-page.js`。
 > 本契约定义「转换」页的行为、接口、预设、设置键、错误码与安全边界；改实现前先改这里。
 
 ## 1. 范围
@@ -68,10 +68,10 @@
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| GET | `/api/convert/capabilities` | ffmpeg 版本/路径、16 个预设（含 `available`/`reason`）、默认值、并发、空闲时段、计数 |
+| GET | `/api/convert/capabilities` | ffmpeg 版本/路径、16 个预设（含 `available`/`reason`）、默认值、并发、空闲时段、计数、`source_extensions`（video/audio/all/selected） |
 | GET | `/api/convert?status=&offset=&limit=&q=` | 任务列表（`status` 逗号分隔、`q` 匹配源路径/产物名/预设） |
 | POST | `/api/convert` | 提交；`{paths:[], preset, options:{}, confirm}` → 202 |
-| POST | `/api/convert/enumerate` | `{path, recursive, extensions?}` → 候选文件 + `skipped` 统计 |
+| POST | `/api/convert/enumerate` | `{path, recursive, extensions?}` → 候选文件 + `skipped` 统计。`extensions` 为后缀数组（v0061：可多选子集；只接受登记过的音视频后缀，空数组/非法后缀 → 400；不传则用设置 `convert_source_extensions`，为空表示全部支持后缀） |
 | GET | `/api/convert/queue` | 队列快照：`active/queued/recent/counts/concurrency/offpeak/storage` |
 | GET | `/api/convert/{job_id}` | 单任务详情（含 `timeline.steps`、`options`、`source_info`） |
 | POST | `/api/convert/{job_id}/cancel` | 取消（排队直接删；运行中 kill 进程并清理 `.dcpart`） |
@@ -89,14 +89,17 @@
   "options": {
     "quality": "standard", "speed": "veryfast", "max_resolution": 0,
     "channels": "keep", "output_mode": "alongside", "output_dir": "",
-    "output_subdir": "", "overwrite": "rename", "name_template": "{name}",
-    "keep_source": true, "copy_subtitles": true, "delete_source": false
+    "output_subdir": "", "overwrite": "trash", "name_template": "{name}",
+    "keep_source": false, "copy_subtitles": true, "delete_source": true
   },
-  "confirm": ""
+  "confirm": "DELETE SOURCE"
 }
 ```
 
-`delete_source=true` 时 `confirm` 必须等于 `DELETE SOURCE`，否则 400。
+- `delete_source` 默认 `true`（v0061，跟随 `convert_delete_source`）；显式传 `keep_source=true` 或
+  `delete_source=false` 则保留源文件。
+- `confirm` 只在**本次显式要求删除**（`delete_source: true` 或 `keep_source: false`）时必须等于
+  `DELETE SOURCE`，否则 400；沿用默认删源不再强制（前端会自动带上该 token）。
 
 ## 4. 任务与队列语义
 
@@ -107,7 +110,8 @@
 - 进度：FFmpeg `-progress pipe:1` 的 `out_time_us` / 源时长 → 5–95%，完成 100%；
   `speed`/`fps` 直接透传给 UI 估算 ETA。
 - 重启：`running → queued`（FFmpeg 不能续转，重新从头开始），残留 `.dcpart` 由下一次执行覆盖。
-- 失败：`convert_keep_temp=false`（默认）时删除 `.dcpart`；`true` 时保留并标记 `part_kept`。
+- 失败：一律删除 `.dcpart`（v0061 起 `convert_keep_temp` 降级为兼容键、不再生效）。
+- 任务快照新增 `overwritten_path`（被覆盖的旧产物路径）与 `trashed_count`（移入回收站的条目数）。
 - 超时：`max(600, 源时长 × 系数)`，copy 系数 1、转码系数 8。
 - 产物校验：体积 ≥ 1024B、音/视频轨存在、时长偏差 ≤ 5s（超出只告警，不判失败）。
 
@@ -141,13 +145,15 @@ CREATE INDEX idx_convert_jobs_status ON convert_jobs(status, created_epoch);
 | `convert_default_preset` | `mp4_h264` | 预设 ID |
 | `convert_quality` | `standard` | `high/standard/small` |
 | `convert_speed` | `veryfast` | `ultrafast/superfast/veryfast/faster/medium` |
-| `convert_overwrite` | `rename` | `rename/skip/overwrite` |
-| `convert_keep_source` | `true` | bool |
+| `convert_overwrite` | `trash` | `trash/rename/skip/overwrite`（v0061：默认 `trash`；旧值 `rename` 首次启动一次性迁移） |
+| `convert_delete_source` | `true` | bool（v0061：转换成功后删除源文件） |
+| `convert_source_extensions` | `[]` | 后缀数组；空 = 全部支持后缀；只接受登记过的音视频后缀，去重，≤40 项 |
+| `convert_keep_source` | `true` | **兼容键**（v0061 起不再生效） |
 | `convert_copy_subtitles` | `true` | bool（MKV 预设复制字幕轨） |
 | `convert_max_resolution` | `0` | 0/2160/1080/720/480 |
 | `convert_job_limit` | `500` | 10–5000 |
 | `convert_min_free_gb` | `20` | 0–102400 |
-| `convert_keep_temp` | `false` | bool（失败保留 `.dcpart`） |
+| `convert_keep_temp` | `false` | **兼容键**（v0061 起失败一律清 `.dcpart`） |
 | `convert_offpeak_enabled` | `false` | bool |
 | `convert_offpeak_start` | `01:00` | HH:MM |
 | `convert_offpeak_end` | `07:00` | HH:MM（可跨零点） |
@@ -179,17 +185,25 @@ CREATE INDEX idx_convert_jobs_status ON convert_jobs(status, created_epoch);
 
 - 输出位置：`alongside`（源目录，默认）/ `fixed`（`convert_output_dir`）/
   `subdir`（`convert_output_dir/convert_output_subdir`）；目录必须可写，必要时自动创建。
-- 命名：`convert_name_template` 渲染 + 预设扩展名；`rename` 冲突时 `名称 (2).ext`。
-- 源 = 目标（同目录同格式）时**强制改名**，绝不允许覆盖源文件。
+- 命名：`convert_name_template` 渲染 + 预设扩展名。
+- 同名策略（v0061）：`trash`（默认）= 覆盖，旧产物先移入
+  `<共享文件夹>/#duplicate-cleaner-trash/<时间戳>/<相对路径>` 并登记回收站清单；
+  `rename` = `名称 (2).ext`；`skip` = 跳过；`overwrite` = 直接覆盖（旧的不可恢复）。
+- 移动旧产物的时机是「产物校验通过之后、`os.replace` 之前」；`os.replace` 失败会把旧文件还原。
+  回收站移动失败则降级为 `rename`，绝不静默丢弃。回收站 id 形如转换任务 `cv-…`，可在回收站页恢复/清理。
+- 源 = 目标（同目录同格式）时**强制改名**，任何策略都不允许覆盖源文件。
 - 写 `.dcpart` → 校验 → `os.replace` 原子改名（同目录，不跨卷）。
-- `delete_source`：只在产物校验通过后删除，且遵循 `is_regular_file`（拒符号链接），记审计
-  `convert_delete_source`。
+- `delete_source`：默认开启（`convert_delete_source`），只在产物校验通过并原子改名后删除，
+  遵循 `is_regular_file`（拒符号链接），记审计 `convert_delete_source`。
+- 失败 / 取消 / 超时：一律删除 `.dcpart`。
 
 ## 9. 前端
 
 - 导航「转换」→ `#/convert`；`VIEWS`/`VIEW_HEADINGS` 注册 `convert`/`convertHeading`。
-- 模块 `js/convert-page.js`：能力探测、目录枚举、手动粘贴路径、已选列表、预设/质量/分辨率、
-  输出位置、提交（含删除源二次确认）、队列轮询（2s）、取消/重试/删除/批量、CSV 导出。
+- 模块 `js/convert-page.js`：能力探测、源文件后缀多选（v0061，勾选即保存）、目录枚举、
+  手动粘贴路径、已选列表、预设/质量/分辨率、输出位置、提交、队列轮询（2s）、
+  取消/重试/删除/批量、CSV 导出。
+- 删源项默认勾选且不再弹二次确认（v0061）；取消勾选即保留源文件。
 - 只用 `el()`/`textContent`，不写 `innerHTML`；进度条宽度用 `node.style.width`。
 - 预设卡明确区分「仅换封装（秒级、无损）」与「需要重新编码（CPU 高）」。
 - 未启用 / FFmpeg 不可用 / 空闲时段未到，都在页头徽标与提交按钮上体现。
@@ -198,8 +212,10 @@ CREATE INDEX idx_convert_jobs_status ON convert_jobs(status, created_epoch);
 
 - 源文件必须在共享文件夹内、是普通文件、拒绝任一层的符号链接；
 - 输出目录同样走 `check_path_safety` + `share.validate_root`；
-- 覆盖默认 `rename`；`overwrite` 只针对产物，源文件永不被原地覆盖；
-- 「删除源文件」只能按任务勾选 + 二次确认 + `confirm="DELETE SOURCE"`，且校验通过后执行；
+- 同名策略默认 `trash`（覆盖但旧产物进回收站）；`overwrite` 只针对产物，源文件永不被原地覆盖；
+- 「删除源文件」默认开启，但必须产物校验通过后执行；请求显式要求删除时仍需
+  `confirm="DELETE SOURCE"`；失败不删源；
+- 后缀筛选只允许登记过的音视频后缀，避免被用来扫描任意文件；
 - FFmpeg 用参数数组调用（无 shell），`-nostdin`，取消时 kill 进程；
 - stderr 只保留最后一行（≤400 字符），不包含 Cookie 等敏感值。
 
@@ -212,16 +228,18 @@ CREATE INDEX idx_convert_jobs_status ON convert_jobs(status, created_epoch);
 
 - `convert_auto_scan`：转换完成后把产物目录入队扫描（同一目录 10 分钟去抖）；
 - `convert_auto_subtitle`：转换完成后自动提交字幕任务（要求 `subtitle_enabled`）；
-- 通知：新增事件 `convert_done` / `convert_failed`（DSM/Webhook/Telegram）；
+- 通知：新增事件 `convert_done` / `convert_failed`（Webhook / Telegram）；
 - 下载中心产物可以直接作为转换输入（都是共享内文件）。
 
 ## 13. 测试与验收
 
 - 单元：`src/backend/tests/test_v0056_convert.py`（预设金标、探测/进度解析、兼容性、
-  命名/覆盖/跳过、取消/重试、持久化、失败清理、真 FFmpeg 转码）；
-- 静态：`BE-CONVERT-MODULE/PRESETS/ARGS/SAFETY/SCHEMA`、`FE-CONVERT-UI/NAV/PROGRESS`、
-  `BE-SETTINGS-KEYS/NORMALIZE`；
-- e2e：`CV-00`…`CV-14`（未启用 403、能力、枚举、未知预设、删源确认、提交、队列、
-  详情、筛选、取消/重试/删除、CSV、批量取消、真实仅换封装）；
+  命名/覆盖/跳过/覆盖进回收站、取消/重试、持久化、失败清理、多后缀枚举、真 FFmpeg 转码）、
+  `tests/test_v0061_convert_defaults.py`（默认值迁移 + 后缀校验）；
+- 静态：`BE-CONVERT-MODULE/PRESETS/ARGS/SAFETY/TRASH-OVERWRITE/DELETE-DEFAULT/EXT-FILTER/SCHEMA`、
+  `FE-CONVERT-UI/NAV/PROGRESS/EXTS/DELETE-DEFAULT`、`BE-SETTINGS-KEYS/NORMALIZE`；
+- e2e：`CV-00`…`CV-19`（未启用 403、能力、枚举、多后缀子集、非法/空后缀、未知预设、
+  删源确认、提交、队列、详情、筛选、取消/重试/删除、CSV、批量取消、真实仅换封装、
+  默认值元数据、真实转码覆盖进回收站）；
 - 验收：MP4→MKV copy 秒级且时长一致；AVI→MP4 H.264 可播放；MKV→MP3 可播放；
   取消 2 秒内生效且不留 `.dcpart`；重启后队列恢复；设置保存不 400。

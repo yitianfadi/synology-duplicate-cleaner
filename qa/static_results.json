@@ -1,7 +1,7 @@
 {
-  "generated_at": "2026-11-18T23:00:13+0800",
+  "generated_at": "2026-11-19T13:58:53+0800",
   "summary": {
-    "PASS": 240,
+    "PASS": 245,
     "FAIL": 0,
     "UNVERIFIED": 0
   },
@@ -28,7 +28,7 @@
       "id": "BE-FILE-COUNT",
       "name": "后端 Python 文件数",
       "status": "INFO",
-      "detail": "85"
+      "detail": "86"
     },
     {
       "id": "BE-SRC-HYGIENE",
@@ -52,7 +52,7 @@
       "id": "BE-UNITTEST-LOG",
       "name": "unittest 结果",
       "status": "INFO",
-      "detail": "Ran 847 tests in 186.799s"
+      "detail": "Ran 863 tests in 151.637s"
     },
     {
       "id": "BE-NO-AUTODELETE",
@@ -806,7 +806,25 @@
     },
     {
       "id": "BE-CONVERT-SAFETY",
-      "name": "删除源文件需 confirm、覆盖默认改名、产物 .dcpart 原子改名、拒符号链接、无启用开关",
+      "name": "删除源文件需 confirm、覆盖策略显式枚举、产物 .dcpart 原子改名、拒符号链接、无启用开关",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "BE-CONVERT-TRASH-OVERWRITE",
+      "name": "转换覆盖旧产物走套件回收站（destination_for/record_job），落地失败可还原",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "BE-CONVERT-DELETE-DEFAULT",
+      "name": "转换成功后默认删除源文件；convert_delete_source 生效、keep_source/keep_temp 降级为兼容键",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "BE-CONVERT-EXT-FILTER",
+      "name": "目录枚举支持多后缀子集：校验受支持后缀、拒绝空数组、记住上次筛选",
       "status": "PASS",
       "detail": ""
     },
@@ -819,6 +837,18 @@
     {
       "id": "FE-CONVERT-UI",
       "name": "转换页含目录枚举/预设/提交/队列",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "FE-CONVERT-EXTS",
+      "name": "转换页可多选源文件后缀（视频/音频分组 + 全选/清空），枚举请求带上所选后缀",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "FE-CONVERT-DELETE-DEFAULT",
+      "name": "转换页删源默认勾选、不再弹二次确认，且保留源文件复选框已移除",
       "status": "PASS",
       "detail": ""
     },
@@ -1352,7 +1382,7 @@
     },
     {
       "id": "SPK-DIST",
-      "name": "构建产物存在（DuplicateCleaner-1.1.0-0060.spk）",
+      "name": "构建产物存在（DuplicateCleaner-1.1.0-0061.spk）",
       "status": "PASS",
       "detail": ""
     },
@@ -1364,7 +1394,7 @@
     },
     {
       "id": "SPK-VERSION",
-      "name": "SPK INFO.version 与当前源码 APP_VERSION（1.1.0-0060）一致",
+      "name": "SPK INFO.version 与当前源码 APP_VERSION（1.1.0-0061）一致",
       "status": "PASS",
       "detail": ""
     },

@@ -41,7 +41,11 @@ class TrashManager(object):
 
     @staticmethod
     def _check_id(trash_id):
-        if not isinstance(trash_id, str) or not config.JOB_ID_RE.match(trash_id):
+        # v0061：回收站不再只由删除任务（del-*）写入，转换覆盖旧产物时也用
+        # 转换任务 id（cv-*）登记，所以这里放宽到 SAFE_ID_RE 并显式挡住路径穿越。
+        if not isinstance(trash_id, str) or not config.SAFE_ID_RE.match(trash_id):
+            raise not_found(u"回收站记录不存在")
+        if trash_id in (".", "..") or ".." in trash_id:
             raise not_found(u"回收站记录不存在")
 
     def trash_root(self, share_root):

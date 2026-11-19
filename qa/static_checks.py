@@ -1522,6 +1522,11 @@ def check_frontend():
     # ---- v0056 格式转换（docs/CONVERT_CONTRACT.md）----
     convert_path = os.path.join(backend, "dupcleaner", "convert.py")
     convert_src = read(convert_path) if os.path.isfile(convert_path) else ""
+    convert_config_path = os.path.join(backend, "dupcleaner", "config.py")
+    convert_config_src = (read(convert_config_path)
+                          if os.path.isfile(convert_config_path) else "")
+    convert_settings_src = read(os.path.join(backend, "dupcleaner",
+                                             "settings.py"))
     services_src = read(os.path.join(backend, "dupcleaner", "services.py"))
     httpapi_src = read(os.path.join(backend, "dupcleaner", "httpapi.py"))
     check("BE-CONVERT-MODULE", "转换服务存在并接入服务容器/API 路由",
@@ -1546,7 +1551,7 @@ def check_frontend():
           and ("scale=-2:min(%d\\\\,ih)" in convert_src),
           "convert ffmpeg args markers missing")
     check("BE-CONVERT-SAFETY",
-          "删除源文件需 confirm、覆盖默认改名、产物 .dcpart 原子改名、拒符号链接、无启用开关",
+          "删除源文件需 confirm、覆盖策略显式枚举、产物 .dcpart 原子改名、拒符号链接、无启用开关",
           ("DELETE SOURCE" in convert_src)
           and ("CONVERT_OVERWRITE_DEFAULT" in convert_src)
           and ("config.CONVERT_PART_EXT" in convert_src)
@@ -1554,6 +1559,31 @@ def check_frontend():
           and ("has_symlink_component" in convert_src)
           and ("convert_enabled" not in convert_src),
           "convert safety markers missing")
+    # v0061：同名目标默认「覆盖 + 旧产物进套件回收站」，同路径仍强制改名
+    check("BE-CONVERT-TRASH-OVERWRITE",
+          "转换覆盖旧产物走套件回收站（destination_for/record_job），落地失败可还原",
+          all(marker in convert_src for marker in (
+              'action == "trash"', "_trash_existing_target",
+              "_trash.destination_for", "_trash.record_job",
+              "_restore_trashed", "job.trashed_paths"))
+              and ("trash" in convert_config_src)
+              and ('CONVERT_OVERWRITE_DEFAULT = "trash"' in convert_config_src),
+          "convert trash overwrite markers missing")
+    check("BE-CONVERT-DELETE-DEFAULT",
+          "转换成功后默认删除源文件；convert_delete_source 生效、keep_source/keep_temp 降级为兼容键",
+          ("CONVERT_DELETE_SOURCE_DEFAULT = True" in convert_config_src)
+          and ('"convert_delete_source"' in convert_settings_src)
+          and ('"convert_source_extensions"' in convert_settings_src)
+          and ("convert_delete_source" in convert_src)
+          and ("v0061：失败一律清理 .dcpart" in convert_src)
+          and ("settings.get(\"convert_keep_temp\")" not in convert_src),
+          "convert delete-source default markers missing")
+    check("BE-CONVERT-EXT-FILTER",
+          "目录枚举支持多后缀子集：校验受支持后缀、拒绝空数组、记住上次筛选",
+          all(marker in convert_src for marker in (
+              "_source_extensions", "convert_source_extensions",
+              u"extensions 不能为空数组", u"不支持的后缀")),
+          "convert extension filter markers missing")
     check("BE-CONVERT-SCHEMA", "schema ≥ v10 含 convert_jobs 表",
           schema_version >= 10 and ("convert_jobs" in schema_src),
           "schema v10 markers missing")
@@ -1563,6 +1593,23 @@ def check_frontend():
               "view-convert", "convertEnumerateBtn", "convertPreset",
               "convertSubmitBtn", "convertJobsList", "convertOutputMode")),
           "convert page markers missing")
+    # v0061：源文件后缀多选 + 默认删源（页面无「保留源文件」复选框）
+    check("FE-CONVERT-EXTS",
+          "转换页可多选源文件后缀（视频/音频分组 + 全选/清空），枚举请求带上所选后缀",
+          all(marker in html for marker in (
+              "convertExtPicker", "convertExtAllBtn", "convertExtNoneBtn",
+              "convertExtVideoBtn", "convertExtAudioBtn", "convertExtHint"))
+          and all(marker in app for marker in (
+              "selectedExtensions", "setExtensionSelection",
+              "convert_source_extensions", "extensions: exts")),
+          "convert extension picker markers missing")
+    check("FE-CONVERT-DELETE-DEFAULT",
+          "转换页删源默认勾选、不再弹二次确认，且保留源文件复选框已移除",
+          ('id="convertDeleteSource" type="checkbox" checked' in html)
+          and ("convertKeepSource" not in html)
+          and ("convertDeleteSource.checked" in app)
+          and (u"转换成功后删除源文件？" not in app),
+          "convert delete-source default markers missing")
     check("FE-CONVERT-NAV", "主导航含转换入口，VIEWS/VIEW_HEADINGS 已注册",
           ('data-nav="convert"' in html)
           and ("convertHeading" in app)
@@ -1843,6 +1890,8 @@ def check_frontend():
                     "convert_keep_source", "convert_copy_subtitles",
                     "convert_max_resolution", "convert_job_limit",
                     "convert_min_free_gb", "convert_keep_temp",
+                    # v0061 转换默认值 + 后缀筛选
+                    "convert_delete_source", "convert_source_extensions",
                     "convert_offpeak_enabled", "convert_offpeak_start",
                     "convert_offpeak_end", "convert_name_template",
                     "convert_auto_scan", "convert_auto_subtitle"]

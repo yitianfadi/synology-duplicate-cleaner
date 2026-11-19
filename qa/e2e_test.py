@@ -3182,6 +3182,8 @@ def run():
             with open(path, "wb") as handle:
                 handle.write(b"QA-CONVERT-" * 512)
             cv_files.append(path)
+        with open(os.path.join(convert_dir, "qa-c.txt"), "wb") as handle:
+            handle.write(b"not a media file")
 
         resp = client.get("/api/convert/capabilities")
         caps = jd(resp)
@@ -3194,6 +3196,21 @@ def run():
               "status=%s presets=%s"
               % (resp.status, len(presets)))
 
+        # v0061：默认「覆盖进回收站 + 转换成功后删源」+ 后缀多选元数据
+        cv_defaults = caps.get("defaults") or {}
+        cv_exts = caps.get("source_extensions") or {}
+        check("CV-18", "v0061 默认覆盖进回收站、默认删源、后缀多选元数据齐备",
+              cv_defaults.get("overwrite") == "trash"
+              and cv_defaults.get("delete_source") is True
+              and "trash" in (caps.get("overwrite_modes") or [])
+              and isinstance(cv_exts.get("video"), list)
+              and isinstance(cv_exts.get("audio"), list)
+              and isinstance(cv_exts.get("all"), list)
+              and ".mp4" in (cv_exts.get("video") or [])
+              and set(cv_exts.get("selected") or []) == set(cv_exts.get("all") or []),
+              "defaults=%s exts=%s" % (cv_defaults.get("overwrite"),
+                                       repr(cv_exts)[:160]))
+
         resp = client.post_json("/api/convert/enumerate",
                                 {"path": convert_dir, "recursive": True})
         enum = jd(resp)
@@ -3202,6 +3219,32 @@ def run():
               resp.status == 200 and set(names) == {"qa-a.mp4", "qa-b.mkv"}
               and isinstance(enum.get("skipped"), dict),
               "status=%s names=%s" % (resp.status, names))
+
+        # v0061：源文件后缀可多选，只扫描所选后缀
+        resp = client.post_json("/api/convert/enumerate", {
+            "path": convert_dir, "recursive": True,
+            "extensions": [".mkv"]})
+        enum = jd(resp)
+        names = [item.get("name") for item in enum.get("items") or []]
+        check("CV-15", "v0061 枚举只返回勾选的后缀（可多选子集）",
+              resp.status == 200 and names == ["qa-b.mkv"]
+              and enum.get("extensions") == [".mkv"],
+              "status=%s names=%s" % (resp.status, names))
+
+        resp = client.post_json("/api/convert/enumerate", {
+            "path": convert_dir, "recursive": True,
+            "extensions": [".txt"]})
+        code, _ = err_code(resp)
+        check("CV-16", "v0061 枚举拒绝不支持的后缀 / 空数组",
+              resp.status == 400 and code == "INVALID_ARGUMENT",
+              "status=%s code=%s" % (resp.status, code))
+
+        resp = client.post_json("/api/convert/enumerate", {
+            "path": convert_dir, "recursive": True, "extensions": []})
+        code, _ = err_code(resp)
+        check("CV-17", "v0061 枚举空数组返回 400（不选请传 null）",
+              resp.status == 400 and code == "INVALID_ARGUMENT",
+              "status=%s code=%s" % (resp.status, code))
 
         resp = client.post_json("/api/convert", {"paths": cv_files,
                                                  "preset": "nope"})
@@ -3334,6 +3377,45 @@ def run():
                       "job=%s status=%s err=%s"
                       % (real_id, real_detail.get("status"),
                          real_detail.get("error_message")))
+                # v0061：同目标再次转换 → 覆盖并把旧产物移入套件回收站
+                if real_detail.get("status") == "done" and output_path:
+                    subprocess.run(
+                        [ffmpeg_cv, "-nostdin", "-hide_banner", "-loglevel",
+                         "error", "-y", "-f", "lavfi", "-i",
+                         "testsrc2=size=160x120:rate=15:duration=1",
+                         "-c:v", "libx264", "-preset", "ultrafast",
+                         "-pix_fmt", "yuv420p", clip],
+                        check=True, timeout=120,
+                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    resp = client.post_json("/api/convert", {
+                        "paths": [clip], "preset": "mkv_copy"})
+                    second_id = ((jd(resp).get("jobs") or [{}])[0]).get("job_id")
+                    second = {}
+                    deadline = time.time() + 90
+                    while time.time() < deadline:
+                        r3 = client.get("/api/convert/%s"
+                                        % quote(second_id or "cv-x"))
+                        second = jd(r3).get("job") or {}
+                        if second.get("status") in ("done", "failed",
+                                                   "cancelled"):
+                            break
+                        time.sleep(0.2)
+                    check("CV-19",
+                          "v0061 目标同名时覆盖旧产物并移入套件回收站",
+                          second.get("status") == "done"
+                          and os.path.normcase(second.get("output_path") or "")
+                          == os.path.normcase(output_path)
+                          and int(second.get("trashed_count") or 0) == 1,
+                          "job=%s status=%s out=%s trashed=%s err=%s"
+                          % (second_id, second.get("status"),
+                             second.get("output_path"),
+                             second.get("trashed_count"),
+                             second.get("error_message")))
+                    if second_id:
+                        client.request(
+                            "DELETE",
+                            "/api/convert/%s?delete_output=1"
+                            % quote(second_id))
                 if real_id:
                     client.request(
                         "DELETE",

@@ -208,6 +208,9 @@ input[type="checkbox"]:disabled { cursor: not-allowed; }
 }
 .check input { margin-top: 2px; }
 .check input:disabled { cursor: not-allowed; }
+.ext-chips { display: flex; flex-wrap: wrap; gap: 6px 16px; }
+.ext-chips .check { font-size: 12.5px; }
+.ext-chips .check input { margin-top: 1px; }
 .input-unit { display: flex; gap: 8px; }
 .input-unit input { flex: 1 1 auto; min-width: 0; }
 .input-unit select { flex: 0 0 76px; }

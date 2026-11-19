@@ -21,6 +21,7 @@ from tests.helpers import BACKEND_DIR  # noqa: F401
 
 from dupcleaner import config, convert
 from dupcleaner import settings as settings_module
+from dupcleaner import trash as trash_module
 from dupcleaner.errors import ApiError
 from dupcleaner.store import Store
 from dupcleaner.video_similarity import FFmpegTool
@@ -403,6 +404,13 @@ class _FakeTool(object):
         return self.exit_code, self.stderr
 
 
+class _FakeRuntime(object):
+    """TrashManager 只需要 runtime_config.data_dir。"""
+
+    def __init__(self, data_dir):
+        self.data_dir = data_dir
+
+
 class ConvertServiceTest(unittest.TestCase):
     def setUp(self):
         self.tmpdir = tempfile.mkdtemp(prefix="dc-cv-")
@@ -417,9 +425,15 @@ class ConvertServiceTest(unittest.TestCase):
             "convert_concurrency": 1,
         })
         self.tool = _FakeTool()
+        self.shares = _FakeShares(self.share)
+        # v0061：overwrite=trash 需要真实 TrashManager（写 manifest，可恢复）
+        self.trash = trash_module.TrashManager(
+            _FakeRuntime(os.path.join(self.tmpdir, "data")), self.store,
+            self.shares)
         self.service = convert.ConvertService(
-            None, self.store, _FakeShares(self.share),
-            lambda: dict(self.settings), ffmpeg_tool=self.tool)
+            None, self.store, self.shares,
+            lambda: dict(self.settings), ffmpeg_tool=self.tool,
+            trash_manager=self.trash)
 
     def tearDown(self):
         self.service.shutdown(timeout=0.2)
@@ -525,7 +539,8 @@ class ConvertServiceTest(unittest.TestCase):
 
     def test_execute_success(self):
         source = self._source()
-        created = self.service.create("admin", {"paths": [source]})
+        created = self.service.create("admin", {
+            "paths": [source], "options": {"keep_source": True}})
         job = self._job(created["jobs"][0]["job_id"])
         self.service._execute(job)
         self.assertEqual(job.status, "done")
@@ -537,8 +552,20 @@ class ConvertServiceTest(unittest.TestCase):
                                         + config.CONVERT_PART_EXT))
         self.assertTrue(job.verify["duration_ok"])
         self.assertEqual(job.verify["video_codec"], "h264")
-        # 源文件默认保留
+        # 显式 keep_source=true 时源文件保留
         self.assertTrue(os.path.isfile(source))
+
+    def test_default_deletes_source_after_success(self):
+        # v0061：默认「转换成功后删除源文件」，不需要 confirm
+        source = self._source("movie.mkv")
+        created = self.service.create("admin", {"paths": [source]})
+        job = self._job(created["jobs"][0]["job_id"])
+        self.assertTrue(job.options["delete_source"])
+        self.service._run_job(job)
+        self.assertEqual(job.status, "done")
+        self.assertFalse(os.path.exists(source))
+        self.assertTrue(job.deleted_source)
+        self.assertTrue(os.path.isfile(job.output_path))
 
     def test_execute_writes_expected_args(self):
         source = self._source()
@@ -565,8 +592,9 @@ class ConvertServiceTest(unittest.TestCase):
     def test_execute_same_name_gets_renamed(self):
         source = self._source()
         existing = os.path.join(self.share, "movie.mp4")
-        # 目标同名（mp4 预设、源也是 mp4）：必须自动加序号，绝不覆盖
-        created = self.service.create("admin", {"paths": [source]})
+        # 目标同名（mp4 预设、源也是 mp4）：同路径必须自动加序号，绝不覆盖源文件
+        created = self.service.create("admin", {
+            "paths": [source], "options": {"keep_source": True}})
         job = self._job(created["jobs"][0]["job_id"])
         self.service._execute(job)
         self.assertNotEqual(os.path.normcase(job.output_path),
@@ -575,17 +603,62 @@ class ConvertServiceTest(unittest.TestCase):
         with open(source, "rb") as handle:
             self.assertEqual(handle.read(8), b"v" * 8)
 
+    def test_overwrite_trash_moves_old_product_to_trash(self):
+        # v0061：不同格式但目标已存在 → 覆盖，旧产物进套件回收站（不加序号）
+        source = self._source("movie.mkv")
+        old = os.path.join(self.share, "movie.mp4")
+        with open(old, "wb") as handle:
+            handle.write(b"o" * 100)
+        created = self.service.create("admin", {
+            "paths": [source], "options": {"keep_source": True}})
+        job = self._job(created["jobs"][0]["job_id"])
+        self.service._run_job(job)
+        self.assertEqual(job.status, "done")
+        self.assertEqual(os.path.normcase(job.output_path),
+                         os.path.normcase(old))
+        self.assertEqual(len(job.trashed_paths), 1)
+        entry = job.trashed_paths[0]
+        self.assertEqual(os.path.normcase(entry["original"]),
+                         os.path.normcase(old))
+        self.assertTrue(os.path.isfile(entry["trash_path"]))
+        with open(entry["trash_path"], "rb") as handle:
+            self.assertEqual(handle.read(2), b"oo")
+        # 新产物覆盖在原路径，内容是这次转出来的
+        self.assertGreater(os.path.getsize(old), 100)
+        # manifest 可被回收站页读到
+        manifest = self.trash.load(job.job_id)
+        self.assertIsNotNone(manifest)
+        self.assertEqual(len(manifest["entries"]), 1)
+
+    def test_overwrite_rename_mode_still_appends_index(self):
+        self.settings["convert_overwrite"] = "rename"
+        source = self._source("movie.mkv")
+        old = os.path.join(self.share, "movie.mp4")
+        with open(old, "wb") as handle:
+            handle.write(b"o" * 100)
+        created = self.service.create("admin", {
+            "paths": [source], "options": {"keep_source": True}})
+        job = self._job(created["jobs"][0]["job_id"])
+        self.service._run_job(job)
+        self.assertEqual(job.status, "done")
+        self.assertIn("(2)", os.path.basename(job.output_path))
+        self.assertEqual(job.trashed_paths, [])
+        with open(old, "rb") as handle:
+            self.assertEqual(handle.read(2), b"oo")
+
     def test_execute_skip_existing(self):
         # 源 .mkv → 目标 .mp4：先跑一次生成产物 movie.mp4，再提交第二次走 skip
         source = self._source("movie.mkv")
         self.settings["convert_overwrite"] = "skip"
         target = os.path.join(self.share, "movie.mp4")
-        created = self.service.create("admin", {"paths": [source]})
+        created = self.service.create("admin", {
+            "paths": [source], "options": {"keep_source": True}})
         job = self._job(created["jobs"][0]["job_id"])
         self.service._run_job(job)
         self.assertTrue(os.path.isfile(target))
         # 再提交一次：skip 策略应直接 done 且不覆盖
-        created = self.service.create("admin", {"paths": [source]})
+        created = self.service.create("admin", {
+            "paths": [source], "options": {"keep_source": True}})
         job2 = self._job(created["jobs"][0]["job_id"])
         before = os.path.getmtime(target)
         self.service._run_job(job2)
@@ -614,19 +687,22 @@ class ConvertServiceTest(unittest.TestCase):
         self.assertFalse(os.path.exists(job.output_path
                                         + config.CONVERT_PART_EXT))
 
-    def test_keep_temp_on_failure(self):
+    def test_failure_always_cleans_part(self):
+        # v0061：convert_keep_temp 降级为兼容键，失败一律清 .dcpart（省空间）
         source = self._source()
         self.settings["convert_keep_temp"] = True
         self.tool.exit_code = 1
         self.tool.stderr = b"boom"
-        created = self.service.create("admin", {"paths": [source]})
+        created = self.service.create("admin", {
+            "paths": [source], "options": {"keep_source": True}})
         job = self._job(created["jobs"][0]["job_id"])
-        # 假 tool 已写出部分产物后返回失败：keep_temp 时应保留 .dcpart
         self.service._run_job(job)
         self.assertEqual(job.status, "failed")
-        self.assertTrue(job.part_kept)
-        self.assertTrue(os.path.isfile(job.output_path
-                                       + config.CONVERT_PART_EXT))
+        self.assertFalse(job.part_kept)
+        self.assertFalse(os.path.exists(job.output_path
+                                        + config.CONVERT_PART_EXT))
+        # 失败不删除源文件
+        self.assertTrue(os.path.isfile(source))
 
     def test_execute_missing_audio_rejected(self):
         self.tool._probe_text = AUDIO_ONLY_PROBE
@@ -683,12 +759,53 @@ class ConvertServiceTest(unittest.TestCase):
         self.assertEqual([item["name"] for item in result["items"]],
                          ["a.mp4"])
 
+    def test_enumerate_multi_extension_filter(self):
+        # v0061：可同时选多个不同后缀，只扫描所选后缀
+        self._source("a.mp4")
+        self._source("b.mkv")
+        self._source("c.flac")
+        self._source("d.avi")
+        result = self.service.enumerate_files(
+            {"path": self.share, "extensions": [".mkv", "flac"]})
+        self.assertEqual([item["name"] for item in result["items"]],
+                         ["b.mkv", "c.flac"])
+        self.assertEqual(result["skipped"]["extension"], 2)
+        self.assertEqual(result["extensions"], [".flac", ".mkv"])
+
+    def test_enumerate_rejects_unknown_extension(self):
+        self._source("a.mp4")
+        with self.assertRaises(ApiError):
+            self.service.enumerate_files(
+                {"path": self.share, "extensions": [".exe"]})
+
+    def test_enumerate_rejects_empty_extension_list(self):
+        self._source("a.mp4")
+        with self.assertRaises(ApiError):
+            self.service.enumerate_files(
+                {"path": self.share, "extensions": []})
+
+    def test_enumerate_uses_saved_extension_filter(self):
+        self._source("a.mp4")
+        self._source("b.mkv")
+        self.settings["convert_source_extensions"] = [".mkv"]
+        result = self.service.enumerate_files({"path": self.share})
+        self.assertEqual([item["name"] for item in result["items"]],
+                         ["b.mkv"])
+
     def test_capabilities(self):
         caps = self.service.capabilities()
         self.assertTrue(caps["ffmpeg"]["available"])
         self.assertEqual(len(caps["presets"]), 16)
         self.assertTrue(all(item["available"] for item in caps["presets"]))
         self.assertEqual(caps["defaults"]["quality"], "standard")
+        # v0061：后缀多选 + 默认删源
+        exts = caps["source_extensions"]
+        self.assertIn(".mp4", exts["video"])
+        self.assertIn(".flac", exts["audio"])
+        self.assertEqual(exts["selected"], exts["all"])
+        self.assertTrue(caps["defaults"]["delete_source"])
+        self.assertEqual(caps["defaults"]["overwrite"], "trash")
+        self.assertIn("trash", caps["overwrite_modes"])
 
     def test_offpeak_blocks_dispatch(self):
         now = time.localtime()

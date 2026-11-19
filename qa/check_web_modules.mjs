@@ -445,11 +445,14 @@ async function main() {
         cvInitOk && constantsMod.VIEWS.indexOf('convert') !== -1
         && constantsMod.VIEW_HEADINGS.convert === 'convertHeading', cvInitError);
       record('WEB-MOD-CONVERT-DEFAULTS',
-        '转换默认设置与后端契约一致（v0058 恒可用 / 并发 1 / 同目录 / rename）',
+        '转换默认设置与后端契约一致（v0058 恒可用 / 并发 1 / 同目录 / v0061 覆盖进回收站 + 默认删源）',
         constantsMod.DEFAULT_SETTINGS.convert_enabled === true
         && constantsMod.DEFAULT_SETTINGS.convert_concurrency === 1
         && constantsMod.DEFAULT_SETTINGS.convert_output_mode === 'alongside'
-        && constantsMod.DEFAULT_SETTINGS.convert_overwrite === 'rename');
+        && constantsMod.DEFAULT_SETTINGS.convert_overwrite === 'trash'
+        && constantsMod.DEFAULT_SETTINGS.convert_delete_source === true
+        && Array.isArray(constantsMod.DEFAULT_SETTINGS.convert_source_extensions)
+        && constantsMod.DEFAULT_SETTINGS.convert_source_extensions.length === 0);
   }
 
   const failed = results.filter(function (item) { return item.status !== 'PASS'; });

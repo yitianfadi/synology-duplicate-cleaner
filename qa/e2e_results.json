@@ -1,9 +1,9 @@
 {
-  "generated_at": "2026-11-18T22:49:38+0800",
+  "generated_at": "2026-11-19T13:56:12+0800",
   "python": "3.12.9 | packaged by Anaconda, Inc. | (main, Feb  6 2025, 18:49:16) [MSC v.1929 64 bit (AMD64)]",
   "repo": "D:\\code\\zhouyi\\qunhui\\synology-duplicate-cleaner",
   "summary": {
-    "PASS": 254,
+    "PASS": 259,
     "FAIL": 0,
     "UNVERIFIED": 1
   },
@@ -11,11 +11,11 @@
     "fixture_files": 46,
     "python": "3.12.9",
     "birthtime_supported": true,
-    "backend_port": 10907,
+    "backend_port": 5570,
     "csrf_token_len": 43,
     "meta": {
       "ok": true,
-      "app_version": "1.1.0-0060",
+      "app_version": "1.1.0-0061",
       "dsm_version": "dev",
       "python_version": "3.12.9",
       "creation_time_supported": true,
@@ -221,8 +221,10 @@
         "convert_default_preset": "mp4_h264",
         "convert_quality": "standard",
         "convert_speed": "veryfast",
-        "convert_overwrite": "rename",
+        "convert_overwrite": "trash",
+        "convert_delete_source": true,
         "convert_keep_source": true,
+        "convert_source_extensions": [],
         "convert_copy_subtitles": true,
         "convert_max_resolution": 0,
         "convert_job_limit": 500,
@@ -643,7 +645,7 @@
       }
     },
     "subtitle_enumerate_count": 0,
-    "main_scan_id": "20261118-224822-e897fe",
+    "main_scan_id": "20261119-135443-6e7d91",
     "main_scan_final": "completed",
     "main_stats": {
       "files_seen": 38,
@@ -657,7 +659,7 @@
       "selectable_duplicate_files": 15,
       "selectable_reclaimable_bytes": 4403200,
       "bytes_hashed": 8753152,
-      "bytes_per_sec": 416558466,
+      "bytes_per_sec": 406566709,
       "errors": 0,
       "skipped": {
         "symlink": 0,
@@ -733,13 +735,13 @@
     },
     "main_groups_total": 12,
     "recycle_plan": {
-      "plan_id": "plan-9d9006aa089929b0",
+      "plan_id": "plan-861397d29e5ad6b9",
       "count": 2,
       "bytes": 40960,
       "groups_affected": 1
     },
     "recycle_job": {
-      "job_id": "del-20261118-224823-4eff7c",
+      "job_id": "del-20261119-135444-c87751",
       "status": "completed",
       "done": 2,
       "failed": 0,
@@ -1279,7 +1281,7 @@
       "id": "SKIP-04",
       "name": "符号链接跳过（当前环境无法创建 symlink）",
       "status": "UNVERIFIED",
-      "detail": "os.symlink failed: [WinError 1314] 客户端没有所需的特权。: 'C:\\\\Users\\\\zhouyi\\\\AppData\\\\Local\\\\Temp\\\\dupqa-joce2kp5\\\\qa-share-a\\\\dup' -> 'C:\\\\Users\\\\zhouyi\\\\AppData\\\\Local\\\\Temp\\\\dupqa-joce2kp5\\\\qa-share-a\\\\link_to_dup'"
+      "detail": "os.symlink failed: [WinError 1314] 客户端没有所需的特权。: 'C:\\\\Users\\\\zhouyi\\\\AppData\\\\Local\\\\Temp\\\\dupqa-xnf1vb7x\\\\qa-share-a\\\\dup' -> 'C:\\\\Users\\\\zhouyi\\\\AppData\\\\Local\\\\Temp\\\\dupqa-xnf1vb7x\\\\qa-share-a\\\\link_to_dup'"
     },
     {
       "id": "HARDLINK-01",
@@ -2110,8 +2112,32 @@
       "detail": ""
     },
     {
+      "id": "CV-18",
+      "name": "v0061 默认覆盖进回收站、默认删源、后缀多选元数据齐备",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
       "id": "CV-02",
       "name": "v0056 目录枚举只返回音视频候选",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "CV-15",
+      "name": "v0061 枚举只返回勾选的后缀（可多选子集）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "CV-16",
+      "name": "v0061 枚举拒绝不支持的后缀 / 空数组",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "CV-17",
+      "name": "v0061 枚举空数组返回 400（不选请传 null）",
       "status": "PASS",
       "detail": ""
     },
@@ -2184,6 +2210,12 @@
     {
       "id": "CV-14",
       "name": "v0056 真实仅换封装转换完成且产物可读",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "CV-19",
+      "name": "v0061 目标同名时覆盖旧产物并移入套件回收站",
       "status": "PASS",
       "detail": ""
     },

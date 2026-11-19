@@ -397,8 +397,12 @@ export var DEFAULT_SETTINGS = {
   convert_default_preset: 'mp4_h264',
   convert_quality: 'standard',
   convert_speed: 'veryfast',
-  convert_overwrite: 'rename',
+  convert_overwrite: 'trash',
+  // v0061：默认转换成功后删除源文件；convert_keep_source 降级为兼容键
+  convert_delete_source: true,
   convert_keep_source: true,
+  // v0061：转换页「源文件后缀」筛选（空数组 = 全部支持后缀）
+  convert_source_extensions: [],
   convert_copy_subtitles: true,
   convert_max_resolution: 0,
   convert_job_limit: 500,

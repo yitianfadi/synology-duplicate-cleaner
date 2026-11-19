@@ -308,6 +308,7 @@ REQ 编号沿用 v1.0 基线，状态按当前版本事实更新。
 | v0058 | 2026-11-17 | 下载/转换改为内置功能（去掉启用开关与 403 闸门） | 826（skip 5） | 235 | 245/0/1 | 追加下载/转换页无“未启用”断言 | `e27f849b…0e0e470` |
 | v0059 | 2026-11-17 | 音视频合成（有序拼接 + 混流，schema v11）+ 更名「影音工具」 | 846（skip 6） | 238 | 253/0/1 | 追加合成页有序列表/提交/FFmpeg 徽标断言 | `322f63fa…c6d763` |
 | v0060 | 2026-11-18 | 字幕默认译文 + 设置页瘦身（约 150→44 项）+ 移除 DSM 通知渠道（synology 专属资源） | 847（skip 6） | 240 | 254/0/1 | 设置页 9 组/保存无控制台异常；渠道移除断言 | `e80e9fab…a7a57` |
+| v0061 | 2026-11-19 | 转换：源后缀多选 + 同名覆盖进套件回收站 + 默认删源/失败清理 | 863（skip 6） | 245 | 259/0/1 | 转换页后缀多选/默认同名策略/删源勾选断言 | `c9640a98…adebabc` |
 
 说明：
 
@@ -334,6 +335,7 @@ REQ 编号沿用 v1.0 基线，状态按当前版本事实更新。
 - v0058：下载 / 转换改为内置功能——去掉设置里的启用复选框与「未启用」徽标，后端不再因 `download_enabled`/`convert_enabled` 返回 403（两个键保留为兼容项、默认改 `true`、不再生效）；新增 static `FE-NOGATE-V0058`，3 个单测与 `DL-00`/`CV-00` 改为验证“开关值被忽略”；schema v10 不变。
 - v0059：新增「合成」页（导航第 5 项）：视频/音频各自有序列表 → 按选择顺序拼接 + 混流；`copy`/`encode`/`auto` 两条路径，音频以视频时长为准 apad/截断；schema 升 v11（纯新增 `avmerge_jobs`）；新增 `AV_MERGE_CONTRACT.md`、static `BE-AVMERGE-*`/`FE-MERGE-UI`、e2e `MG-00`…`MG-07`（含真实 FFmpeg 合成）；同时把显示名改为「重复文件清理与影音工具 / Duplicate Cleaner & Media Toolkit」（包 ID/数据目录不变）。
 - v0060：字幕任务在配置 LLM Key 后默认勾选「同时生成译文」（`subtitle_translate_enabled` 废弃，缺 Key 返回 `TRANSLATE_NOT_CONFIGURED`）；设置页由约 150 项精简为 44 项（删除扫描/相似/视频/存储四组重复项，下载/转换/合成只留输出位置，字幕只留凭据/音轨/监控，通知只留渠道/事件/凭据），后端键与 API 全保留；**移除 DSM 系统通知渠道**——DSM 7 的 `sysnotify` 资源仅 Synology 自家套件可用，第三方 SPK 声明后安装报 4539，故只保留 Webhook/Telegram；新增 static `SPK-NO-SYNOLOGY-RESOURCE`、e2e `SUB-23B`。
+- v0061：转换三处默认行为调整——① 源文件后缀可多选（`/api/convert/enumerate` 的 `extensions` 严格校验 + 新设置 `convert_source_extensions`，空数组=全部）② 同名目标默认 `trash`：覆盖并把旧产物移入套件回收站 `#duplicate-cleaner-trash`（`TrashManager.destination_for`/`record_job`，落地失败还原或降级加序号），旧默认 `rename` 一次性迁移 ③ 默认删源（`convert_delete_source=true`）、不再弹二次确认、失败/取消/超时一律清 `.dcpart`（`convert_keep_temp`/`convert_keep_source` 降级为兼容键）；新增 static `BE-CONVERT-TRASH-OVERWRITE`/`BE-CONVERT-DELETE-DEFAULT`/`BE-CONVERT-EXT-FILTER`/`FE-CONVERT-EXTS`/`FE-CONVERT-DELETE-DEFAULT`、e2e `CV-15`…`CV-19`、单测 `test_v0061_convert_defaults.py`；`TrashManager._check_id` 放宽到 `SAFE_ID_RE`（拒绝 `..`）。
 
 ### 6.2 原报告记录异常（保留说明，不再重复展开）
 
@@ -377,8 +379,9 @@ python build/build_spk.py --no-icons --out-dir $env:TEMP\qa-build1
 |---|---|---|
 | e2e 结果 | `qa/e2e_results.json` | 逐条 `id`/结论/说明 |
 | static 结果 | `qa/static_results.json` | 逐条 `id`/结论 |
-| SPK | `dist/DuplicateCleaner-1.1.0-0060.spk` | 39,239,680 B；SHA256 `e80e9fab…5fa7a57`；package.tgz MD5 `333aa593261e8ab34eb65c1cafdeaef5` |
-| 校验文件 | `dist/DuplicateCleaner-1.1.0-0060.spk.sha256` | 与产物 SHA256 一致 |
+| SPK | `dist/DuplicateCleaner-1.1.0-0061.spk` | 39,249,920 B；SHA256 `c9640a980926dda063133e524276431989e6ae7372fb1cf67a117ab56adebabc`；package.tgz MD5 `d195cff627128b262b3befff1e5bedf0` |
+| 校验文件 | `dist/DuplicateCleaner-1.1.0-0061.spk.sha256` | 与产物 SHA256 一致 |
+| 上一版 SPK | `dist/DuplicateCleaner-1.1.0-0060.spk` | 39,239,680 B；SHA256 `e80e9fab…5fa7a57` |
 | 探针脚本/截图 | `.uiprobe/probe_v0043..v0050.mjs`、`.uiprobe/*.png` | 真实 Chromium |
 | 契约 | `docs/*_CONTRACT.md` | 逐版本接口与行为 |
 

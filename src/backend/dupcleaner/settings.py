@@ -4,6 +4,7 @@
 from __future__ import absolute_import
 
 import copy
+import logging
 import os
 import re
 import threading
@@ -11,6 +12,8 @@ import urllib.parse
 
 from . import config
 from .errors import ApiError
+
+logger = logging.getLogger(__name__)
 
 # 契约 §6 的设置键与默认值（顺序即前端展示顺序）
 DEFAULT_SETTINGS = {
@@ -217,17 +220,21 @@ DEFAULT_SETTINGS = {
     # 质量三档 high/standard/small → 编码器 CRF；速度档只对 x264/x265 生效。
     "convert_quality": config.CONVERT_QUALITY_DEFAULT,
     "convert_speed": config.CONVERT_SPEED_DEFAULT,
-    # 同名产物策略：rename（加序号）/ skip / overwrite（显式选择才覆盖）。
+    # 同名产物策略：trash（覆盖并把旧产物移入套件回收站，v0061 默认）/ rename（加序号）/
+    # skip（跳过）/ overwrite（直接覆盖，旧的不可恢复）。
     "convert_overwrite": config.CONVERT_OVERWRITE_DEFAULT,
-    # 保留源文件（默认是）；delete_source 需要任务级 confirm，不能靠设置默认。
+    # v0061：转换成功后默认删除源文件（省空间）；convert_keep_source 降级为兼容键，不再生效。
+    "convert_delete_source": config.CONVERT_DELETE_SOURCE_DEFAULT,
     "convert_keep_source": True,
+    # v0061：转换页「源文件后缀」筛选项（默认空 = 全部支持后缀，见 CONVERT_SOURCE_EXTENSIONS）。
+    "convert_source_extensions": [],
     # MKV 预设是否复制字幕轨（MP4 不支持，忽略）。
     "convert_copy_subtitles": True,
     # 分辨率上限（0=原样，只缩小不放大）。
     "convert_max_resolution": config.CONVERT_MAX_RESOLUTION_DEFAULT,
     "convert_job_limit": config.CONVERT_JOB_LIMIT_DEFAULT,
     "convert_min_free_gb": config.CONVERT_MIN_FREE_GB_DEFAULT,
-    # 失败时是否保留 .dcpart（默认否，避免长期占空间）。
+    # v0061：失败一律清 .dcpart（避免占空间）；该键降级为兼容键，不再生效。
     "convert_keep_temp": False,
     # 仅空闲时段执行：窗口外排队等待，不自动开跑。
     "convert_offpeak_enabled": config.CONVERT_OFFPEAK_ENABLED_DEFAULT,
@@ -1015,6 +1022,7 @@ def _normalize_value(key, value):
         return _check_bool(key, value)
     # --- v0056 格式转换（docs/CONVERT_CONTRACT.md §6）---
     if key in ("convert_enabled", "convert_keep_source",
+               "convert_delete_source",
                "convert_copy_subtitles", "convert_keep_temp",
                "convert_offpeak_enabled", "convert_auto_scan",
                "convert_auto_subtitle"):
@@ -1056,6 +1064,33 @@ def _normalize_value(key, value):
             _err(u"convert_overwrite 只能是 %s"
                  % "/".join(config.CONVERT_OVERWRITE_MODES), {"key": key})
         return value
+    if key == "convert_source_extensions":
+        # v0061：转换页「源文件后缀」筛选。空数组 = 全部支持后缀；
+        # 只允许 config 里登记过的音视频后缀，避免拿它扫任意文件。
+        if value in (None, ""):
+            return []
+        if not isinstance(value, list):
+            _err(u"convert_source_extensions 必须是字符串数组", {"key": key})
+        allowed = frozenset(config.DEFAULT_VIDEO_EXTENSIONS) \
+            | frozenset(config.CONVERT_AUDIO_EXTENSIONS)
+        result = []
+        for item in value:
+            if not isinstance(item, str):
+                _err(u"convert_source_extensions 每项必须是字符串", {"key": key})
+            ext = item.strip().lower()
+            if not ext:
+                continue
+            if not ext.startswith("."):
+                ext = "." + ext
+            if ext not in allowed:
+                _err(u"convert_source_extensions 含不支持的后缀：%s" % ext,
+                     {"key": key})
+            if ext not in result:
+                result.append(ext)
+        if len(result) > config.CONVERT_SOURCE_EXTENSIONS_MAX:
+            _err(u"convert_source_extensions 最多 %d 项"
+                 % config.CONVERT_SOURCE_EXTENSIONS_MAX, {"key": key})
+        return result
     if key == "convert_max_resolution":
         return _check_int(key, value, 0, 4320)
     if key == "convert_job_limit":
@@ -1190,6 +1225,9 @@ def merge_settings(current, patch):
 class SettingsManager(object):
     """线程安全的设置读写 + 落盘。"""
 
+    # v0061：一次性设置迁移的标记（存在 DB 的 schema_meta 表里，避免重复迁移）。
+    MIGRATION_0061_KEY = "settings_migrated_v0061"
+
     def __init__(self, store):
         self._store = store
         self._lock = threading.RLock()
@@ -1204,10 +1242,42 @@ class SettingsManager(object):
         if not raw:
             return default_settings()
         try:
-            return validate_effective(raw)
+            settings = validate_effective(raw)
         except ApiError:
             # 磁盘上的设置被破坏时回到默认值，避免后端无法启动
             return default_settings()
+        return self._migrate_0061(settings)
+
+    def _migrate_0061(self, settings):
+        """v0061：把旧的默认值迁到新默认值（只做一次）。
+
+        - `convert_overwrite: rename → trash`：rename 曾是默认值，几乎没人主动选；
+          新默认为「覆盖前把旧产物移入套件回收站」，保持磁盘占用可控且可恢复。
+        迁移后写 DB 标记，之后用户再选回 rename 不会被再次改写。
+        """
+        try:
+            done = self._store.db.schema_meta_get(self.MIGRATION_0061_KEY)
+        except Exception:
+            logger.exception(u"读取设置迁移标记失败，跳过迁移")
+            return settings
+        if done:
+            return settings
+        changed = {}
+        if settings.get("convert_overwrite") == "rename":
+            settings["convert_overwrite"] = config.CONVERT_OVERWRITE_DEFAULT
+            changed["convert_overwrite"] = config.CONVERT_OVERWRITE_DEFAULT
+        if changed:
+            try:
+                self._store.save_settings(settings)
+                self._store.audit("settings_migrate", "system",
+                                  {"version": "1.1.0-0061", "changed": changed})
+            except Exception:
+                logger.exception(u"设置迁移落盘失败")
+        try:
+            self._store.db.schema_meta_set(self.MIGRATION_0061_KEY, "1")
+        except Exception:
+            pass
+        return settings
 
     def get(self):
         with self._lock:

@@ -41,7 +41,9 @@ export var state = {
   convert: {
     caps: null, capsLoading: false, candidates: [], selected: new Map(),
     snapshot: null, timer: null, loading: false, loaded: false,
-    lastError: '', submitting: false, enumerating: false
+    lastError: '', submitting: false, enumerating: false,
+    // v0061：源文件后缀多选（exts 为当前勾选集合，savingExt 防抖持久化标记）
+    exts: new Set(), extsTouched: false, extSaving: null
   },
   // 当前扫描
   scan: { id: null, data: null, stats: null, timer: null, abort: null, polling: false, errors: 0, handled: false },
@@ -257,6 +259,8 @@ export var IDS = ('loginView loginForm loginUsername loginPassword loginOtp logi
   'setDownloadNameTemplate setDownloadNameTemplateError ' +
   'view-convert convertHeading convertPageStatusBadge convertDirPath ' +
   'convertDirPickBtn convertEnumerateBtn convertRecursive ' +
+  'convertExtPicker convertExtHint convertExtAllBtn ' +
+  'convertExtNoneBtn convertExtVideoBtn convertExtAudioBtn ' +
   'convertEnumerateError convertEnumerateLoading convertCandidatesPanel ' +
   'convertCandidatesSummary convertCandidatesList convertSelectAllBtn ' +
   'convertSelectNoneBtn convertManualDetails convertPaths ' +
@@ -265,7 +269,7 @@ export var IDS = ('loginView loginForm loginUsername loginPassword loginOtp logi
   'convertMaxResolution convertChannels convertOutputMode ' +
   'convertOutputDir convertOutputPickBtn convertOutputDirField ' +
   'convertOutputSubdir convertOutputSubdirField convertNameTemplate ' +
-  'convertOverwrite convertKeepSource convertCopySubtitles ' +
+  'convertOverwrite convertCopySubtitles ' +
   'convertDeleteSource convertSubmitBtn convertSubmitHint ' +
   'convertSubmitError convertCancelAllBtn convertRetryFailedBtn ' +
   'convertClearFinishedBtn convertExportLink convertQueueHint ' +

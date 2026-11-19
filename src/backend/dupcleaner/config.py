@@ -7,9 +7,9 @@ import os
 import re
 
 APP_NAME = "DuplicateCleaner"
-APP_VERSION = "1.1.0-0060"
+APP_VERSION = "1.1.0-0061"
 DISPLAY_NAME = "重复文件清理与字幕"
-SPK_VERSION = "1.1.0-0060"
+SPK_VERSION = "1.1.0-0061"
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8787
@@ -529,10 +529,19 @@ CONVERT_OUTPUT_MODES = ("alongside", "fixed", "subdir")
 CONVERT_OUTPUT_MODE_DEFAULT = "alongside"
 CONVERT_SUBDIR_DEFAULT = "converted"
 CONVERT_SUBDIR_MAX = 60
-# 同名产物策略：rename=自动加序号（默认，永不覆盖原文件）；skip=跳过；
-# overwrite=覆盖（仅在用户显式选择时生效）。
-CONVERT_OVERWRITE_MODES = ("rename", "skip", "overwrite")
-CONVERT_OVERWRITE_DEFAULT = "rename"
+# 同名产物策略：
+#   trash=覆盖，旧的同名产物先移入套件回收站（v0061 默认，省空间且可恢复）；
+#   rename=自动加序号（v0056–0060 的默认）；
+#   skip=跳过不转换；
+#   overwrite=直接覆盖（旧产物不再可恢复，必须用户显式选择）。
+# 源文件与产物同路径（同目录同格式）时一律强制加序号，任何策略都不覆盖源文件。
+CONVERT_OVERWRITE_MODES = ("trash", "rename", "skip", "overwrite")
+CONVERT_OVERWRITE_DEFAULT = "trash"
+# v0061：转换成功后默认删除源文件（避免同一份内容存两份）。
+# convert_keep_source 降级为兼容键——接受提交但不生效。
+CONVERT_DELETE_SOURCE_DEFAULT = True
+# 目录枚举默认后缀 = video_extensions ∪ 本表音频后缀；可在转换页按需勾选子集。
+CONVERT_SOURCE_EXTENSIONS_MAX = 40
 # 质量三档 → 各编码器 CRF/量化参数（见 convert.py 的 _QUALITY_ARGS）。
 CONVERT_QUALITIES = ("high", "standard", "small")
 CONVERT_QUALITY_DEFAULT = "standard"

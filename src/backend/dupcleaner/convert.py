@@ -563,6 +563,10 @@ class ConvertJob(object):
         self.part_kept = False
         self.attempts = 0
         self.deleted_source = False
+        # v0061：overwrite=trash 时被覆盖的旧产物（原路径）；trashed_paths 为
+        # [{"original", "trash_path", "size"}]，成功后登记回收站 manifest 用。
+        self.overwritten_path = ""
+        self.trashed_paths = []
         self.verify = {}
         self.created_epoch = float(created_epoch or time.time())
         self.started_epoch = 0.0
@@ -698,6 +702,8 @@ class ConvertJob(object):
             "verify": dict(self.verify or {}),
             "part_kept": bool(self.part_kept),
             "deleted_source": bool(self.deleted_source),
+            "overwritten_path": self.overwritten_path,
+            "trashed_count": len(self.trashed_paths or []),
             "estimate_bytes": estimate_bytes(
                 preset, self.source_info or {}, self.options,
                 self.source_bytes),
@@ -760,6 +766,8 @@ class ConvertJob(object):
             "part_kept": bool(self.part_kept),
             "attempts": self.attempts,
             "deleted_source": bool(self.deleted_source),
+            "overwritten_path": self.overwritten_path,
+            "trashed_paths": self.trashed_paths,
             "verify": self.verify,
             "created_epoch": self.created_epoch,
             "started_epoch": self.started_epoch,
@@ -782,11 +790,14 @@ class ConvertJob(object):
                       "output_dir", "output_name", "output_path",
                       "output_size", "out_time", "speed", "fps",
                       "part_path", "part_kept", "attempts",
-                      "deleted_source", "verify", "started_epoch",
+                      "deleted_source", "overwritten_path", "trashed_paths",
+                      "verify", "started_epoch",
                       "finished_epoch", "updated_epoch", "timeline"):
             if field in record:
                 setattr(job, field, record[field])
         job.progress = int(job.progress or 0)
+        if not isinstance(job.trashed_paths, list):
+            job.trashed_paths = []
         job.source_bytes = int(job.source_bytes or 0)
         job.output_size = int(job.output_size or 0)
         job.attempts = int(job.attempts or 0)
@@ -804,11 +815,14 @@ class ConvertJob(object):
 # ----------------------------------------------------------------------
 class ConvertService(object):
     def __init__(self, runtime_config, store, share_service, settings_provider,
-                 ffmpeg_tool=None, on_complete=None, notifier=None):
+                 ffmpeg_tool=None, on_complete=None, notifier=None,
+                 trash_manager=None):
         self.config = runtime_config
         self.store = store
         self._shares = share_service
         self._settings = settings_provider
+        # v0061：overwrite=trash 时把旧产物移入套件回收站（manifest 可在回收站页恢复）。
+        self._trash = trash_manager
         self._lock = threading.RLock()
         self._jobs = {}
         self._queue = []
@@ -998,11 +1012,11 @@ class ConvertService(object):
         output_dir = self._resolve_output_dir(job)
         job.output_dir = output_dir
         self._ensure_free_space(job, output_dir)
-        target, overwrite = self._resolve_target(job, output_dir)
+        target, action = self._resolve_target(job, output_dir)
         job.output_dir = os.path.dirname(target)
         job.output_path = target
         job.output_name = os.path.basename(target)
-        if os.path.exists(target) and not overwrite:
+        if action == "skip" and os.path.exists(target):
             raise _JobSkipped(target, os.path.getsize(target))
         if info.get("hdr") and preset["group"] == "video" and not preset["copy"]:
             logger.warning(u"源为 HDR，转 H.264 后颜色可能偏灰: %s",
@@ -1043,9 +1057,29 @@ class ConvertService(object):
         self._step_start(job, "verify")
         size = self._verify(job, part)
         self._step_end(job, "verify")
+        if action == "trash" and os.path.exists(target):
+            # v0061：覆盖前把旧产物移入套件回收站（失败则降级为加序号）
+            if not self._trash_existing_target(job, target):
+                directory = os.path.dirname(target)
+                stem, ext = os.path.splitext(os.path.basename(target))
+                target = self._unique_path(directory, stem, ext,
+                                           job.source_path)
+                new_part = target + config.CONVERT_PART_EXT
+                try:
+                    os.replace(part, new_part)
+                except OSError as exc:
+                    raise ConvertError("OUTPUT_DIR_INVALID",
+                                       u"重命名产物失败：%s" % exc)
+                part = new_part
+                job.part_path = part
+                job.output_dir = directory
+                job.output_path = target
+                job.output_name = os.path.basename(target)
         try:
             os.replace(part, target)
         except OSError as exc:
+            if job.trashed_paths:
+                self._restore_trashed(job)
             raise ConvertError("OUTPUT_DIR_INVALID", u"重命名产物失败：%s" % exc)
         job.output_path = target
         job.output_name = os.path.basename(target)
@@ -1054,6 +1088,9 @@ class ConvertService(object):
         job.stage = "done"
         job.message = u"转换完成：%s → %s" % (
             _human_bytes(job.source_bytes), _human_bytes(size))
+        if job.trashed_paths:
+            job.message += u"（旧产物已移入套件回收站）"
+        self._record_trash(job)
         self._delete_source(job)
         self._finish_status(job, STATUS_DONE, job.message)
 
@@ -1188,7 +1225,12 @@ class ConvertService(object):
         return normalized
 
     def _resolve_target(self, job, output_dir):
-        """返回 (目标路径, 是否允许覆盖)。rename/skip/overwrite 三策略。"""
+        """返回 (目标路径, 动作)。
+
+        动作：new=目标不存在，直接写；skip=跳过；overwrite=直接覆盖；
+        trash=覆盖前把旧产物移入套件回收站（v0061 默认）。
+        源文件与产物同路径（同目录同格式）时一律加序号，任何策略都不覆盖源文件。
+        """
         settings = self._settings_snapshot()
         options = job.options
         preset = job.preset_obj
@@ -1215,18 +1257,74 @@ class ConvertService(object):
         if overwrite not in config.CONVERT_OVERWRITE_MODES:
             overwrite = config.CONVERT_OVERWRITE_DEFAULT
         if path_key(target) == path_key(job.source_path):
-            # 同目录同名同格式：绝不允许原地覆盖源文件
+            # 同目录同名同格式：绝不允许原地覆盖源文件（任何策略都不例外）
             target = self._unique_path(output_dir, text, preset["ext"],
                                        job.source_path)
-            return target, False
+            return target, "new"
         if not os.path.exists(target):
-            return target, False
+            return target, "new"
         if overwrite == "overwrite":
-            return target, True
+            return target, "overwrite"
         if overwrite == "skip":
-            return target, False
+            return target, "skip"
+        if overwrite == "trash":
+            return target, "trash"
         return self._unique_path(output_dir, text, preset["ext"],
-                                 job.source_path), False
+                                 job.source_path), "new"
+
+    def _trash_existing_target(self, job, target):
+        """把已存在的旧产物移入套件回收站；失败时返回 False（调用方降级加序号）。
+
+        返回 True 表示旧文件已移走（job.trashed_paths 里记了条目）。
+        """
+        if self._trash is None:
+            return False
+        try:
+            share = self._shares.validate_root(os.path.dirname(target))
+            root = (share or {}).get("path") or u""
+            if not root or not is_under(target, root):
+                return False
+            stamp = time.strftime("%Y%m%d-%H%M%S")
+            destination = self._trash.destination_for(root, target, stamp)
+            parent = os.path.dirname(destination)
+            if parent:
+                os.makedirs(parent, exist_ok=True)
+            size = int(os.path.getsize(target))
+            os.replace(target, destination)
+        except (OSError, ApiError):
+            logger.exception(u"旧产物移入回收站失败，降级为加序号: %s", target)
+            return False
+        job.trashed_paths.append({"original": target,
+                                  "trash_path": destination,
+                                  "size": size})
+        job.overwritten_path = target
+        logger.info(u"覆盖前把旧产物移入回收站: %s → %s", target, destination)
+        return True
+
+    def _record_trash(self, job):
+        """转换成功后登记回收站 manifest（供「删除与回收站」整组恢复/清理）。"""
+        if self._trash is None or not job.trashed_paths:
+            return
+        try:
+            self._trash.record_job(job.job_id, "", job.user,
+                                   list(job.trashed_paths))
+        except Exception:
+            logger.exception(u"登记转换回收站清单失败: %s", job.job_id)
+
+    @staticmethod
+    def _restore_trashed(job):
+        """产物最终改名失败时，把刚移进回收站的旧文件还原回原位。"""
+        for entry in list(job.trashed_paths):
+            trash_path = entry.get("trash_path") or u""
+            original = entry.get("original") or u""
+            if not trash_path or not original or not os.path.isfile(trash_path):
+                continue
+            try:
+                os.replace(trash_path, original)
+                logger.warning(u"产物落地失败，已还原被覆盖的旧文件: %s", original)
+            except OSError:
+                logger.exception(u"还原旧文件失败（仍在回收站）: %s", trash_path)
+        job.trashed_paths = []
 
     @staticmethod
     def _unique_path(directory, stem, ext, source_path):
@@ -1375,19 +1473,32 @@ class ConvertService(object):
         job.error_message = _one_line(message) or u"转换失败"
         stage = job.stage if job.stage in STAGE_LABELS else "convert"
         job.step_end(stage, "failed", job.error_message)
-        # 失败默认清理 .dcpart（FFmpeg 无法续转，留着只占空间）；
-        # convert_keep_temp 打开时保留便于排查，显式标记避免误以为已清理。
-        settings = self._settings_snapshot()
-        if settings.get("convert_keep_temp"):
-            job.part_kept = bool(job.part_path
-                                 and os.path.isfile(job.part_path))
-        else:
-            self._cleanup_part(job)
+        # v0061：失败一律清理 .dcpart（FFmpeg 无法续转，留着只占空间）；
+        # convert_keep_temp 降级为兼容键，不再生效。
+        self._cleanup_part(job)
         self._finish_status(
             job, STATUS_FAILED,
             u"失败：%s" % (job.error_message or job.error_code))
 
     # -- 对外：能力 / 提交 ----------------------------------------------
+    @staticmethod
+    def _source_extensions(settings, all_exts):
+        """转换页后缀筛选：未设置/为空 = 全部；只保留仍受支持的后缀。"""
+        raw = settings.get("convert_source_extensions") or []
+        if not isinstance(raw, list) or not raw:
+            return list(all_exts)
+        allowed = set(all_exts)
+        result = []
+        for item in raw:
+            ext = str(item or u"").strip().lower()
+            if not ext:
+                continue
+            if not ext.startswith("."):
+                ext = "." + ext
+            if ext in allowed and ext not in result:
+                result.append(ext)
+        return result or list(all_exts)
+
     def capabilities(self):
         tool = self._ffmpeg
         available = bool(tool.available())
@@ -1401,6 +1512,12 @@ class ConvertService(object):
                 item["reason"] = u"未找到 FFmpeg（可在设置里指定路径）"
             presets.append(item)
         settings = self._settings_snapshot()
+        video_exts = [str(x).lower() for x in
+                      (settings.get("video_extensions")
+                       or config.DEFAULT_VIDEO_EXTENSIONS)]
+        audio_exts = [str(x).lower() for x in config.CONVERT_AUDIO_EXTENSIONS]
+        all_exts = sorted(set(video_exts) | set(audio_exts))
+        selected = self._source_extensions(settings, all_exts)
         return {
             "ok": True,
             "ffmpeg": {
@@ -1427,10 +1544,14 @@ class ConvertService(object):
                 or config.CONVERT_SUBDIR_DEFAULT,
                 "overwrite": settings.get("convert_overwrite")
                 or config.CONVERT_OVERWRITE_DEFAULT,
-                "keep_source": settings.get("convert_keep_source", True),
+                "keep_source": settings.get("convert_delete_source",
+                                            config.CONVERT_DELETE_SOURCE_DEFAULT) is False,
+                "delete_source": settings.get("convert_delete_source",
+                                              config.CONVERT_DELETE_SOURCE_DEFAULT),
                 "copy_subtitles": settings.get("convert_copy_subtitles", True),
                 "name_template": settings.get("convert_name_template")
                 or config.CONVERT_NAME_TEMPLATE_DEFAULT,
+                "source_extensions": selected,
             },
             "qualities": list(config.CONVERT_QUALITIES),
             "speeds": list(config.CONVERT_SPEEDS),
@@ -1440,6 +1561,14 @@ class ConvertService(object):
             "video_extensions": list(settings.get("video_extensions")
                                      or config.DEFAULT_VIDEO_EXTENSIONS),
             "audio_extensions": list(config.CONVERT_AUDIO_EXTENSIONS),
+            # v0061：转换页「源文件后缀」多选（分组 + 全部 + 当前选中）
+            "source_extensions": {
+                "video": video_exts,
+                "audio": audio_exts,
+                "all": all_exts,
+                "selected": selected,
+                "max": config.CONVERT_SOURCE_EXTENSIONS_MAX,
+            },
             "concurrency": self._concurrency(),
             "counts": self.counts(),
             "offpeak": self._offpeak_state(settings),
@@ -1479,9 +1608,15 @@ class ConvertService(object):
             raise ApiError("PRESET_UNKNOWN",
                            u"未知的输出预设: %s" % preset_id,
                            details={"presets": list(PRESET_IDS)})
-        options = self._options_for(settings, payload.get("options") or {},
-                                    preset_id)
-        if options.get("delete_source") \
+        raw_options = payload.get("options") or {}
+        options = self._options_for(settings, raw_options, preset_id)
+        # v0061：删除源文件已是默认行为，所以 confirm 只对「本次显式要求删除」生效；
+        # 沿用默认值时不再强制 token（旧客户端显式传 keep_source=false 同样要确认）。
+        explicit_delete = isinstance(raw_options, dict) and (
+            raw_options.get("delete_source") is True
+            or (raw_options.get("delete_source") is None
+                and raw_options.get("keep_source") is False))
+        if explicit_delete \
                 and str(payload.get("confirm") or u"").strip() != "DELETE SOURCE":
             raise invalid(
                 u"删除源文件需要确认：请求体 confirm 必须是 \"DELETE SOURCE\"",
@@ -1595,12 +1730,17 @@ class ConvertService(object):
                             or u"").strip()
         if len(name_template) > config.CONVERT_NAME_TEMPLATE_MAX:
             raise invalid(u"name_template 过长")
-        keep_source = bool(pick("keep_source",
-                                settings.get("convert_keep_source", True)))
-        delete_source = bool(pick("delete_source", False))
-        if delete_source and keep_source:
-            # 显式 delete_source=true 覆盖 keep_source 默认值
-            keep_source = False
+        # v0061：默认「转换成功后删除源文件」，默认值来自 convert_delete_source。
+        # 兼容旧客户端：显式给了 keep_source 而没给 delete_source 时，尊重 keep_source。
+        delete_default = bool(settings.get(
+            "convert_delete_source", config.CONVERT_DELETE_SOURCE_DEFAULT))
+        if "delete_source" in overrides:
+            delete_source = bool(overrides.get("delete_source"))
+        elif "keep_source" in overrides:
+            delete_source = not bool(overrides.get("keep_source"))
+        else:
+            delete_source = delete_default
+        keep_source = not delete_source
         copy_subtitles = bool(pick(
             "copy_subtitles", settings.get("convert_copy_subtitles", True)))
         return {
@@ -1634,14 +1774,25 @@ class ConvertService(object):
             raise ApiError("INVALID_DIRECTORY",
                            u"目录不存在或不是目录: %s" % normalized)
         settings = self._settings_snapshot()
+        supported = [str(x).lower() for x in
+                     (settings.get("video_extensions")
+                      or config.DEFAULT_VIDEO_EXTENSIONS)]
+        supported += [str(x).lower() for x in config.CONVERT_AUDIO_EXTENSIONS]
+        supported_set = frozenset(item if item.startswith(".") else "." + item
+                                  for item in supported)
         raw_ext = payload.get("extensions")
         if raw_ext is None:
-            allowed = [str(x).lower() for x in
-                       (settings.get("video_extensions")
-                        or config.DEFAULT_VIDEO_EXTENSIONS)]
-            allowed += [str(x).lower() for x in config.CONVERT_AUDIO_EXTENSIONS]
+            allowed = self._source_extensions(settings, sorted(supported_set))
         elif isinstance(raw_ext, list):
             allowed = [str(x).lower() for x in raw_ext if str(x).strip()]
+            if not allowed:
+                raise invalid(u"extensions 不能为空数组（不选就传 null 用默认值）")
+            unknown = [item for item in allowed
+                       if (item if item.startswith(".") else "." + item)
+                       not in supported_set]
+            if unknown:
+                raise invalid(u"不支持的后缀：%s"
+                              % u", ".join(sorted(unknown)[:10]))
         else:
             raise invalid(u"extensions 必须是字符串数组")
         allowed_set = frozenset(item if item.startswith(".") else "." + item

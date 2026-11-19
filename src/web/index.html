@@ -6,8 +6,8 @@
 <meta name="color-scheme" content="light">
 <meta name="referrer" content="same-origin">
 <title>重复文件清理与影音工具 · Duplicate Cleaner &amp; Media Toolkit</title>
-<link rel="icon" href="./assets/favicon.svg?v=1.1.0-0060" type="image/svg+xml">
-<link rel="stylesheet" href="./styles.css?v=1.1.0-0060">
+<link rel="icon" href="./assets/favicon.svg?v=1.1.0-0061" type="image/svg+xml">
+<link rel="stylesheet" href="./styles.css?v=1.1.0-0061">
 </head>
 <body>
 <a class="skip-link" href="#main">跳到主要内容</a>
@@ -1201,7 +1201,7 @@
       <div class="page-head">
         <div>
           <h1 id="convertHeading">转换</h1>
-          <p class="page-desc">把视频或音频换成另一种格式。标「仅换封装」的预设只重写容器，秒级完成且画质不变；标「重编码」的会长时间占用 CPU。默认输出到源文件同目录并自动改名，绝不覆盖原文件。</p>
+          <p class="page-desc">把视频或音频换成另一种格式。标「仅换封装」的预设只重写容器，秒级完成且画质不变；标「重编码」的会长时间占用 CPU。默认输出到源文件同目录；目标同名时覆盖旧产物，旧产物先移入套件回收站（可恢复）；转换成功后默认删除源文件。</p>
         </div>
         <span class="badge badge-gray" id="convertPageStatusBadge">检测中…</span>
       </div>
@@ -1220,6 +1220,17 @@
           </div>
           <label class="check"><input id="convertRecursive" type="checkbox" checked>包含子目录</label>
           <p class="hint">只列出共享文件夹内的普通文件；符号链接、隐藏目录与系统目录会跳过。</p>
+        </div>
+        <div class="field">
+          <span class="field-label" id="convertExtLabel">源文件后缀（只列出勾选的后缀）</span>
+          <div class="ext-chips" id="convertExtPicker" role="group" aria-labelledby="convertExtLabel"></div>
+          <div class="subtitle-submit-row">
+            <button type="button" class="btn btn-link btn-sm" id="convertExtAllBtn">全选</button>
+            <button type="button" class="btn btn-link btn-sm" id="convertExtNoneBtn">清空</button>
+            <button type="button" class="btn btn-link btn-sm" id="convertExtVideoBtn">仅视频</button>
+            <button type="button" class="btn btn-link btn-sm" id="convertExtAudioBtn">仅音频</button>
+          </div>
+          <p class="hint" id="convertExtHint">可同时勾选多个不同后缀；勾选结果会自动保存。</p>
         </div>
         <p class="field-error" id="convertEnumerateError" role="alert" hidden></p>
         <div class="state-box" id="convertEnumerateLoading" hidden><span class="spinner" aria-hidden="true"></span>正在列出文件…</div>
@@ -1320,10 +1331,9 @@
             <select id="convertOverwrite"></select>
           </div>
           <div class="field field-wide">
-            <label class="check"><input id="convertKeepSource" type="checkbox" checked>保留源文件</label>
+            <label class="check"><input id="convertDeleteSource" type="checkbox" checked>转换成功后删除源文件（默认开启，省空间）</label>
             <label class="check"><input id="convertCopySubtitles" type="checkbox" checked>MKV 预设复制字幕轨</label>
-            <label class="check"><input id="convertDeleteSource" type="checkbox">转换成功后删除源文件</label>
-            <p class="hint">删除源文件需要二次确认；产物校验失败时不会删除。</p>
+            <p class="hint">删除源文件在产物校验通过、原子改名完成之后才执行；转换失败不会删除源文件，失败产生的临时文件一律清理。取消勾选则保留源文件。</p>
           </div>
         </div>
       </section>
@@ -2041,6 +2051,6 @@
   <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.6" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M12 10.8v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="12" cy="7.6" r="1.05" fill="currentColor"/></symbol>
 </svg>
 
-<script type="module" src="./app.js?v=1.1.0-0060"></script>
+<script type="module" src="./app.js?v=1.1.0-0061"></script>
 </body>
 </html>

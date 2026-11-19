@@ -46,9 +46,10 @@ var RESOLUTION_LABEL = {
 };
 
 var OVERWRITE_LABEL = {
-  rename: '自动改名（推荐）',
+  trash: '覆盖旧产物（旧文件移入回收站）',
+  rename: '自动改名（加序号）',
   skip: '跳过已存在',
-  overwrite: '覆盖同名文件'
+  overwrite: '直接覆盖（旧文件不再保留）'
 };
 
 var OUTPUT_MODE_LABEL = {
@@ -214,12 +215,14 @@ function fillDefaults() {
   if (els.convertNameTemplate && !els.convertNameTemplate.value) {
     els.convertNameTemplate.value = defaults.name_template || '{name}';
   }
-  if (els.convertKeepSource) {
-    els.convertKeepSource.checked = defaults.keep_source !== false;
+  // v0061：默认「转换成功后删除源文件」；旧版「保留源文件」复选框已移除。
+  if (els.convertDeleteSource) {
+    els.convertDeleteSource.checked = defaults.delete_source !== false;
   }
   if (els.convertCopySubtitles) {
     els.convertCopySubtitles.checked = defaults.copy_subtitles !== false;
   }
+  initExtensions();
   updateOutputModeUi();
 }
 
@@ -240,6 +243,123 @@ function updateOutputModeUi() {
   var needsDir = mode !== 'alongside';
   setHidden(els.convertOutputDirField, !needsDir);
   setHidden(els.convertOutputSubdirField, mode !== 'subdir');
+}
+
+// ---------------------------------------------------------------------
+// v0061：源文件后缀多选（只列出勾选的后缀，勾选结果自动保存）
+// ---------------------------------------------------------------------
+function extMeta() {
+  var caps = convertState().caps || {};
+  return caps.source_extensions || {};
+}
+
+function allExtensions() {
+  var meta = extMeta();
+  return (meta.all || []).slice();
+}
+
+function initExtensions() {
+  var cs = convertState();
+  var meta = extMeta();
+  var all = (meta.all || []).slice();
+  var saved = ((convertState().caps || {}).defaults || {}).source_extensions || [];
+  if (!all.length) { cs.exts = new Set(); return; }
+  var chosen = saved.filter(function (ext) { return all.indexOf(ext) !== -1; });
+  cs.exts = new Set(chosen.length ? chosen : all);
+  cs.extsTouched = false;
+  renderExtensionPicker();
+}
+
+function renderExtensionPicker() {
+  var picker = els.convertExtPicker;
+  if (!picker) { return; }
+  var cs = convertState();
+  var meta = extMeta();
+  clear(picker);
+  var groups = [
+    { label: '视频', exts: meta.video || [] },
+    { label: '音频', exts: meta.audio || [] }
+  ];
+  groups.forEach(function (group) {
+    (group.exts || []).forEach(function (ext) {
+      var checkbox = el('input', {
+        attrs: { type: 'checkbox', checked: cs.exts.has(ext) },
+        dataset: { ext: ext },
+        on: {
+          change: function (event) {
+            if (event.target.checked) { cs.exts.add(ext); }
+            else { cs.exts.delete(ext); }
+            cs.extsTouched = true;
+            updateExtHint();
+            schedulePersistExtensions();
+          }
+        }
+      });
+      picker.appendChild(el('label', { className: 'check' }, [checkbox, ext]));
+    });
+  });
+  updateExtHint();
+}
+
+function updateExtHint() {
+  if (!els.convertExtHint) { return; }
+  var chosen = selectedExtensions();
+  var total = allExtensions().length;
+  if (!total) {
+    setText(els.convertExtHint, '尚未读取到支持的后缀。');
+    return;
+  }
+  if (!chosen.length) {
+    setText(els.convertExtHint, '未勾选任何后缀：请至少勾选一个再列出文件。');
+    return;
+  }
+  if (chosen.length === total) {
+    setText(els.convertExtHint,
+      '已勾选全部 ' + total + ' 个后缀（视频 + 音频）。可同时勾选多个不同后缀。');
+    return;
+  }
+  setText(els.convertExtHint,
+    '只列出 ' + chosen.length + ' 个后缀：' + chosen.join(' '));
+}
+
+function selectedExtensions() {
+  var cs = convertState();
+  return allExtensions().filter(function (ext) { return cs.exts.has(ext); });
+}
+
+function schedulePersistExtensions() {
+  var cs = convertState();
+  if (cs.extSaving) { clearTimeout(cs.extSaving); }
+  cs.extSaving = setTimeout(function () {
+    cs.extSaving = null;
+    persistExtensions();
+  }, 500);
+}
+
+async function persistExtensions() {
+  var chosen = selectedExtensions();
+  try {
+    await api('/api/settings', {
+      method: 'PUT',
+      body: { settings: { convert_source_extensions: chosen } },
+      timeout: 15000
+    });
+  } catch (err) {
+    // 保存失败不影响本次筛选，只提示一次
+    toast(errorMessage(err, '保存后缀筛选失败。'), 'error');
+  }
+}
+
+function setExtensionSelection(kind) {
+  var cs = convertState();
+  var meta = extMeta();
+  if (kind === 'all') { cs.exts = new Set(allExtensions()); }
+  else if (kind === 'none') { cs.exts = new Set(); }
+  else if (kind === 'video') { cs.exts = new Set(meta.video || []); }
+  else if (kind === 'audio') { cs.exts = new Set(meta.audio || []); }
+  cs.extsTouched = true;
+  renderExtensionPicker();
+  schedulePersistExtensions();
 }
 
 function updatePresetHint() {
@@ -352,6 +472,11 @@ async function enumerateFiles() {
     setConvertError('请先填写或选择目录。');
     return;
   }
+  var exts = selectedExtensions();
+  if (!exts.length) {
+    setConvertError('请至少勾选一个源文件后缀。');
+    return;
+  }
   cs.enumerating = true;
   setHidden(els.convertEnumerateLoading, false);
   try {
@@ -359,7 +484,8 @@ async function enumerateFiles() {
       method: 'POST',
       body: {
         path: path,
-        recursive: els.convertRecursive ? !!els.convertRecursive.checked : true
+        recursive: els.convertRecursive ? !!els.convertRecursive.checked : true,
+        extensions: exts
       },
       timeout: 60000
     });
@@ -425,16 +551,13 @@ function readOptions() {
     overwrite: els.convertOverwrite ? els.convertOverwrite.value : undefined,
     name_template: els.convertNameTemplate
       ? String(els.convertNameTemplate.value || '').trim() : '',
-    keep_source: els.convertKeepSource ? !!els.convertKeepSource.checked : true,
+    // v0061：删源改为默认开启；保留源文件 = 取消勾选
+    delete_source: els.convertDeleteSource ? !!els.convertDeleteSource.checked : true,
     copy_subtitles: els.convertCopySubtitles
       ? !!els.convertCopySubtitles.checked : true
   };
   if (els.convertMaxResolution) {
     options.max_resolution = parseInt(els.convertMaxResolution.value, 10) || 0;
-  }
-  if (els.convertDeleteSource && els.convertDeleteSource.checked) {
-    options.delete_source = true;
-    options.keep_source = false;
   }
   return options;
 }
@@ -448,17 +571,10 @@ async function submitConvert() {
     setSubmitError('请先选择要转换的文件。');
     return;
   }
-  var confirmText = '';
-  if (els.convertDeleteSource && els.convertDeleteSource.checked) {
-    var ok = await confirmDialog({
-      title: '转换成功后删除源文件？',
-      message: '已勾选「转换成功后删除源文件」：每个任务会先校验产物，再删除源文件。此操作不可撤销，请确认已经备份或确定不需要原文件。',
-      confirmText: '删除源文件',
-      danger: true
-    });
-    if (!ok) { return; }
-    confirmText = 'DELETE SOURCE';
-  }
+  // v0061：默认删除源文件，不再弹二次确认；接口仍要求显式删除时带 token。
+  var willDelete = els.convertDeleteSource
+    ? !!els.convertDeleteSource.checked : true;
+  var confirmText = willDelete ? 'DELETE SOURCE' : '';
   cs.submitting = true;
   setText(els.convertSubmitHint, '正在提交…');
   try {
@@ -473,7 +589,8 @@ async function submitConvert() {
       timeout: 60000
     });
     var count = (res && res.count) || 0;
-    toast('已提交 ' + count + ' 个转换任务', 'success');
+    toast('已提交 ' + count + ' 个转换任务' +
+      (willDelete ? '（转换成功后会删除源文件）' : ''), 'success');
     cs.selected.clear();
     cs.candidates.length = 0;
     renderSelection();
@@ -556,7 +673,8 @@ function renderJobRow(job) {
   if (job.output_path && job.status === 'done') {
     info.appendChild(el('div', {
       className: 'muted download-row-path',
-      text: job.output_path + (job.deleted_source ? '（源文件已删除）' : '')
+      text: job.output_path + (job.deleted_source ? '（源文件已删除）' : '') +
+        (job.trashed_count ? '（旧产物已移入回收站）' : '')
     }));
   }
   if (job.status === 'running' || job.status === 'queued') {
@@ -749,6 +867,27 @@ export function initConvertPage() {
   }
   if (els.convertEnumerateBtn) {
     els.convertEnumerateBtn.addEventListener('click', enumerateFiles);
+  }
+  // v0061：源文件后缀多选
+  if (els.convertExtAllBtn) {
+    els.convertExtAllBtn.addEventListener('click', function () {
+      setExtensionSelection('all');
+    });
+  }
+  if (els.convertExtNoneBtn) {
+    els.convertExtNoneBtn.addEventListener('click', function () {
+      setExtensionSelection('none');
+    });
+  }
+  if (els.convertExtVideoBtn) {
+    els.convertExtVideoBtn.addEventListener('click', function () {
+      setExtensionSelection('video');
+    });
+  }
+  if (els.convertExtAudioBtn) {
+    els.convertExtAudioBtn.addEventListener('click', function () {
+      setExtensionSelection('audio');
+    });
   }
   if (els.convertAddManualBtn) {
     els.convertAddManualBtn.addEventListener('click', addManualPaths);
