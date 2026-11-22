@@ -1,9 +1,9 @@
 {
-  "generated_at": "2026-11-19T22:23:32+0800",
+  "generated_at": "2026-11-22T12:09:30+0800",
   "python": "3.12.9 | packaged by Anaconda, Inc. | (main, Feb  6 2025, 18:49:16) [MSC v.1929 64 bit (AMD64)]",
   "repo": "D:\\code\\zhouyi\\qunhui\\synology-duplicate-cleaner",
   "summary": {
-    "PASS": 263,
+    "PASS": 275,
     "FAIL": 0,
     "UNVERIFIED": 1
   },
@@ -11,11 +11,11 @@
     "fixture_files": 46,
     "python": "3.12.9",
     "birthtime_supported": true,
-    "backend_port": 7861,
+    "backend_port": 5965,
     "csrf_token_len": 43,
     "meta": {
       "ok": true,
-      "app_version": "1.1.0-0065",
+      "app_version": "1.1.0-0067",
       "dsm_version": "dev",
       "python_version": "3.12.9",
       "creation_time_supported": true,
@@ -206,7 +206,10 @@
         "download_auto_subtitle": false,
         "download_skip_existing": true,
         "download_auto_retry": true,
-        "download_auto_retry_max": 2,
+        "download_auto_retry_max": 5,
+        "download_auto_retry_base_sec": 60,
+        "download_auto_retry_factor": 3,
+        "download_auto_retry_cap_sec": 1800,
         "download_offpeak_enabled": false,
         "download_offpeak_start": "01:00",
         "download_offpeak_end": "08:00",
@@ -602,6 +605,8 @@
         ],
         "concurrency_max": 4,
         "default_concurrency": 1,
+        "job_limit_min": 20,
+        "job_limit_max": 1000,
         "failure_categories": [
           "audio_extract",
           "no_speech",
@@ -646,7 +651,7 @@
       }
     },
     "subtitle_enumerate_count": 0,
-    "main_scan_id": "20261119-222201-c1094c",
+    "main_scan_id": "20261122-120828-fd0700",
     "main_scan_final": "completed",
     "main_stats": {
       "files_seen": 38,
@@ -660,7 +665,7 @@
       "selectable_duplicate_files": 15,
       "selectable_reclaimable_bytes": 4403200,
       "bytes_hashed": 8753152,
-      "bytes_per_sec": 400267988,
+      "bytes_per_sec": 416147677,
       "errors": 0,
       "skipped": {
         "symlink": 0,
@@ -736,13 +741,13 @@
     },
     "main_groups_total": 12,
     "recycle_plan": {
-      "plan_id": "plan-1881694667711de5",
+      "plan_id": "plan-48a15ad05dbde463",
       "count": 2,
       "bytes": 40960,
       "groups_affected": 1
     },
     "recycle_job": {
-      "job_id": "del-20261119-222201-339308",
+      "job_id": "del-20261122-120829-67058d",
       "status": "completed",
       "done": 2,
       "failed": 0,
@@ -957,6 +962,30 @@
     {
       "id": "SUB-21",
       "name": "subtitle_concurrency 超出 1..4 返回 400 INVALID_ARGUMENT",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SUB-36",
+      "name": "GET /api/settings 回传 subtitle_concurrency/subtitle_job_limit（任务页控件数据源）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SUB-37",
+      "name": "/api/meta 暴露字幕并发与保留上限范围（1..4 / 20..1000，v0066）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SUB-38",
+      "name": "PUT /api/settings 可保存 subtitle_job_limit=50（保存后立即生效）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "SUB-39",
+      "name": "subtitle_job_limit 超出 20..1000 返回 400 INVALID_ARGUMENT",
       "status": "PASS",
       "detail": ""
     },
@@ -1282,7 +1311,7 @@
       "id": "SKIP-04",
       "name": "符号链接跳过（当前环境无法创建 symlink）",
       "status": "UNVERIFIED",
-      "detail": "os.symlink failed: [WinError 1314] 客户端没有所需的特权。: 'C:\\\\Users\\\\zhouyi\\\\AppData\\\\Local\\\\Temp\\\\dupqa-cqhn8wds\\\\qa-share-a\\\\dup' -> 'C:\\\\Users\\\\zhouyi\\\\AppData\\\\Local\\\\Temp\\\\dupqa-cqhn8wds\\\\qa-share-a\\\\link_to_dup'"
+      "detail": "os.symlink failed: [WinError 1314] 客户端没有所需的特权。: 'C:\\\\Users\\\\zhouyi\\\\AppData\\\\Local\\\\Temp\\\\dupqa-5g_9xk88\\\\qa-share-a\\\\dup' -> 'C:\\\\Users\\\\zhouyi\\\\AppData\\\\Local\\\\Temp\\\\dupqa-5g_9xk88\\\\qa-share-a\\\\link_to_dup'"
     },
     {
       "id": "HARDLINK-01",
@@ -2007,6 +2036,54 @@
     {
       "id": "DL-03",
       "name": "队列快照返回 active/queued/paused/recent 与并发数",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "DL-RETRY-01",
+      "name": "GET /api/settings 回传指数退避参数（默认 60/3/1800，最多 5 次）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "DL-RETRY-02",
+      "name": "PUT /api/settings 可保存退避参数（30/2/120，最多 3 次）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "DL-RETRY-03",
+      "name": "退避参数越界返回 400 INVALID_ARGUMENT：{'download_auto_retry_base_sec': 5}",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "DL-RETRY-03",
+      "name": "退避参数越界返回 400 INVALID_ARGUMENT：{'download_auto_retry_factor': 9}",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "DL-RETRY-03",
+      "name": "退避参数越界返回 400 INVALID_ARGUMENT：{'download_auto_retry_cap_sec': 10}",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "DL-RETRY-03",
+      "name": "退避参数越界返回 400 INVALID_ARGUMENT：{'download_auto_retry_max': 11}",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "DL-RETRY-04",
+      "name": "404 不重试：任务立即 failed 且 attempts=1（v0067 错误分类）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "DL-RETRY-05",
+      "name": "任务快照含 auto_retry / retry_max / retry_in_sec（前端据此显示等待重试）",
       "status": "PASS",
       "detail": ""
     },

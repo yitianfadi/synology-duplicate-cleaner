@@ -630,6 +630,9 @@ class Api(object):
                 # v0034：字幕并发上限/缺省值（设置 subtitle_concurrency）
                 "concurrency_max": config.SUBTITLE_CONCURRENCY_MAX,
                 "default_concurrency": config.SUBTITLE_DEFAULT_CONCURRENCY,
+                # v0066：已完成任务保留上限范围（设置 subtitle_job_limit）
+                "job_limit_min": config.SUBTITLE_JOB_LIMIT_MIN,
+                "job_limit_max": config.SUBTITLE_JOB_LIMIT_MAX,
                 # v0048：失败分类 / 自动重试 / 音轨 / 目录监控
                 "failure_categories": list(config.SUBTITLE_FAILURE_CATEGORIES),
                 "failure_category_labels": dict(
@@ -720,14 +723,15 @@ class Api(object):
             if body.get(alias) is True:
                 patch[alias] = True
         updated = self.services.settings.update(patch)
-        # v0037：字幕并发数保存后立即生效（动态增减 worker，无需重启套件）。
-        if "subtitle_concurrency" in patch:
+        # v0037/v0066：字幕并发数、已完成任务保留上限保存后立即生效
+        # （并发动态增减 worker；保留上限在下一次 LRU 清理时按新上限裁剪）。
+        if "subtitle_concurrency" in patch or "subtitle_job_limit" in patch:
             subtitles = getattr(self.services, "subtitles", None)
             if subtitles is not None:
                 try:
                     subtitles.apply_settings(updated)
                 except Exception:  # pragma: no cover - 保存成功优先
-                    logger.exception("apply subtitle_concurrency failed")
+                    logger.exception("apply subtitle settings failed")
         # 只记录键名，绝不记录任何值（含密钥）
         self.services.store.audit("settings_update", session.user,
                                   {"keys": sorted(str(key) for key in patch)})

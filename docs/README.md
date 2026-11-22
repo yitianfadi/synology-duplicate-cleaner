@@ -76,7 +76,9 @@
 | 文档 | 内容 | 状态 |
 |---|---|---|
 | [REQUIREMENTS_V2_ASSESSMENT.md](REQUIREMENTS_V2_ASSESSMENT.md) | v2 需求 → 版本交付映射、关键取舍、明确不做、默认值、真机清单 | 现行（结论） |
-| [RELEASE_NOTES_v1.1.0-0065.md](RELEASE_NOTES_v1.1.0-0065.md) | 转换硬件编解码（VAAPI）：内置 FFmpeg 换 8.1、随包 libva + iHD/i965 驱动、`privilege` 加入 videodriver、3 个硬件预设、失败自动回退 CPU；实测 H.264 硬编 3.5×、HEVC 全 GPU 9× | 现行（已打包） |
+| [RELEASE_NOTES_v1.1.0-0067.md](RELEASE_NOTES_v1.1.0-0067.md) | 下载失败**指数退避自动重试**：默认 1 分钟 → 3 分钟 → 9 分钟 → 27 分钟 → 30 分钟（封顶），最多 5 次；只重试临时故障（5xx/408/425/429/超时/分片），404/403 立即失败；支持 `Retry-After`；设置页可调次数/首次等待/倍数/封顶，任务行显示「等待重试（第 N/M 次，约 X 后）」，手动重试复位计数 | 现行（已打包） |
+| [RELEASE_NOTES_v1.1.0-0066.md](RELEASE_NOTES_v1.1.0-0066.md) | 修复 v0060 设置页瘦身导致的「字幕并发无处可设」：并发任务数（1–4）与已完成任务保留上限（20–1000）回到「字幕 → 任务」标签，改完立即生效；保留上限不再需要重启套件 | 历史（已打包未发布，并入 0067） |
+| [RELEASE_NOTES_v1.1.0-0065.md](RELEASE_NOTES_v1.1.0-0065.md) | 转换硬件编解码（VAAPI）：内置 FFmpeg 换 8.1、随包 libva + iHD/i965 驱动、`privilege` 加入 videodriver、3 个硬件预设、失败自动回退 CPU；实测 H.264 硬编 3.5×、HEVC 全 GPU 9× | 历史（已发布 v1.1.0-0065） |
 | [RELEASE_NOTES_v1.1.0-0064.md](RELEASE_NOTES_v1.1.0-0064.md) | 网页解析修复：文本请求协商 gzip + 按 `Content-Encoding`/魔数解压（站点对 identity 回压缩体却不带头 → 解析不到地址）；解析标题清洗后用作任务名与文件名（`titles` 字段，默认模板 `{title}`） | 历史（未单独发版，并入 0065） |
 | [RELEASE_NOTES_v1.1.0-0063.md](RELEASE_NOTES_v1.1.0-0063.md) | 转换页「已选文件」分页显示（默认 60/页 + 搜索 + 上一页/下一页，选择集仍全量）；同时包含 v0062 自动分批提交与 v0061 后缀多选/覆盖进回收站/默认删源 | 历史（未单独发版，并入 0064） |
 | [RELEASE_NOTES_v1.1.0-0062.md](RELEASE_NOTES_v1.1.0-0062.md) | 转换批量提交自动分批（每批 ≤200）、活动任务上限 500→2000 | 历史（未单独发版，并入 0063） |

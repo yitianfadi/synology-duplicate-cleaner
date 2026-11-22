@@ -25,8 +25,8 @@
 |---|---|---|
 | subtitle_output_mode | "alongside_video" | `alongside_video` / `download_only`；其它值拒绝 |
 | subtitle_skip_existing | true | 布尔；目标 srt 已存在时跳过该视频 |
-| subtitle_job_limit | 200 | 20..1000；已完成任务保留上限（LRU 只删任务目录，不删视频旁 srt）；**修改后需重启套件生效**（服务启动时读取） |
-| subtitle_concurrency | 1 | 1..4；同时执行的字幕任务数（默认 1 串行）；**保存设置后立即生效**（v0037 起动态调整 worker，无需重启套件） |
+| subtitle_job_limit | 200 | 20..1000（`SUBTITLE_JOB_LIMIT_MIN/MAX`）；已完成任务保留上限（LRU 只删任务目录，不删视频旁 srt）；**v0066 起在「字幕 → 任务」标签可直接改，保存后立即生效**（下一次清理按新上限裁剪，无需重启） |
+| subtitle_concurrency | 1 | 1..4；同时执行的字幕任务数（默认 1 串行）；**保存设置后立即生效**（v0037 起动态调整 worker，无需重启套件）；v0066 起在「字幕 → 任务」标签直接调整 |
 | subtitle_translate_outputs | both | v0036：译文输出组合 `both`/`target_only`/`bilingual_only`；控制任务目录与视频旁写出的译文文件数量；`original.srt` 始终保留 |
 | subtitle_audio_prefetch | true | v0040：分片音频预取（布尔）。识别当前分片时后台先抽下一分片音频，FFmpeg 与 ASR 重叠；关闭后严格串行。保存后只影响新任务（任务开始时读取） |
 
@@ -289,7 +289,7 @@ CREATE TABLE IF NOT EXISTS subtitle_batches (
   3. **选项**：识别语言、生成译文 + 目标语言、输出说明「字幕将写入视频同目录（只写 .srt）」、跳过已有字幕开关（默认开）。
   4. **提交**：必须勾选「音频/字幕文本将上传到第三方服务」；超过 20 条二次确认；提交后展示批次进度卡（总数/完成/失败/剩余 + 暂停/继续/取消/重试）。v0031 起提交按钮**禁用原因常显**（未选视频/未勾确认项/超单批上限/配置缺失），「全选」只选到单批上限并提示分批，避免“全选 5000 个后按钮点不动”的误解。
 - 独立 ES module `src/web/js/subtitle-page.js`，由 `app.js` 导入；不新增第三方依赖、不用 `innerHTML`、符合 ES2019。
-- 设置页「云端字幕」分组提供 `subtitle_output_mode`（下拉）、`subtitle_skip_existing`（勾选）、`subtitle_job_limit`（数字，20–1000）；页面进度/批次状态/错误码在 `src/web/js/constants.js` 统一维护。
+- 设置页「云端字幕」分组负责凭据与总开关（启用 / ASR / LLM / 默认音轨 / 监控目录）；v0066 起**队列设置（并发任务数、已完成任务保留上限）在「字幕 → 任务」标签顶部调整**，改完立即生效，设置页不再重复展示。页面进度/批次状态/错误码在 `src/web/js/constants.js` 统一维护。
 - 原「视频结果行 → 生成字幕」入口保留，行为统一走 `POST /api/subtitles`（默认 `output_mode` 取自设置）。
 - 任务中心「历史记录 → 字幕任务」列表与详情展示来源、写回路径、跳过原因、`OUTPUT_NOT_WRITABLE/OUTPUT_WRITE_PARTIAL` 警告、`translation_partial`（部分译文回退原文）与 `SERVER_AUDIO_FALLBACK`（服务器解码回退 NAS）；任务目录下载入口保留。
 - v0032 批次组：一次提交可含 1..20000 个视频，前端**全选不截断**；提交后显示“将分为 M 批（每批 ≤500）”，进度卡展示组聚合进度、批次列表（前 50 可展开）与任务明细分页（每页 100，加载更多）；暂停/继续/取消/重试作用于整组；组 ID 存 `localStorage['dupcleaner.lastSubtitleGroup.v1']` 以便切页/刷新恢复。
@@ -525,6 +525,17 @@ CREATE TABLE IF NOT EXISTS subtitle_batches (
   - `POST /cancel` 大批次组立即返回 **202** `{cancelling:true, requested, cancel_state}`；小批次组 2s 内完成仍返回旧 `{group}` 形状。
   - 新增 `POST /api/subtitles/batch-groups/{id}/cancel-remaining`（`scope=all|filter`）与 `POST .../delete`（`force=true` 时先取消、全部停止后删除，202）。
   - 任务明细 `status=cancelled` 独立筛选；“失败”不再包含已取消。
+
+## 24. v0066 队列设置回到「字幕 → 任务」标签
+
+- **背景**：v0060 设置页瘦身时把「字幕并发任务数」「已完成任务保留上限」两个控件随同一批参数一起删掉，但后端键、校验与立即生效逻辑全部保留 → UI 上再无处调整并发，只能直接调 API。
+- **前端**：「字幕 → 任务」标签的任务明细卡片顶部新增队列设置区（`#subtitleQueueSettings`）：
+  - `#subtitleConcurrency` 下拉 1..`meta.subtitle.concurrency_max`（默认 1，展示「1（串行）」），`change` 立即 `PUT /api/settings {"subtitle_concurrency":N}`；失败回滚控件并展示后端中文错误。
+  - `#subtitleJobLimit` 数字输入 `meta.subtitle.job_limit_min..job_limit_max`（默认 200，20–1000），`change` 立即 `PUT /api/settings {"subtitle_job_limit":N}`。
+  - 批次进度摘要追加「并发 N」；进入页面/保存设置后按 `state.settings` 回填（`renderQueueSettings()`）。
+- **后端**：`apply_settings()` 同时应用 `subtitle_job_limit`（`_clamp_job_limit` → 20..1000，非法值回退 200）；新上限小于当前任务数时置 `_trim_needed`，由下一次任务注册/完成的 LRU 清理按新上限裁剪，**不再需要重启套件**。补丁里没有该键时保持原值。
+- **/api/meta**：`subtitle` 新增 `job_limit_min` / `job_limit_max`，与 `config.SUBTITLE_JOB_LIMIT_MIN/MAX`、设置校验共用同一组常量。
+- 版本 1.1.0-0066；SQLite schema 不变（仍 v11）；设置键/默认值/校验范围不变，无迁移。
 
 
 

@@ -31,6 +31,7 @@ import ipaddress
 import json
 import logging
 import os
+import random
 import re
 import shutil
 import socket
@@ -129,6 +130,31 @@ def _iso(epoch):
         return time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(float(epoch)))
     except (TypeError, ValueError, OverflowError):
         return None
+
+
+def _parse_retry_after(value):
+    """解析 Retry-After（秒数或 HTTP-date）；无法解析返回 0。
+
+    v0067：429/503 常见带此头，任务级退避会取 max(指数退避, Retry-After)。
+    """
+    text = (value or u"").strip()
+    if not text:
+        return 0
+    try:
+        seconds = int(float(text))
+    except (TypeError, ValueError):
+        seconds = 0
+    if seconds > 0:
+        return seconds
+    try:
+        from email.utils import parsedate_to_datetime
+        when = parsedate_to_datetime(text)
+        if when is None:
+            return 0
+        delta = when.timestamp() - time.time()
+        return int(delta) if delta > 0 else 0
+    except Exception:
+        return 0
 
 
 def _safe_name(text, fallback=u"video", max_len=_NAME_MAX):
@@ -290,6 +316,29 @@ def _human_bytes(value):
     if index == 0:
         return u"%d %s" % (int(value), units[index])
     return u"%.1f %s" % (value, units[index])
+
+
+def _human_eta(seconds):
+    """把秒数渲染成"1 分钟 / 3 分钟 / 1 小时 30 分钟"这类可读文案。"""
+    try:
+        total = int(round(float(seconds or 0)))
+    except (TypeError, ValueError):
+        total = 0
+    if total <= 0:
+        return u"0 秒"
+    if total < 60:
+        return u"%d 秒" % total
+    minutes = total // 60
+    if minutes < 60:
+        return u"%d 分钟" % minutes
+    hours = minutes // 60
+    rest = minutes % 60
+    if rest == 0:
+        return u"%d 小时" % hours
+    return u"%d 小时 %d 分钟" % (hours, rest)
+
+
+
 
 
 _HHMM_RE = re.compile(r"^([01][0-9]|2[0-3]):([0-5][0-9])$")
@@ -599,13 +648,18 @@ class _HttpClient(object):
         try:
             return self._opener.open(request, timeout=limit)
         except urllib.error.HTTPError as exc:
+            details = {"status": int(exc.code), "url": _sanitize_error(url)}
+            # v0067：429/503 常带 Retry-After（秒或 HTTP-date），任务级退避优先用它。
+            retry_after = _parse_retry_after(
+                exc.headers.get("Retry-After") if exc.headers else None)
+            if retry_after:
+                details["retry_after"] = retry_after
             try:
                 exc.close()
             except Exception:
                 pass
             raise DownloadError(
-                "HTTP_STATUS", u"服务器返回 HTTP %s" % exc.code,
-                {"status": int(exc.code), "url": _sanitize_error(url)})
+                "HTTP_STATUS", u"服务器返回 HTTP %s" % exc.code, details)
         except urllib.error.URLError as exc:
             reason = getattr(exc, "reason", exc)
             raise DownloadError(
@@ -844,6 +898,11 @@ class DownloadJob(object):
             "skipped": bool(self.skipped),
             "priority": int(self.priority or 0),
             "retry_at": _iso(self.retry_at) if self.retry_at else None,
+            # v0067：自动重试排期（前端据此显示"第 N/M 次，约 X 后"）
+            "auto_retry": bool(self.options.get("auto_retry")),
+            "retry_max": int(self.options.get("auto_retry_max") or 0),
+            "retry_in_sec": (max(0, int(self.retry_at - time.time()))
+                             if self.retry_at else 0),
             "height": int(self.height or 0),
             "created_at": _iso(self.created_epoch),
             "started_at": _iso(self.started_epoch),
@@ -1124,16 +1183,82 @@ class DownloadService(object):
                 job._client = None
             self._persist(job, force=True)
 
-    # v0053：网络类错误可自动重试（指数退避重排），确定性错误不重试。
+    # v0053：网络类错误可自动重试；v0067：指数退避（一次比一次长）+ 错误分类。
     RETRYABLE_CODES = frozenset(["HTTP_STATUS", "SEGMENT_FAILED",
                                  "INTERNAL_ERROR"])
+
+    def _is_retryable_error(self, exc):
+        """只有"可能是临时故障"的错误才重试。
+
+        - HTTP_STATUS：4xx 里只有 408/425/429（以及 5xx）重试；
+          没有 status 的是网络中断/超时，重试。
+        - 其余确定性错误（URL/播放列表/输出路径/空间/直播/DRM/FFmpeg）一律不重试。
+        """
+        code = getattr(exc, "code", "") or "INTERNAL_ERROR"
+        if code not in self.RETRYABLE_CODES:
+            return False
+        if code != "HTTP_STATUS":
+            return True
+        details = getattr(exc, "details", None) or {}
+        try:
+            status = int(details.get("status") or 0)
+        except (TypeError, ValueError):
+            status = 0
+        if status and 400 <= status < 500:
+            return status in config.DOWNLOAD_RETRYABLE_HTTP_STATUS
+        return True
+
+    def _auto_retry_delay(self, attempts, retry_after=0):
+        """指数退避：min(cap, base * factor^(n-1))，再叠加 0~20% 正向抖动。
+
+        v0067：退避参数每次重试时从**当前设置**读取（运营调整立即对等待中
+        的任务生效）；抖动只增不减，保证"一次比一次长"。
+        """
+        settings = self._settings_snapshot()
+
+        def _num(key, default, low, high):
+            try:
+                value = int(settings.get(key) or 0)
+            except (TypeError, ValueError):
+                value = 0
+            if value <= 0:
+                value = default
+            return max(low, min(value, high))
+
+        base = _num("download_auto_retry_base_sec",
+                    config.DOWNLOAD_AUTO_RETRY_BASE_SEC,
+                    config.DOWNLOAD_AUTO_RETRY_BASE_MIN_SEC,
+                    config.DOWNLOAD_AUTO_RETRY_BASE_MAX_SEC)
+        factor = _num("download_auto_retry_factor",
+                      config.DOWNLOAD_AUTO_RETRY_FACTOR,
+                      config.DOWNLOAD_AUTO_RETRY_FACTOR_MIN,
+                      config.DOWNLOAD_AUTO_RETRY_FACTOR_MAX)
+        cap = _num("download_auto_retry_cap_sec",
+                   config.DOWNLOAD_AUTO_RETRY_CAP_SEC,
+                   config.DOWNLOAD_AUTO_RETRY_CAP_MIN_SEC,
+                   config.DOWNLOAD_AUTO_RETRY_CAP_MAX_SEC)
+        step = max(1, int(attempts or 1)) - 1
+        try:
+            delay = float(base) * (float(factor) ** step)
+        except OverflowError:
+            delay = float(cap)
+        delay = min(float(cap), delay)
+        try:
+            retry_after = float(retry_after or 0)
+        except (TypeError, ValueError):
+            retry_after = 0.0
+        if retry_after > 0:
+            delay = min(float(cap), max(delay, retry_after))
+        jitter = max(0.0, float(config.DOWNLOAD_AUTO_RETRY_JITTER or 0))
+        if jitter > 0:
+            delay *= 1.0 + random.uniform(0.0, jitter)
+        return max(1.0, delay)
 
     def _schedule_retry(self, job, exc):
         options = job.options
         if not options.get("auto_retry"):
             return False
-        code = getattr(exc, "code", "") or "INTERNAL_ERROR"
-        if code not in self.RETRYABLE_CODES:
+        if not self._is_retryable_error(exc):
             return False
         try:
             limit = int(options.get("auto_retry_max") or 0)
@@ -1142,14 +1267,16 @@ class DownloadService(object):
         attempts = int(job.attempts or 0)
         if attempts > limit:
             return False
-        delay = config.DOWNLOAD_AUTO_RETRY_BACKOFF_SEC * max(1, attempts)
+        details = getattr(exc, "details", None) or {}
+        delay = self._auto_retry_delay(attempts, details.get("retry_after"))
+        code = getattr(exc, "code", "") or "INTERNAL_ERROR"
         message = getattr(exc, "message", u"") or u""
         with self._lock:
             job.status = STATUS_QUEUED
             job.stage = STATUS_QUEUED
             job.retry_at = time.time() + delay
-            job.message = u"自动重试 %d/%d（%d 秒后）" % (
-                attempts, limit, int(delay))
+            job.message = u"自动重试 %d/%d（%s 后）" % (
+                attempts, limit, _human_eta(delay))
             job.error_code = code
             job.error_message = _sanitize_error(
                 message, job.options.get("cookie") or u"")
@@ -1158,8 +1285,8 @@ class DownloadService(object):
             if job.job_id not in self._queue:
                 self._queue.append(job.job_id)
         self._persist(job, force=True)
-        logger.info(u"下载任务自动重试 %s（%s/%s）", job.job_id,
-                    attempts, limit)
+        logger.info(u"下载任务自动重试 %s（%s/%s，%d 秒后）", job.job_id,
+                    attempts, limit, int(delay))
         return True
 
     def _effective_rate_limit(self, job):
@@ -2855,6 +2982,10 @@ class DownloadService(object):
             job.error_message = u""
             job.progress = 0
             job.finished_epoch = 0.0
+            # v0067：手动重试重新给满自动重试额度（否则上一次已耗尽的
+            # attempts 会让这次失败后直接终止）。
+            job.attempts = 0
+            job.retry_at = 0.0
             job._cancel.clear()
             job._pause.clear()
             job._abort.clear()

@@ -2198,6 +2198,47 @@ import { bindLogsEvents, loadLogs } from './js/logs-page.js';
   }
 
   // ---------- 下载中心设置（v0051） ----------
+  function fillAutoRetryNumber(input, value, fallback) {
+    if (!input) { return; }
+    var num = parseInt(value, 10);
+    input.value = String(isFinite(num) && num > 0 ? num : fallback);
+  }
+
+  function shortDelayText(seconds) {
+    var sec = Math.max(0, Math.round(Number(seconds) || 0));
+    if (sec < 60) { return sec + ' 秒'; }
+    var minutes = Math.round(sec / 60);
+    if (minutes < 60) { return minutes + ' 分钟'; }
+    return (Math.round(seconds / 360) / 10) + ' 小时';
+  }
+
+  // v0067：把"首次等待 / 倍数 / 封顶 / 次数"渲染成可读节奏，供设置页预览。
+  function autoRetryScheduleText(base, factor, cap, max) {
+    var count = Math.max(0, Math.min(10, parseInt(max, 10) || 0));
+    if (!count) { return '当前：不自动重试（失败即结束）。'; }
+    var b = Math.max(10, Math.min(600, parseInt(base, 10) || 60));
+    var f = Math.max(2, Math.min(5, parseInt(factor, 10) || 3));
+    var c = Math.max(60, Math.min(7200, parseInt(cap, 10) || 1800));
+    var parts = [];
+    for (var i = 0; i < count; i += 1) {
+      parts.push(shortDelayText(Math.min(c, b * Math.pow(f, i))));
+    }
+    return '当前节奏：' + parts.join(' → ') + '（共 ' + (count + 1) + ' 次执行机会）。';
+  }
+
+  function refreshDownloadAutoRetryHint() {
+    if (!els.downloadAutoRetryScheduleHint) { return; }
+    if (!els.setDownloadAutoRetry || !els.setDownloadAutoRetry.checked) {
+      setText(els.downloadAutoRetryScheduleHint, '当前：不自动重试（失败即结束）。');
+      return;
+    }
+    setText(els.downloadAutoRetryScheduleHint, autoRetryScheduleText(
+      els.setDownloadAutoRetryBaseSec ? els.setDownloadAutoRetryBaseSec.value : 60,
+      els.setDownloadAutoRetryFactor ? els.setDownloadAutoRetryFactor.value : 3,
+      els.setDownloadAutoRetryCapSec ? els.setDownloadAutoRetryCapSec.value : 1800,
+      els.setDownloadAutoRetryMax ? els.setDownloadAutoRetryMax.value : 5));
+  }
+
   function fillDownloadSettingsForm(settings) {
     var s = settings || {};
     if (els.setDownloadOutputDir) {
@@ -2225,10 +2266,23 @@ import { bindLogsEvents, loadLogs } from './js/logs-page.js';
       els.setDownloadSubscribeEnabled.checked =
         s.download_subscribe_enabled === true;
     }
+    // v0067：失败自动重试（指数退避）
+    if (els.setDownloadAutoRetry) {
+      els.setDownloadAutoRetry.checked = s.download_auto_retry !== false;
+    }
+    fillAutoRetryNumber(els.setDownloadAutoRetryMax, s.download_auto_retry_max, 5);
+    fillAutoRetryNumber(els.setDownloadAutoRetryBaseSec, s.download_auto_retry_base_sec, 60);
+    fillAutoRetryNumber(els.setDownloadAutoRetryFactor, s.download_auto_retry_factor, 3);
+    fillAutoRetryNumber(els.setDownloadAutoRetryCapSec, s.download_auto_retry_cap_sec, 1800);
+    refreshDownloadAutoRetryHint();
     if (els.settingsDownloadSummary) {
+      var retrySummary = s.download_auto_retry !== false
+        ? '失败重试 ' + (parseInt(s.download_auto_retry_max, 10) || 0) + ' 次'
+        : '不自动重试';
       setText(els.settingsDownloadSummary,
         '默认目录 ' + (s.download_output_dir || '未设置') +
-        ' · 订阅' + (s.download_subscribe_enabled === true ? '开' : '关'));
+        ' · 订阅' + (s.download_subscribe_enabled === true ? '开' : '关') +
+        ' · ' + retrySummary);
     }
   }
 
@@ -2262,6 +2316,34 @@ import { bindLogsEvents, loadLogs } from './js/logs-page.js';
       && els.setDownloadAllowPrivate.checked);
     settings.download_subscribe_enabled = !!(els.setDownloadSubscribeEnabled
       && els.setDownloadSubscribeEnabled.checked);
+    // v0067：失败自动重试（指数退避参数）
+    if (els.setDownloadAutoRetry) {
+      settings.download_auto_retry = !!els.setDownloadAutoRetry.checked;
+    }
+    if (els.setDownloadAutoRetryMax) {
+      var retryMax = readIntOption(els.setDownloadAutoRetryMax, 0, 10, false, 0,
+        '最多重试次数');
+      if (retryMax.error) { errors.downloadAutoRetryMax = retryMax.error; }
+      else { settings.download_auto_retry_max = retryMax.value; }
+    }
+    if (els.setDownloadAutoRetryBaseSec) {
+      var retryBase = readIntOption(els.setDownloadAutoRetryBaseSec, 10, 600,
+        false, 60, '首次等待');
+      if (retryBase.error) { errors.downloadAutoRetryBaseSec = retryBase.error; }
+      else { settings.download_auto_retry_base_sec = retryBase.value; }
+    }
+    if (els.setDownloadAutoRetryFactor) {
+      var retryFactor = readIntOption(els.setDownloadAutoRetryFactor, 2, 5,
+        false, 3, '等待递增倍数');
+      if (retryFactor.error) { errors.downloadAutoRetryFactor = retryFactor.error; }
+      else { settings.download_auto_retry_factor = retryFactor.value; }
+    }
+    if (els.setDownloadAutoRetryCapSec) {
+      var retryCap = readIntOption(els.setDownloadAutoRetryCapSec, 60, 7200,
+        false, 1800, '单次等待上限');
+      if (retryCap.error) { errors.downloadAutoRetryCapSec = retryCap.error; }
+      else { settings.download_auto_retry_cap_sec = retryCap.value; }
+    }
   }
 
   // ---------- 格式转换设置（v0056；v0060 只保留输出位置） ----------
@@ -7716,6 +7798,10 @@ import { bindLogsEvents, loadLogs } from './js/logs-page.js';
     downloadJobLimit: { input: 'setDownloadJobLimit', error: 'setDownloadJobLimitError' },
     // v0053 下载增强
     downloadAutoRetryMax: { input: 'setDownloadAutoRetryMax', error: 'setDownloadAutoRetryMaxError' },
+    // v0067：指数退避参数
+    downloadAutoRetryBaseSec: { input: 'setDownloadAutoRetryBaseSec', error: 'setDownloadAutoRetryBaseSecError' },
+    downloadAutoRetryFactor: { input: 'setDownloadAutoRetryFactor', error: 'setDownloadAutoRetryFactorError' },
+    downloadAutoRetryCapSec: { input: 'setDownloadAutoRetryCapSec', error: 'setDownloadAutoRetryCapSecError' },
     downloadOffpeakStart: { input: 'setDownloadOffpeakStart', error: 'setDownloadOffpeakStartError' },
     downloadOffpeakEnd: { input: 'setDownloadOffpeakEnd', error: 'setDownloadOffpeakEndError' },
     downloadOffpeakRate: { input: 'setDownloadOffpeakRate', error: 'setDownloadOffpeakRateError' },
@@ -7813,6 +7899,7 @@ import { bindLogsEvents, loadLogs } from './js/logs-page.js';
       setText(els.settingsOverview,
         '共 9 组设置：媒体 / 自动化 / 云端字幕 / 下载 / 转换 / 合成 / 安全 / 系统诊断 / 权限体检 · 修改后点击底部“保存设置”生效');
     }
+    refreshDownloadAutoRetryHint();
   }
 
   function fillAutomationSettings(settings) {

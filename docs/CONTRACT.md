@@ -1,7 +1,7 @@
 # 实现契约（前后端共享，版本 1.0）
 
 > 本文件是前后端并行开发的唯一接口约定。任何一方需要改动字段，先改本文件并在团队任务中说明。
-> 产品名：**DuplicateCleaner**；显示名：**重复文件清理与字幕**；SPK 版本：**1.1.0-0065**。
+> 产品名：**DuplicateCleaner**；显示名：**重复文件清理与字幕**；SPK 版本：**1.1.0-0067**。
 > v1.1 新增内容相似度模式；相似模式字段与行为见 [SIMILARITY_CONTRACT.md](SIMILARITY_CONTRACT.md)，**精准模式规则不变**。
 
 ## 1. 仓库与写入边界
@@ -128,6 +128,14 @@ v0042 增量（升级启动稳定性）：
 - `postupgrade` 在 root 身份运行时补 `chown -R duplicatecleaner:duplicatecleaner <var>`，防止升级后数据目录属主变化导致无法启动。
 - 无新增接口/错误码；SQLite schema 仍 v7，无数据迁移。
 
+v0066 增量（字幕队列设置回到「字幕 → 任务」标签）：
+- `subtitle_concurrency`（1..4）与 `subtitle_job_limit`（20..1000）不再只靠 API 修改：「字幕 → 任务」标签顶部提供下拉/数字输入，
+  `change` 即 `PUT /api/settings`，失败回滚并展示后端错误；批次进度摘要显示「并发 N」。
+- `subtitle_job_limit` 保存后**立即生效**（v0066 起无需重启套件）：`apply_settings()` 更新上限，新上限小于当前任务数时置清理标记，
+  下一次任务注册/完成的 LRU 清理按新上限裁剪；只删任务目录与 DB 记录，写回视频旁的 srt 永不删除。
+- `GET /api/meta` 的 `subtitle` 新增 `job_limit_min` / `job_limit_max`。
+- 无新增错误码（沿用 `INVALID_ARGUMENT`）；SQLite schema 不变（仍 v11），无数据迁移。
+
 
 
 ## 4. 认证
@@ -155,7 +163,7 @@ v0042 增量（升级启动稳定性）：
 ### GET /api/meta
 ```json
 {
- "app_version": "1.1.0-0065",
+ "app_version": "1.1.0-0067",
  "dsm_version": "7.2.2-72806" | "dev",
  "python_version": "3.8.16",
  "creation_time_supported": true,
@@ -651,7 +659,7 @@ Content-Disposition: attachment; filename="duplicate-scan-<id>.csv"
 - 后端 unittest 覆盖：statx 时间读取降级、哈希分片/限速、重复分组与三种保留策略、
   路径黑名单、删除前重校验、回收站路径生成、CSV、API 鉴权。
 - 前端可用静态检查 + 本地 dev 后端联调；QA 用 dev 模式在临时目录生成重复文件跑完整 API 流程。
-- 打包产物 `dist/DuplicateCleaner-1.1.0-0065.spk` 必须能通过 `tar -tf` 检查，包含 INFO/package.tgz/scripts/conf/ui。
+- 打包产物 `dist/DuplicateCleaner-1.1.0-0067.spk` 必须能通过 `tar -tf` 检查，包含 INFO/package.tgz/scripts/conf/ui。
 ## 12. 下载中心（v0051）
 
 完整契约见 [DOWNLOAD_CONTRACT.md](DOWNLOAD_CONTRACT.md)；本节只列接口与通用约定。

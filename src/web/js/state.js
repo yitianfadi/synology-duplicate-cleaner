@@ -139,6 +139,9 @@ export var IDS = ('loginView loginForm loginUsername loginPassword loginOtp logi
   'settingsScanGroup settingsScanSummary settingsSimilaritySummary settingsVideoSummary ' +
   'settingsSubtitleSummary settingsStorageGroup settingsStorageSummary settingsStatusSummary ' +
   'batchSubtitleBtn subtitleJobsPanel subtitleJobsHeading subtitleJobsStatus subtitleJobsRefreshBtn ' +
+  // v0066：字幕页「任务」标签的队列设置（并发任务数 / 已完成任务保留上限）
+  'subtitleQueueSettings subtitleConcurrency subtitleConcurrencyError ' +
+  'subtitleJobLimit subtitleJobLimitError ' +
   'subtitleJobsLoading subtitleJobsError subtitleJobsEmpty subtitleJobsList ' +
   'subtitleAsrBaseUrlError subtitleAsrModel subtitleAsrModelError subtitleAsrApiKey subtitleAsrApiKeyError ' +
   'subtitleAsrKeySetBadge subtitleClearAsrKey subtitleAsrLanguage subtitleAsrTimeout subtitleAsrTimeoutError ' +
@@ -256,7 +259,12 @@ export var IDS = ('loginView loginForm loginUsername loginPassword loginOtp logi
   'downloadSubscribeHint downloadSubscribeEmpty downloadSubscribeList ' +
   'setDownloadSubscribeEnabled ' +
   'setDownloadSkipExisting setDownloadAutoRetry setDownloadAutoRetryMax ' +
-  'setDownloadAutoRetryMaxError setDownloadOffpeakEnabled ' +
+  'setDownloadAutoRetryMaxError ' +
+  'setDownloadAutoRetryBaseSec setDownloadAutoRetryBaseSecError ' +
+  'setDownloadAutoRetryFactor setDownloadAutoRetryFactorError ' +
+  'setDownloadAutoRetryCapSec setDownloadAutoRetryCapSecError ' +
+  'setDownloadAutoRetryError downloadAutoRetryScheduleHint ' +
+  'setDownloadOffpeakEnabled ' +
   'setDownloadOffpeakStart setDownloadOffpeakStartError ' +
   'setDownloadOffpeakEnd setDownloadOffpeakEndError ' +
   'setDownloadOffpeakRate setDownloadOffpeakRateError ' +

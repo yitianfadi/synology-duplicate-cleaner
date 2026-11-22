@@ -1,7 +1,7 @@
 # 整体方案架构
 
 > 项目：**重复文件清理与字幕（Duplicate Cleaner & Subtitles）** · 群晖 DSM 7.x SPK 套件
-> 版本：1.1.0-0065
+> 版本：1.1.0-0067
 > 原则：**先扫描、出报告、人工确认、二次确认、可回收、全程审计**。任何情况下都不自动静默删除。
 
 ## 1. 目标与边界
@@ -385,8 +385,8 @@ Linux 的 `st_ctime` 是 **inode 状态变更时间**，不是创建时间，复
 
 ### 12.4 容量与恢复
 
-- 默认单 worker 串行执行；v0034 起 `subtitle_concurrency`（1..4，默认 1）可并行执行多个任务，v0037 起保存设置后立即生效（动态增减 worker，无需重启），批次内仍按提交顺序取队。
-- 已完成任务保留上限 `subtitle_job_limit`（默认 200）；LRU 清理只删任务目录与 DB 记录，**不删视频旁 srt**。
+- 默认单 worker 串行执行；v0034 起 `subtitle_concurrency`（1..4，默认 1）可并行执行多个任务，v0037 起保存设置后立即生效（动态增减 worker，无需重启），批次内仍按提交顺序取队；v0066 起并发与保留上限在「字幕 → 任务」标签直接调整（设置页不再重复展示）。
+- 已完成任务保留上限 `subtitle_job_limit`（默认 200）；LRU 清理只删任务目录与 DB 记录，**不删视频旁 srt**；v0066 起改上限保存即生效（无需重启），新上限小于当前任务数时在下一次清理按新上限裁剪。
 - SQLite schema v6 新增 `subtitle_batches`；v0034 起服务启动时 `queued` 任务自动重新入队继续（不再全判 `SERVICE_RESTART`），`running/translating` 有分片转 `paused` 可继续（沿用分片缓存）。
 - v0034 可见性：组快照带 `active_jobs`/`eta_seconds`/`concurrency`，任务列表支持 `status` 过滤；前端任务明细与任务中心把执行中任务置顶。
 - 批次状态由子任务实时聚合，不单独持久化状态机。
@@ -650,7 +650,7 @@ Linux 的 `st_ctime` 是 **inode 状态变更时间**，不是创建时间，复
 ### 21.2 下载增强（v0053）
 
 - **去重**：`_base_path` 给出不含「重名加序号」的首选路径，命中且体积一致即抛 `_JobSkipped` → 任务直接 `done` + `skipped=true`，不写临时目录。
-- **自动重试**：`_schedule_retry` 只处理 `HTTP_STATUS/SEGMENT_FAILED/INTERNAL_ERROR`；退避 `15s×次数`，`retry_at` 由调度器跳过；`attempts > auto_retry_max` 才失败。
+- **自动重试（v0067 指数退避）**：`_is_retryable_error` 先分类——`HTTP_STATUS` 无 status（断网/超时）或 5xx/408/425/429、`SEGMENT_FAILED`、`INTERNAL_ERROR` 才重试，4xx 其余与 URL/播放列表/输出/空间/直播/DRM/FFmpeg 类错误直接失败；`_auto_retry_delay` 计算 `min(cap, base×factor^(n-1))` 并叠加 0–20% 正向抖动（只增不减），429/503 的 `Retry-After` 取 `max(退避, 该值)` 后仍受 `cap` 限制；退避三项每次重试实时读设置。`_schedule_retry` 把任务回 `queued` + `retry_at`，由调度器跳过未到期任务，`attempts > auto_retry_max`（0–10，默认 5）才失败；快照暴露 `auto_retry/retry_max/retry_in_sec`，手动 `retry()` 复位 `attempts`。
 - **分时限速**：`_effective_rate_limit` 在任务开始时按 `_in_offpeak`（支持跨零点）选择常规/低谷档，写入 `_RateLimiter`。
 - **命名模板**：`_render_name` 用 `{title}{site}{date}{height}{season}{episode}…` 渲染，`_split_season_episode` 识别 `S01E02`/「第二季第三集」。
 - **队列与导出**：`_next_queue_index_locked` 按（优先级、创建时间）取任务；`bulk_action` 按 scope 批量处理；`export_rows` 供 `/api/downloads/export`。

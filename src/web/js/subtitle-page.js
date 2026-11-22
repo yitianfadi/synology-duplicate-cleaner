@@ -32,6 +32,12 @@ var POLL_MS = 1500;
 var FALLBACK_BATCH_MAX = 500;
 var FALLBACK_GROUP_MAX = 20000;
 var FALLBACK_ENUM_MAX = 20000;
+// v0066：字幕页「任务」标签的队列设置（并发 1..4 / 已完成任务保留上限 20..1000）
+var FALLBACK_CONCURRENCY_MAX = 4;
+var FALLBACK_CONCURRENCY_DEFAULT = 1;
+var FALLBACK_JOB_LIMIT = 200;
+var JOB_LIMIT_MIN = 20;
+var JOB_LIMIT_MAX = 1000;
 var LAST_CONFIG_KEY = 'dupcleaner.lastSubtitleDir.v1';
 var LAST_GROUP_KEY = 'dupcleaner.lastSubtitleGroup.v1';
 
@@ -96,11 +102,142 @@ function metaLimits() {
   var batchMax = sub && Number(sub.batch_max_items);
   var groupMax = sub && Number(sub.batch_group_max_items);
   var enumMax = sub && Number(sub.enumerate_max_items);
+  var concMax = sub && Number(sub.concurrency_max);
+  var concDefault = sub && Number(sub.default_concurrency);
+  var jobMin = sub && Number(sub.job_limit_min);
+  var jobMax = sub && Number(sub.job_limit_max);
   return {
     batchMax: isFinite(batchMax) && batchMax > 0 ? batchMax : FALLBACK_BATCH_MAX,
     groupMax: isFinite(groupMax) && groupMax > 0 ? groupMax : FALLBACK_GROUP_MAX,
-    enumMax: isFinite(enumMax) && enumMax > 0 ? enumMax : FALLBACK_ENUM_MAX
+    enumMax: isFinite(enumMax) && enumMax > 0 ? enumMax : FALLBACK_ENUM_MAX,
+    concurrencyMax: isFinite(concMax) && concMax > 0
+      ? Math.floor(concMax) : FALLBACK_CONCURRENCY_MAX,
+    concurrencyDefault: isFinite(concDefault) && concDefault > 0
+      ? Math.floor(concDefault) : FALLBACK_CONCURRENCY_DEFAULT,
+    jobLimitMin: isFinite(jobMin) && jobMin > 0 ? Math.floor(jobMin) : JOB_LIMIT_MIN,
+    jobLimitMax: isFinite(jobMax) && jobMax >= 1 ? Math.floor(jobMax) : JOB_LIMIT_MAX
   };
+}
+
+function concurrencyLimits() {
+  var limits = metaLimits();
+  return {
+    max: limits.concurrencyMax,
+    def: Math.min(limits.concurrencyDefault, limits.concurrencyMax)
+  };
+}
+
+function currentConcurrency() {
+  var limits = concurrencyLimits();
+  var value = Number(state.settings ? state.settings.subtitle_concurrency : null);
+  if (!isFinite(value) || value < 1) { return limits.def; }
+  return Math.min(Math.floor(value), limits.max);
+}
+
+function currentJobLimit() {
+  var limits = metaLimits();
+  var value = Number(state.settings ? state.settings.subtitle_job_limit : null);
+  if (!isFinite(value) || value < limits.jobLimitMin || value > limits.jobLimitMax) {
+    return FALLBACK_JOB_LIMIT;
+  }
+  return Math.floor(value);
+}
+
+/** v0066：回填「任务」标签的队列设置（并发 / 保留上限；设置页改过的值也会刷新）。 */
+function renderQueueSettings() {
+  var limits = concurrencyLimits();
+  var select = q('subtitleConcurrency');
+  if (select) {
+    if (select.options.length !== limits.max) {
+      clear(select);
+      for (var i = 1; i <= limits.max; i += 1) {
+        select.appendChild(el('option', {
+          attrs: { value: String(i) },
+          text: i === 1 ? '1（串行）' : String(i)
+        }));
+      }
+    }
+    select.value = String(currentConcurrency());
+    select.disabled = !state.settings;
+  }
+  var input = q('subtitleJobLimit');
+  if (input) {
+    input.value = String(currentJobLimit());
+    input.disabled = !state.settings;
+  }
+}
+
+function setQueueFieldError(id, message) {
+  var elError = q(id);
+  if (!elError) { return; }
+  if (message) {
+    setText(elError, message);
+    show(elError);
+  } else {
+    setText(elError, '');
+    setHidden(elError, true);
+  }
+}
+
+/**
+ * v0066：把队列设置写回后端（PUT /api/settings），保存后立即生效、无需重启。
+ * - 并发：后端动态增减 worker；调小时正在执行的任务跑完才退出。
+ * - 保留上限：LRU 只删任务目录/记录，永不删除视频旁 srt。
+ * 失败时回滚控件并展示后端中文错误（范围校验由后端兜底）。
+ */
+async function applyQueueSetting(kind, raw) {
+  var isConcurrency = kind === 'concurrency';
+  var select = q('subtitleConcurrency');
+  var input = q('subtitleJobLimit');
+  var errorId = isConcurrency ? 'subtitleConcurrencyError' : 'subtitleJobLimitError';
+  var limits = concurrencyLimits();
+  var meta = metaLimits();
+  var prev = isConcurrency ? currentConcurrency() : currentJobLimit();
+  var next = NaN;
+  if (isConcurrency) {
+    next = Math.floor(Number(raw));
+    if (isFinite(next) && next > limits.max) { next = limits.max; }
+    if (!isFinite(next) || next < 1) { next = prev; }
+  } else {
+    var text = String(raw === null || raw === undefined ? '' : raw).trim();
+    if (/^\d+$/.test(text)) { next = parseInt(text, 10); }
+    if (!isFinite(next) || next < meta.jobLimitMin || next > meta.jobLimitMax) {
+      setQueueFieldError(errorId, '保留上限必须是 ' + meta.jobLimitMin
+        + '–' + meta.jobLimitMax + ' 的整数。');
+      if (input) { input.value = String(prev); }
+      return;
+    }
+  }
+  setQueueFieldError(errorId, '');
+  if (next === prev) { renderQueueSettings(); return; }
+  if (select) { select.disabled = true; }
+  if (input) { input.disabled = true; }
+  var patch = {};
+  patch[isConcurrency ? 'subtitle_concurrency' : 'subtitle_job_limit'] = next;
+  try {
+    var res = await api('/api/settings', {
+      method: 'PUT', body: { settings: patch }, timeout: 15000
+    });
+    var updated = res && res.settings ? res.settings : null;
+    state.settings = Object.assign({}, state.settings || {}, updated || patch);
+    if (isConcurrency) {
+      toast('并发已调整为 ' + next
+        + (next < prev
+          ? '：正在执行的任务会跑完再退出，排队任务随后按新并发执行。'
+          : '：排队任务马上并行执行。'), 'success', 6000);
+    } else {
+      toast('已完成任务保留上限已改为 ' + next + '：下一次清理按新上限执行。',
+        'success', 6000);
+    }
+  } catch (err) {
+    var message = errorMessage(err, isConcurrency
+      ? '调整并发失败，请重试。' : '修改保留上限失败，请重试。');
+    setQueueFieldError(errorId, message);
+    toast(message, 'error');
+  } finally {
+    renderQueueSettings();
+    renderGroupHead();
+  }
 }
 
 /** 记住上次目录/递归/模式（与扫描页记住上次扫描范围一致）。 */
@@ -280,6 +417,8 @@ function updateCapabilityUi() {
   if (language && !language.dataset.userTouched) {
     language.value = cap.asrLanguage;
   }
+  // v0066：队列设置随能力/设置刷新（并发 1..4、保留上限 20..1000）
+  renderQueueSettings();
   updateSubmitState();
 }
 
@@ -757,6 +896,7 @@ function renderGroupHead() {
     + ' · 取消 ' + fmtInt(counts.cancelled) + ' · 暂停 ' + fmtInt(counts.paused)
     + ' · 排队 ' + fmtInt(counts.queued) + ' · 运行 ' + fmtInt(running)
     + ' · 剩余 ' + fmtInt(remaining) + ' · 批次 ' + fmtInt(batchCount)
+    + ' · 并发 ' + fmtInt(currentConcurrency())
     + (missing > 0 ? ' · 缺失 ' + fmtInt(missing) : '');
   // v0050：批量取消/强制删除进度（取消中任务仍可能处于 running 到分片边界）
   var cancelState = group.cancel_state || page.cancelState || null;
@@ -2006,6 +2146,19 @@ export function initSubtitlePage() {
   }
   var confirm = q('subtitleBatchConfirm');
   if (confirm) { confirm.addEventListener('change', updateSubmitState); }
+  // v0066：队列设置——保存后立即生效（并发动态调整 worker；保留上限下次清理生效）
+  var concurrencySelect = q('subtitleConcurrency');
+  if (concurrencySelect) {
+    concurrencySelect.addEventListener('change', function () {
+      applyQueueSetting('concurrency', concurrencySelect.value);
+    });
+  }
+  var jobLimitInput = q('subtitleJobLimit');
+  if (jobLimitInput) {
+    jobLimitInput.addEventListener('change', function () {
+      applyQueueSetting('job_limit', jobLimitInput.value);
+    });
+  }
   var submit = q('subtitleSubmitBtn');
   if (submit) { submit.addEventListener('click', submitGroup); }
   var overviewRefresh = q('subtitleGroupOverviewRefresh');

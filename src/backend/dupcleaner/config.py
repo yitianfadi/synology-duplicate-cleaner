@@ -7,9 +7,9 @@ import os
 import re
 
 APP_NAME = "DuplicateCleaner"
-APP_VERSION = "1.1.0-0065"
+APP_VERSION = "1.1.0-0067"
 DISPLAY_NAME = "重复文件清理与字幕"
-SPK_VERSION = "1.1.0-0065"
+SPK_VERSION = "1.1.0-0067"
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8787
@@ -378,6 +378,9 @@ SHORT_VIDEO_RATIO_MAX = 2.0
 # 已完成任务保留上限（设置 subtitle_job_limit 的缺省值）；LRU 只删任务目录，
 # 绝不删除写回视频旁的字幕文件。
 SUBTITLE_JOB_LIMIT_DEFAULT = 200
+# v0066：字幕页「任务」标签可直接调整保留上限；范围与设置校验共用同一组常量。
+SUBTITLE_JOB_LIMIT_MIN = 20
+SUBTITLE_JOB_LIMIT_MAX = 1000
 # v0034/v0037：字幕任务并发上限/缺省值。默认 1 = 保持历史串行行为；设置
 # subtitle_concurrency 可在 1..4 调整，保存设置后立即生效（动态调整 worker，无需重启）。
 SUBTITLE_CONCURRENCY_MAX = 4
@@ -481,11 +484,28 @@ DOWNLOAD_PARSE_CANDIDATE_LIMIT = 50
 # ---------------------------------------------------------------------------
 # 下载前去重：目标文件已存在（且体积一致/未知）时直接跳过，不再重复下载。
 DOWNLOAD_SKIP_EXISTING_DEFAULT = True
-# 任务级自动重试：只对网络类错误生效（HTTP/分片），退避 = 次数 × 基础秒数。
+# 任务级自动重试：只对网络类错误生效（HTTP 5xx/429/超时、分片失败、内部竞态）。
+# v0067：退避改为指数递增（一次比一次长）：
+#   delay(n) = min(cap, base * factor^(n-1)) * (1 + 0..jitter)
+# 默认 60s → 180s → 540s → 1620s → 1800s（cap），最多 5 次。
 DOWNLOAD_AUTO_RETRY_DEFAULT = True
-DOWNLOAD_AUTO_RETRY_MAX_DEFAULT = 2
-DOWNLOAD_AUTO_RETRY_MAX_LIMIT = 5
-DOWNLOAD_AUTO_RETRY_BACKOFF_SEC = 15.0
+DOWNLOAD_AUTO_RETRY_MAX_DEFAULT = 5
+DOWNLOAD_AUTO_RETRY_MAX_LIMIT = 10
+DOWNLOAD_AUTO_RETRY_BASE_SEC = 60
+DOWNLOAD_AUTO_RETRY_FACTOR = 3
+DOWNLOAD_AUTO_RETRY_CAP_SEC = 1800
+DOWNLOAD_AUTO_RETRY_JITTER = 0.2
+DOWNLOAD_AUTO_RETRY_BASE_MIN_SEC = 10
+DOWNLOAD_AUTO_RETRY_BASE_MAX_SEC = 600
+DOWNLOAD_AUTO_RETRY_FACTOR_MIN = 2
+DOWNLOAD_AUTO_RETRY_FACTOR_MAX = 5
+DOWNLOAD_AUTO_RETRY_CAP_MIN_SEC = 60
+DOWNLOAD_AUTO_RETRY_CAP_MAX_SEC = 7200
+# v0067：任务级可重试的 HTTP 状态（4xx 里只有这些值得重试）。
+DOWNLOAD_RETRYABLE_HTTP_STATUS = frozenset([
+    408, 425, 429, 500, 502, 503, 504, 507, 509,
+    520, 521, 522, 523, 524, 525, 526, 527, 598, 599,
+])
 # 分时限速：低谷时段用另一档限速（0=不限），窗口可跨零点。
 DOWNLOAD_OFFPEAK_ENABLED_DEFAULT = False
 DOWNLOAD_OFFPEAK_START_DEFAULT = "01:00"

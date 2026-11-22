@@ -53,10 +53,31 @@ function jobBadge(job) {
   });
 }
 
+function retryDelayText(seconds) {
+  var sec = Math.max(0, Math.round(Number(seconds) || 0));
+  if (sec < 60) { return sec + ' 秒'; }
+  var minutes = Math.round(sec / 60);
+  if (minutes < 60) { return minutes + ' 分钟'; }
+  return (Math.round(sec / 360) / 10) + ' 小时';
+}
+
+/* v0067：自动重试等待中的任务——队列里不再只是"排队中"，而是"第 N/M 次，约 X 后"。 */
+function retryStageText(job) {
+  if (!job || job.status !== 'queued') { return ''; }
+  var wait = Number(job.retry_in_sec) || 0;
+  if (wait <= 0) { return ''; }
+  var attempts = Number(job.attempts) || 0;
+  var max = Number(job.retry_max) || 0;
+  var who = max > 0 ? ('第 ' + attempts + '/' + max + ' 次') : ('第 ' + attempts + ' 次');
+  return '等待重试（' + who + '，约 ' + retryDelayText(wait) + '后）';
+}
+
 function stageText(job) {
   var label = job.stage_label || '';
   var parts = [];
-  if (label) { parts.push(label); }
+  var retry = retryStageText(job);
+  if (retry) { parts.push(retry); }
+  else if (label) { parts.push(label); }
   if (job.segments_total) {
     parts.push('分片 ' + (job.segments_done || 0) + '/' + job.segments_total);
   }
@@ -79,6 +100,11 @@ function jobMeta(job) {
     items.push(fmtBytes(job.bytes_done) + ' / ' + fmtBytes(job.bytes_total));
   } else if (job.bytes_done) {
     items.push(fmtBytes(job.bytes_done));
+  }
+  // v0067：失败任务标出自动重试消耗（attempts 含首次执行）
+  var attempts = Number(job.attempts) || 0;
+  if (job.status === 'failed' && attempts > 1) {
+    items.push('已自动重试 ' + (attempts - 1) + ' 次');
   }
   return items.join(' · ');
 }
@@ -105,6 +131,13 @@ function renderJobRow(job) {
     info.appendChild(el('div', {
       className: 'field-error download-row-error',
       text: job.error_message
+    }));
+  }
+  // v0067：等待自动重试时把上次失败原因留在行内，便于判断是不是同一个错
+  if (job.status === 'queued' && Number(job.retry_in_sec) > 0 && job.error_message) {
+    info.appendChild(el('div', {
+      className: 'muted download-row-error',
+      text: '上次失败：' + job.error_message
     }));
   }
   if (job.status === 'done' && job.output_path) {

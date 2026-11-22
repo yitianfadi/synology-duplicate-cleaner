@@ -17,7 +17,8 @@
 | subtitle_audio_source | nas | v0032：`nas`=本机解码抽 16k mp3（只上传音频）；`server`=本机仅流复制抽音轨（不解码），由 ASR 服务器解码（仍只上传音频） |
 | subtitle_audio_prefetch | true | v0040：分片音频预取（默认开）。识别第 N 片时后台线程先抽第 N+1 片音频，NAS 的 FFmpeg 与云端 ASR 重叠；关闭后恢复“抽音频 → 上传 → 识别”严格串行 |
 | subtitle_write_vtt | false | v0033：默认只生成 SRT；`true` 时任务目录额外生成 `.vtt`（写回视频目录始终只写 `.srt`） |
-| subtitle_concurrency | 1 | v0034/v0037：同时执行的字幕任务数 1..4，默认 1（串行，最稳）；**保存设置后立即生效**（动态调整 worker，无需重启套件） |
+| subtitle_concurrency | 1 | v0034/v0037：同时执行的字幕任务数 1..4，默认 1（串行，最稳）；**保存设置后立即生效**（动态调整 worker，无需重启套件）；v0066 起在「字幕 → 任务」标签直接调整 |
+| subtitle_job_limit | 200 | v0066：已完成字幕任务保留上限 20..1000；超出后按创建时间清理任务目录与 DB 记录（写回视频目录的 srt 永不删除）；保存后立即生效，无需重启套件 |
 | subtitle_translate_enabled | true | v0060 起**已废弃、不再生效**：翻译改为“配了 `subtitle_llm_api_key` 即可用”，任务弹窗默认勾选；键仅保留兼容旧配置/旧客户端 |
 | subtitle_llm_base_url | https://api.openai.com/v1 | http/https |
 | subtitle_llm_api_key | "" | GET 不回传明文 |
@@ -373,6 +374,15 @@ v0028 在 v1.3 单文件任务之上新增**目录批量生成 / 翻译**：独�
   - `start-stop-status`：健康检查 15s → **90s**；失败时清理残留进程/端口后**重试一次**；进程存活但未通过检查时返回成功（不把升级判成失败）；`PYTHONPYCACHEPREFIX=<var>/pycache`；全过程写 `<var>/log/start.log`。
   - `postupgrade`：root 身份下补 `chown -R duplicatecleaner:duplicatecleaner <var>`。
 - 版本 1.1.0-0042；SQLite schema 不变（仍 v7）；无接口/错误码变化。
+
+## 23. v0066 并发与保留上限在「字幕 → 任务」标签直接调整
+
+- **背景**：v0060 设置页瘦身把「字幕并发任务数」与「已完成任务保留上限」控件删掉，后端键与校验仍在 → 界面上再无处调整并发（只能调 API）。
+- **前端**：「字幕 → 任务」标签的任务明细卡片顶部新增队列设置（`#subtitleQueueSettings`）：并发下拉 `#subtitleConcurrency`（1..`meta.subtitle.concurrency_max`，默认 1 显示「1（串行）」）与保留上限输入 `#subtitleJobLimit`（`meta.subtitle.job_limit_min..job_limit_max`，默认 200）；`change` 即 `PUT /api/settings` 并 toast 结果，失败回滚控件并展示后端中文错误；批次进度摘要追加「并发 N」；每次进入页面按 `state.settings` 回填。
+- **后端**：`apply_settings()` 同时应用 `subtitle_job_limit`（`_clamp_job_limit` 规范到 20..1000，非法值回退 200）；新上限小于当前任务数时置 `_trim_needed`，由下一次任务注册/完成的 LRU 清理裁剪（只删任务目录与 DB 记录，**写回视频旁的 srt 永不删除**）。补丁中没有该键时保持原值。
+- **meta**：`/api/meta` 的 `subtitle` 增加 `job_limit_min` / `job_limit_max`，与 `config.SUBTITLE_JOB_LIMIT_MIN/MAX` 及设置校验共用常量。
+- **并发语义不变**：调大立即补 worker；调小只让多余 worker 在任务边界退出，正在执行的任务不中断。
+- 版本 1.1.0-0066；SQLite schema 不变（仍 v11）；接口只新增可选字段，无错误码变化。
 
 
 

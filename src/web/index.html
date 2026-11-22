@@ -6,8 +6,8 @@
 <meta name="color-scheme" content="light">
 <meta name="referrer" content="same-origin">
 <title>重复文件清理与影音工具 · Duplicate Cleaner &amp; Media Toolkit</title>
-<link rel="icon" href="./assets/favicon.svg?v=1.1.0-0065" type="image/svg+xml">
-<link rel="stylesheet" href="./styles.css?v=1.1.0-0065">
+<link rel="icon" href="./assets/favicon.svg?v=1.1.0-0067" type="image/svg+xml">
+<link rel="stylesheet" href="./styles.css?v=1.1.0-0067">
 </head>
 <body>
 <a class="skip-link" href="#main">跳到主要内容</a>
@@ -928,6 +928,20 @@
               <svg class="icon" aria-hidden="true"><use href="#i-refresh"></use></svg>刷新任务
             </button>
           </div>
+          <div class="form-grid subtitle-queue-settings" id="subtitleQueueSettings">
+            <div class="field">
+              <label for="subtitleConcurrency">并发任务数（1–4，默认 1）</label>
+              <select id="subtitleConcurrency" aria-label="同时执行的字幕任务数"></select>
+              <p class="hint">同时执行的字幕任务数；调整后立即生效，排队任务马上按新并发调度。调小时正在执行的任务会跑完再退出，不会中断。</p>
+              <p class="field-error" id="subtitleConcurrencyError" role="alert" hidden></p>
+            </div>
+            <div class="field">
+              <label for="subtitleJobLimit">已完成任务保留上限（20–1000）</label>
+              <input id="subtitleJobLimit" type="number" inputmode="numeric" min="20" max="1000" step="1" value="200">
+              <p class="hint">超出后按创建时间清理任务目录与记录；写回视频目录的 srt 永不删除。修改后立即生效，下一次清理按新上限执行。</p>
+              <p class="field-error" id="subtitleJobLimitError" role="alert" hidden></p>
+            </div>
+          </div>
           <div class="form-grid subtitle-filter-bar" id="subtitleFilterBar">
             <div class="field">
               <label for="subtitleJobSearch">检索（路径/任务ID/关键字）</label>
@@ -1766,6 +1780,38 @@
               <label class="check"><input id="setDownloadSubscribeEnabled" type="checkbox">启用订阅下载（定时检查 RSS/网页并自动入队）</label>
               <p class="hint">关闭时不自动轮询，但仍可在下载页对单个订阅「立即检查」。</p>
             </div>
+            <div class="field field-wide">
+              <label class="check"><input id="setDownloadAutoRetry" type="checkbox">下载失败自动重试（一次比一次等得久）</label>
+              <p class="hint">只对网络/服务端临时故障重试：5xx、408、425、429、超时/断网、分片失败；404/403 等确定性错误立即失败。重试走断点续传，不重复下载已完成部分。</p>
+              <p class="field-error" id="setDownloadAutoRetryError" role="alert" hidden></p>
+            </div>
+            <div class="field">
+              <label for="setDownloadAutoRetryMax">最多重试次数（0–10）</label>
+              <input id="setDownloadAutoRetryMax" type="number" min="0" max="10" step="1" inputmode="numeric">
+              <p class="hint">0 = 不自动重试；默认 5 次（共 6 次执行机会）。</p>
+              <p class="field-error" id="setDownloadAutoRetryMaxError" role="alert" hidden></p>
+            </div>
+            <div class="field">
+              <label for="setDownloadAutoRetryBaseSec">首次等待（秒，10–600）</label>
+              <input id="setDownloadAutoRetryBaseSec" type="number" min="10" max="600" step="1" inputmode="numeric">
+              <p class="hint">默认 60 秒。</p>
+              <p class="field-error" id="setDownloadAutoRetryBaseSecError" role="alert" hidden></p>
+            </div>
+            <div class="field">
+              <label for="setDownloadAutoRetryFactor">等待递增倍数（2–5）</label>
+              <input id="setDownloadAutoRetryFactor" type="number" min="2" max="5" step="1" inputmode="numeric">
+              <p class="hint">每次等待 = 上次 × 倍数；默认 3。</p>
+              <p class="field-error" id="setDownloadAutoRetryFactorError" role="alert" hidden></p>
+            </div>
+            <div class="field">
+              <label for="setDownloadAutoRetryCapSec">单次等待上限（秒，60–7200）</label>
+              <input id="setDownloadAutoRetryCapSec" type="number" min="60" max="7200" step="1" inputmode="numeric">
+              <p class="hint">默认 1800 秒（30 分钟）。</p>
+              <p class="field-error" id="setDownloadAutoRetryCapSecError" role="alert" hidden></p>
+            </div>
+            <div class="field field-wide">
+              <p class="hint" id="downloadAutoRetryScheduleHint">默认节奏：1 分钟 → 3 分钟 → 9 分钟 → 27 分钟 → 30 分钟（封顶）。</p>
+            </div>
           </div>
         </details>
 
@@ -2068,6 +2114,6 @@
   <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.6" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M12 10.8v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="12" cy="7.6" r="1.05" fill="currentColor"/></symbol>
 </svg>
 
-<script type="module" src="./app.js?v=1.1.0-0065"></script>
+<script type="module" src="./app.js?v=1.1.0-0067"></script>
 </body>
 </html>

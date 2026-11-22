@@ -1079,6 +1079,47 @@ def run():
               resp.status == 400 and code == "INVALID_ARGUMENT",
               "status=%s code=%s" % (resp.status, code))
 
+        # ---------------- v0066：字幕页「任务」标签的队列设置 ----------------
+        resp = client.get("/api/settings")
+        settings_payload = jd(resp).get("settings", {})
+        check("SUB-36",
+              "GET /api/settings 回传 subtitle_concurrency/subtitle_job_limit（任务页控件数据源）",
+              resp.status == 200
+              and isinstance(settings_payload.get("subtitle_concurrency"), int)
+              and isinstance(settings_payload.get("subtitle_job_limit"), int),
+              "status=%s has_conc=%s has_limit=%s"
+              % (resp.status, "subtitle_concurrency" in settings_payload,
+                 "subtitle_job_limit" in settings_payload))
+
+        resp = client.get("/api/meta")
+        sub_meta = jd(resp).get("subtitle") or {}
+        check("SUB-37",
+              "/api/meta 暴露字幕并发与保留上限范围（1..4 / 20..1000，v0066）",
+              resp.status == 200
+              and sub_meta.get("concurrency_max") == 4
+              and sub_meta.get("default_concurrency") == 1
+              and sub_meta.get("job_limit_min") == 20
+              and sub_meta.get("job_limit_max") == 1000,
+              "status=%s concurrency_max=%s job_limit=%s-%s"
+              % (resp.status, sub_meta.get("concurrency_max"),
+                 sub_meta.get("job_limit_min"), sub_meta.get("job_limit_max")))
+
+        resp = client.put_json("/api/settings",
+                               {"settings": {"subtitle_job_limit": 50}})
+        saved = jd(resp).get("settings", {})
+        check("SUB-38",
+              "PUT /api/settings 可保存 subtitle_job_limit=50（保存后立即生效）",
+              resp.status == 200 and saved.get("subtitle_job_limit") == 50,
+              "status=%s data=%s" % (resp.status, jd(resp)))
+
+        resp = client.put_json("/api/settings",
+                               {"settings": {"subtitle_job_limit": 19}})
+        code, _ = err_code(resp)
+        check("SUB-39",
+              "subtitle_job_limit 超出 20..1000 返回 400 INVALID_ARGUMENT",
+              resp.status == 400 and code == "INVALID_ARGUMENT",
+              "status=%s code=%s" % (resp.status, code))
+
         # ---------------- v0035 补翻译（历史任务派生仅翻译任务） ----------------
         resp = client.post_json(
             "/api/subtitles/sub-20260101-000000-abcdef/translate",
@@ -2957,6 +2998,85 @@ def run():
                           for key in ("active", "queued", "paused", "recent"))
                   and isinstance(data.get("concurrency"), int),
                   "status=%s keys=%s" % (resp.status, sorted(data)))
+
+            # v0067：下载失败指数退避（设置键 + 4xx 不重试 + 快照字段）
+            resp = client.get("/api/settings")
+            auto = jd(resp).get("settings", {})
+            retry_defaults = {
+                "download_auto_retry": auto.get("download_auto_retry"),
+                "download_auto_retry_max": auto.get("download_auto_retry_max"),
+                "download_auto_retry_base_sec":
+                    auto.get("download_auto_retry_base_sec"),
+                "download_auto_retry_factor":
+                    auto.get("download_auto_retry_factor"),
+                "download_auto_retry_cap_sec":
+                    auto.get("download_auto_retry_cap_sec"),
+            }
+            check("DL-RETRY-01",
+                  "GET /api/settings 回传指数退避参数（默认 60/3/1800，最多 5 次）",
+                  resp.status == 200
+                  and retry_defaults["download_auto_retry"] is True
+                  and retry_defaults["download_auto_retry_max"] == 5
+                  and retry_defaults["download_auto_retry_base_sec"] == 60
+                  and retry_defaults["download_auto_retry_factor"] == 3
+                  and retry_defaults["download_auto_retry_cap_sec"] == 1800,
+                  "status=%s data=%s" % (resp.status, retry_defaults))
+
+            resp = client.put_json("/api/settings", {"settings": {
+                "download_auto_retry_max": 3,
+                "download_auto_retry_base_sec": 30,
+                "download_auto_retry_factor": 2,
+                "download_auto_retry_cap_sec": 120}})
+            saved = jd(resp).get("settings", {})
+            check("DL-RETRY-02",
+                  "PUT /api/settings 可保存退避参数（30/2/120，最多 3 次）",
+                  resp.status == 200
+                  and saved.get("download_auto_retry_max") == 3
+                  and saved.get("download_auto_retry_base_sec") == 30
+                  and saved.get("download_auto_retry_factor") == 2
+                  and saved.get("download_auto_retry_cap_sec") == 120,
+                  "status=%s data=%s" % (resp.status, saved))
+
+            for bad in ({"download_auto_retry_base_sec": 5},
+                        {"download_auto_retry_factor": 9},
+                        {"download_auto_retry_cap_sec": 10},
+                        {"download_auto_retry_max": 11}):
+                resp = client.put_json("/api/settings", {"settings": bad})
+                code, _ = err_code(resp)
+                check("DL-RETRY-03",
+                      "退避参数越界返回 400 INVALID_ARGUMENT：%s" % bad,
+                      resp.status == 400 and code == "INVALID_ARGUMENT",
+                      "status=%s code=%s" % (resp.status, code))
+            client.put_json("/api/settings", {"settings": {
+                "download_auto_retry_max": 5,
+                "download_auto_retry_base_sec": 60,
+                "download_auto_retry_factor": 3,
+                "download_auto_retry_cap_sec": 1800}})
+
+            resp = client.post_json("/api/downloads", {
+                "urls": [cdn_base + "/media/missing-0067.bin"]})
+            miss_id = ((jd(resp).get("jobs") or [{}])[0]).get("job_id")
+            miss_detail = {}
+            deadline = time.time() + 30
+            while time.time() < deadline:
+                r2 = client.get("/api/downloads/%s" % quote(miss_id or ""))
+                miss_detail = (jd(r2).get("job") or {})
+                if miss_detail.get("status") in ("done", "failed", "cancelled"):
+                    break
+                time.sleep(0.2)
+            check("DL-RETRY-04",
+                  "404 不重试：任务立即 failed 且 attempts=1（v0067 错误分类）",
+                  miss_detail.get("status") == "failed"
+                  and miss_detail.get("attempts") == 1
+                  and miss_detail.get("error_code") == "HTTP_STATUS",
+                  "status=%s attempts=%s code=%s"
+                  % (miss_detail.get("status"), miss_detail.get("attempts"),
+                     miss_detail.get("error_code")))
+            check("DL-RETRY-05",
+                  "任务快照含 auto_retry / retry_max / retry_in_sec（前端据此显示等待重试）",
+                  all(key in miss_detail
+                      for key in ("auto_retry", "retry_max", "retry_in_sec")),
+                  "keys=%s" % sorted(miss_detail))
 
             resp = client.post_json("/api/downloads", {
                 "urls": [cdn_base + "/live/index.m3u8"]})

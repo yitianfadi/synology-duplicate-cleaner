@@ -254,7 +254,17 @@ class ApiTest(unittest.TestCase):
                          "ffmpeg_path")
 
         fake_ffmpeg = os.path.join(self.harness.tmpdir, "ffmpeg_bin")
-        shutil.copyfile(sys.executable, fake_ffmpeg)
+        if os.name == "nt":
+            # Windows 上不能把 python.exe 拷贝当“非 ffmpeg 可执行文件”桩：副本缺少同目录的
+            # python3xx.dll，加载失败会弹系统错误框并卡住 CreateProcess（/api/meta 探测超时）。
+            # 系统 cmd.exe 自包含、秒退，语义一致（能运行但不是 ffmpeg）。
+            fake_ffmpeg += ".exe"
+            shutil.copyfile(
+                os.path.join(os.environ.get("SystemRoot", r"C:\Windows"),
+                             "System32", "cmd.exe"),
+                fake_ffmpeg)
+        else:
+            shutil.copyfile(sys.executable, fake_ffmpeg)
         try:
             os.chmod(fake_ffmpeg, 0o755)
         except OSError:

@@ -2521,6 +2521,15 @@ input[type="checkbox"]:disabled { cursor: not-allowed; }
    ========================================================================== */
 .subtitle-filter-bar { margin: 8px 0; }
 .subtitle-job-select { margin-right: 6px; }
+/* v0066：字幕页「任务」标签的队列设置（并发任务数 / 已完成任务保留上限） */
+.subtitle-queue-settings {
+  margin: 6px 0 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--card-soft);
+}
+.subtitle-queue-settings .field { margin: 0; }
 .log-search-results { display: flex; flex-direction: column; gap: 10px; margin-top: 8px; }
 .log-search-item {
   border: 1px solid var(--border);

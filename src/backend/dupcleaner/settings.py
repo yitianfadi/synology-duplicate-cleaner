@@ -190,9 +190,13 @@ DEFAULT_SETTINGS = {
     # --- v0053 下载增强（docs/DOWNLOAD_CONTRACT.md §15）---
     # 目标文件已存在（体积一致）时跳过下载，避免重复占用空间。
     "download_skip_existing": config.DOWNLOAD_SKIP_EXISTING_DEFAULT,
-    # 网络类错误自动重试（任务级，退避重排），次数上限 0–5。
+    # 网络类错误自动重试（任务级，退避重排），次数上限 0–10。
     "download_auto_retry": config.DOWNLOAD_AUTO_RETRY_DEFAULT,
     "download_auto_retry_max": config.DOWNLOAD_AUTO_RETRY_MAX_DEFAULT,
+    # v0067：指数退避参数（首次等待 / 每次倍乘 / 单次等待封顶，单位秒）。
+    "download_auto_retry_base_sec": config.DOWNLOAD_AUTO_RETRY_BASE_SEC,
+    "download_auto_retry_factor": config.DOWNLOAD_AUTO_RETRY_FACTOR,
+    "download_auto_retry_cap_sec": config.DOWNLOAD_AUTO_RETRY_CAP_SEC,
     # 分时限速：低谷窗口内使用另一档限速（0 = 不限），支持跨零点。
     "download_offpeak_enabled": config.DOWNLOAD_OFFPEAK_ENABLED_DEFAULT,
     "download_offpeak_start": config.DOWNLOAD_OFFPEAK_START_DEFAULT,
@@ -820,7 +824,8 @@ def _normalize_value(key, value):
     if key == "subtitle_skip_existing":
         return _check_bool(key, value)
     if key == "subtitle_job_limit":
-        return _check_int(key, value, 20, 1000)
+        return _check_int(key, value, config.SUBTITLE_JOB_LIMIT_MIN,
+                          config.SUBTITLE_JOB_LIMIT_MAX)
     if key == "subtitle_translate_outputs":
         if value not in config.SUBTITLE_TRANSLATE_OUTPUTS:
             _err(u"subtitle_translate_outputs 只能是 both/target_only/bilingual_only",
@@ -1013,6 +1018,16 @@ def _normalize_value(key, value):
         return _check_bool(key, value)
     if key == "download_auto_retry_max":
         return _check_int(key, value, 0, config.DOWNLOAD_AUTO_RETRY_MAX_LIMIT)
+    # v0067：指数退避参数（首次等待 / 倍数 / 单次封顶）。
+    if key == "download_auto_retry_base_sec":
+        return _check_int(key, value, config.DOWNLOAD_AUTO_RETRY_BASE_MIN_SEC,
+                          config.DOWNLOAD_AUTO_RETRY_BASE_MAX_SEC)
+    if key == "download_auto_retry_factor":
+        return _check_int(key, value, config.DOWNLOAD_AUTO_RETRY_FACTOR_MIN,
+                          config.DOWNLOAD_AUTO_RETRY_FACTOR_MAX)
+    if key == "download_auto_retry_cap_sec":
+        return _check_int(key, value, config.DOWNLOAD_AUTO_RETRY_CAP_MIN_SEC,
+                          config.DOWNLOAD_AUTO_RETRY_CAP_MAX_SEC)
     if key in ("download_offpeak_start", "download_offpeak_end"):
         return _check_hhmm(key, value)
     if key == "download_offpeak_rate_limit_kbps":

@@ -1021,12 +1021,29 @@ def check_frontend():
     check("FE-SUBTITLE-VTT",
           "默认只生成 SRT，VTT 仍为可选底层能力（v0060 起固定关闭，设置页不再展示）",
           vtt_ui_ok, "subtitle vtt optional setting missing")
+    subtitle_page_js = read(os.path.join(js_dir, "subtitle-page.js")) \
+        if os.path.isfile(os.path.join(js_dir, "subtitle-page.js")) else ""
     concurrency_ui_ok = (
         "subtitle_concurrency" in settings_src
-        and "subtitle_concurrency" in subtitles_src)
+        and "subtitle_concurrency" in subtitles_src
+        and 'id="subtitleConcurrency"' in html
+        and "subtitle_concurrency" in subtitle_page_js
+        and "renderQueueSettings" in subtitle_page_js
+        and "applyQueueSetting" in subtitle_page_js)
     check("FE-SUBTITLE-CONCURRENCY",
-          "字幕并发任务数（默认 1、保存后动态调整 worker）仍可用（v0060 起固定默认）",
+          "字幕并发任务数可在「字幕 → 任务」标签直接调整（1..4，保存后立即生效，v0066）",
           concurrency_ui_ok, "subtitle concurrency setting UI missing")
+    job_limit_ui_ok = (
+        "SUBTITLE_JOB_LIMIT_MIN" in settings_src
+        and "SUBTITLE_JOB_LIMIT_MAX" in settings_src
+        and "SUBTITLE_JOB_LIMIT_MIN" in subtitles_src
+        and "_clamp_job_limit" in subtitles_src
+        and '"subtitle_job_limit" not in settings' in subtitles_src
+        and 'id="subtitleJobLimit"' in html
+        and "subtitle_job_limit" in subtitle_page_js)
+    check("FE-SUBTITLE-JOB-LIMIT",
+          "已完成任务保留上限可在「字幕 → 任务」标签调整（20..1000，保存后立即生效，v0066）",
+          job_limit_ui_ok, "subtitle job limit setting UI missing")
     timeline_ui_ok = (
         "SUBTITLE_STEP_LABEL" in app
         and "subtitleTimelineSection" in app
@@ -1773,12 +1790,45 @@ def check_frontend():
           and ("_JobSkipped" in downloads_src),
           "dedupe markers missing")
     check("BE-DOWNLOAD-RETRY",
-          "任务级自动重试：可重试码 + 退避 + retry_at 调度",
+          "任务级自动重试：可重试码 + 指数退避 + retry_at 调度 + 4xx 分类",
           ("RETRYABLE_CODES" in downloads_src)
           and ("def _schedule_retry" in downloads_src)
+          and ("def _is_retryable_error" in downloads_src)
+          and ("def _auto_retry_delay" in downloads_src)
           and ("retry_at" in downloads_src)
-          and ("DOWNLOAD_AUTO_RETRY_MAX_LIMIT" in config_src),
+          and ("retry_in_sec" in downloads_src)
+          and ("DOWNLOAD_AUTO_RETRY_MAX_LIMIT" in config_src)
+          and ("DOWNLOAD_RETRYABLE_HTTP_STATUS" in config_src),
           "retry markers missing")
+    check("BE-DOWNLOAD-RETRY-BACKOFF",
+          "v0067：指数退避（base/factor/cap + 正向抖动）+ Retry-After + 设置键",
+          ("DOWNLOAD_AUTO_RETRY_BASE_SEC" in config_src)
+          and ("DOWNLOAD_AUTO_RETRY_FACTOR" in config_src)
+          and ("DOWNLOAD_AUTO_RETRY_CAP_SEC" in config_src)
+          and ("DOWNLOAD_AUTO_RETRY_JITTER" in config_src)
+          and ("_parse_retry_after" in downloads_src)
+          and ("retry_after" in downloads_src)
+          and ("download_auto_retry_base_sec" in download_settings_src)
+          and ("download_auto_retry_factor" in download_settings_src)
+          and ("download_auto_retry_cap_sec" in download_settings_src)
+          and ("DOWNLOAD_AUTO_RETRY_BASE_MIN_SEC" in download_settings_src),
+          "backoff markers missing")
+    check("FE-DOWNLOAD-RETRY-UI",
+          "v0067：设置页可配自动重试（开关/次数/首次等待/倍数/封顶）+ 任务行显示等待重试",
+          ('id="setDownloadAutoRetry"' in html)
+          and ('id="setDownloadAutoRetryMax"' in html)
+          and ('id="setDownloadAutoRetryBaseSec"' in html)
+          and ('id="setDownloadAutoRetryFactor"' in html)
+          and ('id="setDownloadAutoRetryCapSec"' in html)
+          and ("download_auto_retry_base_sec" in app)
+          and ("download_auto_retry_factor" in app)
+          and ("download_auto_retry_cap_sec" in app)
+          and ("refreshDownloadAutoRetryHint" in app)
+          and ("retryStageText" in download_page)
+          and ("retry_in_sec" in download_page)
+          and ("download_auto_retry_max: 5" in
+               read(os.path.join(js_dir, "constants.js"))),
+          "download retry UI markers missing")
     check("BE-DOWNLOAD-OFFPEAK",
           "分时限速：HH:MM 窗口（支持跨零点）",
           ("def _in_offpeak" in downloads_src)

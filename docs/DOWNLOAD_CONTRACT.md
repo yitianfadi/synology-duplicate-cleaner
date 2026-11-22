@@ -272,10 +272,21 @@ v0064 起：结果标题显示在候选列表标题上；「加入下载列表�
 - 命中后任务直接置 `done` 且 `skipped=true`、`message` 说明「已存在同名文件，跳过下载」，不写临时目录、不消耗流量（探测请求除外）；
 - `overwrite=true` 或关闭该设置时不跳过；任务选项是提交时快照。
 
-### 15.2 任务级自动重试（`download_auto_retry` / `download_auto_retry_max`）
+### 15.2 任务级自动重试（`download_auto_retry` / `download_auto_retry_max`，v0067 指数退避）
 
-- 只对 `HTTP_STATUS` / `SEGMENT_FAILED` / `INTERNAL_ERROR` 生效；`LIVE_/DRM_/PLAYLIST_INVALID/URL_*/OUTPUT_*/INSUFFICIENT_SPACE/FFMPEG_UNAVAILABLE` 不重试；
-- 退避：`15s × 已尝试次数`，任务回队列并带 `retry_at`，调度器跳过未到期任务；`attempts` 超过 `auto_retry_max`（0–5，默认 2）后标 `failed`；
+- 只对**可能是临时故障**的错误重试：
+  - `HTTP_STATUS` 且无 `status`（断网/超时）、5xx、408、425、429 → 重试；
+  - 4xx 里除 408/425/429（400/401/403/404/405/410 …）→ **不重试**，直接失败；
+  - `SEGMENT_FAILED`、`INTERNAL_ERROR` → 重试；
+  - `LIVE_/DRM_/PLAYLIST_INVALID/URL_*/OUTPUT_*/INSUFFICIENT_SPACE/FFMPEG_UNAVAILABLE/MERGE_FAILED` → 不重试。
+- 退避（v0067，一次比一次长）：
+  `delay(n) = min(cap, base × factor^(n-1))`，再叠加 **0–20% 正向抖动**（只增不减，避免一批任务同时重试）。
+  - 默认 `base=60s`、`factor=3`、`cap=1800s`、`max=5` → **1 分钟 → 3 分钟 → 9 分钟 → 27 分钟 → 30 分钟（封顶）**，共 6 次执行机会；
+  - 429/503 带 `Retry-After` 时取 `max(指数退避, Retry-After)`，仍受 `cap` 与次数限制；
+  - 退避三项（`download_auto_retry_base_sec` / `_factor` / `_cap_sec`）在**每次重试时实时读设置**，改完对等待中的任务立即生效；开关与次数是提交时快照（任务选项）。
+- 任务回队列并带 `retry_at`（重启后仍保留），调度器跳过未到期任务；`attempts` 超过 `auto_retry_max`（0–10，默认 5）后标 `failed`。
+- 快照新增 `retry_in_sec` / `retry_max` / `auto_retry`；任务行显示「等待重试（第 N/M 次，约 X 后）」，失败行显示「已自动重试 N 次」。
+- 手动「重试」会**复位 `attempts=0`**（重新给满自动重试额度）。
 - 队列顺序仍按「优先级 → 创建时间」，重试任务不抢占。
 
 ### 15.3 分时限速（`download_offpeak_*`）

@@ -1211,6 +1211,16 @@ def _clamp_concurrency(value):
     return max(1, min(concurrency, config.SUBTITLE_CONCURRENCY_MAX))
 
 
+def _clamp_job_limit(value):
+    """v0066：把设置里的 subtitle_job_limit 规范到 MIN..MAX（非法值回退默认 200）。"""
+    try:
+        job_limit = int(value or config.SUBTITLE_JOB_LIMIT_DEFAULT)
+    except (TypeError, ValueError):
+        job_limit = config.SUBTITLE_JOB_LIMIT_DEFAULT
+    return max(config.SUBTITLE_JOB_LIMIT_MIN,
+               min(job_limit, config.SUBTITLE_JOB_LIMIT_MAX))
+
+
 class _AudioPrefetch(object):
     """v0040：分片音频预取（只预读 1 片，让 NAS 的 FFmpeg 与云端 ASR 重叠）。
 
@@ -1427,10 +1437,15 @@ class SubtitleService(object):
             self._ensure_worker()
 
     def apply_settings(self, settings=None):
-        """v0037：立即应用 subtitle_concurrency（保存设置后生效，无需重启套件）。
+        """v0037/v0066：立即应用 subtitle_concurrency 与 subtitle_job_limit。
 
-        调大并发 → 立即补 worker 消化排队任务；调小 → 只把多余 worker 标记为
-        待退出，正在执行的任务不中断，跑完当前任务后线程自行结束。
+        保存设置后生效，无需重启套件：
+        - 并发：调大立即补 worker 消化排队任务；调小只把多余 worker 标记为
+          待退出，正在执行的任务不中断，跑完当前任务后线程自行结束。
+        - 保留上限（v0066）：更新 job_limit；新上限小于当前任务数时置
+          `_trim_needed`，由下一次任务注册/完成的 LRU 清理按新上限裁剪
+          （只删任务目录与 DB 记录，永不删除写回视频旁的 srt）。
+          设置里没有 `subtitle_job_limit` 键时保持原值不变。
         """
         if settings is None:
             try:
@@ -1440,9 +1455,15 @@ class SubtitleService(object):
         if not isinstance(settings, dict):
             settings = {}
         concurrency = _clamp_concurrency(settings.get("subtitle_concurrency"))
+        job_limit = (self.job_limit if "subtitle_job_limit" not in settings
+                     else _clamp_job_limit(settings.get("subtitle_job_limit")))
         with self._lock:
             changed = concurrency != self.concurrency
             self.concurrency = concurrency
+            if job_limit != self.job_limit:
+                self.job_limit = job_limit
+                if len(self._jobs) > self.job_limit:
+                    self._trim_needed = True
             # 没有 worker/排队任务时保持惰性：下一次 submit 会按新并发起线程。
             if changed and (self._workers or self._retiring or self._queue):
                 self._sync_workers_locked()

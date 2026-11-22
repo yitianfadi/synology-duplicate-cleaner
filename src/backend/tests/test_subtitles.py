@@ -1234,6 +1234,48 @@ class SubtitleConcurrencyTest(SubtitleTestBase):
         self.assertEqual(len(service._workers), 2)
         self.assertTrue(all(worker.is_alive() for worker in service._workers))
 
+    def test_apply_settings_updates_job_limit_without_restart(self):
+        """v0066：保留上限保存后立即生效（无需重启套件），越界/非法值被规范。"""
+        self._configure_settings(subtitle_job_limit=80)
+        service = self._new_service()
+        self.assertEqual(service.job_limit, 80)
+        service.apply_settings({"subtitle_concurrency": 1,
+                                "subtitle_job_limit": 20})
+        self.assertEqual(service.job_limit, 20)
+        service.apply_settings({"subtitle_concurrency": 1,
+                                "subtitle_job_limit": 99999})
+        self.assertEqual(service.job_limit, subtitles.config.SUBTITLE_JOB_LIMIT_MAX)
+        service.apply_settings({"subtitle_concurrency": 1,
+                                "subtitle_job_limit": "abc"})
+        self.assertEqual(service.job_limit,
+                         subtitles.config.SUBTITLE_JOB_LIMIT_DEFAULT)
+
+    def test_apply_settings_keeps_job_limit_when_key_missing(self):
+        """补丁里没有 subtitle_job_limit 时保持原值（只改并发不误改保留上限）。"""
+        self._configure_settings(subtitle_job_limit=64)
+        service = self._new_service()
+        self.assertEqual(service.job_limit, 64)
+        self.assertEqual(service.apply_settings({"subtitle_concurrency": 2}), 2)
+        self.assertEqual(service.job_limit, 64)
+
+    def test_lowering_job_limit_marks_trim_and_trims_next_time(self):
+        """调小上限后置 _trim_needed，下一次清理按新上限裁剪。"""
+        service = self._new_service()
+        for _index in range(25):
+            job = subtitles.SubtitleJob(
+                subtitles.make_job_id(), "v.mp4", "auto", False, "zh", "admin")
+            job.status = "done"
+            job.created_epoch = time.time()
+            service._jobs[job.job_id] = job
+        self.assertFalse(service._trim_needed)
+        service.apply_settings({"subtitle_concurrency": 1,
+                                "subtitle_job_limit": 20})
+        self.assertEqual(service.job_limit, 20)
+        self.assertTrue(service._trim_needed)
+        with service._lock:
+            service._trim_jobs_locked()
+        self.assertLessEqual(len(service._jobs), 20)
+
 
 class SubtitleAudioPrefetchTest(SubtitleTestBase):
     """v0040：分片音频预取（预读 1 片：抽音频与上一片 ASR 重叠；关闭后串行）。"""

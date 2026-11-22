@@ -1,7 +1,7 @@
 {
-  "generated_at": "2026-11-19T22:19:15+0800",
+  "generated_at": "2026-11-22T12:08:18+0800",
   "summary": {
-    "PASS": 257,
+    "PASS": 260,
     "FAIL": 0,
     "UNVERIFIED": 0
   },
@@ -28,7 +28,7 @@
       "id": "BE-FILE-COUNT",
       "name": "后端 Python 文件数",
       "status": "INFO",
-      "detail": "89"
+      "detail": "90"
     },
     {
       "id": "BE-SRC-HYGIENE",
@@ -52,7 +52,7 @@
       "id": "BE-UNITTEST-LOG",
       "name": "unittest 结果",
       "status": "INFO",
-      "detail": "Ran 895 tests in 155.840s"
+      "detail": "Ran 913 tests in 293.902s"
     },
     {
       "id": "BE-NO-AUTODELETE",
@@ -500,7 +500,13 @@
     },
     {
       "id": "FE-SUBTITLE-CONCURRENCY",
-      "name": "字幕并发任务数（默认 1、保存后动态调整 worker）仍可用（v0060 起固定默认）",
+      "name": "字幕并发任务数可在「字幕 → 任务」标签直接调整（1..4，保存后立即生效，v0066）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "FE-SUBTITLE-JOB-LIMIT",
+      "name": "已完成任务保留上限可在「字幕 → 任务」标签调整（20..1000，保存后立即生效，v0066）",
       "status": "PASS",
       "detail": ""
     },
@@ -962,7 +968,19 @@
     },
     {
       "id": "BE-DOWNLOAD-RETRY",
-      "name": "任务级自动重试：可重试码 + 退避 + retry_at 调度",
+      "name": "任务级自动重试：可重试码 + 指数退避 + retry_at 调度 + 4xx 分类",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "BE-DOWNLOAD-RETRY-BACKOFF",
+      "name": "v0067：指数退避（base/factor/cap + 正向抖动）+ Retry-After + 设置键",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "FE-DOWNLOAD-RETRY-UI",
+      "name": "v0067：设置页可配自动重试（开关/次数/首次等待/倍数/封顶）+ 任务行显示等待重试",
       "status": "PASS",
       "detail": ""
     },
@@ -1442,7 +1460,7 @@
     },
     {
       "id": "SPK-DIST",
-      "name": "构建产物存在（DuplicateCleaner-1.1.0-0065.spk）",
+      "name": "构建产物存在（DuplicateCleaner-1.1.0-0067.spk）",
       "status": "PASS",
       "detail": ""
     },
@@ -1454,7 +1472,7 @@
     },
     {
       "id": "SPK-VERSION",
-      "name": "SPK INFO.version 与当前源码 APP_VERSION（1.1.0-0065）一致",
+      "name": "SPK INFO.version 与当前源码 APP_VERSION（1.1.0-0067）一致",
       "status": "PASS",
       "detail": ""
     },

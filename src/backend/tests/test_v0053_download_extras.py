@@ -150,19 +150,27 @@ class PageParseSpaceTest(unittest.TestCase):
         self.assertEqual(self.h.service._effective_rate_limit(job), 0)
 
     # -- 自动重试 -------------------------------------------------------
-    def _patched_backoff(self):
+    def _patched_backoff(self, base=0.2, factor=2, cap=1.0):
+        """v0067：退避参数改名为 基准/倍数/封顶，并关闭抖动保持确定。"""
         import contextlib
-        service = self
 
         @contextlib.contextmanager
         def _ctx():
-            original = downloads_module.config.DOWNLOAD_AUTO_RETRY_BACKOFF_SEC
-            downloads_module.config.DOWNLOAD_AUTO_RETRY_BACKOFF_SEC = 0.2
+            keys = ("DOWNLOAD_AUTO_RETRY_BASE_SEC",
+                    "DOWNLOAD_AUTO_RETRY_FACTOR",
+                    "DOWNLOAD_AUTO_RETRY_CAP_SEC",
+                    "DOWNLOAD_AUTO_RETRY_JITTER")
+            originals = {key: getattr(downloads_module.config, key)
+                         for key in keys}
+            downloads_module.config.DOWNLOAD_AUTO_RETRY_BASE_SEC = base
+            downloads_module.config.DOWNLOAD_AUTO_RETRY_FACTOR = factor
+            downloads_module.config.DOWNLOAD_AUTO_RETRY_CAP_SEC = cap
+            downloads_module.config.DOWNLOAD_AUTO_RETRY_JITTER = 0
             try:
                 yield
             finally:
-                downloads_module.config.DOWNLOAD_AUTO_RETRY_BACKOFF_SEC = \
-                    original
+                for key, value in originals.items():
+                    setattr(downloads_module.config, key, value)
         return _ctx()
 
     def test_auto_retry_after_server_errors(self):

@@ -379,7 +379,11 @@ export var DEFAULT_SETTINGS = {
   // v0053 下载增强
   download_skip_existing: true,
   download_auto_retry: true,
-  download_auto_retry_max: 2,
+  download_auto_retry_max: 5,
+  // v0067 指数退避（首次等待 / 每次倍乘 / 单次封顶，秒）
+  download_auto_retry_base_sec: 60,
+  download_auto_retry_factor: 3,
+  download_auto_retry_cap_sec: 1800,
   download_offpeak_enabled: false,
   download_offpeak_start: '01:00',
   download_offpeak_end: '08:00',
