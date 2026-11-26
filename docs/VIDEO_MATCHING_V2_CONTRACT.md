@@ -2,7 +2,7 @@
 
 > 版本：`1.1.0-0047` · SQLite schema 仍 **v8**（视频指纹缓存为独立 SQLite 文件 `<var>/cache/video.sqlite`）
 > 关联：[CONTRACT.md](CONTRACT.md) §6/§7、[ARCHITECTURE.md](ARCHITECTURE.md) §17、
-> [REQUIREMENTS_V2_ASSESSMENT.md](REQUIREMENTS_V2_ASSESSMENT.md) §1 第 11 项、§2 第 3 条
+> [FEATURES.md](FEATURES.md) §1.3（视频视觉相似）
 
 ## 0. 一句话
 

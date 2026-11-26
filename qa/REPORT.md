@@ -11,7 +11,7 @@
 | 覆盖说明 | v0050 已于 2026-11-10 在 DSM 真机完成 1.1.0-0042 → 1.1.0-0050 覆盖升级；v0043–v0050 功能项仍待逐条真机验证 |
 
 > 本文件只保留当前有效结论与证据索引。逐版本需求复述、实现细节与踩坑长文已删除；
-> 需要追溯时见 `docs/README.md`（文档索引）、`docs/*_CONTRACT.md`、`docs/REQUIREMENTS_V2_ASSESSMENT.md` 与 `git log`。
+> 需要追溯时见 `docs/README.md`（文档索引）、`docs/*_CONTRACT.md`、`docs/FEATURES.md`（按功能检索）与 `git log`；版本要点见 `docs/CHANGELOG.md`。
 
 ## 1. 当前基线
 
@@ -401,7 +401,7 @@ python build/build_spk.py --no-icons --out-dir $env:TEMP\qa-build1
 
 本报告是当前基线的汇总入口；每个版本的需求背景、实现取舍与踩坑细节保留在
 `docs/SUBTITLE_CONTRACT.md`、`docs/SUBTITLE_BATCH_CONTRACT.md`、`docs/STORAGE_CONTRACT.md`、
-`docs/REQUIREMENTS_V2_ASSESSMENT.md` 与 `docs/README.md`，逐次提交记录见 `git log`。
+`docs/FEATURES.md`（功能与关键词）、`docs/CHANGELOG.md`（版本要点）与 `docs/README.md`，逐次提交记录见 `git log`。
 
 ### 7.4 构建可复现性
 

@@ -135,7 +135,7 @@ Linux 的 `st_ctime` 是 **inode 状态变更时间**，不是创建时间，复
 
 ## 4. 前端页面结构
 
-（详细线框图与交互见 `docs/UI_PROTOTYPE.md`）
+（页面与交互见 [FEATURES.md](FEATURES.md) 与 `CONTRACT.md` §10）
 
 静态 SPA 采用 ES modules：`web/app.js` 为入口，常量/状态/DOM 工具/格式化/API/Toast/弹窗拆到 `web/js/` 下基础模块；v0057 起把面板业务也拆成独立模块——`labels.js`（共享判定/标签）、`scan-history.js`、`deletion-jobs.js`、`trash-page.js`、`logs-page.js`、`subtitle-shared.js`、`subtitle-jobs.js`，与已有的 `subtitle-page.js` / `download-page.js` / `convert-page.js` 并列。模块只能依赖基础模块与 `state.js` 的钩子，**不反向 import app.js**；无构建步骤、无第三方依赖。后端对 `.js/.css` 响应 `Cache-Control: no-cache`，升级后浏览器会重新校验模块文件。
 
@@ -586,7 +586,7 @@ Linux 的 `st_ctime` 是 **inode 状态变更时间**，不是创建时间，复
 
 ## 19. 任务中心 / 权限体检 / 日志增强（v0049）
 
-> 详细契约见 [TASK_CENTER_V2_CONTRACT.md](TASK_CENTER_V2_CONTRACT.md)。
+> 任务检索/日志/权限体检的现行接口见 [CONTRACT.md](CONTRACT.md) §8–§9；v0057 起任务中心页已退役（内容拆入扫描/字幕/设置内嵌标签）。
 
 - **任务检索**：`SubtitleService._matches_filters` 支持 q（路径/任务ID/消息）、suffix、directory
   （path_key 前缀）、category（失败分类），与 status/group_id/batch_id 组合；前端在有筛选条件时
@@ -633,7 +633,7 @@ Linux 的 `st_ctime` 是 **inode 状态变更时间**，不是创建时间，复
 - **两种引擎**：直链走 `Range` 续传；HLS 先 `hls.parse`，主列表按 `download_max_height` 选变体，`hls.plan_local_files` 生成下载计划，`ThreadPoolExecutor(segment_concurrency)` 拉分片（存在即跳过 = 断点续传），`hls.build_local_playlist` 写本地 m3u8，再交给 `FFmpegTool.run(-c copy)`。
 - **为什么用本地化播放列表**：后端只允许标准库，Python 无 AES；纯 Python CBC 在 NAS 上只有几 MB/s。把分片与 key 落地、让 FFmpeg 用原生 AES 解密 + 无损封装，既守约束又快，还能覆盖 fMP4/`EXT-X-MAP`/字节范围/密钥轮换。
 - **落盘**：临时目录放在输出目录内部（`.dc-download-<job_id>`），分片与产物先 `*.dcpart` 再 `os.replace`，因此同卷 rename、不跨卷搬运；完成删临时目录，失败保留以便重试。
-- **持久化**：SQLite schema v9 只存任务汇总（`payload_json` 文档式），分片进度以磁盘状态为准，避免每个分片写库；进度落库节流 2s。
+- **持久化**：引入时（schema v9）只存任务汇总（`payload_json` 文档式），分片进度以磁盘状态为准，避免每个分片写库；进度落库节流 2s。
 - **IO 保护**：任务级并发 1–4（默认 2）、分片并发 1–16（默认 4）、全局限速按运行任务均分、剩余空间闸门；NAS 上字幕/索引与下载同时跑时建议 1–2 任务。
 - **联动**：任务完成回调在 `services._make_download_complete` 里实现自动扫描（同目录 600s 去抖）与自动字幕（`create_batch`），全部 best-effort。
 - **安全**：`assert_url_allowed` 做协议/长度/凭据/内网地址校验（`download_allow_private` 可放开）；输出目录经 `check_path_safety` + `ShareService.share_root`；Cookie 是密钥键，日志与任务详情都不回显。
@@ -675,7 +675,7 @@ Linux 的 `st_ctime` 是 **inode 状态变更时间**，不是创建时间，复
 - **硬件编解码（v0065）**：`hwaccel.py` 探测 `/dev/dri/renderD128` + 随包 `lib/vaapi`（libva 2.22 / libigdgmm / iHD / i965），拼 `LIBVA_DRIVER_NAME`/`LIBVA_DRIVERS_PATH`/`LD_LIBRARY_PATH` 交给 `FFmpegTool.run_stream(env_extra=…)`；`probe_vaapi()` 用一次最小 `-init_hw_device vaapi` 确认可用（缓存）。3 个硬件预设走 `-vaapi_device` + CQP（`-qp`）；源编码在驱动能力表内时全 GPU（`-hwaccel vaapi -hwaccel_output_format vaapi`），否则软解 + `hwupload`；失败自动回退同容器 CPU 预设（审计 `convert_hw_fallback`）。实测 DS920+：H.264 硬编 3.49×、HEVC 硬解→H.264 硬编 9.07×。
 - **覆盖与删除**：默认 `rename`（`名称 (2).ext`）；源=目标时强制改名，绝不原地覆盖；`delete_source` 必须 `confirm="DELETE SOURCE"` 且校验通过后才删，并记审计。
 - **`.dcpart` 的坑（v0056 一并修下载）**：FFmpeg 按输出扩展名推断容器，`.dcpart` 会让它报 `Unable to choose an output format`；转换所有预设显式 `-f <muxer>`，下载的 `_merge`/`_remux` 也补 `-f mp4`，并有 static `BE-DOWNLOAD-PART-FORMAT` 兜底。
-- **持久化**：SQLite schema v10 只新增 `convert_jobs`（`payload_json` 文档式），进度落库节流 2s，与下载一致。
+- **持久化**：引入时（schema v10）只新增 `convert_jobs`（`payload_json` 文档式），进度落库节流 2s，与下载一致。
 - **性能取舍**：NAS 无独显，转码并发默认 1；copy 预设（MKV/MP4 换封装）秒级、几乎不耗 CPU，是"先能用"的默认路径；重编码在设置里明确提示耗时风险。
 
 ## 23. 任务中心退役：功能下放到各模块（v0057）

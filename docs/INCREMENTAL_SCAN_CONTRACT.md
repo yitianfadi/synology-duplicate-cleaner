@@ -2,7 +2,7 @@
 
 > 版本：`1.1.0-0043` · SQLite schema **v8** · 后端 Python 3.8+ 仅标准库
 > 关联文档：[ARCHITECTURE.md](ARCHITECTURE.md) §13、[CONTRACT.md](CONTRACT.md) §6/§7/§8、
-> [STORAGE_CONTRACT.md](STORAGE_CONTRACT.md) §1、[REQUIREMENTS_V2_ASSESSMENT.md](REQUIREMENTS_V2_ASSESSMENT.md) §1 第 1–4 项、§4 默认值
+> [STORAGE_CONTRACT.md](STORAGE_CONTRACT.md) §1；功能入口与关键词见 [FEATURES.md](FEATURES.md) §1.4（默认值以设置页/`config.py` 为准）
 
 ## 0. 一句话结论
 

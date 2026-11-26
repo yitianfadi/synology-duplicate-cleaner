@@ -2,7 +2,7 @@
 
 > 版本：`1.1.0-0048` · SQLite schema 仍 **v8**（监控状态为 `<var>/subtitle_watch_state.json`）
 > 关联：[SUBTITLE_BATCH_CONTRACT.md](SUBTITLE_BATCH_CONTRACT.md)、[CONTRACT.md](CONTRACT.md) §6/§8、
-> [ARCHITECTURE.md](ARCHITECTURE.md) §18、[REQUIREMENTS_V2_ASSESSMENT.md](REQUIREMENTS_V2_ASSESSMENT.md) §1 第 12–15 项、§4 默认值
+> [ARCHITECTURE.md](ARCHITECTURE.md) §18；功能入口与关键词见 [FEATURES.md](FEATURES.md) §4
 
 ## 0. 一句话
 

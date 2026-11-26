@@ -90,7 +90,7 @@
 - 本地化文件名固定：`seg_%06d<ext>`、`init_%04d<ext>`、`key_%04d.bin`，重写后的 `local.m3u8` 只引用本地文件名（含 `IV=`），交给 FFmpeg 解密与封装；
 - 媒体后缀白名单：`.ts/.m4s/.mp4/.m4v/.m4a/.aac/.cmfv/.cmfa/.mp3/.ac3/.ec3`，其余按 `.ts`。
 
-## 5. 数据模型（schema v9）
+## 5. 数据模型（引入时 schema v9；当前全局 schema v11）
 
 ```sql
 download_jobs(job_id PK, group_id, status, payload_json, created_epoch, updated_epoch)

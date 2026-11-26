@@ -1,7 +1,7 @@
 {
-  "generated_at": "2026-11-22T12:08:18+0800",
+  "generated_at": "2026-11-26T16:20:49+0800",
   "summary": {
-    "PASS": 260,
+    "PASS": 259,
     "FAIL": 0,
     "UNVERIFIED": 0
   },
@@ -41,18 +41,6 @@
       "name": "存在后端 unittest 测试文件",
       "status": "PASS",
       "detail": ""
-    },
-    {
-      "id": "BE-UNITTEST",
-      "name": "后端 unittest 全部通过",
-      "status": "PASS",
-      "detail": ""
-    },
-    {
-      "id": "BE-UNITTEST-LOG",
-      "name": "unittest 结果",
-      "status": "INFO",
-      "detail": "Ran 913 tests in 293.902s"
     },
     {
       "id": "BE-NO-AUTODELETE",

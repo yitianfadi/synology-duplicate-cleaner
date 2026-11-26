@@ -119,7 +119,7 @@
 - 超时：`max(600, 源时长 × 系数)`，copy 系数 1、转码系数 8。
 - 产物校验：体积 ≥ 1024B、音/视频轨存在、时长偏差 ≤ 5s（超出只告警，不判失败）。
 
-## 5. 数据模型（schema v10）
+## 5. 数据模型（引入时 schema v10；当前全局 schema v11）
 
 ```sql
 CREATE TABLE convert_jobs (

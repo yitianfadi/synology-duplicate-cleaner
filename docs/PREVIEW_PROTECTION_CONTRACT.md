@@ -2,7 +2,7 @@
 
 > 版本：`1.1.0-0044` · SQLite schema 仍 **v8**（本版无 DB 迁移）
 > 关联：[CONTRACT.md](CONTRACT.md) §6/§8、[ARCHITECTURE.md](ARCHITECTURE.md) §14、
-> [REQUIREMENTS_V2_ASSESSMENT.md](REQUIREMENTS_V2_ASSESSMENT.md) §1 第 5–6 项
+> [FEATURES.md](FEATURES.md) §2（预览增强 / 删除白名单）
 
 ## 0. 一句话
 
