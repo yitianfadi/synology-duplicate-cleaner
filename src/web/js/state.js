@@ -251,7 +251,8 @@ export var IDS = ('loginView loginForm loginUsername loginPassword loginOtp logi
   'downloadCandidatesList downloadApplyCandidatesBtn ' +
   'downloadSelectAllCandidatesBtn downloadClearCandidatesBtn ' +
   'downloadApplyHint downloadStorageHint downloadPauseAllBtn ' +
-  'downloadResumeAllBtn downloadRetryFailedBtn downloadExportLink ' +
+  'downloadResumeAllBtn downloadRetryFailedBtn downloadClearDoneBtn ' +
+  'downloadClearFailedBtn downloadExportLink ' +
   'downloadBookmarkletDetails downloadBookmarkletCode ' +
   'downloadBookmarkletCopyBtn downloadBookmarkletHint ' +
   'downloadSubscribeStatus downloadSubscribeUrl downloadSubscribeInterval ' +

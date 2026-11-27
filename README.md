@@ -2,8 +2,8 @@
 
 一款为 Synology DSM 7.x 编写的重复文件清理与影音工具：提供**哈希精准匹配**、**图片/文档内容相似**与**视频视觉相似**三种扫描模式，默认只保留**创建时间最晚**的一份；先出报告，人工核对、两次确认后才删除，默认移入群晖回收站，并持久化操作日志。图片/文档相似结果必须人工复核、禁止一键批量删除；视频相似组默认不勾选，允许手动全选批量删除。另附字幕（云端 ASR/LLM）、下载（直链/HLS）、格式转换与音视频合成四个独立模块。
 
-> **当前代码版本：1.1.0-0067（已发布）**（2026-11-22）—— 下载失败改为**指数退避自动重试**：默认 1 分钟 → 3 分钟 → 9 分钟 → 27 分钟 → 30 分钟（封顶），最多 5 次；只重试临时故障（5xx/408/425/429/超时/分片），404/403 等立即失败；设置页可调次数/首次等待/倍数/封顶，任务行显示「等待重试（第 N/M 次，约 X 后）」。
-> 最近一次正式发布为 [v1.1.0-0067](https://github.com/yitianfadi/synology-duplicate-cleaner/releases/tag/v1.1.0-0067)（下载指数退避重试；同时包含未单独发版的 v0066 字幕队列设置）；全部版本见 [CHANGELOG](docs/CHANGELOG.md)。
+> **当前代码版本：1.1.0-0068（已发布）**（2026-11-27）—— 下载页「下载任务」新增**清空已完成**与**清空失败/取消**：一键删除对应任务的记录（不删除已下载的文件），清空前失败任务仍可重试；接口 `POST /api/downloads/bulk` 支持 `clear_finished` 与 `done|failed|cancelled|failed_cancelled|finished` 范围。
+> 最近一次正式发布为 [v1.1.0-0068](https://github.com/yitianfadi/synology-duplicate-cleaner/releases/tag/v1.1.0-0068)（下载任务清空已完成/失败/取消）；更早版本见 [CHANGELOG](docs/CHANGELOG.md)。
 
 > ## ⚠️ 风险提示
 > **删除文件存在数据丢失风险，重要数据建议先备份；本工具仅基于哈希判定重复，无法保证业务文件适用性，请核对扫描结果再操作。**
@@ -24,7 +24,7 @@
 | 增量扫描 | 增量、incremental、hash cache、new_only |
 | 预览 / 删除 / 回收站 | 预览、preview、删除、回收站、recycle、恢复、永久删除、硬链接合并 |
 | 字幕 / 翻译 | 字幕、subtitle、ASR、Whisper、LLM、翻译、双语、srt、vtt、批量、目录监控 |
-| 下载 | 下载、download、HLS、m3u8、DASH、AES-128、解析、cURL、RSS 订阅、自动重试、退避 |
+| 下载 | 下载、download、HLS、m3u8、DASH、AES-128、解析、cURL、RSS 订阅、自动重试、退避、清空已完成 |
 | 格式转换 | 转换、convert、转码、换容器、remux、预设、VAAPI、QSV、NVDEC、覆盖进回收站 |
 | 音视频合成 | 合成、merge、拼接、concat、混流、mux |
 | 计划 / 通知 | 计划扫描、schedule、Webhook、Telegram、告警 |
@@ -81,6 +81,7 @@
 - **分时限速（v0053）**：低谷时段（支持跨零点）用另一档限速，白天走常规限速
 - **文件名模板（v0053）**：`{title}/{site}/{date}/{height}/{season}/{episode}…`，自动识别 `S01E02` 与「第二季第三集」
 - **队列操作（v0053）**：任务置顶、全部暂停/继续、重试失败、导出 CSV；任务列表显示下载目录剩余空间
+- **清空已完成 / 失败（v0068）**：下载任务工具栏「清空已完成」「清空失败/取消」二次确认后删除对应任务记录，**已下载的文件保留**；接口 `POST /api/downloads/bulk`（`action=clear_finished`，范围 `done|failed|cancelled|failed_cancelled|finished`）
 - **书签脚本（v0053）**：在播放页一键把当前地址发到 NAS 下载页并自动解析
 - **DASH 支持（v0054）**：`.mpd`（SegmentTemplate/SegmentTimeline/SegmentList/SegmentBase）下载音视频轨并合并为 MP4；含 `ContentProtection` 的 DRM 清单直接拒绝
 - **订阅下载（v0054）**：RSS/Atom 或播放网页按间隔检查新条目自动入队，已下载地址不重复；可手动「立即检查」
@@ -124,7 +125,7 @@
 ```bash
 python build/fetch_ffmpeg.py   # 首次构建：下载两个架构的静态 FFmpeg 到 vendor/ffmpeg/
 python build/build_spk.py
-# 生成 dist/DuplicateCleaner-1.1.0-0067.spk
+# 生成 dist/DuplicateCleaner-1.1.0-0068.spk
 ```
 
 构建机需要 Python 3.8+；FFmpeg 二进制不提交到 Git，首次构建需运行 `build/fetch_ffmpeg.py`。重新生成图标需要 Pillow（仓库已带 PNG，可 `--no-icons`）。
@@ -132,7 +133,7 @@ python build/build_spk.py
 ### 2. 安装到 DSM
 
 1. DSM 套件中心先安装 **Python3**（3.8+）。
-2. 套件中心 → 手动安装 → 选择 `dist/DuplicateCleaner-1.1.0-0067.spk`。
+2. 套件中心 → 手动安装 → 选择 `dist/DuplicateCleaner-1.1.0-0068.spk`。
 3. 启动套件；从 DSM 主菜单打开“重复文件清理与字幕”，或访问 `http://<NAS>:8787/`。
 4. 使用 administrators 组账号登录。
 5. 按页面黄色“权限提示”给 `duplicatecleaner` 系统内部用户授权目标共享文件夹（读取；删除副本需读取/写入）。

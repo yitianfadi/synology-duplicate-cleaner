@@ -34,7 +34,7 @@
 |---|---|
 | [README.md](../README.md) | 功能概览、安装、开发联调、测试、安全摘要、已知限制 |
 | [FEATURES.md](FEATURES.md) | **按功能/关键词检索的功能总览**：入口、接口、设置键、契约、源码位置 |
-| [CHANGELOG.md](CHANGELOG.md) | 全部版本历史（当前 1.1.0-0067） |
+| [CHANGELOG.md](CHANGELOG.md) | 全部版本历史（当前 1.1.0-0068） |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | 组件与目录、扫描/哈希/时间/删除设计、群晖 API 调用点、性能、按版本演进 |
 | [SPK_PACKAGING.md](SPK_PACKAGING.md) | 依赖、构建、安装、权限、TLS、日志、升级/卸载、排错 |
 

@@ -8,6 +8,7 @@ import { api, errorMessage } from './api.js';
 import { els, state } from './state.js';
 import { clear, el, hide, setHidden, setText, show } from './dom.js';
 import { fmtBytes, fmtDateTime, fmtElapsed } from './format.js';
+import { confirmDialog } from './modal.js';
 import { toast } from './toast.js';
 
 var POLL_MS = 2000;
@@ -223,7 +224,22 @@ function renderJobs(snapshot) {
     ' · 失败 ' + (counts.failed || 0));
   setText(els.downloadConcurrencyHint,
     '同时下载 ' + (snapshot && snapshot.concurrency ? snapshot.concurrency : '—') + ' 个');
+  // v0068：有对应的已结束任务时才能「清空已完成 / 清空失败/取消」
+  var doneCount = Number(counts.done) || 0;
+  var failedCount = (Number(counts.failed) || 0) + (Number(counts.cancelled) || 0);
+  setClearButton('downloadClearDoneBtn', doneCount,
+    '删除 ' + doneCount + ' 个已完成任务的记录（不会删除已下载的文件）');
+  setClearButton('downloadClearFailedBtn', failedCount,
+    '删除 ' + failedCount + ' 个失败/已取消任务的记录（不会删除已下载的文件）');
   renderStorage(snapshot);
+}
+
+/* v0068：清空按钮的可用态 + 悬停说明（数量为 0 时禁用）。 */
+function setClearButton(id, count, title) {
+  var button = els[id];
+  if (!button) { return; }
+  button.disabled = count === 0;
+  button.title = count > 0 ? title : '暂无可清空的任务';
 }
 
 function renderError(message) {
@@ -297,6 +313,65 @@ async function deleteJob(jobId) {
     toast('任务已删除', 'success');
   } catch (err) {
     toast(errorMessage(err, '删除失败。'), 'error');
+  }
+  refreshDownloadQueue();
+}
+
+/* v0068：清空已结束任务记录（只删记录，不删除已下载的文件）。 */
+var CLEAR_KINDS = {
+  done: {
+    scope: 'done',
+    count: function (counts) { return Number(counts.done) || 0; },
+    empty: '没有已完成的任务可清空。',
+    title: '清空已完成任务？',
+    confirmText: '清空已完成',
+    describe: function (count) {
+      return '会删除 ' + count + ' 个已完成任务的记录（不会删除已下载的文件）。' +
+        '失败与已取消的任务可用「清空失败/取消」处理。此操作不可撤销。';
+    },
+    done: function (count) { return '已清空 ' + count + ' 个已完成任务'; }
+  },
+  failed_cancelled: {
+    scope: 'failed_cancelled',
+    count: function (counts) {
+      return (Number(counts.failed) || 0) + (Number(counts.cancelled) || 0);
+    },
+    empty: '没有失败或已取消的任务可清空。',
+    title: '清空失败/已取消任务？',
+    confirmText: '清空失败/取消',
+    describe: function (count) {
+      return '会删除 ' + count + ' 个失败与已取消任务的记录（不会删除已下载的文件）。' +
+        '清空后这些任务不能再「重试」；需要重试请先重试。此操作不可撤销。';
+    },
+    done: function (count) { return '已清空 ' + count + ' 个失败/已取消任务'; }
+  }
+};
+
+async function clearFinishedJobs(kind) {
+  var config = CLEAR_KINDS[kind];
+  if (!config) { return; }
+  var ds = downloadState();
+  var counts = (ds.snapshot && ds.snapshot.counts) || {};
+  var count = config.count(counts);
+  if (!count) {
+    toast(config.empty, 'info');
+    return;
+  }
+  var ok = await confirmDialog({
+    title: config.title,
+    message: config.describe(count),
+    confirmText: config.confirmText,
+    danger: true
+  });
+  if (!ok) { return; }
+  try {
+    var res = await api('/api/downloads/bulk', {
+      method: 'POST', body: { action: 'clear_finished', scope: config.scope },
+      timeout: 30000
+    });
+    toast(config.done((res && res.affected) || 0), 'success');
+  } catch (err) {
+    toast(errorMessage(err, '清空失败。'), 'error');
   }
   refreshDownloadQueue();
 }
@@ -937,6 +1012,16 @@ export function initDownloadPage() {
   if (els.downloadRetryFailedBtn) {
     els.downloadRetryFailedBtn.addEventListener('click', function () {
       bulkDownloadAction('retry', 'failed');
+    });
+  }
+  if (els.downloadClearDoneBtn) {
+    els.downloadClearDoneBtn.addEventListener('click', function () {
+      clearFinishedJobs('done');
+    });
+  }
+  if (els.downloadClearFailedBtn) {
+    els.downloadClearFailedBtn.addEventListener('click', function () {
+      clearFinishedJobs('failed_cancelled');
     });
   }
   if (els.downloadBookmarkletCopyBtn) {

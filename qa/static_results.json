@@ -1,7 +1,7 @@
 {
-  "generated_at": "2026-11-26T16:20:49+0800",
+  "generated_at": "2026-11-27T22:35:41+0800",
   "summary": {
-    "PASS": 259,
+    "PASS": 262,
     "FAIL": 0,
     "UNVERIFIED": 0
   },
@@ -28,7 +28,7 @@
       "id": "BE-FILE-COUNT",
       "name": "后端 Python 文件数",
       "status": "INFO",
-      "detail": "90"
+      "detail": "91"
     },
     {
       "id": "BE-SRC-HYGIENE",
@@ -41,6 +41,18 @@
       "name": "存在后端 unittest 测试文件",
       "status": "PASS",
       "detail": ""
+    },
+    {
+      "id": "BE-UNITTEST",
+      "name": "后端 unittest 全部通过",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "BE-UNITTEST-LOG",
+      "name": "unittest 结果",
+      "status": "INFO",
+      "detail": "Ran 921 tests in 234.455s"
     },
     {
       "id": "BE-NO-AUTODELETE",
@@ -973,6 +985,18 @@
       "detail": ""
     },
     {
+      "id": "BE-DOWNLOAD-CLEAR",
+      "name": "v0068：批量清空已结束任务（done/失败/取消范围，保留产物文件）",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "FE-DOWNLOAD-CLEAR-UI",
+      "name": "v0068：下载任务工具栏「清空已完成 / 清空失败/取消」+ 二次确认 + 无任务时禁用",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
       "id": "BE-DOWNLOAD-OFFPEAK",
       "name": "分时限速：HH:MM 窗口（支持跨零点）",
       "status": "PASS",
@@ -1448,7 +1472,7 @@
     },
     {
       "id": "SPK-DIST",
-      "name": "构建产物存在（DuplicateCleaner-1.1.0-0067.spk）",
+      "name": "构建产物存在（DuplicateCleaner-1.1.0-0068.spk）",
       "status": "PASS",
       "detail": ""
     },
@@ -1460,7 +1484,7 @@
     },
     {
       "id": "SPK-VERSION",
-      "name": "SPK INFO.version 与当前源码 APP_VERSION（1.1.0-0067）一致",
+      "name": "SPK INFO.version 与当前源码 APP_VERSION（1.1.0-0068）一致",
       "status": "PASS",
       "detail": ""
     },

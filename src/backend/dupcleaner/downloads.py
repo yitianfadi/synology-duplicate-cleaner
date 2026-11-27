@@ -3042,11 +3042,50 @@ class DownloadService(object):
         self._persist(job, force=True)
         return job.snapshot()
 
+    # -- v0068：清空已结束任务 -------------------------------------------
+    CLEAR_SCOPES = {
+        "all": FINAL_STATUSES,
+        "finished": FINAL_STATUSES,
+        "done": (STATUS_DONE,),
+        "failed": (STATUS_FAILED,),
+        "cancelled": (STATUS_CANCELLED,),
+        "failed_cancelled": (STATUS_FAILED, STATUS_CANCELLED),
+    }
+
+    def clear_finished(self, scope="all"):
+        """v0068：删除已结束任务的记录（不删除已下载的文件）。
+
+        批量上限 `DOWNLOAD_BULK_MAX`；逐条复用 `delete()`，因此临时文件与
+        下载组的 job_ids 会一并清理。活动任务（排队/运行/暂停）不受影响。
+        """
+        key = str(scope or "all").strip().lower()
+        statuses = self.CLEAR_SCOPES.get(key)
+        if statuses is None:
+            raise invalid(u"不支持的范围: %s" % scope)
+        with self._lock:
+            targets = [job.job_id for job in self._jobs.values()
+                       if job.status in statuses]
+        targets = targets[:config.DOWNLOAD_BULK_MAX]
+        cleared = 0
+        for job_id in targets:
+            try:
+                self.delete(job_id)
+                cleared += 1
+            except ApiError:
+                continue
+        return {"ok": True, "action": "clear_finished", "scope": key,
+                "matched": len(targets), "affected": cleared,
+                "counts": self.counts()}
+
     def bulk_action(self, user, action, scope="all"):
-        """批量暂停/继续/取消/重试（v0053）。
+        """批量暂停/继续/取消/重试（v0053）/ 清空已结束（v0068）。
 
         scope: all（活动任务）/ queued / running / paused / failed（失败+取消）。
+        清空动作的 scope 见 `CLEAR_SCOPES`（all/finished/done/failed/cancelled）。
         """
+        action = str(action or "").strip().lower()
+        if action == "clear_finished":
+            return self.clear_finished(scope)
         if action not in ("pause", "resume", "cancel", "retry"):
             raise invalid(u"不支持的操作: %s" % action)
         mapping = {

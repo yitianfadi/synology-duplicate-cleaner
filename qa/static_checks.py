@@ -1829,6 +1829,25 @@ def check_frontend():
           and ("download_auto_retry_max: 5" in
                read(os.path.join(js_dir, "constants.js"))),
           "download retry UI markers missing")
+    check("BE-DOWNLOAD-CLEAR",
+          "v0068：批量清空已结束任务（done/失败/取消范围，保留产物文件）",
+          ("def clear_finished" in downloads_src)
+          and ("CLEAR_SCOPES" in downloads_src)
+          and ('self.delete(job_id)' in downloads_src),
+          "download clear markers missing")
+    check("FE-DOWNLOAD-CLEAR-UI",
+          "v0068：下载任务工具栏「清空已完成 / 清空失败/取消」+ 二次确认 + 无任务时禁用",
+          ('id="downloadClearDoneBtn"' in html)
+          and ('id="downloadClearFailedBtn"' in html)
+          and (u"清空已完成" in html)
+          and (u"清空失败/取消" in html)
+          and ("clearFinishedJobs" in download_page)
+          and ("failed_cancelled" in download_page)
+          and ("downloadClearDoneBtn" in
+               read(os.path.join(js_dir, "state.js")))
+          and ("downloadClearFailedBtn" in
+               read(os.path.join(js_dir, "state.js"))),
+          "download clear UI markers missing")
     check("BE-DOWNLOAD-OFFPEAK",
           "分时限速：HH:MM 窗口（支持跨零点）",
           ("def _in_offpeak" in downloads_src)
@@ -1854,7 +1873,8 @@ def check_frontend():
           "下载页批量操作与导出入口",
           all(marker in html for marker in (
               "downloadPauseAllBtn", "downloadResumeAllBtn",
-              "downloadRetryFailedBtn", "downloadExportLink"))
+              "downloadRetryFailedBtn", "downloadClearDoneBtn",
+              "downloadClearFailedBtn", "downloadExportLink"))
           and ("/api/downloads/bulk" in app)
           and ("/api/downloads/export" in html)
           and ("/priority" in app),

@@ -1,6 +1,6 @@
 # 功能总览（按功能 / 关键词检索）
 
-> 基线版本 **1.1.0-0067**。本文是「按功能找东西」的总入口：每一节先给**搜索关键词**（中英文同义词，GitHub 搜索、`Ctrl+F` 都能命中），再给入口、接口、设置键、契约文档与源码位置。
+> 基线版本 **1.1.0-0068**。本文是「按功能找东西」的总入口：每一节先给**搜索关键词**（中英文同义词，GitHub 搜索、`Ctrl+F` 都能命中），再给入口、接口、设置键、契约文档与源码位置。
 > 只看安装与使用：[README](../README.md)；看历史版本：[CHANGELOG](CHANGELOG.md)；看接口细节：各 `*_CONTRACT.md`。
 
 ## 0. 关键词速查表
@@ -143,13 +143,14 @@
 
 ## 5. 下载中心
 
-**关键词**：下载、download、HLS、m3u8、DASH、mpd、AES-128、合并 MP4、分片、断点续传、解析、cURL、RSS、订阅、限速、命名模板、自动重试、退避。
+**关键词**：下载、download、HLS、m3u8、DASH、mpd、AES-128、合并 MP4、分片、断点续传、解析、cURL、RSS、订阅、限速、命名模板、自动重试、退避、清空已完成。
 
 | 功能 | 入口 / 接口 | 说明 | 文档 |
 |---|---|---|---|
 | 直链下载 | `POST /api/downloads` | HTTP Range 断点续传 | [DOWNLOAD_CONTRACT](DOWNLOAD_CONTRACT.md) |
 | HLS / DASH | 同上 | TS/fMP4 多码率、AES-128 本地解密、音视频轨合并为 MP4 | 同上 |
 | 队列与控制 | `GET /api/downloads/queue`、`{id}/pause|resume|cancel|retry` | 并发 1–4（默认 2）、优先级、批量操作、CSV 导出 | 同上 |
+| 清空已完成 / 失败 | `POST /api/downloads/bulk`（`action=clear_finished`） | 删除已完成或失败/已取消任务记录，**保留已下载文件** | 同上 §18 |
 | 本地化目录 | 任务设置 | 输出目录必须在共享文件夹内；子目录模板；`.dcpart` 原子改名 | 同上 |
 | 命名模板 | `download_name_template` | `{title}{site}{date}{height}{season}{episode}…` | 同上 §15.4 |
 | 分时限速 | `download_offpeak_*` | 低谷窗口换档，支持跨零点 | 同上 §15.3 |
@@ -170,12 +171,13 @@
 
 ### 5.6 下载去重与失败重试
 
-**关键词**：下载前去重、skip existing、自动重试、指数退避、backoff、Retry-After、等待重试。
+**关键词**：下载前去重、skip existing、自动重试、指数退避、backoff、Retry-After、等待重试、清空已完成、clear finished。
 
 - 去重：目标文件已存在且体积一致 → 任务直接完成（`skipped=true`），不消耗流量；`download_skip_existing` 默认开。
 - 退避重试：`min(cap, base×factor^(n-1))` + 0–20% 正向抖动；默认 60s → 180s → 540s → 1620s → 1800s（封顶），最多 5 次；只重试 5xx/408/425/429/断网/分片/内部错误，4xx 立即失败；支持 `Retry-After`。
+- 清空已完成：下载页「下载任务」工具栏点「清空已完成」→ 二次确认后删除已完成任务记录（不删除已下载文件）；「清空失败/取消」同理清失败与已取消任务；接口 `POST /api/downloads/bulk` + `{"action":"clear_finished","scope":"done"}`，范围另支持 `failed/cancelled/failed_cancelled/finished`。
 - 设置：`download_auto_retry`、`download_auto_retry_max`、`download_auto_retry_base_sec`、`download_auto_retry_factor`、`download_auto_retry_cap_sec`。
-- 文档：[DOWNLOAD_CONTRACT §15.1–15.2](DOWNLOAD_CONTRACT.md)。
+- 文档：[DOWNLOAD_CONTRACT §15.1–15.2](DOWNLOAD_CONTRACT.md)、[§18](DOWNLOAD_CONTRACT.md)。
 
 ---
 

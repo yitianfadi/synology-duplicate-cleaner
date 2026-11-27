@@ -377,3 +377,21 @@ Cookie 等敏感选项在返回时只给 `cookie_set`。
 ### 17.5 测试
 
 `tests/test_v0054_dash_subs.py`（16 例）：DASH 模板/时间轴/列表/DRM/非法清单与真实下载链路；RSS/Atom 解析；订阅新增/更新/删除、RSS 只入队一次、网页 best 模式、总开关与间隔门控、Cookie 掩码。
+
+## 18. 清空已完成（v0068）
+
+- 入口：下载页「下载任务」工具栏的「清空已完成」（`#downloadClearDoneBtn`，scope `done`）与「清空失败/取消」（`#downloadClearFailedBtn`，scope `failed_cancelled`）；对应状态数量为 0 时按钮禁用，点击后二次确认。
+- API：`POST /api/downloads/bulk`，请求体 `{"action": "clear_finished", "scope": "done"}`。`scope` 取值：
+
+| scope | 清除范围 | 界面入口 |
+|---|---|---|
+| `done` | 已完成 | 清空已完成 |
+| `failed` | 失败 | — |
+| `cancelled` | 已取消 | — |
+| `failed_cancelled` | 失败 + 已取消 | 清空失败/取消 |
+| `finished` / 省略 | 全部已结束（已完成 + 失败 + 已取消） | — |
+
+- 行为：只删除任务记录（内存任务表 + `download_jobs` 行）与残留临时文件；**不删除已下载的产物文件**。逐条复用单任务删除语义，下载组的 `job_ids` 同步裁剪。活动任务（排队/运行/暂停）不受影响；单次最多 `DOWNLOAD_BULK_MAX`（500）条。
+- 响应：`{"ok": true, "action": "clear_finished", "scope": "...", "matched": n, "affected": n, "counts": {...}}`；未知 scope → 400 `INVALID_ARGUMENT`。
+- 前端：成功后刷新队列；对应状态为 0 时按钮禁用并提示。失败/已取消任务在被清空前仍可用「重试失败」或逐条「删除」处理。
+- 测试：`src/backend/tests/test_v0068_download_clear.py`（8 例）；e2e `DL-CLEAR-01..04`。

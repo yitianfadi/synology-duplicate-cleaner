@@ -3221,6 +3221,83 @@ def run():
                   resp.status == 200 and int(job.get("priority") or 0) >= 1,
                   "status=%s job=%s" % (resp.status, job))
 
+            # v0068：清空已完成（删记录、不删已下载文件）
+            served["/media/clear-me.bin"] = b"CLEAR-ME-" * 256
+            resp = client.post_json("/api/downloads", {
+                "urls": [cdn_base + "/media/clear-me.bin"],
+                "options": {"title": "qa-clear"}})
+            clear_id = ((jd(resp).get("jobs") or [{}])[0]).get("job_id")
+            clear_job = {}
+            deadline = time.time() + 30
+            while time.time() < deadline:
+                r2 = client.get("/api/downloads/%s" % quote(clear_id or ""))
+                clear_job = (jd(r2).get("job") or {})
+                if clear_job.get("status") in ("done", "failed", "cancelled"):
+                    break
+                time.sleep(0.2)
+            clear_path = clear_job.get("output_path") or ""
+            resp = client.post_json("/api/downloads/bulk", {
+                "action": "clear_finished", "scope": "done"})
+            cleared = jd(resp)
+            check("DL-CLEAR-01", "清空已完成返回 matched/affected 且已完成计数归零",
+                  resp.status == 200
+                  and cleared.get("action") == "clear_finished"
+                  and cleared.get("scope") == "done"
+                  and cleared.get("affected", 0) >= 1
+                  and (cleared.get("counts") or {}).get("done") == 0,
+                  "status=%s data=%s" % (resp.status, cleared))
+            resp = client.get("/api/downloads/%s" % quote(clear_id or ""))
+            check("DL-CLEAR-02", "清空后任务记录 404，已下载文件仍在",
+                  resp.status == 404 and os.path.isfile(clear_path),
+                  "status=%s path=%s" % (resp.status, clear_path))
+            resp = client.post_json("/api/downloads/bulk", {
+                "action": "clear_finished", "scope": "bogus"})
+            code, _ = err_code(resp)
+            check("DL-CLEAR-03", "未知清空范围返回 400 INVALID_ARGUMENT",
+                  resp.status == 400 and code == "INVALID_ARGUMENT",
+                  "status=%s code=%s" % (resp.status, code))
+
+            # 清空后补一个已完成任务，供重启持久化检查（RESTART-08）使用
+            served["/media/restart-keep.bin"] = b"RESTART-KEEP-" * 128
+            resp = client.post_json("/api/downloads", {
+                "urls": [cdn_base + "/media/restart-keep.bin"],
+                "options": {"title": "qa-restart-keep"}})
+            dl_id = ((jd(resp).get("jobs") or [{}])[0]).get("job_id")
+            deadline = time.time() + 30
+            while time.time() < deadline:
+                r2 = client.get("/api/downloads/%s" % quote(dl_id or ""))
+                keep = (jd(r2).get("job") or {})
+                if keep.get("status") in ("done", "failed", "cancelled"):
+                    break
+                time.sleep(0.2)
+
+            # v0068：清空失败/已取消（只删这些记录，已完成任务保留）
+            resp = client.post_json("/api/downloads", {
+                "urls": [cdn_base + "/media/clear-missing.bin"]})
+            fail_id = ((jd(resp).get("jobs") or [{}])[0]).get("job_id")
+            fail_status = None
+            deadline = time.time() + 30
+            while time.time() < deadline:
+                r2 = client.get("/api/downloads/%s" % quote(fail_id or ""))
+                fail_status = (jd(r2).get("job") or {}).get("status")
+                if fail_status in ("failed", "cancelled", "done"):
+                    break
+                time.sleep(0.2)
+            resp = client.post_json("/api/downloads/bulk", {
+                "action": "clear_finished", "scope": "failed_cancelled"})
+            cleared2 = jd(resp)
+            keep_resp = client.get("/api/downloads/%s" % quote(dl_id or ""))
+            check("DL-CLEAR-04", "清空失败/已取消只删这些记录，已完成任务保留",
+                  resp.status == 200
+                  and fail_status == "failed"
+                  and cleared2.get("scope") == "failed_cancelled"
+                  and cleared2.get("affected", 0) >= 1
+                  and (cleared2.get("counts") or {}).get("failed") == 0
+                  and (cleared2.get("counts") or {}).get("cancelled") == 0
+                  and keep_resp.status == 200,
+                  "status=%s fail=%s data=%s keep=%s"
+                  % (resp.status, fail_status, cleared2, keep_resp.status))
+
             # DL-13：DASH（.mpd）识别与规划（真实下载链路由单测覆盖，避免伪造媒体）
             served["/dash/manifest.mpd"] = (
                 u'<?xml version="1.0"?>'

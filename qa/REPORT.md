@@ -4,8 +4,8 @@
 |---|---|
 | 项目 | 重复文件清理与字幕 / DuplicateCleaner（DSM 7 SPK） |
 | 套件 ID | `DuplicateCleaner` |
-| 当前版本 | 1.1.0-0065（已打包，未发布） |
-| 最近更新 | 2026-11-19 |
+| 当前版本 | 1.1.0-0068（已发布） |
+| 最近更新 | 2026-11-27 |
 | 验收主机 | Windows 本地 |
 | 验收结论 | PASS（发布基线） |
 | 覆盖说明 | v0050 已于 2026-11-10 在 DSM 真机完成 1.1.0-0042 → 1.1.0-0050 覆盖升级；v0043–v0050 功能项仍待逐条真机验证 |
@@ -15,25 +15,25 @@
 
 ## 1. 当前基线
 
-最新一次全量验收为 1.1.0-0067（已打包，SPK 结构/同步检查全绿）。
+最新一次全量验收为 1.1.0-0068（已打包，SPK 结构/同步检查全绿）。
 
 | 套件 | 命令 | 结果 |
 |---|---|---|
-| 后端单元测试 | `cd src/backend && python -m unittest discover -s tests` | **913 OK（6 skipped）** |
-| 静态检查 | `python qa/static_checks.py` | **260 PASS / 0 FAIL / 0 UNVERIFIED** |
-| 端到端 | `python qa/e2e_test.py` | **275 PASS / 0 FAIL / 1 UNVERIFIED**（Windows symlink 历史项；含 DL-00…DL-20、DL-RETRY-01…05、CV-00…CV-21、MG-00…MG-07、RESTART-08、SET-08…SET-10） |
+| 后端单元测试 | `cd src/backend && python -m unittest discover -s tests` | **921 OK（6 skipped）** |
+| 静态检查 | `python qa/static_checks.py` | **262 PASS / 0 FAIL / 0 UNVERIFIED** |
+| 端到端 | `python qa/e2e_test.py` | **279 PASS / 0 FAIL / 1 UNVERIFIED**（Windows symlink 历史项；含 DL-00…DL-20、DL-RETRY-01…05、DL-CLEAR-01…04、CV-00…CV-21、MG-00…MG-07、RESTART-08、SET-08…SET-10） |
 | 前端模块图 | `node qa/check_web_modules.mjs` | **37/37 PASS**（v0063 已选列表分页） |
 | 无头浏览器冒烟 | `python qa/web_smoke.py` | 8/8 PASS（最近一次 static 内联执行） |
-| 真实 Chromium 探针 | `.uiprobe/probe_v0043..v0050.mjs`、`.uiprobe/ui_probe.py`、`.uiprobe/v0067_ui_probe.mjs` | v0043–v0050 全通过；v0057/v0058/v0059 用 `ui_probe.py`（登录 → 逐页点击扫描/字幕/下载/转换/合成/设置 → 校验面板、无“未启用”、无 console 错误）通过；v0064 复跑通过；**v0067 8/8**（设置页退避控件/节奏预览/保存回读 + 任务行「等待重试（第 N/M 次，约 X 后）」+ 快照字段，无 console 错误） |
+| 真实 Chromium 探针 | `.uiprobe/probe_v0043..v0050.mjs`、`.uiprobe/ui_probe.py`、`.uiprobe/v0067_ui_probe.mjs`、`.uiprobe/v0068_ui_probe.mjs` | v0043–v0050 全通过；v0057/v0058/v0059 用 `ui_probe.py`（登录 → 逐页点击扫描/字幕/下载/转换/合成/设置 → 校验面板、无“未启用”、无 console 错误）通过；v0064 复跑通过；**v0067 8/8**（设置页退避控件/节奏预览/保存回读 + 任务行「等待重试（第 N/M 次，约 X 后）」+ 快照字段，无 console 错误）；**v0068 11/11**（两个清空按钮可用态/二次确认/`clear_finished` 请求体/先清已完成再清失败取消/按钮复位/任务 404/文件保留/计数归零/无 console 错误） |
 
 | 产物项 | 值 |
 |---|---|
-| 文件 | `dist/DuplicateCleaner-1.1.0-0067.spk` |
+| 文件 | `dist/DuplicateCleaner-1.1.0-0068.spk` |
 | 大小 | 99,491,840 B（97,160 KB） |
-| SHA256 | `23c2ebe8bcb063f61e5a322e30beb5a0623707e15289889040644314db760772` |
-| package.tgz MD5 | `52edc8df0847d7cc8214ec90887353b4`（= INFO.checksum） |
-| SQLite schema | v11（v10 convert_jobs；v11 avmerge_jobs；v0052–v0055/v0057/v0058/v0060–v0064/v0066/v0067 无迁移） |
-| 版本同步 | 1.1.0-0067 同步 8 处（static `SPK-BUILD-VERSION`/`SPK-SYNC` 通过） |
+| SHA256 | `4e655496fc2d53d75ebd5cdddc277c184c6e2112d3c30d93b1b73ea84be7468d` |
+| package.tgz MD5 | `2d6a30d0006ad06bfca693e8e7d99c13`（= INFO.checksum） |
+| SQLite schema | v11（v10 convert_jobs；v11 avmerge_jobs；v0052–v0055/v0057/v0058/v0060–v0064/v0066/v0067/v0068 无迁移） |
+| 版本同步 | 1.1.0-0068 同步 8 处（static `SPK-BUILD-VERSION`/`SPK-SYNC` 通过） |
 
 判定口径：
 
@@ -315,6 +315,7 @@ REQ 编号沿用 v1.0 基线，状态按当前版本事实更新。
 | v0065 | 2026-11-19 | 转换硬件编解码：内置 FFmpeg 8.1（VAAPI）+ 随包 libva/iHD/i965 + videodriver 组 + 3 个硬件预设与 CPU 回退 | 895（skip 6） | 257 | 263/0/1 | 硬件状态探测（CV-21）+ 参数金标/回退（15 例单测） | `c892957b…5265264` |
 | v0066 | 2026-11-20 | 字幕队列设置回到「任务」标签（并发 1–4 / 保留上限 20–1000，改完即生效） | 898（skip 6） | 258 | 267/0/1 | 真机探针：4 档并发/默认串行/上限 200·20–1000/保存即时生效/越界回滚 | `f78163fe…fe0c64fd` |
 | v0067 | 2026-11-22 | 下载失败指数退避自动重试（5xx/408/425/429/超时/分片重试，4xx 立即失败，`Retry-After`，UI 可见） | 913（skip 6） | 260 | 275/0/1 | Playwright 8/8：设置页 5 控件回填/节奏预览实时更新/保存回读 + 任务行「等待重试（第 N/M 次，约 X 后）」+ 快照字段 | `23c2ebe8…db760772` |
+| v0068 | 2026-11-27 | 下载任务「清空已完成 / 清空失败/取消」（只删记录不删文件；`clear_finished` 支持 done/failed/cancelled/failed_cancelled/finished） | 921（skip 6） | 262 | 279/0/1 | Playwright 11/11：两个按钮可用态/二次确认/`clear_finished` 请求体/先清已完成再清失败取消/按钮复位/任务 404/文件保留/计数归零/无 console 错误 | `4e655496…be7468d` |
 
 说明：
 
@@ -348,6 +349,7 @@ REQ 编号沿用 v1.0 基线，状态按当前版本事实更新。
 - v0065：转换支持 Intel 核显硬件编解码（VAAPI）。DS920+ 实测：`libx264 medium` 1080p ≈1.0×、i965 硬编 2.02×、iHD 硬编 H.264 3.49×、HEVC 硬编 2.24×、**HEVC 硬解 + H.264 硬编全 GPU 9.07×**。实现：x86_64 内置 FFmpeg 换 BtbN n8.1（`--enable-vaapi --enable-libvpl`）；随包 `target/lib/vaapi/`（libva 2.22 + libigdgmm + iHD/i965 驱动，BtbN 对 libva 是运行时 dlopen，必须自带）；`spk/conf/privilege` 加 `join-groupname: videodriver`；新增 `hwaccel.py` 探测、`FFmpegTool.probe_vaapi()`、3 个硬件预设（CQP）、`convert_hwaccel` 设置键与失败自动回退 CPU（审计 `convert_hw_fallback`、快照 `hw_fallback`）；新增 static `BE-CONVERT-HWACCEL`/`BE-CONVERT-HW-PRESETS`/`SPK-PRIVILEGE-VIDEODRIVER`/`SPK-FFMPEG-VAAPI`/`SPK-VAAPI-BUNDLE`/`FE-CONVERT-HW`、单测 `test_v0065_convert_hw.py`（15 例）、e2e `CV-21`。SPK 体积 39 MB → 99.5 MB（仅 x86_64 变大，aarch64 保持 4.1）。
 - v0066：修 v0060 设置页瘦身造成的“字幕并发无处可设”——「字幕 → 任务」标签顶部新增 `#subtitleQueueSettings`（并发 1–4、已完成保留上限 20–1000），`change` 即 `PUT /api/settings` 并立即 `apply_settings()`（并发调小不打断正在执行的任务；保留上限下调后下一次清理按新上限 LRU 裁剪，只删任务目录+DB，srt 永不删）；`/api/meta.subtitle` 新增 `job_limit_min/max`；新增 static `FE-SUBTITLE-JOB-LIMIT` 并把 `FE-SUBTITLE-CONCURRENCY` 收紧回“界面上真有控件”、e2e `SUB-36..39`、单测 3 例。
 - v0067：下载失败改为**指数退避自动重试**。`_is_retryable_error` 分类（`HTTP_STATUS` 无 status/5xx/408/425/429、`SEGMENT_FAILED`、`INTERNAL_ERROR` 才重试；400/401/403/404 等 4xx 与 URL/播放列表/输出/空间/直播/DRM/FFmpeg 错误立即失败）；`_auto_retry_delay` = `min(cap, base×factor^(n-1))` + 0–20% 正向抖动（只增不减），429/503 的 `Retry-After` 取 `max(退避, 该值)` 后仍受 cap/次数限制；退避三项（`download_auto_retry_base_sec`/`_factor`/`_cap_sec`）每次重试实时读设置，开关/次数仍是提交时快照；`auto_retry_max` 默认 2→5、上限 5→10；快照新增 `auto_retry/retry_max/retry_in_sec`，设置页新增 5 个控件 + 节奏预览，任务行显示「等待重试（第 N/M 次，约 X 后）」与「上次失败」，手动 `retry()` 复位 `attempts`。无 schema 迁移。新增 static `BE-DOWNLOAD-RETRY-BACKOFF`/`FE-DOWNLOAD-RETRY-UI`、单测 `test_v0067_download_retry.py`（15 例）、e2e `DL-RETRY-01..05`。
+- v0068：下载中心新增「清空已完成」与「清空失败/取消」——`DownloadService.clear_finished(scope)`（`CLEAR_SCOPES`：all/finished/done/failed/cancelled/failed_cancelled，单次上限 `DOWNLOAD_BULK_MAX=500`）逐条复用 `delete()` 删除记录与残留临时文件、同步裁剪下载组 `job_ids`，**不删已下载文件**；`POST /api/downloads/bulk` 的 `action=clear_finished` 承接，未知 scope 返回 400；下载任务工具栏新增 `#downloadClearDoneBtn`（scope `done`）与 `#downloadClearFailedBtn`（scope `failed_cancelled`），对应状态为 0 时禁用、`confirmDialog` 二次确认。无 schema 迁移。新增 static `BE-DOWNLOAD-CLEAR`/`FE-DOWNLOAD-CLEAR-UI`、单测 `test_v0068_download_clear.py`（8 例）、e2e `DL-CLEAR-01..04`。
 
 ### 6.2 原报告记录异常（保留说明，不再重复展开）
 
